@@ -160,5 +160,12 @@ cargo run -q -p pid-parse --example probe_page_dims -- /tmp/XIONGANA2.pid
 `XIONGANA2.igr` 确实在包里，但它是 93.5 × 36 mm 的标题栏碎片；旧断言（落到 `A2-W - New.igr`）钉的正是
 被本条否掉的顶替，现在钉 `template = None` + `missing_templates = ["XIONGANA2"]`。
 
-仍未做（本条的「前置」）：`<图名词干>_p/` 包作搜索根 —— 修好后 `DWG-0202` 按名穿 `CPECCHBA2.igr`；
-`XIONGANA2.igr` 这种「名字命中但只导出标题栏碎片」的单独判据。两件都不影响本条判据本身。
+**前置一已落地**（`a8f8519`）：`drawing_package_dir` 按 `<stem>_p` 找到图自己的备份包（图旁 → 语料根
+→ 语料下一层），`load_border_template` 把包内 `RefData~*.zip` 接在语料档案之后。`DWG-0202` 现在按名
+穿上 `CPECCHBA2.igr`（594.00 × 420.00、101 图元、2 处放置），`test-file` 挂模板 3 → 5；53 张逐项不变。
+
+**前置二量下来不成立。** `XIONGANA2.igr` 的 6 个实体是 2 `Other` / 1 `Symbol` / 3 `Text`，没有一条
+`Line` / `Polyline` / `Arc` / `Circle`——`ink_extent_mm` 只数笔画（那是为了量外框），所以它返回 `None`，
+候选在任何尺寸判据之前就被跳过。而且它只在 `DWG-0202` 的包里，`DWG-0201` 自己的包并不存在，P1 的
+「图自己的包」规则到不了它。要画它得另定两条判据（「碎片算不算家具」、「有名页要不要跨包搜」），
+所以 `DWG-0201` 暂维持裸页、报 `XIONGANA2`。

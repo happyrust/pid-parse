@@ -194,7 +194,7 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
 | 项 | 缺什么 | 一旦有了做什么 |
 |---|---|---|
 | §2.2 两张 A1 超容差（1200td 2.09 mm、N井场 2.46/2.71 mm） | 已实施（`835fc59`：`.PID` 链名同算 + 10 mm 命名窗口，47 → 49） | 只余「出图器会不会拉伸 OLE 框」的 ≤ 3 mm 放置子问题，待有参考出图再核，不挡结项 |
-| §2.10 族盲 | 已实施（`1b5cce7`：有名页只收名字命中的候选，解析不到不画并记 `missing_templates`；无链页仍走 2 mm） | 只余两条前置：`<图名词干>_p/` 包作搜索根（修后 `DWG-0202` 按名穿 `CPECCHBA2.igr`）；`XIONGANA2.igr` 这种「名字命中但 `.igr` 只导出标题栏碎片」单列一条 |
+| §2.10 族盲 | 已实施（`1b5cce7`：有名页只收名字命中的候选，解析不到不画并记 `missing_templates`；无链页仍走 2 mm） | 搜索根已落地（`a8f8519`：`DWG-0202` 按名穿 `CPECCHBA2.igr`；`test-file` 3 → 5）。只余 `XIONGANA2.igr` 碎片：它的 6 个实体没有笔画，`ink_extent_mm = None`，且文件不在自己包里——前提证伪，见 `docs/plans/2026-10-29-plot-pdf-correctness.md` §P2 |
 | §2.3 四个库文件名 / 19 处放置 | `XA …`、`Pulsation Damper.sym` 等源文件 | 补库或确认永久缺口；纸上不受影响（`missing_boxes = 0`） |
 | §2.4 48 张没有参考出图 | 参考 PDF 或批量目视抽查 | 才有像素级对照 |
 | §2.7 字体 subset 前缀 | 无（D5 已查：前缀本来就在） | 用同一个检查器在今天的页面上重取读数，分清「整文件嵌入」与「真的缺前缀」 |
