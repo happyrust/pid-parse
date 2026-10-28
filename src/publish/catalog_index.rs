@@ -433,7 +433,7 @@ pub fn read_catalog_index_from_zip(
         if entry.is_dir() {
             continue;
         }
-        let name = crate::backup::datamap::decode_zip_name(entry.name_raw());
+        let name = crate::refdata_archive::decode_zip_name(entry.name_raw());
         if name != "CatalogIndex.xml" && !name.ends_with("/CatalogIndex.xml") {
             continue;
         }
