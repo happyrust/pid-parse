@@ -264,12 +264,18 @@ fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
     doc.add(Object::Dict(ocg))
 }
 
-/// Whether any run on the page needs a typeface: the same test
-/// [`crate::fonts::prepare_fonts`] loads faces for.
+/// Whether any run on the page needs a typeface.
+///
+/// The same rule [`show_text`] applies: a run of spaces letters nothing and is
+/// trimmed away, so a page that holds only padding must not ask for a face
+/// either.
 fn has_inked_text(model: &PaperModel) -> bool {
-    model.primitives.iter().any(
-        |primitive| matches!(&primitive.shape, PaperShape::Text { value, .. } if !value.is_empty()),
-    )
+    model.primitives.iter().any(|primitive| {
+        matches!(
+            &primitive.shape,
+            PaperShape::Text { value, .. } if !value.trim().is_empty()
+        )
+    })
 }
 
 fn pages_ref(doc: &Document) -> Result<pdfcraft_cos::ObjRef, PlotWriteError> {
@@ -1918,6 +1924,40 @@ mod tests {
             "{:?}",
             ink.spans
         );
+    }
+
+    /// A page whose only "text" is spaces letters nothing, so it needs no
+    /// face: `has_inked_text` must read the rule `show_text` applies, not a
+    /// second one of its own.
+    #[test]
+    fn a_page_of_spaces_needs_no_face() {
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [12.0, 40.0],
+                    height_mm: Some(5.0),
+                    rotation: 0.0,
+                    value: "   ".into(),
+                    font: None,
+                    anchor: TextAnchor::Center,
+                    line: TextLine::Middle,
+                    spans: Vec::new(),
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(&model, &[]).expect("no run letters, so no face is needed");
+        let ink = read_plot(&pdf).expect("read");
+        assert!(ink.spans.is_empty(), "{:?}", ink.spans);
     }
 
     fn anchor_row(anchor: TextAnchor) -> u8 {
