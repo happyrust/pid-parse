@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### 更正：`7f202e9` 的两次语料读数被写成同一个数，共享目录是 175 格字而非 225（2026-10-28）
+
+`7f202e9` 的提交信息末段写「the disk corpus in 97.11 s over 47 sheets wearing furniture and 225
+labels, the backup archive in 98.14 s over the same 47 and the same 225」。前半句是错的：共享目录
+（`D:\work\cad\PID自研软件验证`）的 `Ref/Template Files` 只有五个 `CPE*` 模板，读数是 **175 格字**；
+225 是七个模板的总数，只有备份包（`RefData~4~682.zip` 里另有 `A0-W - New.igr` / `A1-W - New.igr`）
+才会全部命中。两数自洽：`34×3 + 37 + 36 = 175`，再加两份 `W` 的各 25 格正好 225。
+
+- **代码与 pin 都没错**，错在提交信息的一句话。`TEMPLATE_PLACEMENTS` 一直按模板写格（七份合计
+  225），两种语料都全过：共享目录比 175 格（五个模板），备份包比 225 格（七份全在）。
+- **复核**：今天在 `a09c425` 上把两种语料各跑一遍，`export_plant_backup` 分别打印
+  `63 placements … 175 labels` 与 `61 placements … 225 labels`，与上表一致。
+- **提交信息已不可改**（`7f202e9` 已在 main 上），所以更正落在文档里：
+  `pid-plot/tests/export_plant_backup.rs` 的模块文档现在把两种语料各读多少格、为什么差额是 50 写明，
+  并把「pin 的总数是 225」与「一次运行读到多少」分开。
+
 ### 一条 10 mm 的「笔」其实是 `BandAid` 校验带（2026-10-27 续）
 
 整包出图时 `Q井场` 的笔宽直方图里有一条无法解释的读数：9 条 10.000 mm，而 53 张图里最宽的正经笔

@@ -25,7 +25,10 @@
 //!   the seven templates, pinned per template and required to agree sheet by
 //!   sheet, so a re-authored title block that drifts a cell or respells the
 //!   company name fails even though its stroke count, extent and placements
-//!   are untouched;
+//!   are untouched. How many of those 225 a run actually reads is the corpus's
+//!   business, not the pin's: a share carries the five `CPE*` templates and so
+//!   compares 175 cells, a backup package carries all seven and compares 225
+//!   (see the corpus split below);
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
 //!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
@@ -64,6 +67,15 @@
 //! [`pid_plot::fonts::font_dirs`]). `PID_TEST_DATA_DIR` is an optional third
 //! root: it is one of the places `backup-plant-data` is looked for, beside the
 //! corpus and the two `pid-test-data` paths listed in [`backup_dir`].
+//!
+//! The label pin splits the same way, and the two readings are not
+//! interchangeable: 34 cells each on `CPE-SQ-A0/A1/A2`, 37 on
+//! `CPECCHB-SQ-A1`, 36 on `CPECCHB-SQ-A2` — **175 cells on a share** — then 25
+//! each on `A0-W - New.igr` and `A1-W - New.igr`, which only a package's
+//! `RefData~4~682.zip` supplies, so **225 in a package**. The pin's own total
+//! is the 225; a share reading 225 would mean it had found the two `W` files
+//! it does not have. (`7f202e9`'s commit message reported 225 for both corpora;
+//! the share's figure is 175 — see the CHANGELOG erratum.)
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
