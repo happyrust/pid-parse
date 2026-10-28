@@ -113,7 +113,11 @@ Backup 模块和 Publish 模块不在 `.pid` 主读取路径上，但它们补�
 - `Manifest.txt` 的 `key<<|>>value` 表格。
 - MTF envelope 和 MDF page 相关基础结构。
 - `RefData~SCHEMA~ID` 文件名和 magic-byte 分类。
-- RefData ZIP central directory entry index。
+- RefData ZIP central directory entry index（`backup::zip_index`，只列条目元数据）。
+- `refdata-archive` 特性下的 `refdata_archive`：把备份包自己带的参考数据读出来 ——
+  `.igr` 图框模板与 `.sym` 符号体的**字节**。它只骑 `zip` 依赖本身，不带发布管线，
+  所以「画一张图」那一侧（`pid-plot`）可以单独用：备份包目录因此不需要先手工解压。
+  归档条目的名字带 UTF-8 BOM（实名 `\u{feff}A2-W.igr`），模块负责归一。
 - `scan_backup_folder`：一次清点整个备份目录的 `Manifest.txt`、`Export.dmp`（只嗅探前 4 KiB，认出 SQL Server MTF 或 Oracle `exp`）、`RefData` 和 `PlantData`。ZIP 只列中央目录，不抽出 MDF，也不写数据库。
 
 `publish` 面向 `Export.mdf -> drawing graph -> _Data.xml / _Meta.xml`。它依赖 vendored `oxidized-mdf` 读取 MDF，把 SQL Server 数据转成中间 drawing graph，再由 XML writer 输出发布文件。

@@ -17,6 +17,9 @@
 
 use std::path::{Path, PathBuf};
 
+use pid_parse::refdata_archive::{
+    ArchiveFile, archive_members, read_archive_file, refdata_archives,
+};
 use pid_parse::style_link::{
     LineStyleIndex, MarkerStroke, ResolvedLineStyle, ResolvedTextStyle, TextAlignment,
     TextStyleIndex,
@@ -29,6 +32,8 @@ use pid_parse::{
     PidParser, SheetRecordKind, build_normalized_geometry,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::write::carries_a_pen;
 
 const MM_PER_METRE: f64 = 1000.0;
 
@@ -90,7 +95,9 @@ pub struct PaperModel {
 /// One `.igr` border template, as drawn.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BorderTemplate {
-    /// Template file the furniture came from, as found on disk.
+    /// Template file the furniture came from, as found on disk or — when the
+    /// corpus carries none, and a backup package's `RefData~*.zip` does — as
+    /// the archive path with the member's own name on the end.
     pub path: String,
     /// The template's own ink extent, paper millimetres.
     ///
@@ -823,32 +830,38 @@ fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
 ///
 /// The symbol library is the first of: `PID_SYMBOL_LIBRARY`, a directory
 /// under `<corpus>/Ref` or `<corpus>/../Ref` whose name contains `symbol`,
-/// then `test-file/symbols-full`.
+/// then `test-file/symbols-full` — and, after every directory, the
+/// `RefData~*.zip` a backup package keeps beside them, which carries the same
+/// trees without being unpacked.
 ///
 /// The sheet's border template comes from `<corpus>/Ref/Template Files` and
-/// `<corpus>/Ref` (or the corpus's parent): the `.igr` whose own extent is the
-/// sheet, which is how a linked OLE frame record is resolved to a file
+/// `<corpus>/Ref` (or the corpus's parent), or from a `RefData~*.zip` in the
+/// corpus or beside it: the `.igr` whose own extent is the sheet — and, when
+/// two of them are the same size, the one the sheet's link record names —
+/// which is how a linked OLE frame record is resolved to a file
 /// ([`load_border_template`]). Its furniture goes onto the page before the
 /// drawing's own records, so content inks over the frame rather than under it.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
-    let (roots, library) = symbol_library(corpus);
-    lay_out_with_symbol_roots(pid, corpus, roots, &library)
+    let (roots, archives, library) = symbol_library(corpus);
+    lay_out_with_symbol_roots(pid, corpus, roots, archives, &library)
 }
 
 /// [`lay_out_drawing`], with where the symbol library lives stated instead of
 /// discovered.
 ///
-/// The roots are normally found from the corpus (see `symbol_library`); a
-/// caller that knows them — a probe comparing two copies, or a test that must
-/// not depend on what happens to be installed — says so here. `library` is the
-/// label the page reports for those roots.
+/// The roots — and the `RefData~*.zip` archives searched after them — are
+/// normally found from the corpus (see `symbol_library`); a caller that knows
+/// them — a probe comparing two copies, or a test that must not depend on what
+/// happens to be installed — says so here. `library` is the label the page
+/// reports for those sources.
 pub fn lay_out_with_symbol_roots(
     pid: &Path,
     corpus: &Path,
     roots: Vec<PathBuf>,
+    archives: Vec<PathBuf>,
     library: &[String],
 ) -> Result<PaperModel, PaperModelError> {
-    let mut symbols = SymbolLibrary::with_roots(roots);
+    let mut symbols = SymbolLibrary::with_roots(roots).with_archives(archives);
     let doc = PidParser::new()
         .parse_file(pid)
         .map_err(|error| PaperModelError {
@@ -871,8 +884,16 @@ pub fn lay_out_with_symbol_roots(
     // authored in page millimetres from the page's own origin — the corpus A1
     // template runs `(0, 0)` to `(841, 594)`, exactly the sheet B states.
     let mut template: Option<BorderTemplate> = None;
+    // What the sheet's own frames point at, kept for the pick: a record's path
+    // does not resolve here, but its file name still says which template the
+    // sheet was drawn on when two of them are the same size.
+    let linked_templates: Vec<String> = doc
+        .jsites
+        .iter()
+        .flat_map(|site| site.ole_links.iter().cloned())
+        .collect();
     if let Some(page) = page_mm
-        && let Some(furniture) = load_border_template(corpus, page)
+        && let Some(furniture) = load_border_template(corpus, page, &linked_templates)
     {
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
@@ -1256,7 +1277,8 @@ struct Placement {
     symbol: Option<String>,
 }
 
-/// The symbol-library roots searched, in order.
+/// The symbol-library sources searched, in order: the directory roots, the
+/// `RefData~*.zip` archives after them, and the label naming both.
 ///
 /// `PID_SYMBOL_LIBRARY` replaces the search outright. Otherwise the corpus's
 /// own `Ref` directory comes first, then the library bundled with this
@@ -1272,17 +1294,30 @@ struct Placement {
 /// A path found in an earlier root still wins, so a project's own library
 /// keeps deciding what its drawings look like; the later roots only answer
 /// for names the earlier ones do not carry.
-fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
+///
+/// A backup package keeps its library inside `RefData~*.zip` rather than
+/// exploded on a share, so the archives in the corpus and beside it are
+/// returned as further sources (see [`SymbolLibrary::with_archives`]).
+/// Directories are still searched first, so unpacking a backup stays optional
+/// and cannot change a page.
+fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     if let Some(list) = std::env::var_os("PID_SYMBOL_LIBRARY") {
-        let roots: Vec<PathBuf> = std::env::split_paths(&list)
+        // A listed path is a root, unless it is an archive — the override
+        // replaces the search outright, and a backup's library is a file.
+        let listed: Vec<PathBuf> = std::env::split_paths(&list).collect();
+        let roots: Vec<PathBuf> = listed
+            .iter()
             .filter(|path| path.is_dir())
+            .cloned()
             .collect();
-        if !roots.is_empty() {
+        let archives: Vec<PathBuf> = listed.into_iter().filter(|path| path.is_file()).collect();
+        if !roots.is_empty() || !archives.is_empty() {
             let label = roots
                 .iter()
+                .chain(archives.iter())
                 .map(|path| path.display().to_string())
                 .collect();
-            return (roots, label);
+            return (roots, archives, label);
         }
     }
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1319,17 +1354,20 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     if bundled.is_dir() && !roots.iter().any(|seen| seen == &bundled) {
         roots.push(bundled.clone());
     }
-    if roots.is_empty() {
-        // Nothing on disk to search: the bundled path is still the name to
-        // report, and the reader will refuse every symbol by name.
+    let archives = refdata_archive_files(corpus);
+    if roots.is_empty() && archives.is_empty() {
+        // Nothing on disk or in an archive to search: the bundled path is
+        // still the name to report, and the reader will refuse every symbol
+        // by name.
         let label = vec![bundled.display().to_string()];
-        return (roots, label);
+        return (roots, archives, label);
     }
     let label = roots
         .iter()
+        .chain(archives.iter())
         .map(|path| path.display().to_string())
         .collect();
-    (roots, label)
+    (roots, archives, label)
 }
 
 /// How far a template's own ink may sit from the sheet it borders, in
@@ -1340,6 +1378,18 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
 /// millimetres is far outside that noise and 348 mm inside the gap between one
 /// ISO size and the next, so a near miss can only mean the same sheet.
 const TEMPLATE_EXTENT_TOLERANCE_MM: f64 = 2.0;
+
+/// How close two extents must be before their difference is the same reading.
+///
+/// A sheet states its size in `f64` metres and carries noise of its own
+/// (`841.0000500894253` for an A1), and two templates authored for one size
+/// differ only in the last bits of theirs (`841.0000000000001` against
+/// `841.0000000003785`). Compared exactly, whichever noise happens to lean the
+/// sheet's way wins — at 4e-10 mm, a difference nothing measured. A micrometre
+/// is 150× finer than the closest two templates of *different* sizes come
+/// (841.00 against 841.15), so quantizing the error here costs no distinction
+/// and stops the noise from outvoting the name.
+const TEMPLATE_EXTENT_QUANTUM_MM: f64 = 1e-3;
 
 /// Directories that can hold `.igr` border templates, in search order.
 ///
@@ -1367,9 +1417,32 @@ fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Every `.igr` file under the corpus's template directories, path-sorted.
-fn border_template_files(corpus: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = Vec::new();
+/// One file a sheet's border could have come from.
+///
+/// A corpus carries templates either exploded under `Ref/Template Files` or
+/// inside the `RefData~*.zip` a backup package keeps at its own root, and the
+/// pick has to read both the same way. A member is named by
+/// [`ArchiveFile::label`], which is the archive path with the member's own
+/// name on the end, so everything downstream — the extent error, the link-name
+/// prefix, the reported path — reads it as the file it is.
+enum TemplateSource {
+    /// A `.igr` under one of the corpus's template directories.
+    File(PathBuf),
+    /// A `.igr` member of a `RefData~*.zip` in the corpus or beside it.
+    Member(ArchiveFile),
+}
+
+/// Every `.igr` a sheet's furniture could come from: the corpus's template
+/// directories first, then the `RefData~*.zip` archives in the corpus and its
+/// parent.
+///
+/// Directories come first so an extracted tree still decides, which keeps
+/// unpacking a backup optional and stops it from changing any page: the two
+/// sources hold the same files, and the pick's remaining keys are equal for
+/// them.
+fn border_template_sources(corpus: &Path) -> Vec<TemplateSource> {
+    let mut sources: Vec<TemplateSource> = Vec::new();
+    let mut seen: Vec<PathBuf> = Vec::new();
     for dir in border_template_dirs(corpus) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -1386,12 +1459,39 @@ fn border_template_files(corpus: &Path) -> Vec<PathBuf> {
             .collect();
         found.sort();
         for path in found {
-            if !files.iter().any(|seen| seen == &path) {
-                files.push(path);
+            if !seen.contains(&path) {
+                seen.push(path.clone());
+                sources.push(TemplateSource::File(path));
             }
         }
     }
-    files
+    for archive in refdata_archive_files(corpus) {
+        let Ok(members) = archive_members(&archive, "igr") else {
+            continue;
+        };
+        sources.extend(members.into_iter().map(TemplateSource::Member));
+    }
+    sources
+}
+
+/// The `RefData~*.zip` archives a corpus keeps its reference data in, in
+/// search order: the corpus's own directory, then its parent's.
+///
+/// A backup package holds them beside `Manifest.txt`, so a drawing laid out
+/// with the package directory as its corpus finds them, and one laid out with
+/// a subdirectory of the package (a plant's extracted drawing folder) finds
+/// them one level up. A project corpus has none, which is the usual case and
+/// why an empty list is not a problem.
+fn refdata_archive_files(corpus: &Path) -> Vec<PathBuf> {
+    let mut archives: Vec<PathBuf> = Vec::new();
+    for dir in [Some(corpus), corpus.parent()].into_iter().flatten() {
+        for archive in refdata_archives(dir) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    archives
 }
 
 /// The extent of a document's stroked geometry, paper millimetres.
@@ -1449,20 +1549,97 @@ struct BorderTemplateDocument {
     geometry: NormalizedPidGeometry,
 }
 
+/// The file-name stem a sheet's link record spells, as one a template's own
+/// file name can begin with.
+///
+/// The record stores an authoring-machine path, usually through Windows' 8.3
+/// short name — `C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.IGR` names the file
+/// this machine has as `CPE-SQ-A1.igr`. Only the last component is the file
+/// name (the directories carry `~` of their own); cutting it at the `~` leaves
+/// the six characters Windows kept (`CPE-SQ`). A record authored on a share that
+/// kept long names spells the whole stem (`\CPECCHB-SQ-A2.igr`). Either way the
+/// stem is a prefix of the file it names — `CPE-SQ` is not a prefix of
+/// `CPECCHB-SQ-A1` — which is what lets it decide what an extent cannot.
+fn linked_template_prefix(link: &str) -> Option<String> {
+    let file_name = link.rsplit(['\\', '/']).next().unwrap_or(link);
+    let (stem, extension) = file_name.rsplit_once('.')?;
+    if !extension.eq_ignore_ascii_case("igr") {
+        return None;
+    }
+    let prefix = stem.split('~').next().unwrap_or(stem);
+    (!prefix.is_empty()).then(|| prefix.to_ascii_uppercase())
+}
+
+/// Whether `path`'s own name is the one a link record's stem spells.
+fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let stem = stem.to_ascii_uppercase();
+    prefixes
+        .iter()
+        .any(|prefix| stem.starts_with(prefix.as_str()))
+}
+
+/// How one eligible template ranks against another, smallest first: the ones a
+/// sheet names, then the closer extent, then the name it has on disk.
+///
+/// The last key is reached only by templates the sheet names none of and whose
+/// extents agree to [`TEMPLATE_EXTENT_QUANTUM_MM`], where the choice is
+/// evidence-free and only has to be the same one twice.
+fn template_rank(path: &Path, error: f64, prefixes: &[String]) -> (bool, f64, String) {
+    (
+        !template_named_by(path, prefixes),
+        (error / TEMPLATE_EXTENT_QUANTUM_MM).round(),
+        path.to_string_lossy().to_ascii_lowercase(),
+    )
+}
+
 /// The template authored for `page_mm`, if the corpus ships one.
 ///
-/// The link record only says the frame is an external OLE document; it does not
-/// surface the stored short path (`CPE-SQ~3.IGR`), which no filesystem resolves.
-/// So the file is picked by the one thing both sides state independently: the
-/// extent. Every `.igr` under the corpus's template directories is parsed, its
-/// stroked extent is measured, and the template whose extent is the sheet is the
-/// one the sheet was drawn on. A page with no such file gets no furniture rather
-/// than a scaled-up guess from another size.
-fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTemplateDocument> {
-    let mut best: Option<(f64, BorderTemplateDocument)> = None;
-    for path in border_template_files(corpus) {
-        let Ok(doc) = PidParser::new().parse_file(&path) else {
-            continue;
+/// Every `.igr` under the corpus's template directories is parsed and its
+/// stroked extent measured; the file whose extent is the sheet is the one the
+/// sheet was drawn on. That equality is the primary evidence, because it is the
+/// one thing the sheet's geometry and the template state independently.
+///
+/// It is not the only evidence, and on its own it is not always enough. A
+/// project can hold two templates of the same size — `CPE-SQ-A1.igr` and
+/// `CPECCHB-SQ-A1.igr` are both authored for A1 — and then the two extents
+/// differ only in the last bits of their `f64` metres (`841.0000000000001`
+/// against `841.0000000003785`), so which one is closer to the sheet's own
+/// noise (a page states `841.0000500894253`) is a 4e-10 mm accident, not a
+/// reading. The link record breaks that tie: its stem is a prefix of the name
+/// it points at, so a template the sheet names wins over a stranger of the same
+/// size. A page that names nothing still falls back to the extent, and a page
+/// with no template within [`TEMPLATE_EXTENT_TOLERANCE_MM`] gets no furniture
+/// rather than a scaled-up guess from another size.
+fn load_border_template(
+    corpus: &Path,
+    page_mm: [f64; 2],
+    links: &[String],
+) -> Option<BorderTemplateDocument> {
+    let prefixes: Vec<String> = links
+        .iter()
+        .filter_map(|link| linked_template_prefix(link))
+        .collect();
+    let mut best: Option<((bool, f64, String), BorderTemplateDocument)> = None;
+    for source in border_template_sources(corpus) {
+        let (path, doc) = match source {
+            TemplateSource::File(path) => {
+                let Ok(doc) = PidParser::new().parse_file(&path) else {
+                    continue;
+                };
+                (path, doc)
+            }
+            TemplateSource::Member(file) => {
+                let Ok(bytes) = read_archive_file(&file) else {
+                    continue;
+                };
+                let Ok(doc) = PidParser::new().parse_reader(std::io::Cursor::new(bytes)) else {
+                    continue;
+                };
+                (file.label(), doc)
+            }
         };
         let geometry = build_normalized_geometry(&doc);
         let Some(extent_mm) = ink_extent_mm(&geometry) else {
@@ -1474,21 +1651,20 @@ fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTempla
         if error > TEMPLATE_EXTENT_TOLERANCE_MM {
             continue;
         }
+        let document = BorderTemplateDocument {
+            path,
+            extent_mm,
+            doc,
+            geometry,
+        };
+        let rank = template_rank(&document.path, error, &prefixes);
         if best
             .as_ref()
-            .is_some_and(|(best_error, _)| *best_error <= error)
+            .is_some_and(|(best_rank, _)| *best_rank <= rank)
         {
             continue;
         }
-        best = Some((
-            error,
-            BorderTemplateDocument {
-                path,
-                extent_mm,
-                doc,
-                geometry,
-            },
-        ));
+        best = Some((rank, document));
     }
     best.map(|(_, template)| template)
 }
@@ -1564,6 +1740,15 @@ fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
 /// whole body on `SmartPlant`'s screen, so its colour and width win over
 /// the body's own; the dash falls back to the body's when the placement
 /// draws solid — the same rule OpenCADStudio applies.
+///
+/// The one exception is a placement width no pen could carry, which is a
+/// validation mark rather than a pen: `Q井场`'s globe valve is placed under
+/// `BandAid`, the 10 mm band `SmartPlant` paints over an object an engineer has
+/// flagged, and it sits in the style table beside `lsOk` and `lsWarning`. That
+/// width repainted the valve's 0.13 mm outline with the page's thickest pen — a
+/// black blob where every other valve on the sheet is a hairline. The body's
+/// own width stands instead; the colour still comes from the placement, which
+/// the plot's monochrome table inks black anyway.
 fn body_stroke(
     body_style: Option<&PrimitiveStyle>,
     placement_style: Option<&ResolvedLineStyle>,
@@ -1576,10 +1761,12 @@ fn body_stroke(
             || body_style.map_or([0, 0, 0], |style| style.rgb),
             |style| style.symbology.rgb(),
         ),
-        width_mm: placement_style.map_or_else(
-            || body_style.map_or(0.25, |style| style.width_mm),
-            |style| style.symbology.width_mm(),
-        ),
+        width_mm: placement_style
+            .filter(|style| carries_a_pen(style.symbology.width_mm()))
+            .map_or_else(
+                || body_style.map_or(0.25, |style| style.width_mm),
+                |style| style.symbology.width_mm(),
+            ),
         dash_mm: placement_style
             .and_then(|style| style.dash.as_ref())
             .map(|dash| {
@@ -2109,13 +2296,23 @@ fn complex_dash_cells(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> usi
 /// far half of exactly those ticks (`docs/analysis/2026-10-24-
 /// one-glyph-stubs-centre-a-half-period-in.md`).
 ///
-/// The centre is held at or before the run's end: a run shorter than half an
-/// advance has no room for a mark placed a half advance in, and the corpus's
-/// 4.23 mm stub keeps its mark at the end it does reach.
+/// A run shorter than half an advance carries **no** glyph at all. The centre
+/// is not pulled back to the run's end: the reference inks only the rail on
+/// those runs. Its nearest glyph on either side of them is 40.3–40.8 mm away,
+/// and the walls of the three stubs carry rail pieces we draw to 0.06 mm —
+/// the corpus's 4.23 mm vertical stub prints `0.169 + 4.233 mm` of rail and no
+/// mark, its 1.32 and 3.81 mm stubs the same. The 3.83 mm run on the 7.62 mm
+/// advance sits 0.02 mm over half that advance and does keep the mark the
+/// reference inks there, so the boundary is the half advance, not the run list
+/// (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
 fn complex_dash_positions(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> Vec<f64> {
     let cells = complex_dash_cells(length_mm, period_mm, glyph_span_mm);
     if cells <= 1 {
-        return vec![(period_mm * 0.5).min(length_mm)];
+        let half = period_mm * 0.5;
+        if length_mm < half {
+            return Vec::new();
+        }
+        return vec![half];
     }
     let step = length_mm / cells as f64;
     (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
@@ -2544,7 +2741,7 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 mod tests {
     use super::{label_line_ranges, line_spans, sheet_text_spans};
     use pid_parse::style_link::{MarkerStroke, TextAlignment};
-    use pid_parse::symbol_library::{NameMiss, SymbolLettering, SymbolPrimitive};
+    use pid_parse::symbol_library::{NameMiss, PrimitiveStyle, SymbolLettering, SymbolPrimitive};
     use pid_parse::{
         PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
         PidGraphicProvenance, PidPoint, PidSourceLayer,
@@ -2552,7 +2749,7 @@ mod tests {
 
     use super::{
         BorderTemplate, PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, Placement,
-        SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape,
+        SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape, body_stroke,
         canonical_rect_chain, complex_dash_cells, complex_dash_glyph_span_mm,
         complex_dash_positions, place_metres, push_entity, push_symbol_primitive, shape_points,
     };
@@ -2655,10 +2852,16 @@ mod tests {
             assert_eq!(positions.len(), 1);
             assert!((positions[0] - expected).abs() < 1e-9);
         }
-        // A run shorter than half an advance has no room for that, and the
-        // 4.23 mm stub keeps its mark at the end it does reach.
-        for length in [4.23_f64, 4.2, 3.8, 0.5] {
-            assert_eq!(complex_dash_positions(length, 10.16, span), vec![length]);
+        // A run shorter than half an advance gets no glyph: the reference
+        // inks only the rail there, so there is no mark to pull back to the
+        // end. `probe_complex_dash_marks` reads the 4.23 mm stub's walls as
+        // `0.169 + 4.233 mm` of rail with no mark, and the nearest reference
+        // glyph 40 mm away.
+        for length in [5.07_f64, 4.23, 4.2, 3.81, 1.32, 0.5] {
+            assert!(
+                complex_dash_positions(length, 10.16, span).is_empty(),
+                "{length} mm is under the 5.08 mm half advance"
+            );
         }
     }
 
@@ -4041,5 +4244,142 @@ mod tests {
         );
         // Neither a sheet nor ink: nothing to put on paper.
         assert_eq!(model(None, &[]).resolved_page_mm(), None);
+    }
+
+    #[test]
+    fn a_link_spells_the_template_stem_it_points_at() {
+        use std::path::PathBuf;
+
+        use super::{linked_template_prefix, template_named_by};
+
+        // A record written through Windows' 8.3 name keeps six characters of
+        // it. The `~` in the *directories* is not the file's.
+        assert_eq!(
+            linked_template_prefix(r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.IGR").as_deref(),
+            Some("CPE-SQ")
+        );
+        // A record authored on a share that kept long names spells the whole
+        // stem, and one on the authoring machine spells its own path.
+        assert_eq!(
+            linked_template_prefix(r"\CPECCHB-SQ-A2.igr").as_deref(),
+            Some("CPECCHB-SQ-A2")
+        );
+        assert_eq!(
+            linked_template_prefix(r"Ref\Template Files\CPECCHB-SQ-A1.igr").as_deref(),
+            Some("CPECCHB-SQ-A1")
+        );
+        // Anything that is not a template names no template.
+        assert_eq!(linked_template_prefix(r"Ref\Symbols\Gate Valve.sym"), None);
+        assert_eq!(linked_template_prefix("CPE-SQ~2"), None);
+
+        let prefixes = vec!["CPE-SQ".to_string()];
+        assert!(template_named_by(
+            &PathBuf::from("CPE-SQ-A1.igr"),
+            &prefixes
+        ));
+        assert!(template_named_by(
+            &PathBuf::from("CPE-SQ-A0.igr"),
+            &prefixes
+        ));
+        // `CPE-SQ` is not a prefix of `CPECCHB-SQ-A1`: another family's A1 of
+        // the same size stays a stranger.
+        assert!(!template_named_by(
+            &PathBuf::from("CPECCHB-SQ-A1.igr"),
+            &prefixes
+        ));
+    }
+
+    #[test]
+    fn the_named_template_beats_a_stranger_of_the_same_size() {
+        use std::path::PathBuf;
+
+        use super::template_rank;
+
+        // Twenty A1 sheets say `CPE-SQ~2.IGR`. `CPECCHB-SQ-A1.igr` is the same
+        // size, and its own float noise sits 3.8e-10 mm closer to the sheet's
+        // — closer by less than an atom, and enough to have decided it before
+        // the name was read.
+        let prefixes = vec!["CPE-SQ".to_string()];
+        let named = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 4.0e-10, &prefixes);
+        let stranger = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 0.0, &prefixes);
+        assert!(named < stranger, "named {named:?} vs stranger {stranger:?}");
+    }
+
+    /// One of `Q井场`'s placement styles, at the width asked for.
+    ///
+    /// `style_id 92` and the salmon colour are that drawing's `BandAid` entry;
+    /// the same shape serves for an ordinary pen simply by stating its width.
+    fn placement_style(width_mm: f64) -> pid_parse::style_link::ResolvedLineStyle {
+        pid_parse::style_link::ResolvedLineStyle {
+            style_id: 92,
+            symbology: pid_parse::style_link::LineSymbology {
+                width_m: width_mm / 1000.0,
+                colour: 0x0077_A7FF,
+            },
+            dash: None,
+            marker: None,
+            complex_dash: None,
+            hop: pid_parse::style_link::StyleHop::Direct,
+        }
+    }
+
+    #[test]
+    fn a_placement_pen_still_paints_the_body_and_a_validation_band_does_not() {
+        let body = PrimitiveStyle {
+            rgb: [0, 0, 0],
+            width_mm: 0.13,
+            dash_mm: Vec::new(),
+        };
+        // The valve's own pen: nothing placed, and every pen a placement can
+        // carry, keeps the body's outline as the body draws it.
+        let plain = body_stroke(Some(&body), None).expect("a pen");
+        assert!((plain.width_mm - 0.13).abs() < 1e-9);
+        for pen in [0.13, 0.35, 0.70] {
+            let styled = body_stroke(Some(&body), Some(&placement_style(pen))).expect("a pen");
+            assert!(
+                (styled.width_mm - pen).abs() < 1e-9,
+                "a placement's {pen} mm pen paints the body, not {} mm",
+                styled.width_mm
+            );
+            assert_eq!(styled.rgb, [255, 167, 119], "the placement's colour stands");
+        }
+        // `Q井场`'s globe valve is placed under `BandAid`: 10 mm of validation
+        // band, which used to repaint a hairline valve with the thick pen.
+        let band_aid = body_stroke(Some(&body), Some(&placement_style(10.0))).expect("a pen");
+        assert!(
+            (band_aid.width_mm - 0.13).abs() < 1e-9,
+            "the band's 10 mm is a mark, so the body keeps its own pen ({}) mm",
+            band_aid.width_mm
+        );
+        // A body that states nothing falls back the same way a bare placement
+        // does, so the mark still leaves a drawable pen behind it.
+        let bare = body_stroke(None, Some(&placement_style(10.0))).expect("a pen");
+        assert!((bare.width_mm - 0.25).abs() < 1e-9, "{} mm", bare.width_mm);
+    }
+
+    #[test]
+    fn an_error_a_micrometre_apart_is_the_same_error() {
+        use std::path::PathBuf;
+
+        use super::template_rank;
+
+        // The sheet that names nothing (`600td`, 842.54 x 595.54 mm) is 1.54 mm
+        // off both A1 templates, and the two errors differ by the same 3.8e-10:
+        // with no name to go on, the rule still has to answer the same way
+        // twice, so the name on disk decides.
+        let cpe = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 1.54, &[]);
+        let cchb = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 1.5399999, &[]);
+        assert_eq!(cpe.1, cchb.1, "the two errors are one error");
+        assert!(
+            cpe < cchb,
+            "the name on disk breaks it: {cpe:?} vs {cchb:?}"
+        );
+
+        // A tenth of a millimetre is a reading, not noise: the closer extent
+        // still wins over the same name's order.
+        let close = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.0, &[]);
+        let far = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.15, &[]);
+        assert!(close < far, "0.15 mm is not quantized away");
+        assert!(close.1 < far.1, "the quantized errors still differ");
     }
 }

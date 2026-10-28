@@ -98,6 +98,24 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
     }
 }
 
+/// The widest width a drafting pen declares in this corpus, in millimetres.
+///
+/// The ISO 128 ladder these drawings are authored on tops out at 0.70 mm, which
+/// [`pen_width_mm`] already snaps onto the thick pen. Past a millimetre a width
+/// stops being a pen: `SmartPlant` writes its *validation marks* into the same
+/// style table, and those carry the mark's own on-screen size instead —
+/// `BandAid`, which flags an object an engineer has to look at, states 10 mm.
+pub const WIDEST_PEN_MM: f64 = 1.0;
+
+/// Whether a declared width is one a plotter pen can carry.
+///
+/// False for a width no drafting pen declares — see [`WIDEST_PEN_MM`] — and for
+/// the non-positive or non-finite values [`pen_width_mm`] also refuses.
+#[must_use]
+pub fn carries_a_pen(declared_mm: f64) -> bool {
+    declared_mm.is_finite() && declared_mm > 0.0 && declared_mm <= WIDEST_PEN_MM
+}
+
 /// One face [`write_plot`] may select for a text run.
 pub struct PlotFont<'a> {
     /// Canonical name from [`typeface_key`]. Empty means last resort only.
@@ -1159,6 +1177,27 @@ mod tests {
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_validation_marks_width_is_not_a_pen() {
+        use super::{WIDEST_PEN_MM, carries_a_pen, pen_width_mm};
+        // Every width a drafting pen in this corpus declares is a pen, and the
+        // top of the ladder still snaps onto the thick one.
+        for pen in [0.10, 0.13, 0.18, 0.25, 0.35, 0.50, 0.70] {
+            assert!(carries_a_pen(pen), "{pen} mm is a pen");
+            assert_eq!(pen_width_mm(pen), pen_width_mm(pen), "{pen} mm");
+        }
+        assert!((pen_width_mm(WIDEST_PEN_MM) - super::PEN_THICK_MM).abs() < 1e-9);
+        // `BandAid` is the 10 mm band SmartPlant paints over a flagged object;
+        // its size is the mark's, not a pen's.
+        for mark in [WIDEST_PEN_MM + 0.01, 1.414, 10.0] {
+            assert!(!carries_a_pen(mark), "{mark} mm is a validation mark");
+        }
+        // The same values `pen_width_mm` refuses are not pens either.
+        for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(!carries_a_pen(nonsense), "{nonsense}");
+        }
     }
 
     #[test]

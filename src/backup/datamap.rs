@@ -84,7 +84,7 @@ fn sppid_datamap_entry(bytes: &[u8]) -> Result<Vec<u8>, DataMapError> {
             continue;
         }
         let raw = entry.name_raw().to_vec();
-        let name = decode_zip_name(&raw);
+        let name = crate::refdata_archive::decode_zip_name(&raw);
         let base = name.rsplit(['/', '\\']).next().unwrap_or(&name);
         if base != "SPPIDDataMap.xml" {
             continue;
@@ -176,18 +176,6 @@ fn attr(start: &quick_xml::events::BytesStart<'_>, key: &str) -> Option<String> 
             None
         }
     })
-}
-
-pub(crate) fn decode_zip_name(raw: &[u8]) -> String {
-    if let Ok(utf8) = std::str::from_utf8(raw) {
-        return utf8.to_string();
-    }
-    let (decoded, _, had_errors) = encoding_rs::GBK.decode(raw);
-    if had_errors {
-        raw.iter().map(|byte| format!("{byte:02x}")).collect()
-    } else {
-        decoded.into_owned()
-    }
 }
 
 fn publish_guid(raw: &str) -> String {

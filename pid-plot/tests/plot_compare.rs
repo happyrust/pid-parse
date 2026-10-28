@@ -116,7 +116,32 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // so the same ink is charged as extra — 15 mm each, which is what moves their
 // ceilings (7.6 → 22.6 and 22.9 → 37.9 mm). That is a real difference between
 // those two reference pages and every drawing in the set, not a regression:
-// their `.pid` states the same linked A1 frame as `B`'s.
+// their `.pid` states the same linked A1 frame as `B`'s. That charge is gone as
+// of the mask move below: the furniture is masked on every sheet now, whether
+// or not that page's reference drew it.
+//
+// Today's move is the coverage figure's own sampling bug, the mirror of the
+// extra one. It was measured on the centre lines `join_centerlines` merges out
+// of the reference's strokes, and that merge bridges every blank under 3 mm —
+// the sheets' dashed lines leave 1.0–1.2 mm between dashes, so the merge
+// filled their gaps with reference ink, and our dashes (phase-shifted, their
+// own 1.905 / 1.270 mm against the reference's 2.032 + 0.169 dash and 1.0 mm
+// gap) covered the filled blanks. Four of the five sheets therefore read
+// exactly 1.0000 and a missing dashed line could not move the number. Sampled
+// on the strokes as drawn, on both sides, the five read 0.9995 / 0.9997 /
+// 0.9996 / 0.9996 / 0.9990. Nearly everything left uncovered is dash ends —
+// 0.17 to 0.31 mm each, collinear to 0.05 mm, our ink 0.55–0.65 mm away inside
+// the neighbouring blank, measured by
+// `pid-plot/examples/probe_which_reference_ink_is_uncovered.rs`: 73 of `I`'s
+// 75 runs, 15.53 of its 15.62 mm. The two left over total 0.085 mm — an
+// uncovered sample on a 0.169 mm reference sliver at the page edge `x = 0`,
+// whose nearest ink is 10.1 mm away, plus a zero-length reference stroke. No
+// page is missing geometry: no uncovered run is longer than 0.31 mm.
+//
+// The coverage floors follow that reading minus 0.0001, which is 1 mm on an A1
+// sheet and 3 mm on the A0: a lost symbol body (tens of millimetres) fails at
+// once, a single dash end does not, and the old floors — 0.9977 to 0.9995
+// against readings then reported as 1.0000 — could not see either.
 //
 // The ceilings are re-locked again today because the extra figure itself was
 // wrong: it used to be sampled on the centre lines `join_centerlines` merges
@@ -125,39 +150,65 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // its circle, so 1.5 mm of empty paper became ink on every valve: 8 joins per
 // valve type on `I`, 4 on `A` and `低温分离器A`. Sampling the drawn segments
 // instead (`docs/analysis/2026-10-26-the-extra-ink-was-a-join-across-a-blank.md`)
-// reads 0.30 / 15.00 / 0.00 / 18.08 / 8.72 mm, and everything left is the
-// furniture `A` and `低温分离器A`'s reference pages never plotted. The ceilings
-// follow at one bridge's worth of slack above the reading — 1 / 15.5 / 0.5 /
-// 18.6 / 9.2 mm — so a single symbol body leaking back in fails the gate.
+// reads 0.30 / 15.00 / 0.00 / 18.08 / 8.72 mm. Almost all of that was still not
+// ink of ours that the reference lacks, but the mask's own right edge: the left
+// rectangle stopped at `x = 70` (A1) / `72` (A0) while the template's 50 × 10 mm
+// sign-off-column box reaches `x = 75.125` — `74.999970` mm of rail plus half
+// its 0.25 mm stroke. Widening the rectangle to that rail
+// (`pid-plot/assets/template-masks.json`) drops the furniture on every sheet,
+// and the five read **0.30 / 0.00 / 0.00 / 3.08 / 8.72 mm**. No reference content
+// was hidden by the wider rectangle: `A`, `低温分离器A` and `换热器CD` lose
+// nothing from their reference length (`masked_reference_length_mm` stays 0.000
+// mm on all three), and on `I` and `B` the 12.99 / 14.99 mm the rectangle takes
+// in is the box itself, ink for ink the same as ours — coverage holds at
+// 0.9995 / 0.9997 / 0.9996 / 0.9996 / 0.9990.
+//
+// What was left after that was the complex-dash 45° ticks, and they were ours:
+// one glyph on `低温分离器A` (3.08 mm) and two on `换热器CD` (8.72 mm). All
+// three sat on runs shorter than half the pattern's 10.16 mm advance — 1.32,
+// 3.81 and 4.23 mm — where `complex_dash_positions` used to pull the single
+// glyph back to the run's end. The reference inks only the rail on those runs,
+// with its nearest glyph 40.3–40.8 mm away, and the clamp was never measured:
+// taking the glyph off them drops `低温分离器A` to 0.00 and `换热器CD` to 0.00
+// with both coverages bit-identical, which is what says the 11.8 mm was ink the
+// reference never had and not a phase
+// (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
+//
+// What is left is `I`'s 0.31 mm: sixteen fragments of our arc chain on
+// `Wellhead Christmas Tree 02`, 0.011–0.093 mm each, every one of them
+// 0.501–0.550 mm from the reference's nearest ink — threshold crossings, not
+// geometry. The ceilings follow one bridge's worth of slack above the reading —
+// **1 / 0.5 / 0.5 / 0.5 / 0.5 mm** — so a single symbol body leaking back in
+// fails the gate.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.9985,
+        min_coverage: 0.9993,
         max_extra_mm: 1.0,
         min_text_matched: 544,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 15.5,
+        max_extra_mm: 0.5,
         min_text_matched: 151,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9977,
+        min_coverage: 0.9995,
         max_extra_mm: 0.5,
         min_text_matched: 123,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9982,
-        max_extra_mm: 18.6,
+        min_coverage: 0.9995,
+        max_extra_mm: 0.5,
         min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9990,
-        max_extra_mm: 9.2,
+        min_coverage: 0.9989,
+        max_extra_mm: 0.5,
         min_text_matched: 249,
     },
 ];

@@ -14,9 +14,11 @@
 //! This module ships **only the entry index**: open the file, parse
 //! the central directory, and return one [`ZipEntry`] per stored
 //! item. Decompressing payload bytes is left to dedicated pipelines
-//! (the `cfb` crate handles `.pid`; future steps will crack symbol
-//! catalogues). Limiting ourselves to metadata keeps the dependency
-//! footprint small — the `zip` crate is enabled with
+//! (the `cfb` crate handles `.pid`; the reference data a drawing is
+//! *drawn* from — `.igr` templates and `.sym` bodies — is read by
+//! [`crate::refdata_archive`], which inflates members). Limiting this
+//! module to metadata keeps the index usable without allocating
+//! payloads — the `zip` crate is enabled with
 //! `default-features = false`, dropping aes-crypto / bzip2 / xz /
 //! lzma / zstd. Reading the central directory and per-entry
 //! metadata works in this minimal mode.
@@ -95,7 +97,7 @@ pub fn list_zip_entries_from_reader<R: io::Read + io::Seek>(
             // Entry names are read as bytes and decoded here rather than through
             // `entry.name()`: a `SmartPlant` archive stores GBK names, and the
             // name accessor's own decoding refuses those.
-            name: crate::backup::datamap::decode_zip_name(entry.name_raw()),
+            name: crate::refdata_archive::decode_zip_name(entry.name_raw()),
             size: entry.size(),
             compressed_size: entry.compressed_size(),
             is_dir: entry.is_dir(),

@@ -32,6 +32,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | Publish package mode | `src/publish/backup_package.rs` | Backup dir → one `ExpTables` + `SPPIDDataMap.xml` → every `.pid` → 三件 + `_Index.json`; MTF dumps stage to a temp `.mdf` |
 | Publish DB line | `src/publish/{mdf_load,sqlite_load}.rs` | MDF → in-memory SQLite staging → `PublishDrawing` DTO |
 | Publish shared | `src/publish/{model,xml_writer,catalog,diff}.rs` | DTO + `PublishStyle`; `_Data.xml`/`_Meta.xml` writers; `PublishItemCatalog` — one row per item type feeding both lines (sqlite_load chains, xml_writer dispatch + a01 rank, pid_load class rule, diff tag inventory = DB ∪ `.pid`, `_Coverage.json` derived-class rows from the tag roles); `--diff-against` parity |
+| Reference-data archives | `src/refdata_archive.rs` | `.igr` templates and `.sym` bodies read straight out of a backup's `RefData~*.zip` (feature `refdata-archive` — the `zip` dependency alone, which is what `pid-plot` rides); entry names carry a UTF-8 BOM and are GBK-capable, so members are walked by index and matched on a normalized name |
 | Inspect orchestration | `src/inspect/commands.rs` | `InspectCommand::run(&PidPackage) -> InspectOutput`; `src/bin/pid_inspect.rs` is arg-parse + print only |
 | CLI entry | `src/bin/pid_publish_xml.rs` | `<file.pid|backup dir> --out-dir DIR [--oracle-exp|--datamap|--plant|--diff-against]` / `<mdf> --drawing UID` |
 
@@ -68,8 +69,9 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF, reads back, and names any symbol no library carries | every `test-file/**/*.pid` |
-| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen) | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/border_template.rs` | A0/A1 sheets draw the frame, title block and sign-off column their linked `.igr` carries (both frames, 12 furniture labels, rendered company name and `会 签 专 业` read back); an A2 sheet with no matching template draws none | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` (soft-skips when absent) |
+| `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings draw nothing with the archive out of reach | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
