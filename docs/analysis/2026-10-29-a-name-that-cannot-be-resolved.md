@@ -123,3 +123,42 @@ cargo run -q -p pid-parse --example probe_page_dims -- /tmp/XIONGANA2.pid
 
 稳定探针：`probe_frame_vs_template`（页幅 / 链 / 穿的模板 / 正文墨）、`probe_igr_template`
 （模板墨迹与标签）、`probe_page_dims`（模板 `.pid` 的页幅与框状态）、`probe_ole_links`（链）。
+
+## 七、实施（2026-10-29，`1b5cce7`）
+
+判据落在 `load_border_template`：`prefixes` 非空时先用 `template_named_by` 过滤候选，只有名字命中的才
+进入 10 mm 窗口；一个都不命中就返回 `None`。未命名的页不过这道滤网，仍走 2 mm。原来的「先按名字排序」
+随之删掉（`template_rank` 由 `(bool, f64, String)` 收成 `(f64, String)`）——名字不再是排序键，而是门票。
+
+页面把没被回答的名字记进 `PaperModel::missing_templates`（去重、大写词干），只在一个页幅存在时记录：
+没有页幅的页连模板都没问（§2.13）。这样「不画」在报告里是一条读数，而不是一片空白。
+
+读数（`probe_frame_vs_template`，2026-10-29）：
+
+| 语料 | 页 | 穿上 | 所穿 | 缺口 |
+|---|---:|---:|---|---|
+| 53 张备份 | 53 | 49 | `CPE-SQ-A1` 22、`CCHB-A1` 3、`CPE-SQ-A0` 8、`CPE-SQ-A2` 7、`CCHB-A2` 9 | **0** |
+| `test-file` | 7 | 3 | `CPE-SQ-A1` 1（`集注站…B`）、`CCHB-A2` 2（`D06`、无链的 `A01`） | `XA-A1`、`CPECCHBA2`、`XIONGANA2` |
+
+53 张的分布与实施前逐项相同（22 / 3 / 8 / 7 / 9，4 张无页幅）。这不是巧合：§一 已经量到 49/49 的
+页面所穿文件名 = 链名词干，说明真实语料里从来没有顶替，所以这条判据在备份上不改一个像素。它改的是
+夹具侧三张：`工艺管道及仪表流程-1`、`DWG-0201GP06-01` 与 `DWG-0202GP06-01` 的两份副本从「穿别族」
+变成「不画并报到名」，正是 §五 预测的结果。`A01` 没有链、只声明 594 × 420，仍按范围穿上 `CCHB-A2`
+—— 无链页的那一半照旧。
+
+单测两条：
+
+- `a_named_sheet_wears_no_template_it_does_not_name`：841 × 594 的页点名 `XA-A1.igr`（盘上没有）→
+  `None`，不点名的同一页 → `CPE-SQ-A1.igr`；593.75 × 419.63 的页点名 `CPECCHBA2.igr`（不在
+  `test-file`）→ `None`，不点名的同一页 → 0.37 mm 外的 `CPECCHB-SQ-A2.igr`。
+- `a_page_whose_template_is_missing_names_the_gap`：`工艺管道…-1` 的模型 `template = None` 且
+  `missing_templates = ["XA-A1"]`。
+
+负向验证：把过滤行改成恒假，第一条即失败于「a named A1 page wore a stranger's furniture」。
+
+`refdata_archive_corpus` 的 `a_template_the_sheet_names_but_the_file_cannot_supply_is_refused` 跟着改口径：
+`XIONGANA2.igr` 确实在包里，但它是 93.5 × 36 mm 的标题栏碎片；旧断言（落到 `A2-W - New.igr`）钉的正是
+被本条否掉的顶替，现在钉 `template = None` + `missing_templates = ["XIONGANA2"]`。
+
+仍未做（本条的「前置」）：`<图名词干>_p/` 包作搜索根 —— 修好后 `DWG-0202` 按名穿 `CPECCHBA2.igr`；
+`XIONGANA2.igr` 这种「名字命中但只导出标题栏碎片」的单独判据。两件都不影响本条判据本身。

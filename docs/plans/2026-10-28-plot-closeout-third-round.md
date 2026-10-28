@@ -194,7 +194,7 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
 | 项 | 缺什么 | 一旦有了做什么 |
 |---|---|---|
 | §2.2 两张 A1 超容差（1200td 2.09 mm、N井场 2.46/2.71 mm） | 已实施（`835fc59`：`.PID` 链名同算 + 10 mm 命名窗口，47 → 49） | 只余「出图器会不会拉伸 OLE 框」的 ≤ 3 mm 放置子问题，待有参考出图再核，不挡结项 |
-| §2.10 族盲 | **判据已定，不需参考出图：不保留**（分析见 `docs/analysis/2026-10-29-a-name-that-cannot-be-resolved.md`） | 改 `load_border_template`：有名页只收名字命中的候选，无链页仍走 2 mm；先修「图旁的 `<词干>_p/` 包也算搜索根」（修后 `DWG-0202` 按名穿 `CPECCHBA2.igr`）；`XIONGANA2.igr` 这种「名字命中但 `.igr` 只导出标题栏碎片」单列一条 |
+| §2.10 族盲 | 已实施（`1b5cce7`：有名页只收名字命中的候选，解析不到不画并记 `missing_templates`；无链页仍走 2 mm） | 只余两条前置：`<图名词干>_p/` 包作搜索根（修后 `DWG-0202` 按名穿 `CPECCHBA2.igr`）；`XIONGANA2.igr` 这种「名字命中但 `.igr` 只导出标题栏碎片」单列一条 |
 | §2.3 四个库文件名 / 19 处放置 | `XA …`、`Pulsation Damper.sym` 等源文件 | 补库或确认永久缺口；纸上不受影响（`missing_boxes = 0`） |
 | §2.4 48 张没有参考出图 | 参考 PDF 或批量目视抽查 | 才有像素级对照 |
 | §2.7 字体 subset 前缀 | 无（D5 已查：前缀本来就在） | 用同一个检查器在今天的页面上重取读数，分清「整文件嵌入」与「真的缺前缀」 |
@@ -253,3 +253,14 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
   放回 2 mm 时失败）、`border_template` 3/3、`refdata_archive_corpus` 4/4、`export_every_fixture`
   1/1、`plot_compare` 22.7 s、clippy `-D warnings` 与 fmt 全绿。分析页与本单 §2 的「不做」已同步；
   `#41` 一句话 / §1 / §2.1 / §2.2 / §2.8a / §2.8b / §4 也已改成 49。
+- 2026-10-29：**§2.10 已实施并提交** `1b5cce7 feat(pid-plot): a named page wears only the template it names`
+  （5 files，+209/−99）。`load_border_template` 在 `prefixes` 非空时先按名字过滤候选（不命中即不是候选），
+  命中者才进 10 mm 窗口；一个都不命中返回 `None`。`PaperModel::missing_templates` 记下没人回答的词干，
+  只在有页幅时记录。读数：53 张**不变**（49 穿：`CPE-SQ-A1` 22 / `CCHB-A1` 3 / `CPE-SQ-A0` 8 /
+  `CPE-SQ-A2` 7 / `CCHB-A2` 9，4 张无页幅，缺口 0）；`test-file` 7 张从 6 穿降到 **3 穿**
+  （`D06`、无链的 `A01`、`集注站…B`），缺口 `XA-A1` / `CPECCHBA2` / `XIONGANA2` —— 正是分析页 §五
+  预测的「不修搜索根则同样不穿」。单测两条（有名→`None`、无名→按范围命中；`工艺管道…-1` 报
+  `["XA-A1"]`），过滤行改恒假时第一条失败；`refdata_archive_corpus` 的 `XIONGANA2` 用例从「落到
+  `A2-W - New.igr`」改成「`template = None` + 缺口名」。`pid-plot --lib` 102、`border_template` 3/3、
+  `export_plant_backup` 101.8 s、`export_every_fixture` 1/1、`plot_compare` 30.2 s、`refdata_archive_corpus`
+  4/4、clippy `-D warnings` 与 fmt 全绿。
