@@ -9,10 +9,9 @@
 //! four lost labels (the I drawing's reference total fell 552 → 546 for the
 //! same reason). Later rounds recovered them and then some: all five drawings
 //! pair every label they count today — I 546/546, A 151/151, B 123/123,
-//! L 167/167, H 249/249. Only I's floor sits below its reading, at 544: it was
-//! pinned while that drawing's two electric-motor `M`s were still unpaired,
-//! and tightening it to the reading is a change of its own, not a comment's.
-//! See the baseline note below for where those two `M`s came from.
+//! L 167/167, H 249/249 — and every floor is its reading exactly. I's floor
+//! came up from 544 once its last two runs, the electric-motor `M`s the
+//! baseline note describes, paired.
 
 use std::path::PathBuf;
 
@@ -85,7 +84,8 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // its-box-edge.md`). L counts every reference label it preserves.
 //
 // All five drawings now pair every label they count, the I drawing's two
-// electric-motor `M`s above included.
+// electric-motor `M`s above included, so each floor below is its reading
+// exactly: I's came up from 544 when those two paired.
 //
 // The last two runs in the I drawing to pair were both electric-motor `M`s.
 // The reading that pinned I's floor found our body lettering them at 2.04 mm
@@ -187,7 +187,7 @@ const BASELINES: [Baseline; 5] = [
         name: "I井场 注采阀组工艺及自控流程图",
         min_coverage: 0.9993,
         max_extra_mm: 1.0,
-        min_text_matched: 544,
+        min_text_matched: 546,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
