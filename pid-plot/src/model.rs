@@ -1415,13 +1415,26 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
 }
 
 /// How far a template's own ink may sit from the sheet it borders, in
-/// millimetres.
+/// millimetres, when the sheet does not name it.
 ///
 /// A sheet states its size in metres and carries float noise (`841.00005`),
 /// while the template's outer frame runs along exactly the same edge. Two
 /// millimetres is far outside that noise and 348 mm inside the gap between one
 /// ISO size and the next, so a near miss can only mean the same sheet.
 const TEMPLATE_EXTENT_TOLERANCE_MM: f64 = 2.0;
+
+/// How far a template's own ink may sit from a sheet that **names** it, in
+/// millimetres.
+///
+/// The extent is the only evidence a sheet that names nothing offers, and two
+/// millimetres is enough for that. A sheet that names its template has already
+/// said which one it is, so a frame that leaves the drawn border a little room
+/// no longer claims another size. The plant backup's sheets sit 0.00–1.54 mm
+/// over their template; the two over the extent window are 2.09 and 2.46–2.71.
+/// Ten millimetres admits them with 3.7× to spare and stays far inside the
+/// nearest different size of the same family (A1 against A2 is 176 mm), which
+/// is what keeps a page that is not that template at all out.
+const TEMPLATE_NAMED_TOLERANCE_MM: f64 = 10.0;
 
 /// How close two extents must be before their difference is the same reading.
 ///
@@ -1604,10 +1617,14 @@ struct BorderTemplateDocument {
 /// kept long names spells the whole stem (`\CPECCHB-SQ-A2.igr`). Either way the
 /// stem is a prefix of the file it names — `CPE-SQ` is not a prefix of
 /// `CPECCHB-SQ-A1` — which is what lets it decide what an extent cannot.
+///
+/// A record may name the template's drawing (`CPE-SQ~2.PID`) rather than its
+/// exported `.igr`; both spell the same stem, and four of the plant backup's 53
+/// sheets link the `.PID` only. The suffix is not the evidence — the stem is.
 fn linked_template_prefix(link: &str) -> Option<String> {
     let file_name = link.rsplit(['\\', '/']).next().unwrap_or(link);
     let (stem, extension) = file_name.rsplit_once('.')?;
-    if !extension.eq_ignore_ascii_case("igr") {
+    if !extension.eq_ignore_ascii_case("igr") && !extension.eq_ignore_ascii_case("pid") {
         return None;
     }
     let prefix = stem.split('~').next().unwrap_or(stem);
@@ -1657,6 +1674,12 @@ fn template_rank(path: &Path, error: f64, prefixes: &[String]) -> (bool, f64, St
 /// size. A page that names nothing still falls back to the extent, and a page
 /// with no template within [`TEMPLATE_EXTENT_TOLERANCE_MM`] gets no furniture
 /// rather than a scaled-up guess from another size.
+///
+/// The name also buys a wider window: the table it points at is the sheet's own
+/// statement of which template it wears, so a frame left a few millimetres larger
+/// than the template's ink is slack, not another size. A named sheet is accepted
+/// up to [`TEMPLATE_NAMED_TOLERANCE_MM`]; an unnamed one, and a name with no
+/// file on disk, still answers to [`TEMPLATE_EXTENT_TOLERANCE_MM`].
 fn load_border_template(
     corpus: &Path,
     page_mm: [f64; 2],
@@ -1692,7 +1715,12 @@ fn load_border_template(
         let error = (extent_mm[0] - page_mm[0])
             .abs()
             .max((extent_mm[1] - page_mm[1]).abs());
-        if error > TEMPLATE_EXTENT_TOLERANCE_MM {
+        let tolerance = if template_named_by(&path, &prefixes) {
+            TEMPLATE_NAMED_TOLERANCE_MM
+        } else {
+            TEMPLATE_EXTENT_TOLERANCE_MM
+        };
+        if error > tolerance {
             continue;
         }
         let document = BorderTemplateDocument {
@@ -4366,6 +4394,16 @@ mod tests {
             linked_template_prefix(r"Ref\Template Files\CPECCHB-SQ-A1.igr").as_deref(),
             Some("CPECCHB-SQ-A1")
         );
+        // A record may name the template's drawing instead of its exported
+        // `.igr`; both spell the same stem.
+        assert_eq!(
+            linked_template_prefix(r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.PID").as_deref(),
+            Some("CPE-SQ")
+        );
+        assert_eq!(
+            linked_template_prefix(r"Ref\Template Files\CPECCH~3.PID").as_deref(),
+            Some("CPECCH")
+        );
         // Anything that is not a template names no template.
         assert_eq!(linked_template_prefix(r"Ref\Symbols\Gate Valve.sym"), None);
         assert_eq!(linked_template_prefix("CPE-SQ~2"), None);
@@ -4509,5 +4547,50 @@ mod tests {
                 "a {page:?} mm page was given furniture from another size"
             );
         }
+    }
+
+    /// A sheet that names its template keeps it across a frame a few millimetres
+    /// larger than the template's ink; a sheet that names nothing does not.
+    ///
+    /// The plant backup's `1200td` (843.09 × 596.09) and `N井场` (843.46 × 596.71)
+    /// both state a page over the 2 mm extent window, and both name an A1
+    /// template in a `.PID` link. The wider window is the name's: ten
+    /// millimetres, still far inside the 176 mm to the next size of the family.
+    #[test]
+    fn a_named_sheet_keeps_its_template_across_a_loose_frame() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let cpe = vec![r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.PID".to_string()];
+        let cchb = vec![r"Ref\Template Files\CPECCH~3.PID".to_string()];
+
+        // `1200td`'s frame, 2.09 mm over the A1 template.
+        let a1 = super::load_border_template(&corpus, [843.09, 596.09], &cpe)
+            .expect("the named A1 template");
+        assert!(a1.path.ends_with("CPE-SQ-A1.igr"), "{}", a1.path.display());
+        // The same page names nothing: the extent rule keeps refusing it.
+        assert!(super::load_border_template(&corpus, [843.09, 596.09], &[]).is_none());
+
+        // A CCHB page 3 mm over the A2 it names by the family stem.
+        let a2 = super::load_border_template(&corpus, [596.9, 423.0], &cchb)
+            .expect("the named CCHB template");
+        assert!(
+            a2.path.ends_with("CPECCHB-SQ-A2.igr"),
+            "{}",
+            a2.path.display()
+        );
+        assert!(super::load_border_template(&corpus, [596.9, 423.0], &[]).is_none());
+
+        // Ten millimetres is the wall: a named page 10.5 mm over gets nothing.
+        assert!(super::load_border_template(&corpus, [851.5, 604.5], &cpe).is_none());
+
+        // A name with no file on disk does not veto the extent rule: the
+        // `XA`-linked sheet still answers to 2 mm (its own question is §2.10).
+        let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
+        let fallback = super::load_border_template(&corpus, [841.5, 594.5], &xa)
+            .expect("the extent still answers");
+        assert!(
+            fallback.path.ends_with("CPE-SQ-A1.igr"),
+            "{}",
+            fallback.path.display()
+        );
     }
 }

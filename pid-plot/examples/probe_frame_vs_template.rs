@@ -4,8 +4,10 @@
 //! A P&ID's border is a linked OLE object: the sheet carries an `igSmartFrame2d`
 //! rectangle (which `build_normalized_geometry` reports as `page_dimensions_mm`)
 //! and a link record naming the template file. `load_border_template` measures
-//! each `.igr`'s ink extent and accepts it within `TEMPLATE_EXTENT_TOLERANCE_MM`
-//! (2 mm), using the link only to rank candidates that already passed the gate.
+//! each `.igr`'s ink extent and accepts an unnamed sheet within
+//! `TEMPLATE_EXTENT_TOLERANCE_MM` (2 mm); a sheet the link names gets
+//! `TEMPLATE_NAMED_TOLERANCE_MM` (10 mm), because the name already says which
+//! template it is.
 //!
 //! This probe prints both statements side by side, per drawing: the frame
 //! extent, every link's leaf name, the `.igr` the pick actually wore, and the
@@ -14,11 +16,11 @@
 //!
 //! It settled §2.2: the two A1 pages over the 2 mm window (`…(1200td)` at
 //! 843.09 × 596.09 and `N井场` at 843.46 × 596.71) both carry a `.PID` link whose
-//! stem names a template on disk, and `linked_template_prefix` only accepts
-//! `.igr` — so their names were never read. Four of the 53 backup sheets link
-//! `.PID` only; on the 47 sheets that wore furniture, the link stem matched the
-//! file the pick chose 47/47. See
-//! `docs/analysis/2026-10-29-the-two-a1-pages-name-their-template.md`.
+//! stem names a template on disk, and `linked_template_prefix` used to accept
+//! `.igr` only — so their names were never read. Four of the 53 backup sheets
+//! link `.PID` only; on the 47 sheets that wore furniture then, the link stem
+//! matched the file the pick chose 47/47. Both now wear their template (49 in
+//! all). See `docs/analysis/2026-10-29-the-two-a1-pages-name-their-template.md`.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_frame_vs_template -- <a.pid|dir> ...

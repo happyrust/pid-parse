@@ -188,7 +188,11 @@ const DERIVED_PAGES: usize = 4;
 /// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets — the 16 that
 /// sat on none until the backup's own `RefData~4~682.zip`, whose templates the
 /// corpus now carries, gave them their frames.
-const TEMPLATED_SHEETS: usize = 47;
+///
+/// The last two are `1200td` and `N井场`: both name their template in a `.PID`
+/// link and state a page 2.09 / 2.46–2.71 mm larger than it, so the pick keeps
+/// them on the name's 10 mm window rather than the 2 mm an unnamed sheet gets.
+const TEMPLATED_SHEETS: usize = 49;
 
 /// One symbol a pinned template places, as the `.igr` states it: the file name
 /// the placement stores and the point it sits at, in paper millimetres.
