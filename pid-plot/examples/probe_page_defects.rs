@@ -153,6 +153,10 @@ struct Report {
     page: Option<[f64; 2]>,
     primitives: usize,
     duplicates: usize,
+    /// Duplicates whose counted copy is sheet furniture, and those whose copy
+    /// is the drawing's own ink. The two add up to [`Self::duplicates`].
+    duplicate_furniture: usize,
+    duplicate_drawing: usize,
     duplicate_samples: Vec<String>,
     degenerate: usize,
     degenerate_samples: Vec<String>,
@@ -175,6 +179,20 @@ struct Report {
     fonts: BTreeMap<String, usize>,
     ink_margins: Option<[f64; 4]>,
     outside: Vec<String>,
+}
+
+/// The package's totals, one field per column the per-page line prints.
+#[derive(Default)]
+struct Totals {
+    primitives: usize,
+    duplicates: usize,
+    duplicate_furniture: usize,
+    duplicate_drawing: usize,
+    degenerate: usize,
+    not_finite: usize,
+    texts: usize,
+    empty_texts: usize,
+    stacked_texts: usize,
 }
 
 /// Left/bottom/right/top margins from the ink to the page edges.
@@ -230,6 +248,8 @@ fn audit(name: String, model: &PaperModel) -> Report {
     let mut seen: HashMap<String, (usize, Option<[usize; 2]>)> = HashMap::new();
     let mut duplicate_samples = Vec::new();
     let mut duplicates = 0usize;
+    let mut duplicate_furniture = 0usize;
+    let mut duplicate_drawing = 0usize;
     let mut degenerate_count = 0usize;
     let mut degenerate_samples = Vec::new();
     let mut non_finite = 0usize;
@@ -256,6 +276,14 @@ fn audit(name: String, model: &PaperModel) -> Report {
             *first_range = primitive.byte_range;
         } else {
             duplicates += 1;
+            // Each repeat is charged to the copy being counted: the first copy
+            // keeps whatever flag it had, so a duplicated template stroke and a
+            // duplicated body stroke land in different columns.
+            if primitive.furniture {
+                duplicate_furniture += 1;
+            } else {
+                duplicate_drawing += 1;
+            }
             if primitive
                 .stroke
                 .as_ref()
@@ -421,6 +449,8 @@ fn audit(name: String, model: &PaperModel) -> Report {
         page: model.resolved_page_mm(),
         primitives: model.primitives.len(),
         duplicates,
+        duplicate_furniture,
+        duplicate_drawing,
         duplicate_samples,
         degenerate: degenerate_count,
         degenerate_samples,
@@ -479,15 +509,17 @@ fn main() {
             }
         }
     }
-    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut totals = Totals::default();
     for report in &reports {
-        totals.0 += report.primitives;
-        totals.1 += report.duplicates;
-        totals.2 += report.degenerate;
-        totals.3 += report.not_finite;
-        totals.4 += report.texts;
-        totals.5 += report.empty_texts;
-        totals.6 += report.stacked_texts;
+        totals.primitives += report.primitives;
+        totals.duplicates += report.duplicates;
+        totals.duplicate_furniture += report.duplicate_furniture;
+        totals.duplicate_drawing += report.duplicate_drawing;
+        totals.degenerate += report.degenerate;
+        totals.not_finite += report.not_finite;
+        totals.texts += report.texts;
+        totals.empty_texts += report.empty_texts;
+        totals.stacked_texts += report.stacked_texts;
         let page = report.page.map_or("none".to_string(), |page| {
             format!("{:.2}x{:.2}", page[0], page[1])
         });
@@ -507,13 +539,16 @@ fn main() {
             _ => "none".to_string(),
         };
         println!(
-            "{} {}: {page} mm  {} prims  {} text  h {heights}  dup {} degen {} nonfinite {} \
+            "{} {}: {page} mm  {} prims  {} text  h {heights}  \
+             dup {} (furniture {} / drawing {}) degen {} nonfinite {} \
              empty-text {} stacked {} no-height {}  dashes {}  pens [{}]  missing {}",
             if flagged { "FLAG" } else { "PASS" },
             report.name,
             report.primitives,
             report.texts,
             report.duplicates,
+            report.duplicate_furniture,
+            report.duplicate_drawing,
             report.degenerate,
             report.not_finite,
             report.empty_texts,
@@ -566,17 +601,19 @@ fn main() {
         }
     }
     println!(
-        "\n{} drawings, {} failed: {} prims, {} duplicates, {} degenerate, {} non-finite, \
-         {} texts ({} empty, {} stacked)",
+        "\n{} drawings, {} failed: {} prims, {} duplicates ({} furniture / {} drawing), \
+         {} degenerate, {} non-finite, {} texts ({} empty, {} stacked)",
         reports.len(),
         failed,
-        totals.0,
-        totals.1,
-        totals.2,
-        totals.3,
-        totals.4,
-        totals.5,
-        totals.6
+        totals.primitives,
+        totals.duplicates,
+        totals.duplicate_furniture,
+        totals.duplicate_drawing,
+        totals.degenerate,
+        totals.not_finite,
+        totals.texts,
+        totals.empty_texts,
+        totals.stacked_texts
     );
     if failed > 0 {
         std::process::exit(1);
