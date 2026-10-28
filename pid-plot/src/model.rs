@@ -4480,4 +4480,34 @@ mod tests {
         assert!(close < far, "0.15 mm is not quantized away");
         assert!(close.1 < far.1, "the quantized errors still differ");
     }
+
+    /// A page is given the template its own size matches, and a page with no
+    /// match is given none: the pick is by extent, never a scaled guess.
+    ///
+    /// The A2 half became testable when `CPECCHB-SQ-A2.igr` landed in
+    /// `test-file/Ref/Template Files`: before it the directory held A0/A1 only,
+    /// so “an A2 page draws nothing” was a fact about the fixtures rather than
+    /// about the rule.
+    #[test]
+    fn a_template_is_picked_by_extent_and_never_scaled_to_fit() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let a2 = super::load_border_template(&corpus, [593.94, 420.00], &[])
+            .expect("the A2 sheet's own template");
+        assert!(
+            a2.path.ends_with("CPECCHB-SQ-A2.igr"),
+            "{}",
+            a2.path.display()
+        );
+        let a1 =
+            super::load_border_template(&corpus, [841.0, 594.0], &[]).expect("the A1 template");
+        assert!(a1.path.ends_with("CPE-SQ-A1.igr"), "{}", a1.path.display());
+        // Two sizes no template here is authored for. The 2 mm tolerance must
+        // refuse them, not stretch the nearest one onto the page.
+        for page in [[500.0, 300.0], [700.0, 500.0]] {
+            assert!(
+                super::load_border_template(&corpus, page, &[]).is_none(),
+                "a {page:?} mm page was given furniture from another size"
+            );
+        }
+    }
 }

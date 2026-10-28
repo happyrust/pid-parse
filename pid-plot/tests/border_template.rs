@@ -6,12 +6,22 @@
 //! finds that template, draws it at the sheet it was authored for, letters
 //! every one of its labels, and expands the one symbol the template places.
 //!
-//! Both paper sizes are gated, and both are rendered and measured. The A1 case
+//! Three paper sizes are gated, and each is measured. The A1 case
 //! (`CPE-SQ-A1.igr`) letters the title block within the figures its reference
 //! plot gives; the A0 case (`CPE-SQ-A0.igr`, `I井场`) does the same against its
 //! own reference plot, whose figures are the A1 ones to 0.02 mm — one set of
-//! sizes across both sheets. Its furniture also sits 348.00 mm further right,
+//! sizes across both sheets — and its furniture sits 348.00 mm further right,
 //! which is exactly the difference between the two page widths.
+//!
+//! The A2 case is the repository's own pair: `D06.pid` with
+//! `CPECCHB-SQ-A2.igr`, which landed in `test-file/Ref/Template Files` on
+//! 2026-10-28. It is a different template family from `CPE-SQ`, so its frame
+//! insets (35.354 mm on the left, 7.071 mm on the other three), its stroke
+//! census (72 lines, 1 polyline, 7 fills, 36 labels) and its cells are its own;
+//! none of the A1 figures is copied onto it. Until that file was in the
+//! repository this gate asserted the opposite for `D06` — that an A2 sheet drew
+//! no furniture — and passed because the template directory held A0/A1 only,
+//! not because the page had no frame.
 //!
 //! Soft-skips when the corpus or the fixture is absent, which is what CI sees.
 
@@ -76,6 +86,21 @@ fn frame_boxes(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
 
 fn near(point: [f64; 2], expected: [f64; 2], tolerance: f64) -> bool {
     (point[0] - expected[0]).abs() <= tolerance && (point[1] - expected[1]).abs() <= tolerance
+}
+
+/// Whether a furniture line runs between `a` and `b`, in either direction.
+fn has_line(model: &PaperModel, a: [f64; 2], b: [f64; 2], tolerance: f64) -> bool {
+    model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+        .any(|primitive| {
+            let PaperShape::Line { start_mm, end_mm } = &primitive.shape else {
+                return false;
+            };
+            (near(*start_mm, a, tolerance) && near(*end_mm, b, tolerance))
+                || (near(*start_mm, b, tolerance) && near(*end_mm, a, tolerance))
+        })
 }
 
 /// The two endpoints an arc primitive sweeps between, paper millimetres.
@@ -580,10 +605,11 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
 }
 
 #[test]
-fn a_sheet_no_template_matches_draws_no_furniture() {
-    // `D06` is an A2 sheet. The corpus ships A0 and A1 templates only, so the
-    // extent rule has to refuse the near-miss rather than stretching one of
-    // them onto a smaller page.
+fn an_a2_sheet_draws_its_linked_a2_template() {
+    // `D06` states 594.33 × 420.57 mm. The A2 CCHB template measures
+    // 593.94 × 420.00 — 0.57 mm inside it — so the extent rule takes it. The
+    // sheet's link record names `XIONGANA2.IGR`, a file no corpus in this
+    // repository ships, which is why the pick here is the extent's.
     let fixture = fixture_dir().join("D06.pid");
     if !fixture.is_file() {
         eprintln!("skipping border template; {} is absent", fixture.display());
@@ -591,19 +617,200 @@ fn a_sheet_no_template_matches_draws_no_furniture() {
     }
     let corpus = fixture_dir();
     let model = lay_out_drawing(&fixture, &corpus).unwrap_or_else(|error| panic!("{error}"));
+
+    let template = model
+        .template
+        .as_ref()
+        .unwrap_or_else(|| panic!("D06 drew no furniture"));
     assert!(
-        model.template.is_none(),
-        "D06 drew furniture from {:?}",
-        model.template.as_ref().map(|template| &template.path)
+        template.path.ends_with("CPECCHB-SQ-A2.igr"),
+        "D06 drew {}",
+        template.path
     );
     assert!(
-        !model.primitives.iter().any(|primitive| primitive.furniture),
-        "D06 carries furniture primitives"
+        near(
+            [template.extent_mm[0], template.extent_mm[1]],
+            [593.94, 420.00],
+            0.5
+        ),
+        "the template's own extent is {:?}",
+        template.extent_mm
     );
-    assert!(
-        !labels(&model)
+    // The A2 CCHB census: 72 lines, one polyline, 7 fills and 36 labels. Not
+    // the A1 CPE-SQ one (175 strokes, 34 labels) — a different family, drawn
+    // to different margins.
+    assert_eq!(template.primitives, 116, "furniture primitives");
+    assert_eq!(
+        model
+            .primitives
             .iter()
-            .any(|label| label.contains("会 签") || label.contains("中国石油")),
-        "D06 carries a title-block label"
+            .filter(|primitive| primitive.furniture)
+            .count(),
+        116,
+        "primitives flagged as furniture"
     );
+    assert_eq!(
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.furniture)
+            .filter(|primitive| matches!(primitive.shape, PaperShape::Text { .. }))
+            .count(),
+        36,
+        "furniture labels"
+    );
+
+    // The outer frame is one polyline along the page edge; the inner one is
+    // four lines at 35.354 mm from the left edge and 7.071 mm from the other
+    // three. The A2 CCHB insets are its own — the CPE-SQ family uses 25 mm and
+    // 10 mm — so they are read here rather than borrowed.
+    let boxes = frame_boxes(&model);
+    assert!(
+        boxes
+            .iter()
+            .any(|(min, max)| near(*min, [0.0, 0.0], 0.5) && near(*max, [593.94, 420.00], 0.5)),
+        "no outer frame: {boxes:?}"
+    );
+    for (start, end) in [
+        ([35.354, 7.071], [586.869, 7.071]),
+        ([586.869, 7.071], [586.869, 412.929]),
+        ([586.869, 412.929], [35.354, 412.929]),
+        ([35.354, 412.929], [35.354, 7.071]),
+    ] {
+        assert!(
+            has_line(&model, start, end, 0.05),
+            "no inner frame edge {start:?} -> {end:?}"
+        );
+    }
+
+    let labels = labels(&model);
+    for expected in [
+        // sign-off block
+        "会 签 专 业",
+        "签     署",
+        "日    期",
+        "审核",
+        "校对",
+        "设计",
+        "制图",
+        // title block
+        "中国石油工程建设有限公司 ",
+        "华北分公司",
+        "CPECC",
+        "项目号",
+        "CADD号",
+        "文件号",
+        "专业",
+        "版次",
+        "阶段",
+        "比例",
+        "工程设计证书: A111017147 综甲     工程勘察证书: B111017147 综甲",
+    ] {
+        assert!(
+            labels.contains(&expected),
+            "D06: no furniture label {expected:?}"
+        );
+    }
+
+    // The three placements, each drawn from the body the `.igr` caches. The
+    // stored paths are absolute paths on the authoring machine
+    // (`c:\users\administrator…\a$c40d91a4b.sym`, `…\hqz.sym` via its 8.3
+    // spelling), so no library root can address them; the page must still get
+    // their ink and no placeholder box.
+    assert_eq!(template.symbols.len(), 3, "{:?}", template.symbols);
+    for symbol in &template.symbols {
+        assert_eq!(
+            symbol.body,
+            SymbolBodySource::Cached,
+            "{} drew from {:?}",
+            symbol.key,
+            symbol.body
+        );
+        assert!(
+            !symbol.library_available,
+            "{} resolved a library body",
+            symbol.key
+        );
+        assert_eq!(
+            symbol.name_gap,
+            Some(NameMiss::NoSuchFile),
+            "{} was refused for some other reason",
+            symbol.key
+        );
+        assert!(
+            symbol.extent_mm.is_some(),
+            "{} drew nothing; the strokes are from its cache",
+            symbol.key
+        );
+        // A cached body's ink can start a fraction of a millimetre off the
+        // point that places it — the `a$…` body begins 0.35 mm above its own —
+        // so the owner is read with a millimetre of slack, which still names
+        // one placement and not its neighbour.
+        assert!(
+            model
+                .template_symbol_at(symbol.insertion_mm, 1.0)
+                .is_some_and(|owner| owner.key == symbol.key),
+            "the placement does not own its own insertion point"
+        );
+    }
+    assert!(
+        template.symbols.iter().any(|symbol| {
+            symbol.key.to_ascii_lowercase().ends_with("a$c40d91a4b.sym")
+                && near(symbol.insertion_mm, [0.0, 59.040], 0.02)
+        }),
+        "no `a$c40d91a4b.sym` at its insertion point: {:?}",
+        template.symbols
+    );
+    let hqz: Vec<[f64; 2]> = template
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.key.to_ascii_lowercase().ends_with("hqz.sym"))
+        .map(|symbol| symbol.insertion_mm)
+        .collect();
+    assert_eq!(hqz.len(), 2, "{hqz:?}");
+    for expected in [[35.354, 412.929], [35.354, 306.869]] {
+        assert!(
+            hqz.iter().any(|insertion| near(*insertion, expected, 0.02)),
+            "no `hqz.sym` at {expected:?}: {hqz:?}"
+        );
+    }
+    assert!(
+        model.missing_symbols.is_empty(),
+        "the template's own gaps entered the drawing's report: {:?}",
+        model.missing_symbols
+    );
+    assert!(
+        model.missing_boxes.is_empty(),
+        "a placement drew a placeholder box: {:?}",
+        model.missing_boxes
+    );
+
+    // And the furniture reaches the page. There is no reference plot for this
+    // fixture, so the labels are read back by their characters, not by widths.
+    let dirs = font_dirs(Some(&corpus_dir()));
+    if !dirs.iter().any(|dir| dir.is_dir()) {
+        eprintln!("skipping the page render; no font directory is present");
+        return;
+    }
+    let prepared = prepare_fonts(&[&model], &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+        })
+        .collect();
+    let pdf = write_plot(&model, &fonts).unwrap_or_else(|error| panic!("write: {error}"));
+    let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("read back: {error}"));
+    for expected in [
+        "中国石油工程建设有限公司",
+        "华北分公司",
+        "会 签 专 业",
+        "CPECC",
+    ] {
+        assert!(
+            ink.spans.iter().any(|span| span.text.trim() == expected),
+            "D06: {expected:?} did not reach the page"
+        );
+    }
 }

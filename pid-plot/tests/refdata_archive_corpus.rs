@@ -20,8 +20,12 @@
 //!   member of the archive rather than a file on disk;
 //! - a second drawing of the same plant wears a template out of the same
 //!   archive, while the one it *names* is refused — see below;
-//! - with the archive out of reach, none of them wears anything: that is what
-//!   makes the furniture above the archive's doing and not some disk copy;
+//! - with neither a template directory nor the archive in reach, none of them
+//!   wears anything: that is what makes the furniture above the archive's doing
+//!   and not some disk copy. The drawings are copied to a directory holding
+//!   nothing else for that reading — `test-file` itself served until the
+//!   repository shipped an A2 template, at which point an A2 page could wear it
+//!   from disk and the control stopped being about the archive;
 //! - a symbol body resolves with **no** directory root at all, so the archive
 //!   is the source of the strokes and not a fallback beside one.
 //!
@@ -62,6 +66,27 @@ fn backup_dir() -> Option<PathBuf> {
 fn layout(drawing: &Path, corpus: &Path) -> PaperModel {
     lay_out_drawing(drawing, corpus)
         .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()))
+}
+
+/// A corpus with copies of the drawings and nothing else: no `Ref`, no
+/// `RefData~*.zip`, and a parent holding neither.
+///
+/// This is the negative control's corpus. `test-file` itself served until the
+/// repository shipped `CPECCHB-SQ-A2.igr`; after that an A2 page could wear
+/// that template from disk and “no furniture” was no longer the archive's doing.
+/// Copied out, the reading is the one the gate means, and it no longer depends
+/// on which templates the repository happens to ship.
+fn bare_corpus() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("pid-plot-bare-{}", std::process::id()));
+    let corpus = root.join("corpus");
+    std::fs::create_dir_all(&corpus).expect("bare corpus");
+    for name in ["DWG-0202GP06-01.pid", "DWG-0201GP06-01.pid", "D06.pid"] {
+        let source = fixture_dir().join(name);
+        if source.is_file() {
+            std::fs::copy(&source, corpus.join(name)).expect("copy drawing");
+        }
+    }
+    corpus
 }
 
 /// The template's file name, or a panic naming what was drawn instead.
@@ -175,11 +200,10 @@ fn without_the_archive_the_same_drawings_draw_no_furniture() {
         eprintln!("skipping the archive corpus; no fixture backup is present");
         return;
     };
-    // `test-file` itself: `test-file/Ref/Template Files` carries the A0 and A1
-    // templates only, and no `RefData~*.zip` is in reach of it or its parent,
-    // so an A2 page matches nothing. This is the negative control that makes
-    // the two readings above the archive's doing.
-    let bare = fixture_dir();
+    // The drawings copied to a directory with no `Ref` and no archive in reach,
+    // so an A2 page matches nothing — the negative control that makes the two
+    // readings above the archive's doing rather than a disk copy's.
+    let bare = bare_corpus();
     for name in ["DWG-0202GP06-01.pid", "DWG-0201GP06-01.pid", "D06.pid"] {
         let drawing = bare.join(name);
         if !drawing.is_file() {
@@ -209,6 +233,7 @@ fn without_the_archive_the_same_drawings_draw_no_furniture() {
             template.path
         );
     }
+    std::fs::remove_dir_all(bare.parent().expect("bare root")).ok();
 }
 
 #[test]
