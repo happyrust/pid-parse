@@ -7,10 +7,12 @@
 //! Matched counts are therefore one to four lower than the numbers this gate
 //! held before blanks were excluded — the drop is four phantom pairs, not
 //! four lost labels (the I drawing's reference total fell 552 → 546 for the
-//! same reason). Later rounds raised them past that point again: the I
-//! drawing is at 543 of 546, and two of the five drawings (B and H) pair
-//! every reference label they count. The L drawing sits at 165 of 167 for a
-//! reason of its own — see the baseline note below.
+//! same reason). Later rounds recovered them and then some: all five drawings
+//! pair every label they count today — I 546/546, A 151/151, B 123/123,
+//! L 167/167, H 249/249. Only I's floor sits below its reading, at 544: it was
+//! pinned while that drawing's two electric-motor `M`s were still unpaired,
+//! and tightening it to the reading is a change of its own, not a comment's.
+//! See the baseline note below for where those two `M`s came from.
 
 use std::path::PathBuf;
 
@@ -82,14 +84,14 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // pad is not part of the label (`docs/analysis/2026-10-20-a-field-hangs-from-
 // its-box-edge.md`). L counts every reference label it preserves.
 //
-// FOUR of the five drawings now pair every label they count; only I keeps
-// two, the electric-motor `M`s above.
+// All five drawings now pair every label they count, the I drawing's two
+// electric-motor `M`s above included.
 //
-// Two reference runs are left in the I drawing, both electric-motor `M`s whose
-// drawn size no field explains: our body letters them at 2.04 mm from a 2.54 mm
-// style height scaled by the placement's 0.804, the reference writes 12.9 pt
-// (4.55 mm). Every other body label's own style height plots within 0.05 mm of
-// the reference and is drawn as the style states.
+// The last two runs in the I drawing to pair were both electric-motor `M`s.
+// The reading that pinned I's floor found our body lettering them at 2.04 mm
+// from a 2.54 mm style height scaled by the placement's 0.804, against a
+// reference 12.9 pt (4.55 mm). Every other body label's own style height plots
+// within 0.05 mm of the reference and is drawn as the style states.
 //
 // The three title-block `DWG-…集…` strings that sat 17.6 mm left of the
 // reference are placed now: a boxed record hangs from the box edge its
