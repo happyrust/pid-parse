@@ -938,8 +938,10 @@ pub fn lay_out_with_symbol_roots(
         .iter()
         .flat_map(|site| site.ole_links.iter().cloned())
         .collect();
+    let package = drawing_package_dir(pid, corpus);
     let furniture = page_mm.and_then(|page| {
-        load_border_template(corpus, page, &linked_templates).map(|furniture| (page, furniture))
+        load_border_template(corpus, package.as_deref(), page, &linked_templates)
+            .map(|furniture| (page, furniture))
     });
     if page_mm.is_some() && furniture.is_none() {
         // A page that named a template and got none is missing furniture, not
@@ -1450,7 +1452,7 @@ const TEMPLATE_EXTENT_TOLERANCE_MM: f64 = 2.0;
 /// millimetres is enough for that. A sheet that names its template has already
 /// said which one it is, so a frame that leaves the drawn border a little room
 /// no longer claims another size. The plant backup's sheets sit 0.00–1.54 mm
-/// over their template; the two over the extent window are 2.09 and 2.46–2.71.
+/// over their template; the two over the unnamed window are 2.09 and 2.46–2.71.
 /// Ten millimetres admits them with 3.7× to spare and stays far inside the
 /// nearest different size of the same family (A1 against A2 is 176 mm), which
 /// is what keeps a page that is not that template at all out.
@@ -1517,7 +1519,7 @@ enum TemplateSource {
 /// unpacking a backup optional and stops it from changing any page: the two
 /// sources hold the same files, and the pick's remaining keys are equal for
 /// them.
-fn border_template_sources(corpus: &Path) -> Vec<TemplateSource> {
+fn border_template_sources(corpus: &Path, package: Option<&Path>) -> Vec<TemplateSource> {
     let mut sources: Vec<TemplateSource> = Vec::new();
     let mut seen: Vec<PathBuf> = Vec::new();
     for dir in border_template_dirs(corpus) {
@@ -1542,7 +1544,15 @@ fn border_template_sources(corpus: &Path) -> Vec<TemplateSource> {
             }
         }
     }
-    for archive in refdata_archive_files(corpus) {
+    let mut archives = refdata_archive_files(corpus);
+    if let Some(package) = package {
+        for archive in refdata_archives(package) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    for archive in archives {
         let Ok(members) = archive_members(&archive, "igr") else {
             continue;
         };
@@ -1680,6 +1690,35 @@ fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
         .any(|prefix| stem.starts_with(prefix.as_str()))
 }
 
+/// The backup package a drawing belongs to, when it is filed beside one.
+///
+/// A backup package directory is named after the drawing it holds, with a `_p`
+/// suffix — `DWG-0202GP06-01_p/` holds `DWG-0202GP06-01.pid` and its
+/// `RefData~*.zip`. A corpus that contains the package rather than being it (the
+/// repository's fixtures keep theirs in `backup-test/`) still has to read that
+/// archive: it is where the drawing's own template lives, and without it a page
+/// that names the template correctly ends up with no furniture. Beside the
+/// drawing first, then at the corpus root, then one directory under it.
+fn drawing_package_dir(pid: &Path, corpus: &Path) -> Option<PathBuf> {
+    let stem = pid.file_stem().and_then(|stem| stem.to_str())?;
+    let wanted = format!("{stem}_p");
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = pid.parent() {
+        candidates.push(parent.join(&wanted));
+    }
+    candidates.push(corpus.join(&wanted));
+    if let Ok(entries) = std::fs::read_dir(corpus) {
+        let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        children.sort();
+        for child in children {
+            if child.is_dir() {
+                candidates.push(child.join(&wanted));
+            }
+        }
+    }
+    candidates.into_iter().find(|candidate| candidate.is_dir())
+}
+
 /// How one eligible template ranks against another, smallest first: the closer
 /// extent, then the name it has on disk.
 ///
@@ -1720,14 +1759,20 @@ fn template_rank(path: &Path, error: f64) -> (f64, String) {
 /// than the template's ink is slack, not another size. A named sheet is accepted
 /// up to [`TEMPLATE_NAMED_TOLERANCE_MM`]; an unnamed one answers to
 /// [`TEMPLATE_EXTENT_TOLERANCE_MM`].
+///
+/// `package` is the drawing's own backup package, when one is in reach: its
+/// `RefData~*.zip` is searched after the corpus's own archives, so a project
+/// corpus that happens to hold a copy still decides first and an unpacked tree
+/// keeps beating an archive.
 fn load_border_template(
     corpus: &Path,
+    package: Option<&Path>,
     page_mm: [f64; 2],
     links: &[String],
 ) -> Option<BorderTemplateDocument> {
     let prefixes = linked_template_prefixes(links);
     let mut best: Option<((f64, String), BorderTemplateDocument)> = None;
-    for source in border_template_sources(corpus) {
+    for source in border_template_sources(corpus, package) {
         let (path, doc) = match source {
             TemplateSource::File(path) => {
                 let Ok(doc) = PidParser::new().parse_file(&path) else {
@@ -4491,10 +4536,10 @@ mod tests {
 
         let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
         assert!(
-            super::load_border_template(&corpus, [841.0, 594.0], &xa).is_none(),
+            super::load_border_template(&corpus, None, [841.0, 594.0], &xa).is_none(),
             "a named A1 page wore a stranger's furniture"
         );
-        let unnamed = super::load_border_template(&corpus, [841.0, 594.0], &[])
+        let unnamed = super::load_border_template(&corpus, None, [841.0, 594.0], &[])
             .expect("an unnamed page still answers to its extent");
         assert!(
             unnamed.path.ends_with("CPE-SQ-A1.igr"),
@@ -4504,15 +4549,47 @@ mod tests {
 
         let cchb = vec![r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPECCHBA2.igr".to_string()];
         assert!(
-            super::load_border_template(&corpus, [593.75, 419.63], &cchb).is_none(),
+            super::load_border_template(&corpus, None, [593.75, 419.63], &cchb).is_none(),
             "a named A2 page wore another family's furniture"
         );
-        let unnamed = super::load_border_template(&corpus, [593.75, 419.63], &[])
+        let unnamed = super::load_border_template(&corpus, None, [593.75, 419.63], &[])
             .expect("the A2 template is 0.37 mm away");
         assert!(
             unnamed.path.ends_with("CPECCHB-SQ-A2.igr"),
             "{}",
             unnamed.path.display()
+        );
+    }
+
+    /// A drawing filed beside its own backup package searches that package's
+    /// `RefData~*.zip` too, so the template it names is found even when the
+    /// corpus around it is a fixture tree rather than the package.
+    ///
+    /// `DWG-0202GP06-01.pid` names `CPECCHBA2.igr`, which is a member of
+    /// `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip`. Before the
+    /// package was searched, the name answered nothing and §2.10 left the page
+    /// bare; the extent rule would also have handed it another family's A2.
+    #[test]
+    fn a_drawing_reads_the_package_it_is_filed_beside() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let model = super::lay_out_drawing(&corpus.join("DWG-0202GP06-01.pid"), &corpus)
+            .expect("the A2 fixture lays out");
+        let template = model.template.as_ref().expect("its own package's template");
+        assert!(
+            template.path.ends_with("CPECCHBA2.igr"),
+            "{}",
+            template.path
+        );
+        assert!(
+            template.path.contains("RefData~4~682.zip"),
+            "{}",
+            template.path
+        );
+        assert_eq!(template.primitives, 101);
+        assert!(
+            model.missing_templates.is_empty(),
+            "{:?}",
+            model.missing_templates
         );
     }
 
@@ -4618,21 +4695,21 @@ mod tests {
     #[test]
     fn a_template_is_picked_by_extent_and_never_scaled_to_fit() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
-        let a2 = super::load_border_template(&corpus, [593.94, 420.00], &[])
+        let a2 = super::load_border_template(&corpus, None, [593.94, 420.00], &[])
             .expect("the A2 sheet's own template");
         assert!(
             a2.path.ends_with("CPECCHB-SQ-A2.igr"),
             "{}",
             a2.path.display()
         );
-        let a1 =
-            super::load_border_template(&corpus, [841.0, 594.0], &[]).expect("the A1 template");
+        let a1 = super::load_border_template(&corpus, None, [841.0, 594.0], &[])
+            .expect("the A1 template");
         assert!(a1.path.ends_with("CPE-SQ-A1.igr"), "{}", a1.path.display());
         // Two sizes no template here is authored for. The 2 mm tolerance must
         // refuse them, not stretch the nearest one onto the page.
         for page in [[500.0, 300.0], [700.0, 500.0]] {
             assert!(
-                super::load_border_template(&corpus, page, &[]).is_none(),
+                super::load_border_template(&corpus, None, page, &[]).is_none(),
                 "a {page:?} mm page was given furniture from another size"
             );
         }
@@ -4652,30 +4729,30 @@ mod tests {
         let cchb = vec![r"Ref\Template Files\CPECCH~3.PID".to_string()];
 
         // `1200td`'s frame, 2.09 mm over the A1 template.
-        let a1 = super::load_border_template(&corpus, [843.09, 596.09], &cpe)
+        let a1 = super::load_border_template(&corpus, None, [843.09, 596.09], &cpe)
             .expect("the named A1 template");
         assert!(a1.path.ends_with("CPE-SQ-A1.igr"), "{}", a1.path.display());
         // The same page names nothing: the extent rule keeps refusing it.
-        assert!(super::load_border_template(&corpus, [843.09, 596.09], &[]).is_none());
+        assert!(super::load_border_template(&corpus, None, [843.09, 596.09], &[]).is_none());
 
         // A CCHB page 3 mm over the A2 it names by the family stem.
-        let a2 = super::load_border_template(&corpus, [596.9, 423.0], &cchb)
+        let a2 = super::load_border_template(&corpus, None, [596.9, 423.0], &cchb)
             .expect("the named CCHB template");
         assert!(
             a2.path.ends_with("CPECCHB-SQ-A2.igr"),
             "{}",
             a2.path.display()
         );
-        assert!(super::load_border_template(&corpus, [596.9, 423.0], &[]).is_none());
+        assert!(super::load_border_template(&corpus, None, [596.9, 423.0], &[]).is_none());
 
         // Ten millimetres is the wall: a named page 10.5 mm over gets nothing.
-        assert!(super::load_border_template(&corpus, [851.5, 604.5], &cpe).is_none());
+        assert!(super::load_border_template(&corpus, None, [851.5, 604.5], &cpe).is_none());
 
         // A name no file answers gets no furniture: the same-size stranger
         // that used to stand in is not a substitute (§2.10).
         let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
         assert!(
-            super::load_border_template(&corpus, [841.5, 594.5], &xa).is_none(),
+            super::load_border_template(&corpus, None, [841.5, 594.5], &xa).is_none(),
             "a named page wore the stranger its frame almost fit"
         );
     }
