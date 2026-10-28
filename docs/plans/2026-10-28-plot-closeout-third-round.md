@@ -194,7 +194,7 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
 | 项 | 缺什么 | 一旦有了做什么 |
 |---|---|---|
 | §2.2 两张 A1 超容差（1200td 2.09 mm、N井场 2.46/2.71 mm） | 已实施（`835fc59`：`.PID` 链名同算 + 10 mm 命名窗口，47 → 49） | 只余「出图器会不会拉伸 OLE 框」的 ≤ 3 mm 放置子问题，待有参考出图再核，不挡结项 |
-| §2.10 族盲（只剩 `工艺管道…-1`：`XA-A1.igr` 不在盘上；`600td` / `A井场` 的 `.PID` 词干其实对得上，见 §2.2 页） | 参考出图 | 决定「找不到同族就不画」是否落地 |
+| §2.10 族盲 | **判据已定，不需参考出图：不保留**（分析见 `docs/analysis/2026-10-29-a-name-that-cannot-be-resolved.md`） | 改 `load_border_template`：有名页只收名字命中的候选，无链页仍走 2 mm；先修「图旁的 `<词干>_p/` 包也算搜索根」（修后 `DWG-0202` 按名穿 `CPECCHBA2.igr`）；`XIONGANA2.igr` 这种「名字命中但 `.igr` 只导出标题栏碎片」单列一条 |
 | §2.3 四个库文件名 / 19 处放置 | `XA …`、`Pulsation Damper.sym` 等源文件 | 补库或确认永久缺口；纸上不受影响（`missing_boxes = 0`） |
 | §2.4 48 张没有参考出图 | 参考 PDF 或批量目视抽查 | 才有像素级对照 |
 | §2.7 字体 subset 前缀 | 无（D5 已查：前缀本来就在） | 用同一个检查器在今天的页面上重取读数，分清「整文件嵌入」与「真的缺前缀」 |
@@ -236,6 +236,13 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
   `linked_template_prefix` 只收 `.igr`（53 张里 4 张 `.PID`-only）。判据见
   `docs/analysis/2026-10-29-the-two-a1-pages-name-their-template.md`；实施另开一笔（47 → 49）。
 - 2026-10-29：**本文件随本轮收口入库**，工作树干净；§7 的 §2.2 行已从「缺参考出图」改成「只缺实施」。
+- 2026-10-29：**§2.10 查明，判据为「不保留」**（`docs/analysis/2026-10-29-a-name-that-cannot-be-resolved.md`）。53 张：
+  49 穿、**49/49 链名词干 = 所穿文件**、0 张靠范围顶替；4 张无家具全部是无页幅（§2.13），`Q井场`
+  的 `CPECCH~3.IGR` 词干其实命中 `CPECCHB-SQ-A1.igr`。四份「缺模板」里 `CPECCHBA2.igr` 与
+  `XIONGANA2.igr` 就在包内 `RefData~4~682.zip`，后者 `.igr` 只有 93.5 × 36 mm 的标题栏碎片
+  （自己的 `.pid` 是 594.00008 × 420.00002、frame Embedded）。三张夹具页目前穿别族：`DWG-0202`
+  三种语料三种答案（`CPECCHB-SQ-A2` / `CPE-SQ-A2` / `CPECCHBA2`），说明顶替读的是磁盘不是图。
+  结论：有名页只穿名字命中的候选，解析不到就不画；无链页仍 2 mm。实施另开一笔。
 - 2026-10-29：**§2.2 已实施并提交** `835fc59 feat(pid-plot): let a sheet's own template link decide the pick`
   （3 files，+100/−11）。`linked_template_prefix` 收 `.PID`/`.IGR` 同算；命名页窗口
   `TEMPLATE_NAMED_TOLERANCE_MM = 10.0`，未命名与名字不在盘上的页仍走 2 mm（`工艺管道…-1` 的
