@@ -2,7 +2,7 @@
 
 > 用户 2026-10-28：「使用 plannatator 制定下一步的开发方案」。本机 `plannotator.exe` 在
 > `C:\Users\dpc\AppData\Local\plannotator\`，沿用仓库既有的 `plannotator annotate <plan> --gate`
-> 审批方式。**本单 S0–S4 已全部落地，§2.2 已查明但不实施**（读数与提交见 §8）；文件随收口入库。
+> 审批方式。**本单 S0–S4 已全部落地，§2.2 已查明并实施**（`835fc59`；读数与提交见 §8）；文件随收口入库。
 >
 > 依据：`#41` 的 2026-10-28 复核（53 张读数与四项结项）、`docs/analysis/2026-10-23-what-a-page-still-gets-wrong.md`、
 > 以及本轮为定案做的三次实测（见 §1.3–§1.5）。
@@ -79,7 +79,8 @@ TMPL   594.33 x 420.57   D06.pid -> CPECCHB-SQ-A2.igr extent 593.94 x 420.00 pri
 
 **不做**：
 
-- 不改 §2.2 的 2 mm 容差、不给「量出来的页幅」挂家具（§2.13 的反证见 D4）。
+- ~~不改 §2.2 的 2 mm 容差~~ —— 该条已被 §7 的分析页改判：命名页走 10 mm、未命名页仍 2 mm，
+  随 `835fc59` 实施。仍不给「量出来的页幅」挂家具（§2.13 的反证见 D4）。
 - 不去重、不改笔宽、不抬出页文字、不动 0.78 em、不碰主对比的图框遮罩。
 - 不做 §2.7（字体 subset 前缀）：D5 查过了，六字母前缀本来就在，是 §2.7 的读数需要重取，不是代码缺项。
 - 不给 48 张没有参考出图的备份做像素对照。
@@ -192,7 +193,7 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
 
 | 项 | 缺什么 | 一旦有了做什么 |
 |---|---|---|
-| §2.2 两张 A1 超容差（1200td 2.09 mm、N井场 2.46/2.71 mm） | 只缺实施（判据已定：`.PID` 链名同算 + 10 mm 命名窗口） | 按 `docs/analysis/2026-10-29-the-two-a1-pages-name-their-template.md` 改 `load_border_template`，并重钉 47 → 49；参考出图只剩 ≤ 3 mm 的放置子问题 |
+| §2.2 两张 A1 超容差（1200td 2.09 mm、N井场 2.46/2.71 mm） | 已实施（`835fc59`：`.PID` 链名同算 + 10 mm 命名窗口，47 → 49） | 只余「出图器会不会拉伸 OLE 框」的 ≤ 3 mm 放置子问题，待有参考出图再核，不挡结项 |
 | §2.10 族盲（只剩 `工艺管道…-1`：`XA-A1.igr` 不在盘上；`600td` / `A井场` 的 `.PID` 词干其实对得上，见 §2.2 页） | 参考出图 | 决定「找不到同族就不画」是否落地 |
 | §2.3 四个库文件名 / 19 处放置 | `XA …`、`Pulsation Damper.sym` 等源文件 | 补库或确认永久缺口；纸上不受影响（`missing_boxes = 0`） |
 | §2.4 48 张没有参考出图 | 参考 PDF 或批量目视抽查 | 才有像素级对照 |
@@ -235,3 +236,13 @@ JHFFDC+JHFFDCGGBABJGICFFFEABABBAAFGEJCC
   `linked_template_prefix` 只收 `.igr`（53 张里 4 张 `.PID`-only）。判据见
   `docs/analysis/2026-10-29-the-two-a1-pages-name-their-template.md`；实施另开一笔（47 → 49）。
 - 2026-10-29：**本文件随本轮收口入库**，工作树干净；§7 的 §2.2 行已从「缺参考出图」改成「只缺实施」。
+- 2026-10-29：**§2.2 已实施并提交** `835fc59 feat(pid-plot): let a sheet's own template link decide the pick`
+  （3 files，+100/−11）。`linked_template_prefix` 收 `.PID`/`.IGR` 同算；命名页窗口
+  `TEMPLATE_NAMED_TOLERANCE_MM = 10.0`，未命名与名字不在盘上的页仍走 2 mm（`工艺管道…-1` 的
+  `XA-A1.igr` 照旧）。读数：**49 张挂模板**（`CPE-SQ-A1` 22、`CPECCHB-SQ-A1` 3）、64 处放置、
+  175 格字、64 处命名缺口；51 张 104 119 图元 / 17 007 文字 / 401 重复（157 家具 / 244 图纸）；
+  同位同字 8 → **10**（`CCHB-A1` 把 10 格写两遍，`N井场` 多两笔）；超页图元仍 1。
+  `export_plant_backup` 重钉到 49/64/22+3（88.9 s）；`pid-plot --lib` 101（新单测在命名窗口
+  放回 2 mm 时失败）、`border_template` 3/3、`refdata_archive_corpus` 4/4、`export_every_fixture`
+  1/1、`plot_compare` 22.7 s、clippy `-D warnings` 与 fmt 全绿。分析页与本单 §2 的「不做」已同步；
+  `#41` 一句话 / §1 / §2.1 / §2.2 / §2.8a / §2.8b / §4 也已改成 49。
