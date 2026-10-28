@@ -36,6 +36,34 @@
 //! It does not soft-skip once the backup is there and no face directory is:
 //! the written-page pins cannot be read without a face, and reporting them
 //! unread is not the same as reading them — see [`require_faces`].
+//!
+//! # Two corpora, two variables
+//!
+//! Which templates get picked — and so how much of the pin above is exercised —
+//! depends on the corpus, and the two kinds of corpus need different variables:
+//!
+//! - **A share**, the default (`D:\work\cad\PID自研软件验证`): templates come
+//!   from `<share>/Ref/Template Files`, faces from `<share>/fonts`. Naming
+//!   `PID_PARSE_SELF_CHECK_DIR` is all it takes.
+//! - **A backup package** (`D:\work\cad\pid-test-data`): the `.igr` templates
+//!   come out of the package's own `RefData~4~682.zip`, and `A0-W - New.igr` /
+//!   `A1-W - New.igr` enter the pick only here — a share's `Ref/Template Files`
+//!   holds the five `CPE*` files and neither of those two. The package carries
+//!   no `fonts/`, so the share's faces have to be named a second time. Both
+//!   variables, or the gate refuses to pass for want of a face rather than
+//!   reporting the written-page pins unread:
+//!
+//! ```text
+//! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\pid-test-data \
+//! PID_PLOT_FONTS=D:\work\cad\PID自研软件验证\fonts \
+//!   cargo test -p pid-plot --test export_plant_backup --locked
+//! ```
+//!
+//! `PID_PLOT_FONTS` is a `;`-separated list like `PATH`, read before
+//! `<corpus>/fonts` and the repository's `test-file/fonts` (see
+//! [`pid_plot::fonts::font_dirs`]). `PID_TEST_DATA_DIR` is an optional third
+//! root: it is one of the places `backup-plant-data` is looked for, beside the
+//! corpus and the two `pid-test-data` paths listed in [`backup_dir`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -888,6 +916,10 @@ fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathB
 /// every pin that needs a written PDF does not, and this used to be an
 /// `eprintln!` and a `return`, which the harness reports as a pass. It did, for
 /// one run.
+///
+/// The two configurations, and the command each one takes, are in this file's
+/// module docs under `Two corpora, two variables`; the panic repeats the
+/// section's name so the message points there too.
 fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
     if dirs.iter().any(|dir| dir.is_dir()) {
         return;
@@ -903,7 +935,9 @@ fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
          {DERIVED_PAGES}-sheet measured-page ratchet.\n  \
          searched: {searched}\n  \
          corpus: {} — a backup package carries no `fonts/`; set PID_PLOT_FONTS to the \
-         share's fonts, or point PID_PARSE_SELF_CHECK_DIR at the share",
+         share's fonts, or point PID_PARSE_SELF_CHECK_DIR at the share.\n  \
+         both variables, and the command for each corpus, are in this file's module \
+         docs under `Two corpora, two variables`",
         corpus.display()
     );
 }
