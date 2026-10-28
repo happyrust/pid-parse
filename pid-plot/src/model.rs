@@ -82,6 +82,17 @@ pub struct PaperModel {
     pub skipped_endpoint_pairs: usize,
     /// Symbol files the drawing names and the library does not have.
     pub missing_symbols: Vec<String>,
+    /// Template stems the drawing's frame links that this corpus could not put
+    /// furniture behind.
+    ///
+    /// A sheet that names a template wears only that template, because another
+    /// family's of the same size would letter another company's title block
+    /// onto it; so when no file answers the name the page stays bare. This is
+    /// the account of that bargain — the link records' stems, uppercase — and
+    /// it is the only way to tell such a page from one that never named a
+    /// template at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_templates: Vec<String>,
     /// 30 mm squares around symbols that were not drawn at all.
     ///
     /// Half-size is 15 mm, the M4 mask when the drawing records no symbol box.
@@ -918,6 +929,7 @@ pub fn lay_out_with_symbol_roots(
     // authored in page millimetres from the page's own origin — the corpus A1
     // template runs `(0, 0)` to `(841, 594)`, exactly the sheet B states.
     let mut template: Option<BorderTemplate> = None;
+    let mut missing_templates: Vec<String> = Vec::new();
     // What the sheet's own frames point at, kept for the pick: a record's path
     // does not resolve here, but its file name still says which template the
     // sheet was drawn on when two of them are the same size.
@@ -926,9 +938,16 @@ pub fn lay_out_with_symbol_roots(
         .iter()
         .flat_map(|site| site.ole_links.iter().cloned())
         .collect();
-    if let Some(page) = page_mm
-        && let Some(furniture) = load_border_template(corpus, page, &linked_templates)
-    {
+    let furniture = page_mm.and_then(|page| {
+        load_border_template(corpus, page, &linked_templates).map(|furniture| (page, furniture))
+    });
+    if page_mm.is_some() && furniture.is_none() {
+        // A page that named a template and got none is missing furniture, not
+        // a page that never asked for any: report the name that went
+        // unanswered so the gap is readable rather than silent.
+        missing_templates = linked_template_prefixes(&linked_templates);
+    }
+    if let Some((page, furniture)) = furniture {
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
@@ -1046,6 +1065,7 @@ pub fn lay_out_with_symbol_roots(
         off_sheet_primitives: off_sheet,
         skipped_endpoint_pairs,
         missing_symbols: placements.missing.into_iter().collect(),
+        missing_templates,
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
@@ -1631,7 +1651,25 @@ fn linked_template_prefix(link: &str) -> Option<String> {
     (!prefix.is_empty()).then(|| prefix.to_ascii_uppercase())
 }
 
-/// Whether `path`'s own name is the one a link record's stem spells.
+/// Every template stem the drawing's own link records spell, deduplicated.
+///
+/// The sheet's frames may point at the template's drawing (`.pid`) as well as
+/// its exported `.igr`, and a sheet can carry more than one link; all of them
+/// name templates, and a page is allowed to wear any it names.
+fn linked_template_prefixes(links: &[String]) -> Vec<String> {
+    let mut prefixes: Vec<String> = Vec::new();
+    for link in links.iter().filter_map(|link| linked_template_prefix(link)) {
+        if !prefixes.contains(&link) {
+            prefixes.push(link);
+        }
+    }
+    prefixes
+}
+
+/// Whether `path`'s own name is one a link record's stem spells.
+///
+/// This decides eligibility, not just order: a page that names a template may
+/// not wear one it does not name — see [`load_border_template`].
 fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return false;
@@ -1642,15 +1680,14 @@ fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
         .any(|prefix| stem.starts_with(prefix.as_str()))
 }
 
-/// How one eligible template ranks against another, smallest first: the ones a
-/// sheet names, then the closer extent, then the name it has on disk.
+/// How one eligible template ranks against another, smallest first: the closer
+/// extent, then the name it has on disk.
 ///
-/// The last key is reached only by templates the sheet names none of and whose
-/// extents agree to [`TEMPLATE_EXTENT_QUANTUM_MM`], where the choice is
-/// evidence-free and only has to be the same one twice.
-fn template_rank(path: &Path, error: f64, prefixes: &[String]) -> (bool, f64, String) {
+/// The last key is reached only by templates whose extents agree to
+/// [`TEMPLATE_EXTENT_QUANTUM_MM`], where the choice is evidence-free and only
+/// has to be the same one twice.
+fn template_rank(path: &Path, error: f64) -> (f64, String) {
     (
-        !template_named_by(path, prefixes),
         (error / TEMPLATE_EXTENT_QUANTUM_MM).round(),
         path.to_string_lossy().to_ascii_lowercase(),
     )
@@ -1663,33 +1700,33 @@ fn template_rank(path: &Path, error: f64, prefixes: &[String]) -> (bool, f64, St
 /// sheet was drawn on. That equality is the primary evidence, because it is the
 /// one thing the sheet's geometry and the template state independently.
 ///
-/// It is not the only evidence, and on its own it is not always enough. A
-/// project can hold two templates of the same size — `CPE-SQ-A1.igr` and
-/// `CPECCHB-SQ-A1.igr` are both authored for A1 — and then the two extents
-/// differ only in the last bits of their `f64` metres (`841.0000000000001`
-/// against `841.0000000003785`), so which one is closer to the sheet's own
-/// noise (a page states `841.0000500894253`) is a 4e-10 mm accident, not a
-/// reading. The link record breaks that tie: its stem is a prefix of the name
-/// it points at, so a template the sheet names wins over a stranger of the same
-/// size. A page that names nothing still falls back to the extent, and a page
-/// with no template within [`TEMPLATE_EXTENT_TOLERANCE_MM`] gets no furniture
-/// rather than a scaled-up guess from another size.
+/// A link record outranks it, and not only as a tie-break. A project can hold
+/// two templates of one size — `CPE-SQ-A1.igr` and `CPECCHB-SQ-A1.igr` are both
+/// authored for A1 — and then the two extents differ only in the last bits of
+/// their `f64` metres (`841.0000000000001` against `841.0000000003785`), so
+/// which one is nearer the sheet's own noise (a page states `841.0000500894253`)
+/// is a 4e-10 mm accident, not a reading. The two also letter different
+/// companies and engineering-certificate numbers into the title block, so
+/// picking by size would print the wrong signature about half the time. The
+/// link record breaks that: its stem is a prefix of the name it points at, so a
+/// page that names templates wears only a template it names — a stranger of the
+/// right size is not a candidate — and a page whose names no file answers gets
+/// **no furniture** rather than another family's title block. A page that names
+/// nothing still falls back to the extent, since that is all the evidence there
+/// is.
 ///
 /// The name also buys a wider window: the table it points at is the sheet's own
 /// statement of which template it wears, so a frame left a few millimetres larger
 /// than the template's ink is slack, not another size. A named sheet is accepted
-/// up to [`TEMPLATE_NAMED_TOLERANCE_MM`]; an unnamed one, and a name with no
-/// file on disk, still answers to [`TEMPLATE_EXTENT_TOLERANCE_MM`].
+/// up to [`TEMPLATE_NAMED_TOLERANCE_MM`]; an unnamed one answers to
+/// [`TEMPLATE_EXTENT_TOLERANCE_MM`].
 fn load_border_template(
     corpus: &Path,
     page_mm: [f64; 2],
     links: &[String],
 ) -> Option<BorderTemplateDocument> {
-    let prefixes: Vec<String> = links
-        .iter()
-        .filter_map(|link| linked_template_prefix(link))
-        .collect();
-    let mut best: Option<((bool, f64, String), BorderTemplateDocument)> = None;
+    let prefixes = linked_template_prefixes(links);
+    let mut best: Option<((f64, String), BorderTemplateDocument)> = None;
     for source in border_template_sources(corpus) {
         let (path, doc) = match source {
             TemplateSource::File(path) => {
@@ -1708,6 +1745,14 @@ fn load_border_template(
                 (file.label(), doc)
             }
         };
+        let named = template_named_by(&path, &prefixes);
+        if !prefixes.is_empty() && !named {
+            // The page named a template, so the furniture on it is the only
+            // furniture it may wear. Another family's of the same size would
+            // letter another company onto the drawing; no furniture is the
+            // honest answer instead.
+            continue;
+        }
         let geometry = build_normalized_geometry(&doc);
         let Some(extent_mm) = ink_extent_mm(&geometry) else {
             continue;
@@ -1715,7 +1760,7 @@ fn load_border_template(
         let error = (extent_mm[0] - page_mm[0])
             .abs()
             .max((extent_mm[1] - page_mm[1]).abs());
-        let tolerance = if template_named_by(&path, &prefixes) {
+        let tolerance = if named {
             TEMPLATE_NAMED_TOLERANCE_MM
         } else {
             TEMPLATE_EXTENT_TOLERANCE_MM
@@ -1729,7 +1774,7 @@ fn load_border_template(
             doc,
             geometry,
         };
-        let rank = template_rank(&document.path, error, &prefixes);
+        let rank = template_rank(&document.path, error);
         if best
             .as_ref()
             .is_some_and(|(best_rank, _)| *best_rank <= rank)
@@ -3389,6 +3434,7 @@ mod tests {
                 text([100.0, 30.0], "PT-101"),
             ],
             missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
@@ -3840,6 +3886,7 @@ mod tests {
             skipped_endpoint_pairs: 0,
             primitives: out,
             missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
@@ -4170,6 +4217,7 @@ mod tests {
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
@@ -4345,6 +4393,7 @@ mod tests {
                 off_sheet_primitives: 0,
                 skipped_endpoint_pairs: 0,
                 missing_symbols: Vec::new(),
+                missing_templates: Vec::new(),
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
                 symbols_referenced: 0,
@@ -4425,20 +4474,60 @@ mod tests {
         ));
     }
 
+    /// A page that names a template wears only that template: a name no file
+    /// answers leaves the page bare, and the gap is reported by name.
+    ///
+    /// `工艺管道及仪表流程-1` is 841.00 × 594.00 and links `XA-A1.igr`, a file
+    /// that is nowhere in the tree; `CPE-SQ-A1.igr` is exactly that size, so
+    /// the extent rule would dress this 熊安 drawing in 华北分公司's title
+    /// block. `DWG-0202GP06-01` is the same story one size down: its
+    /// `CPECCHBA2.igr` lives in its own package archive rather than beside the
+    /// fixture, and `CPECCHB-SQ-A2.igr` sits 0.37 mm from its page. Both pages
+    /// now draw no furniture; a page that names nothing still answers to the
+    /// extent.
     #[test]
-    fn the_named_template_beats_a_stranger_of_the_same_size() {
-        use std::path::PathBuf;
+    fn a_named_sheet_wears_no_template_it_does_not_name() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
 
-        use super::template_rank;
+        let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
+        assert!(
+            super::load_border_template(&corpus, [841.0, 594.0], &xa).is_none(),
+            "a named A1 page wore a stranger's furniture"
+        );
+        let unnamed = super::load_border_template(&corpus, [841.0, 594.0], &[])
+            .expect("an unnamed page still answers to its extent");
+        assert!(
+            unnamed.path.ends_with("CPE-SQ-A1.igr"),
+            "{}",
+            unnamed.path.display()
+        );
 
-        // Twenty A1 sheets say `CPE-SQ~2.IGR`. `CPECCHB-SQ-A1.igr` is the same
-        // size, and its own float noise sits 3.8e-10 mm closer to the sheet's
-        // — closer by less than an atom, and enough to have decided it before
-        // the name was read.
-        let prefixes = vec!["CPE-SQ".to_string()];
-        let named = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 4.0e-10, &prefixes);
-        let stranger = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 0.0, &prefixes);
-        assert!(named < stranger, "named {named:?} vs stranger {stranger:?}");
+        let cchb = vec![r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPECCHBA2.igr".to_string()];
+        assert!(
+            super::load_border_template(&corpus, [593.75, 419.63], &cchb).is_none(),
+            "a named A2 page wore another family's furniture"
+        );
+        let unnamed = super::load_border_template(&corpus, [593.75, 419.63], &[])
+            .expect("the A2 template is 0.37 mm away");
+        assert!(
+            unnamed.path.ends_with("CPECCHB-SQ-A2.igr"),
+            "{}",
+            unnamed.path.display()
+        );
+    }
+
+    /// A bare page says which name went unanswered, so a missing template is a
+    /// reading rather than a blank.
+    #[test]
+    fn a_page_whose_template_is_missing_names_the_gap() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let model = super::lay_out_drawing(&corpus.join("工艺管道及仪表流程-1.pid"), &corpus)
+            .expect("the 熊安 fixture lays out");
+        assert!(
+            model.template.is_none(),
+            "it must not wear CPE-SQ's furniture"
+        );
+        assert_eq!(model.missing_templates, vec!["XA-A1".to_string()]);
     }
 
     /// One of `Q井场`'s placement styles, at the width asked for.
@@ -4503,9 +4592,9 @@ mod tests {
         // off both A1 templates, and the two errors differ by the same 3.8e-10:
         // with no name to go on, the rule still has to answer the same way
         // twice, so the name on disk decides.
-        let cpe = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 1.54, &[]);
-        let cchb = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 1.5399999, &[]);
-        assert_eq!(cpe.1, cchb.1, "the two errors are one error");
+        let cpe = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 1.54);
+        let cchb = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 1.5399999);
+        assert_eq!(cpe.0, cchb.0, "the two errors are one error");
         assert!(
             cpe < cchb,
             "the name on disk breaks it: {cpe:?} vs {cchb:?}"
@@ -4513,10 +4602,10 @@ mod tests {
 
         // A tenth of a millimetre is a reading, not noise: the closer extent
         // still wins over the same name's order.
-        let close = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.0, &[]);
-        let far = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.15, &[]);
+        let close = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.0);
+        let far = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.15);
         assert!(close < far, "0.15 mm is not quantized away");
-        assert!(close.1 < far.1, "the quantized errors still differ");
+        assert!(close.0 < far.0, "the quantized errors still differ");
     }
 
     /// A page is given the template its own size matches, and a page with no
@@ -4582,15 +4671,12 @@ mod tests {
         // Ten millimetres is the wall: a named page 10.5 mm over gets nothing.
         assert!(super::load_border_template(&corpus, [851.5, 604.5], &cpe).is_none());
 
-        // A name with no file on disk does not veto the extent rule: the
-        // `XA`-linked sheet still answers to 2 mm (its own question is §2.10).
+        // A name no file answers gets no furniture: the same-size stranger
+        // that used to stand in is not a substitute (§2.10).
         let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
-        let fallback = super::load_border_template(&corpus, [841.5, 594.5], &xa)
-            .expect("the extent still answers");
         assert!(
-            fallback.path.ends_with("CPE-SQ-A1.igr"),
-            "{}",
-            fallback.path.display()
+            super::load_border_template(&corpus, [841.5, 594.5], &xa).is_none(),
+            "a named page wore the stranger its frame almost fit"
         );
     }
 }

@@ -90,7 +90,7 @@ fn main() {
     }
     let corpus = corpus_dir();
     println!(
-        "name|page_w|page_h|frame_state|frame_w|frame_h|links|picked|picked_w|picked_h|template_prims|content_max_x|content_max_y|primitives|missing"
+        "name|page_w|page_h|frame_state|frame_w|frame_h|links|picked|picked_w|picked_h|template_prims|gaps|content_max_x|content_max_y|primitives|missing"
     );
     for path in &paths {
         let name = path.file_stem().map_or_else(
@@ -119,23 +119,33 @@ fn main() {
             .flat_map(|site| site.ole_links.iter().map(|link| leaf(link).to_string()))
             .collect();
         let model = lay_out_drawing(path, &corpus).ok();
-        let (picked, picked_w, picked_h, template_prims, missing) = model.as_ref().map_or_else(
-            || ("-".to_string(), 0.0, 0.0, 0, 0),
-            |model| {
-                model.template.as_ref().map_or(
-                    ("-".to_string(), 0.0, 0.0, 0, model.missing_symbols.len()),
-                    |template| {
+        let (picked, picked_w, picked_h, template_prims, gaps, missing) =
+            model.as_ref().map_or_else(
+                || ("-".to_string(), 0.0, 0.0, 0, String::new(), 0),
+                |model| {
+                    let gaps = model.missing_templates.join(";");
+                    model.template.as_ref().map_or(
                         (
-                            leaf(&template.path).to_string(),
-                            template.extent_mm[0],
-                            template.extent_mm[1],
-                            template.primitives,
+                            "-".to_string(),
+                            0.0,
+                            0.0,
+                            0,
+                            gaps.clone(),
                             model.missing_symbols.len(),
-                        )
-                    },
-                )
-            },
-        );
+                        ),
+                        |template| {
+                            (
+                                leaf(&template.path).to_string(),
+                                template.extent_mm[0],
+                                template.extent_mm[1],
+                                template.primitives,
+                                gaps.clone(),
+                                model.missing_symbols.len(),
+                            )
+                        },
+                    )
+                },
+            );
         let mut max = [f64::MIN; 2];
         let mut primitives = 0usize;
         if let Some(model) = &model {
@@ -153,7 +163,7 @@ fn main() {
             }
         }
         println!(
-            "{name}|{page_w:.2}|{page_h:.2}|{frame_state}|{frame_w:.2}|{frame_h:.2}|{}|{picked}|{picked_w:.2}|{picked_h:.2}|{template_prims}|{:.2}|{:.2}|{primitives}|{missing}",
+            "{name}|{page_w:.2}|{page_h:.2}|{frame_state}|{frame_w:.2}|{frame_h:.2}|{}|{picked}|{picked_w:.2}|{picked_h:.2}|{template_prims}|{gaps}|{:.2}|{:.2}|{primitives}|{missing}",
             links.join(";"),
             max[0],
             max[1]

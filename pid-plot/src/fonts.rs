@@ -420,6 +420,7 @@ mod tests {
                 furniture: false,
             }],
             missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,

@@ -18,8 +18,9 @@
 //!
 //! - the drawing wears the template it names, and the file it came from is a
 //!   member of the archive rather than a file on disk;
-//! - a second drawing of the same plant wears a template out of the same
-//!   archive, while the one it *names* is refused — see below;
+//! - a second drawing of the same plant names a template the archive holds but
+//!   that cannot supply a frame, and wears **nothing**: a named page is not
+//!   handed a stranger — see below;
 //! - with neither a template directory nor the archive in reach, none of them
 //!   wears anything: that is what makes the furniture above the archive's doing
 //!   and not some disk copy. The drawings are copied to a directory holding
@@ -32,19 +33,22 @@
 //! # The template that is named and still refused
 //!
 //! `test-file/DWG-0201GP06-01.pid` links `XIONGANA2.igr`, and that member is in
-//! the archive. The page still wears `A2-W - New.igr`, because `XIONGANA2.igr`
-//! carries no frame to match it against: the file reads as 6 entities — 2
-//! `Other`, 1 `Symbol`, 3 `Text` (核准 / 校对 / 储运工艺, the sign-off column) —
-//! with a 653-byte `Sheet6` that declares a sheet and holds no geometry. Its
-//! own summary says what it is: `SmartSketch Application`, `TransAcad.igr` for
-//! a template, `ACAD_GLOBALS.FileName = C:\Users\sp3d\Desktop\xionganA2.dwg`,
+//! the archive. The page still wears nothing, because `XIONGANA2.igr` carries
+//! no frame to match it against: the file reads as 6 entities — 2 `Other`,
+//! 1 `Symbol`, 3 `Text` (核准 / 校对 / 储运工艺, the sign-off column) — with a
+//! 653-byte `Sheet6` that declares a sheet and holds no geometry. Its own
+//! summary says what it is: `SmartSketch Application`, `TransAcad.igr` for a
+//! template, `ACAD_GLOBALS.FileName = C:\Users\sp3d\Desktop\xionganA2.dwg`,
 //! `File Version: SmartSketch(R) 6.*/RAD 4.2.` — a `.dwg` carried through
-//! SmartSketch rather than a SmartPlant P&ID border. So the extent rule has
-//! nothing to measure, and the page falls back to the unnamed A2 template whose
-//! ink is 0.31 mm from its stated 594.31 × 420.31. The pairing the checklist
-//! recorded ("`XIONGANA2.igr` is what `DWG-0201GP06-01` needs") is therefore
-//! answered — the file is here — and still unsatisfied, for a reason that is
-//! in the file rather than missing from the corpus.
+//! SmartSketch rather than a SmartPlant P&ID border. It is a title-block
+//! fragment, 93.5 × 36 mm, so the name window refuses it. That refusal is now
+//! the end of the pick: a named page does not fall back to `A2-W - New.igr`
+//! (whose ink is 0.31 mm from the stated 594.31 × 420.31) or to any other
+//! family's A2, because the title block is the page's signature and the size
+//! only says how large the paper is. The pairing the checklist recorded
+//! ("`XIONGANA2.igr` is what `DWG-0201GP06-01` needs") is therefore answered —
+//! the file is here — and still unsatisfied, for a reason that is in the file
+//! rather than missing from the corpus; `missing_templates` reports the stem.
 //!
 //! Soft-skips when the fixture backup is absent, which is the case on CI.
 
@@ -175,23 +179,20 @@ fn a_template_the_sheet_names_but_the_file_cannot_supply_is_refused() {
         return;
     };
     // This drawing links `XIONGANA2.igr`, which the archive holds and which
-    // reads as lettering and no frame, so the page takes the unnamed A2
-    // template 0.31 mm from the stated 594.31 x 420.31 instead.
+    // reads as a 93.5 x 36 mm title-block fragment. The name still decides: no
+    // stranger's A2 fits the page on its behalf, and the page says which name
+    // went unanswered.
     let drawing = fixture_dir().join("DWG-0201GP06-01.pid");
     let model = layout(&drawing, &backup);
-    let template = model.template.as_ref().expect("furniture");
-    assert_eq!(
-        template_file(&model, "DWG-0201GP06-01"),
-        "A2-W - New.igr",
-        "the linked template cannot supply a frame; the page wears the one whose ink fits"
-    );
-    assert!(from_an_archive(&template.path), "{}", template.path);
     assert!(
-        (template.extent_mm[0] - 594.00).abs() < 0.01,
-        "{:?}",
-        template.extent_mm
+        model.template.is_none(),
+        "the page wore {} rather than nothing",
+        model
+            .template
+            .as_ref()
+            .map_or("-", |template| template.path.as_str())
     );
-    assert_eq!(template.primitives, 101);
+    assert_eq!(model.missing_templates, vec!["XIONGANA2".to_string()]);
 }
 
 #[test]
