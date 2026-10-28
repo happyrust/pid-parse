@@ -271,6 +271,40 @@ impl PaperModel {
         }
         Some([max_x.ceil().max(1.0), max_y.ceil().max(1.0)])
     }
+
+    /// Primitives whose ink reaches past the page by more than `slack_mm`.
+    ///
+    /// This reports; it does not refuse. [`beyond_the_sheet`] drops a stroke
+    /// that cannot ink the sheet at all, and a label is exempt there on purpose
+    /// (see its note): `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm
+    /// under the bottom edge and letters nineteen of its twenty glyphs onto the
+    /// page. Counting the overhang keeps that fact visible without losing the
+    /// run or moving it.
+    ///
+    /// A text is judged by its origin, the only position its shape carries;
+    /// every other shape by the points its ink reaches. Non-finite points are
+    /// skipped, and `slack_mm` keeps ink that merely sits on the edge out of
+    /// the count.
+    #[must_use]
+    pub fn primitives_past_the_edge(&self, slack_mm: f64) -> Vec<&PaperPrimitive> {
+        let Some(page) = self.resolved_page_mm() else {
+            return Vec::new();
+        };
+        self.primitives
+            .iter()
+            .filter(|primitive| {
+                shape_points(&primitive.shape)
+                    .into_iter()
+                    .filter(|point| finite(*point))
+                    .any(|point| {
+                        point[0] < -slack_mm
+                            || point[1] < -slack_mm
+                            || point[0] > page[0] + slack_mm
+                            || point[1] > page[1] + slack_mm
+                    })
+            })
+            .collect()
+    }
 }
 
 /// Every point a primitive defines that can set the page's extent.
@@ -1235,13 +1269,23 @@ fn finite(point: [f64; 2]) -> bool {
     point[0].is_finite() && point[1].is_finite()
 }
 
-/// Whether `shape` spans more than its sheet could hold.
+/// Whether `shape` cannot ink the sheet at all, and so is not drawn.
 ///
 /// The inferred `EndpointPair` lines are where this bites: DWG-0202 promotes
 /// three of them from pairs the record never meant as coordinates, and one runs
 /// from 143 km out to the origin — every point finite, nothing to clamp, and
 /// the writer clips it into a diagonal across the page that no plot has. Length
 /// is the tell, not position: a real line is at most a few page widths.
+///
+/// A text is the one shape never judged by position, and that is a decision,
+/// not an oversight. Its origin is where the anchor hangs the run from, not
+/// where the ink lands: `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm
+/// under the bottom edge and letters nineteen of its twenty glyphs onto the
+/// page. Refusing it by origin would lose all twenty; clamping it inside would
+/// move the run. So the overhang stays, the writer clips it the way a printer
+/// does, and [`PaperModel::primitives_past_the_edge`] counts it — one primitive
+/// across the 60 drawings measured, which is the reading the 53-sheet gate
+/// pins.
 fn beyond_the_sheet(shape: &PaperShape, page: [f64; 2]) -> bool {
     // A label's origin may sit past the edge and still letter onto the page —
     // the anchor decides where the run lands — so only its finiteness is read
@@ -3277,6 +3321,60 @@ mod tests {
             end_mm: [10.0, 10.0],
         };
         assert!(beyond_the_sheet(&broken, page));
+    }
+
+    /// A label whose origin hangs under the edge is still drawn, and the model
+    /// reports the overhang instead of dropping the run.
+    ///
+    /// `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm under the
+    /// bottom edge: its first glyph loses that much of its foot and the other
+    /// nineteen letter onto the page. Refusing the run by origin would lose all
+    /// twenty; the count keeps the fact visible.
+    #[test]
+    fn a_label_that_hangs_under_the_edge_is_counted_not_dropped() {
+        let text = |origin_mm: [f64; 2], value: &str| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: None,
+            byte_range: None,
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Text {
+                origin_mm,
+                height_mm: Some(3.175),
+                rotation: 90.0,
+                value: value.to_string(),
+                font: None,
+                anchor: TextAnchor::Center,
+                line: TextLine::Middle,
+                spans: Vec::new(),
+            },
+            furniture: false,
+        };
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([841.0, 594.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                text([12.0, -1.546], "15-TD-4101416-B2-EH40"),
+                text([100.0, 30.0], "PT-101"),
+            ],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        assert!(
+            !super::beyond_the_sheet(&model.primitives[0].shape, [841.0, 594.0]),
+            "a label past the edge is kept, not refused"
+        );
+        let past = model.primitives_past_the_edge(0.5);
+        assert_eq!(past.len(), 1, "{past:?}");
+        assert!(
+            model.primitives_past_the_edge(2.0).is_empty(),
+            "2 mm of slack clears the overhang"
+        );
     }
 
     /// Every break spelling splits, `\r\n` counts once, a trailing break adds

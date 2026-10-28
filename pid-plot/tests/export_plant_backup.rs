@@ -10,6 +10,12 @@
 //! - every drawing lays out at all (a decoder that stops seeing a record
 //!   family shows up as a page of the wrong size, or none);
 //! - no stroke is refused for not fitting the sheet (`off_sheet_primitives`);
+//! - exactly one primitive reaches past its page — a sideways run in `N井场`
+//!   whose origin sits 1.546 mm under the bottom edge, so its first glyph is
+//!   clipped there; the writer clips an overhang the way a printer does, and
+//!   the count is what keeps the reading from drifting to two or to none (the
+//!   rule is [`PaperModel::primitives_past_the_edge`]; why a text is not judged
+//!   by its origin is stated at `beyond_the_sheet` in `model.rs`);
 //! - no label reaches the writer with a line break in it — the writer has no
 //!   face for `U+000D`, and one such label took the whole page down;
 //! - no placement falls back to a placeholder box: a symbol the `.sym`
@@ -82,7 +88,7 @@ use std::path::{Path, PathBuf};
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{
-    PaperModel, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
+    PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
 };
 use pid_plot::read::read_plot;
 use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_plot};
@@ -112,6 +118,17 @@ fn backup_dir() -> Option<PathBuf> {
         .into_iter()
         .map(|root| root.join("backup-plant-data"))
         .find(|candidate| candidate.is_dir())
+}
+
+/// One primitive, named so a reader can find it: a label by its text and
+/// origin, anything else by its shape.
+fn describe(primitive: &PaperPrimitive) -> String {
+    match &primitive.shape {
+        PaperShape::Text {
+            origin_mm, value, ..
+        } => format!("text {:?} at {origin_mm:?} mm", value.trim()),
+        other => format!("{other:?}"),
+    }
 }
 
 fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -149,6 +166,13 @@ const BACKUP_SHEETS: usize = 53;
 /// Every page is a few hundred KiB once the faces are subset. The bitmap
 /// strike that used to ride along pushed each one past 6 MiB.
 const PAGE_CEILING: usize = 2 * 1024 * 1024;
+
+/// How far past a page a primitive's ink may reach before this gate counts it,
+/// millimetres.
+///
+/// Ink that sits exactly on the edge is not past it, and no reading this gate
+/// makes is finer than half a millimetre.
+const EDGE_SLACK_MM: f64 = 0.5;
 
 /// Sheets whose `.pid` states no page at all.
 ///
@@ -1213,6 +1237,7 @@ fn every_backup_drawing_exports_a_readable_page() {
         .collect();
 
     let mut derived = 0usize;
+    let mut past_the_edge: Vec<String> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
         assert_eq!(
@@ -1220,6 +1245,13 @@ fn every_backup_drawing_exports_a_readable_page() {
             "{name}: {} strokes were refused for not fitting the sheet",
             model.off_sheet_primitives
         );
+        let sheet = path.file_name().map_or_else(
+            || name.to_string(),
+            |file| file.to_string_lossy().into_owned(),
+        );
+        for primitive in model.primitives_past_the_edge(EDGE_SLACK_MM) {
+            past_the_edge.push(format!("{sheet}: {}", describe(primitive)));
+        }
         for primitive in &model.primitives {
             if let PaperShape::Text { value, .. } = &primitive.shape {
                 assert!(
@@ -1306,6 +1338,23 @@ fn every_backup_drawing_exports_a_readable_page() {
         derived, DERIVED_PAGES,
         "{derived} sheets stated no page and were measured; {DERIVED_PAGES} did when this ratchet was set"
     );
+    // One primitive reaches past its page, and it is the sideways run in
+    // `N井场`: origin 1.546 mm under the bottom edge, nineteen of its twenty
+    // glyphs on the sheet. An equality because both directions matter — a new
+    // overhang is a reading to explain, and losing this one means the run was
+    // dropped or moved.
+    assert_eq!(
+        past_the_edge.len(),
+        1,
+        "{} primitives reach past their page; one did when this was pinned: {past_the_edge:#?}",
+        past_the_edge.len()
+    );
+    assert!(
+        past_the_edge[0].contains("N井场"),
+        "the primitive past a page is not the sideways run in `N井场`: {}",
+        past_the_edge[0]
+    );
+    eprintln!("past the page: {}", past_the_edge[0]);
     eprintln!(
         "{} backup drawings exported, {} of them on a measured page, {} faces embedded",
         models.len(),
