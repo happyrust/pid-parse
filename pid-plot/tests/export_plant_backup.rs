@@ -20,6 +20,12 @@
 //!   and stroke count that file states, its strokes start at the page origin,
 //!   and each symbol its title block places sits at the point the `.igr` states
 //!   — on every sheet wearing it, since a placement is the template's;
+//! - every label that template letters is the same characters, at the same
+//!   insertion point and the same body height, cell by cell — 225 cells over
+//!   the seven templates, pinned per template and required to agree sheet by
+//!   sheet, so a re-authored title block that drifts a cell or respells the
+//!   company name fails even though its stroke count, extent and placements
+//!   are untouched;
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
 //!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
@@ -124,9 +130,346 @@ const TEMPLATED_SHEETS: usize = 47;
 /// the placement stores and the point it sits at, in paper millimetres.
 type PinnedPlacement = (&'static str, [f64; 2]);
 
+/// One label a pinned template letters, as the `.igr` states it: the
+/// characters, the insertion point in paper millimetres, and the body height in
+/// millimetres.
+///
+/// `f64::NAN` stands for a record that states no height; none of the seven
+/// templates here does, and a `NAN` matches only another `NAN`.
+type PinnedLabel = (&'static str, [f64; 2], f64);
+
 /// One pinned template: the file name, the extent and stroke count its `.igr`
-/// states, and what that `.igr` places.
-type PinnedTemplate = (&'static str, [f64; 2], usize, &'static [PinnedPlacement]);
+/// states, what that `.igr` places, and what it letters.
+type PinnedTemplate = (
+    &'static str,
+    [f64; 2],
+    usize,
+    &'static [PinnedPlacement],
+    &'static [PinnedLabel],
+);
+
+/// The 34 cells `CPE-SQ-A0.igr` letters, sorted by text then position.
+///
+/// Twenty of them run down the left edge's sign-off column and fourteen sit
+/// in the title block. The `CPE-SQ` family is one template re-authored at
+/// three sizes, and the two blocks hang from different edges, which is what
+/// the three lists show: the column's `x` is 24 mm from the left edge on all
+/// three of them and its `y` counts down from the *top* edge, so A0's column
+/// sits 247.000 mm below A1's (the difference between the two page heights)
+/// and A1's 174.000 mm below A2's; the title block's `y` is the same on all
+/// three — it counts up from the *bottom* edge — and its `x` counts in from
+/// the right, so A0's title block is 348.000 mm right of A1's (the difference
+/// between the two page widths) and A1's 247.000 mm right of A2's.
+static CPE_SQ_A0_LABELS: [PinnedLabel; 34] = [
+    ("010065-kj", [1137.931554, 66.349430], 3.500000),
+    ("1 版", [1172.607467, 12.694865], 3.000000),
+    ("2012,05,15", [1100.447381, 12.813829], 3.200000),
+    ("A111001641", [1091.960694, 66.560638], 3.500000),
+    ("CADD号", [1120.587282, 25.124944], 3.200000),
+    ("CPENC-DD11008", [1144.435787, 12.694865], 3.200000),
+    (
+        "中国石油集团工程设计有限责任公司华北分公司",
+        [1063.413661, 74.145144],
+        4.500000,
+    ),
+    ("会 签 专 业", [23.999970, 693.500016], 3.000000),
+    ("会 签 专 业", [23.999970, 768.500016], 3.000000),
+    ("修改", [24.225908, 643.746055], 3.000000),
+    ("修改号", [24.225908, 598.289181], 3.000000),
+    ("制  图", [1046.499970, 61.194323], 3.200000),
+    ("勘察证书号", [1136.391170, 66.014058], 3.500000),
+    ("华北油田苏桥储气库群", [1125.246205, 57.730800], 4.000000),
+    ("审  定", [1046.499970, 37.143917], 3.200000),
+    ("审  核", [1046.499970, 43.160719], 3.200000),
+    ("审核", [24.225908, 658.773122], 3.000000),
+    ("批  准", [1046.499970, 31.143917], 3.200000),
+    ("文件号", [1120.587282, 19.311584], 3.200000),
+    ("施工图", [1099.732930, 24.762086], 3.200000),
+    ("日    期", [23.999970, 743.500016], 3.000000),
+    ("日    期", [23.999970, 818.500016], 3.000000),
+    ("日期", [1081.127194, 13.006008], 3.200000),
+    ("日期", [24.225908, 628.906828], 3.000000),
+    ("校  对", [1046.499970, 48.923321], 3.200000),
+    ("次数", [24.225908, 585.891852], 3.000000),
+    ("比例", [1077.328358, 17.550016], 3.200000),
+    ("签     署", [23.999970, 718.500016], 3.000000),
+    ("签     署", [23.999970, 793.500016], 3.000000),
+    ("设  计", [1046.499970, 55.194323], 3.200000),
+    ("设计证书号", [1090.531612, 66.240398], 3.500000),
+    ("阶段", [1077.279206, 23.542724], 3.200000),
+    ("页次", [24.225908, 613.316247], 3.000000),
+    ("项目号", [1120.587282, 13.316557], 3.200000),
+];
+
+/// The same 34 cells as [`CPE_SQ_A0_LABELS`], on A1's page.
+static CPE_SQ_A1_LABELS: [PinnedLabel; 34] = [
+    ("010065-kj", [789.931554, 66.349412], 3.500000),
+    ("1 版", [824.607467, 12.694846], 3.000000),
+    ("2012,05,15", [752.447381, 12.813810], 3.200000),
+    ("A111001641", [743.960694, 66.560620], 3.500000),
+    ("CADD号", [772.587282, 25.124926], 3.200000),
+    ("CPENC-DD11008", [796.435787, 12.694846], 3.200000),
+    (
+        "中国石油集团工程设计有限责任公司华北分公司",
+        [715.413661, 74.145125],
+        4.500000,
+    ),
+    ("会 签 专 业", [23.999970, 446.499998], 3.000000),
+    ("会 签 专 业", [23.999970, 521.499998], 3.000000),
+    ("修改", [24.225908, 396.746037], 3.000000),
+    ("修改号", [24.225908, 351.289163], 3.000000),
+    ("制  图", [698.499970, 61.194305], 3.200000),
+    ("勘察证书号", [788.391170, 66.014040], 3.500000),
+    ("华北油田苏桥储气库群", [777.246205, 57.730782], 4.000000),
+    ("审  定", [698.499970, 37.143899], 3.200000),
+    ("审  核", [698.499970, 43.160701], 3.200000),
+    ("审核", [24.225908, 411.773103], 3.000000),
+    ("批  准", [698.499970, 31.143899], 3.200000),
+    ("文件号", [772.587282, 19.311566], 3.200000),
+    ("施工图", [751.732930, 24.762068], 3.200000),
+    ("日    期", [23.999970, 496.499998], 3.000000),
+    ("日    期", [23.999970, 571.499998], 3.000000),
+    ("日期", [733.127194, 13.005989], 3.200000),
+    ("日期", [24.225908, 381.906810], 3.000000),
+    ("校  对", [698.499970, 48.923303], 3.200000),
+    ("次数", [24.225908, 338.891833], 3.000000),
+    ("比例", [729.328358, 17.549998], 3.200000),
+    ("签     署", [23.999970, 471.499998], 3.000000),
+    ("签     署", [23.999970, 546.499998], 3.000000),
+    ("设  计", [698.499970, 55.194305], 3.200000),
+    ("设计证书号", [742.531612, 66.240380], 3.500000),
+    ("阶段", [729.279206, 23.542706], 3.200000),
+    ("页次", [24.225908, 366.316229], 3.000000),
+    ("项目号", [772.587282, 13.316539], 3.200000),
+];
+
+/// The same 34 cells as [`CPE_SQ_A0_LABELS`], on A2's page.
+static CPE_SQ_A2_LABELS: [PinnedLabel; 34] = [
+    ("010065-kj", [542.931554, 66.349408], 3.500000),
+    ("1 版", [577.607467, 12.694843], 3.000000),
+    ("2012,05,15", [505.447381, 12.813807], 3.200000),
+    ("A111001641", [496.960694, 66.560616], 3.500000),
+    ("CADD号", [525.587282, 25.124922], 3.200000),
+    ("CPENC-DD11008", [549.435787, 12.694843], 3.200000),
+    (
+        "中国石油集团工程设计有限责任公司华北分公司",
+        [468.413661, 74.145122],
+        4.500000,
+    ),
+    ("会 签 专 业", [23.999970, 272.499995], 3.000000),
+    ("会 签 专 业", [23.999970, 347.499995], 3.000000),
+    ("修改", [24.225908, 222.746034], 3.000000),
+    ("修改号", [24.225908, 177.289159], 3.000000),
+    ("制  图", [451.499970, 61.194301], 3.200000),
+    ("勘察证书号", [541.391170, 66.014037], 3.500000),
+    ("华北油田苏桥储气库群", [530.246205, 57.730778], 4.000000),
+    ("审  定", [451.499970, 37.143895], 3.200000),
+    ("审  核", [451.499970, 43.160697], 3.200000),
+    ("审核", [24.225908, 237.773100], 3.000000),
+    ("批  准", [451.499970, 31.143895], 3.200000),
+    ("文件号", [525.587282, 19.311562], 3.200000),
+    ("施工图", [504.732930, 24.762064], 3.200000),
+    ("日    期", [23.999970, 322.499995], 3.000000),
+    ("日    期", [23.999970, 397.499995], 3.000000),
+    ("日期", [486.127194, 13.005986], 3.200000),
+    ("日期", [24.225908, 207.906806], 3.000000),
+    ("校  对", [451.499970, 48.923299], 3.200000),
+    ("次数", [24.225908, 164.891830], 3.000000),
+    ("比例", [482.328358, 17.549995], 3.200000),
+    ("签     署", [23.999970, 297.499995], 3.000000),
+    ("签     署", [23.999970, 372.499995], 3.000000),
+    ("设  计", [451.499970, 55.194301], 3.200000),
+    ("设计证书号", [495.531612, 66.240376], 3.500000),
+    ("阶段", [482.279206, 23.542702], 3.200000),
+    ("页次", [24.225908, 192.316225], 3.000000),
+    ("项目号", [525.587282, 13.316535], 3.200000),
+];
+
+/// The 37 cells `CPECCHB-SQ-A1.igr` letters.
+///
+/// Different furniture from the `CPE-SQ` family: its title block (`CPECC`, the
+/// company name split across two cells, `项目经理`, an unspaced `专业`) and its
+/// own set of certificate rows.
+///
+/// Ten of the 37 repeat a string the file letters twice, a hair apart: `专业`,
+/// `比例`, `版次`, `阶段`, `项目号` twice each and `制图`, `审定`, `审核`,
+/// `校对`, `设计` three times each, one copy at 2.499745 mm and one at
+/// 2.500000 mm with its insertion point a few thousandths of a millimetre
+/// away. That is the template, not the reader: the `.igr` carries the cell
+/// twice. Pinned as measured — a change that stops double-lettering is worth a
+/// look, and this is the only pin that would say so.
+///
+/// It also letters `签     暑` where the draughtsman meant `署`, which is the
+/// kind of thing a text pin is for: the characters are the file's, and a
+/// "helpful" correction anywhere in the reader would fail here.
+static CPECCHB_SQ_A1_LABELS: [PinnedLabel; 37] = [
+    ("CADD号", [698.513504, 5.647319], 2.499745),
+    ("CPECC", [698.592631, 66.663703], 2.244375),
+    ("专业", [770.298519, 13.179031], 2.499745),
+    ("专业", [770.292325, 13.179355], 2.500000),
+    (
+        "中国石油工程建设有限公司",
+        [753.954102, 76.435606],
+        5.500000,
+    ),
+    ("仪  控", [668.757500, 59.296062], 2.499745),
+    ("会 签 专 业", [23.589985, 521.499994], 2.500000),
+    ("制图", [660.444788, 53.296675], 2.499745),
+    ("制图", [695.441217, 59.296062], 2.499745),
+    ("制图", [695.427384, 59.301093], 2.500000),
+    ("华北分公司", [808.031586, 76.435606], 5.000000),
+    ("审定", [660.666459, 29.997946], 2.499745),
+    ("审定", [695.662887, 35.997334], 2.499745),
+    ("审定", [695.649078, 35.999987], 2.500000),
+    ("审核", [660.463523, 36.067340], 2.499745),
+    ("审核", [695.459952, 42.066728], 2.499745),
+    ("审核", [695.446121, 42.070000], 2.500000),
+    (
+        "工程设计证书: A111017147 综甲     工程勘察证书: B111017147 综甲",
+        [731.990697, 66.885704],
+        2.000000,
+    ),
+    ("文件号", [770.727377, 19.399462], 2.499745),
+    ("日    期", [23.595003, 571.557849], 2.500000),
+    ("日期", [733.656859, 13.385600], 2.499745),
+    ("校对", [660.463523, 42.077323], 2.499745),
+    ("校对", [695.459952, 48.076710], 2.499745),
+    ("校对", [695.446121, 48.080596], 2.500000),
+    ("核准", [695.366657, 29.628482], 2.499745),
+    ("比例", [733.526260, 19.062941], 2.499745),
+    ("比例", [733.516314, 19.063866], 2.500000),
+    ("版次", [812.184351, 13.356468], 2.499745),
+    ("版次", [812.182432, 13.356810], 2.500000),
+    ("签     暑", [23.599454, 546.455491], 2.500000),
+    ("设计", [660.456644, 47.966667], 2.499745),
+    ("设计", [695.453073, 53.966055], 2.499745),
+    ("设计", [695.439241, 53.970541], 2.500000),
+    ("阶段", [733.436817, 24.609254], 2.499745),
+    ("阶段", [733.426862, 24.610744], 2.500000),
+    ("项目号", [770.800244, 24.791983], 2.499745),
+    ("项目号", [770.794102, 24.793492], 2.500000),
+];
+
+/// The 36 cells `CPECCHB-SQ-A2.igr` letters.
+///
+/// The same furniture as [`CPECCHB_SQ_A1_LABELS`] at 1.414× the size — which
+/// is A2's 420 mm against this template's own 593.939 mm extent, so its heights
+/// are 3.535354 mm where the A1 file states 2.500000 — and with one more cell,
+/// `修改号`, in the sign-off column.
+///
+/// Its company-name cell is `中国石油工程建设有限公司 ` with a trailing space,
+/// which the A1 file's same cell does not carry; both are pinned as the files
+/// spell them.
+static CPECCHB_SQ_A2_LABELS: [PinnedLabel; 36] = [
+    ("CADD号", [399.494979, 3.731490], 3.535354),
+    ("CPECC", [398.236067, 91.605293], 1.000000),
+    ("专业", [501.019500, 11.566782], 3.535354),
+    (
+        "中国石油工程建设有限公司 ",
+        [479.407575, 100.801501],
+        7.777778,
+    ),
+    ("仪  控", [357.411488, 76.789441], 3.535354),
+    ("会 签 专 业", [33.939423, 218.484857], 4.242424),
+    ("会 签 专 业", [33.939423, 324.545463], 4.242424),
+    ("修改", [34.258931, 148.125721], 3.535354),
+    ("修改号", [34.258931, 83.843272], 3.535354),
+    ("制图", [345.654938, 68.304593], 3.535354),
+    ("制图", [395.149887, 76.789441], 3.535354),
+    ("华北分公司", [559.032975, 100.801501], 7.777778),
+    ("审定", [345.968443, 35.353534], 3.535354),
+    ("审定", [395.463393, 43.838382], 3.535354),
+    ("审核", [345.681434, 43.937391], 3.535354),
+    ("审核", [395.176384, 52.422240], 3.535354),
+    ("审核", [34.258931, 169.376117], 3.535354),
+    (
+        "工程设计证书: A111017147 综甲     工程勘察证书: B111017147 综甲",
+        [446.855582, 87.515155],
+        2.828283,
+    ),
+    ("文件号", [501.626028, 20.364249], 3.535354),
+    ("日    期", [33.939423, 289.191928], 4.242424),
+    ("日    期", [33.939423, 395.252534], 4.242424),
+    ("日期", [449.197725, 11.858930], 3.535354),
+    ("日期", [34.258931, 127.140954], 3.535354),
+    ("校对", [345.681434, 52.437223], 3.535354),
+    ("校对", [395.176384, 60.922072], 3.535354),
+    ("核准", [395.044438, 34.831005], 3.535354),
+    ("次数", [34.258931, 66.311695], 3.535354),
+    ("比例", [449.013020, 19.888312], 3.535354),
+    ("版次", [561.828118, 11.817728], 3.535354),
+    ("签     署", [33.939423, 253.838393], 4.242424),
+    ("签     署", [33.939423, 359.898999], 4.242424),
+    ("设计", [345.671705, 60.766438], 3.535354),
+    ("设计", [395.166655, 69.251287], 3.535354),
+    ("阶段", [448.886522, 27.732383], 3.535354),
+    ("页次", [34.258931, 105.093668], 3.535354),
+    ("项目号", [501.729083, 27.990814], 3.535354),
+];
+
+/// The 25 cells `A0-W - New.igr` letters.
+///
+/// A third furniture family, reachable only when the corpus is a backup
+/// package: its title block letters `项目经理` and a wide-spaced `审  定`,
+/// and its sign-off column letters a bare `签署` where the `CPE-SQ` family
+/// letters `签     署`. Both W files letter the same 25 strings at their own
+/// page size, and both place no symbol at all (`TEMPLATE_PLACEMENTS` below).
+static A0_W_LABELS: [PinnedLabel; 25] = [
+    ("专业", [20.213572, 674.384346], 3.000000),
+    ("专业", [20.187827, 751.052526], 3.000000),
+    ("修改", [1098.721629, 88.694982], 2.500000),
+    ("审  定", [1041.215048, 44.659907], 2.500000),
+    ("审  核", [1041.215048, 50.659907], 2.500000),
+    ("审定", [1143.833155, 88.901014], 2.500000),
+    ("审核", [1128.948888, 88.922241], 2.500000),
+    ("文件号", [1076.215048, 20.659907], 2.500000),
+    ("日  期", [1076.215048, 14.659907], 2.500000),
+    ("日期", [1162.780233, 88.972189], 2.500000),
+    ("日期", [20.110593, 724.638304], 3.000000),
+    ("日期", [20.316552, 801.435210], 3.000000),
+    ("校  对", [1041.215048, 56.659907], 2.500000),
+    ("校对", [1113.380741, 88.808612], 2.500000),
+    ("核  准", [1041.391838, 32.844114], 2.500000),
+    ("比  例", [1143.967653, 14.731583], 2.500000),
+    ("版  次", [1113.215048, 14.659907], 2.500000),
+    ("版次", [1039.976561, 88.694982], 2.500000),
+    ("签署", [20.290807, 700.798568], 3.000000),
+    ("签署", [20.239317, 775.020987], 3.000000),
+    ("设  计", [1041.215048, 62.659907], 2.500000),
+    ("说明", [1067.899371, 88.808889], 2.500000),
+    ("阶  段", [1076.215048, 26.659907], 2.500000),
+    ("项目号", [1113.215048, 26.659907], 2.500000),
+    ("项目经理", [1039.217319, 38.978732], 2.500000),
+];
+
+/// The same 25 cells as [`A0_W_LABELS`], on A1's page.
+static A1_W_LABELS: [PinnedLabel; 25] = [
+    ("专业", [20.213572, 427.384346], 3.000000),
+    ("专业", [20.187827, 504.052526], 3.000000),
+    ("修改", [750.153186, 89.177180], 3.000000),
+    ("审  定", [691.958746, 44.984658], 3.000000),
+    ("审  核", [691.850496, 50.984658], 3.000000),
+    ("审定", [795.179527, 89.310615], 3.000000),
+    ("审核", [780.407980, 89.384844], 3.000000),
+    ("文件号", [726.917851, 21.143769], 3.000000),
+    ("日  期", [726.697914, 15.143769], 3.000000),
+    ("日期", [814.521916, 89.245664], 3.000000),
+    ("日期", [20.110593, 477.638304], 3.000000),
+    ("日期", [20.316552, 554.435210], 3.000000),
+    ("校  对", [691.958746, 57.092909], 3.000000),
+    ("校对", [765.315194, 89.292058], 3.000000),
+    ("核  准", [691.735219, 32.963129], 3.000000),
+    ("比  例", [794.978368, 15.193452], 3.000000),
+    ("版  次", [764.049814, 15.231744], 3.000000),
+    ("版次", [691.675367, 89.177180], 3.000000),
+    ("签署", [20.290807, 453.798568], 3.000000),
+    ("签署", [20.239317, 528.020987], 3.000000),
+    ("设  计", [691.843854, 62.868810], 3.000000),
+    ("说明", [719.314151, 89.210594], 3.000000),
+    ("阶  段", [726.961839, 27.143769], 3.000000),
+    ("项目号", [764.049814, 27.187757], 3.000000),
+    ("项目经理", [691.628155, 39.059549], 3.000000),
+];
 
 /// What a sheet's template places, by the template's own file name: the file
 /// name each placement records, sorted.
@@ -183,26 +526,45 @@ type PinnedTemplate = (&'static str, [f64; 2], usize, &'static [PinnedPlacement]
 /// wear `CPE-SQ-A1` carries its 比例 wave at the same point. A title block whose
 /// cell moved — a re-authored template, a nibble read one field off — shows up
 /// here and nowhere else, because the placement list alone still matches.
+///
+/// The fifth is the template's own lettering: every label it puts on the page,
+/// as `(characters, insertion point, body height)`, sorted by text then
+/// position, one `static` per template above. This is what the stroke count
+/// above cannot say — a title block re-authored with the same number of strokes
+/// in the same box, spelling the company name differently or sliding one cell
+/// two millimetres, passes extent, strokes and placements alike. Twenty-five to
+/// thirty-seven cells per template, 225 in all, and the count is pinned by each
+/// list's own length. A template that gains or loses a cell therefore fails
+/// here, whatever the drawing it lands on.
 const TEMPLATE_PLACEMENTS: [PinnedTemplate; 7] = [
     (
         "CPE-SQ-A0.igr",
         [1189.0, 841.0],
         175,
         &[("blfh.sym", [1100.6925, 19.0])],
+        &CPE_SQ_A0_LABELS,
     ),
     (
         "CPE-SQ-A1.igr",
         [841.0, 594.0],
         175,
         &[("blfh.sym", [752.6925, 19.0])],
+        &CPE_SQ_A1_LABELS,
     ),
     (
         "CPE-SQ-A2.igr",
         [594.0, 420.0],
         175,
         &[("blfh.sym", [505.6925, 19.0])],
+        &CPE_SQ_A2_LABELS,
     ),
-    ("CPECCHB-SQ-A1.igr", [841.0, 594.0], 96, &[]),
+    (
+        "CPECCHB-SQ-A1.igr",
+        [841.0, 594.0],
+        96,
+        &[],
+        &CPECCHB_SQ_A1_LABELS,
+    ),
     (
         "CPECCHB-SQ-A2.igr",
         [593.939, 420.0],
@@ -212,9 +574,10 @@ const TEMPLATE_PLACEMENTS: [PinnedTemplate; 7] = [
             ("hqz.sym", [35.3536, 412.9293]),
             ("hqz.sym", [35.3536, 306.8687]),
         ],
+        &CPECCHB_SQ_A2_LABELS,
     ),
-    ("A0-W - New.igr", [1189.0, 841.0], 105, &[]),
-    ("A1-W - New.igr", [841.0, 594.0], 101, &[]),
+    ("A0-W - New.igr", [1189.0, 841.0], 105, &[], &A0_W_LABELS),
+    ("A1-W - New.igr", [841.0, 594.0], 101, &[], &A1_W_LABELS),
 ];
 
 /// How far a pinned placement point may drift before the gate speaks, in
@@ -234,6 +597,21 @@ const PLACEMENT_SLACK_MM: f64 = 0.0001;
 /// inside it. It is deliberately below what a plotter resolves — this is a pin
 /// on the file, not on the printed sheet.
 const TEMPLATE_EXTENT_SLACK_MM: f64 = 0.02;
+
+/// How far a pinned label's insertion point and body height may drift before
+/// the gate speaks, in millimetres.
+///
+/// The same ten-thousandth as [`PLACEMENT_SLACK_MM`] and for the same reason:
+/// a text record's point and size come out of the same metre-to-millimetre
+/// conversion as a placement's, so this holds the authored value while
+/// tolerating the last bits of the multiply.
+///
+/// It is deliberately tighter than the one place the corpus asks it to be:
+/// `CPECCHB-SQ-A1` letters ten of its cells twice, the two copies 0.000255 mm
+/// apart in body height (2.500000 against 2.499745). A slack wider than that
+/// would let one copy stand in for the other; this one keeps them apart, and
+/// their points — a few thousandths of a millimetre apart — apart as well.
+const LABEL_SLACK_MM: f64 = 0.0001;
 
 /// Where a page's furniture ink reaches, paper millimetres.
 ///
@@ -327,6 +705,14 @@ type Placement = (String, [f64; 2]);
 /// first such sheet, and how many sheets those were.
 type TemplateAccount = (Vec<Placement>, usize);
 
+/// One label a template letters: the characters, the point it starts at on the
+/// page, and its body height — `f64::NAN` where the record states none.
+type Label = (String, [f64; 2], f64);
+
+/// What one template lettered, over every sheet wearing it: the labels of the
+/// first such sheet, and how many sheets those were.
+type LabelAccount = (Vec<Label>, usize);
+
 /// One template's placements as text, for a failure that names them.
 fn format_placements(placements: &[Placement]) -> String {
     placements
@@ -353,6 +739,115 @@ fn same_placements(measured: &[Placement], pinned: &[Placement]) -> bool {
                     && (point[0] - want_point[0]).abs() < PLACEMENT_SLACK_MM
                     && (point[1] - want_point[1]).abs() < PLACEMENT_SLACK_MM
             })
+}
+
+/// Every label the template's furniture letters, in a deterministic order.
+///
+/// Sorted by text and then by position, so a template that letters one string
+/// twice (`CPECCHB-SQ-A1`'s three `制图` cells) keeps a stable order and a
+/// respelled cell shifts one entry rather than reshuffling the list.
+///
+/// Only furniture is read: a drawing's own labels are the drawing's business,
+/// and the furniture flag is what tells the template's ink from the sheet's.
+fn furniture_labels(model: &PaperModel) -> Vec<Label> {
+    let mut out: Vec<Label> = model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+        .filter_map(|primitive| match &primitive.shape {
+            PaperShape::Text {
+                origin_mm,
+                height_mm,
+                value,
+                ..
+            } => Some((value.clone(), *origin_mm, height_mm.unwrap_or(f64::NAN))),
+            _ => None,
+        })
+        .collect();
+    out.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then(left.1[1].total_cmp(&right.1[1]))
+            .then(left.1[0].total_cmp(&right.1[0]))
+    });
+    out
+}
+
+/// One label as text, for a failure that names it.
+fn format_label(label: &Label) -> String {
+    let (text, point, height) = label;
+    format!(
+        "{text:?} at ({:.4}, {:.4}) mm, {height:.4} mm high",
+        point[0], point[1]
+    )
+}
+
+/// Whether one label matches its pin: the same characters, the same insertion
+/// point and the same body height, each within [`LABEL_SLACK_MM`].
+///
+/// An absent height matches only an absent one, so a record that gains or loses
+/// its size is a change rather than a match.
+fn same_label(measured: &Label, pinned: &Label) -> bool {
+    let (text, point, height) = measured;
+    let (want_text, want_point, want_height) = pinned;
+    text == want_text
+        && (point[0] - want_point[0]).abs() < LABEL_SLACK_MM
+        && (point[1] - want_point[1]).abs() < LABEL_SLACK_MM
+        && ((height - want_height).abs() < LABEL_SLACK_MM
+            || (height.is_nan() && want_height.is_nan()))
+}
+
+/// Whether two label lists agree: the same characters in the same order, each
+/// at the same insertion point and body height.
+fn same_labels(measured: &[Label], pinned: &[Label]) -> bool {
+    measured.len() == pinned.len()
+        && measured
+            .iter()
+            .zip(pinned)
+            .all(|(measured, pinned)| same_label(measured, pinned))
+}
+
+/// Where two label lists part company, one line per difference.
+///
+/// The lists are compared in order, so a difference is reported by position and
+/// the thirty-odd cells that agree are left out: a template that respells one
+/// cell should read as one line, not as two walls of text. A length that
+/// differs gets its own line plus the cells one side has and the other does
+/// not, since those are what a template that gained a cell looks like.
+fn label_differences(measured: &[Label], pinned: &[Label]) -> String {
+    let mut lines: Vec<String> = measured
+        .iter()
+        .zip(pinned)
+        .enumerate()
+        .filter(|(_, (measured, pinned))| !same_label(measured, pinned))
+        .map(|(index, (measured, pinned))| {
+            format!(
+                "    [{index}] page {}, pinned {}",
+                format_label(measured),
+                format_label(pinned)
+            )
+        })
+        .collect();
+    if measured.len() != pinned.len() {
+        lines.push(format!(
+            "    {} labels on the page, {} pinned",
+            measured.len(),
+            pinned.len()
+        ));
+        lines.extend(
+            measured
+                .iter()
+                .skip(pinned.len())
+                .map(|extra| format!("    page only: {}", format_label(extra))),
+        );
+        lines.extend(
+            pinned
+                .iter()
+                .skip(measured.len())
+                .map(|extra| format!("    pin only: {}", format_label(extra))),
+        );
+    }
+    lines.join("\n")
 }
 
 /// The corpus this run is reading, one line per source.
@@ -464,6 +959,11 @@ fn every_backup_drawing_exports_a_readable_page() {
     // should report every template that moved, once each, instead of stopping
     // at the first or repeating itself once per sheet wearing it.
     let mut moved: BTreeMap<String, String> = BTreeMap::new();
+    // The same two accounts for what each template letters, keyed the same way.
+    // A label is the template's text, so the per-sheet agreement and the
+    // collect-then-report shape are the placement account's, not a new rule.
+    let mut by_template_labels: BTreeMap<String, LabelAccount> = BTreeMap::new();
+    let mut mislettered: BTreeMap<String, String> = BTreeMap::new();
     for (path, model) in &models {
         let name = path.display();
         assert!(
@@ -481,7 +981,7 @@ fn every_backup_drawing_exports_a_readable_page() {
         if from_archive(&template.path) {
             templated_from_archive += 1;
         }
-        let Some((file, extent, primitives, wanted)) = TEMPLATE_PLACEMENTS
+        let Some((file, extent, primitives, wanted, wanted_labels)) = TEMPLATE_PLACEMENTS
             .iter()
             .find(|(file, ..)| template.path.ends_with(file))
         else {
@@ -526,6 +1026,37 @@ fn every_backup_drawing_exports_a_readable_page() {
                  the template states",
                 template.path
             );
+        }
+        // The template's own lettering, cell by cell. `template.primitives`
+        // counts these strokes but says nothing about which characters they
+        // carry or where the writer put them; this is the pin that does.
+        let drawn_labels = furniture_labels(model);
+        let pinned_labels: Vec<Label> = wanted_labels
+            .iter()
+            .map(|(text, point, height)| ((*text).to_string(), *point, *height))
+            .collect();
+        if same_labels(&drawn_labels, &pinned_labels) {
+            // The same per-sheet agreement a placement gets, for the same
+            // reason: the text belongs to the template, so a page that letters
+            // it at another point is a difference only this can place.
+            let seen = by_template_labels
+                .entry((*file).to_string())
+                .or_insert_with(|| (drawn_labels.clone(), 0));
+            assert!(
+                same_labels(&seen.0, &drawn_labels),
+                "{name}: {} letters differ from the first sheet wearing it:\n{}",
+                template.path,
+                label_differences(&drawn_labels, &seen.0)
+            );
+            seen.1 += 1;
+        } else {
+            mislettered.entry((*file).to_string()).or_insert_with(|| {
+                format!(
+                    "  {file} (on {}):\n{}",
+                    template.path,
+                    label_differences(&drawn_labels, &pinned_labels)
+                )
+            });
         }
         let mut drawn: Vec<Placement> = Vec::new();
         for symbol in &template.symbols {
@@ -588,8 +1119,20 @@ fn every_backup_drawing_exports_a_readable_page() {
         moved.len(),
         moved.values().cloned().collect::<Vec<_>>().join("\n")
     );
+    assert!(
+        mislettered.is_empty(),
+        "{} template(s) letter something other than the pin says:\n{}",
+        mislettered.len(),
+        mislettered.values().cloned().collect::<Vec<_>>().join("\n")
+    );
     for (file, (measured, sheets)) in &by_template {
-        eprintln!("  {file}: {sheets} sheets, {}", format_placements(measured));
+        let cells = by_template_labels
+            .get(file)
+            .map_or(0, |(labels, _)| labels.len());
+        eprintln!(
+            "  {file}: {sheets} sheets, {cells} labels, {}",
+            format_placements(measured)
+        );
     }
     assert!(
         templated >= TEMPLATED_SHEETS,
@@ -599,9 +1142,13 @@ fn every_backup_drawing_exports_a_readable_page() {
     // corpus had and not of the six it has now — `CPECCHB-SQ-A1` places none
     // and `CPECCHB-SQ-A2` places three. What each template places is pinned
     // above, per sheet, which is where that fact belongs.
+    let cells: usize = by_template_labels
+        .values()
+        .map(|(labels, _)| labels.len())
+        .sum();
     eprintln!(
         "{templated} sheets drew furniture ({} disk, {} from RefData archives), \
-         {placements} placements, {gap_named} with a named gap",
+         {placements} placements, {cells} labels, {gap_named} with a named gap",
         templated - templated_from_archive,
         templated_from_archive
     );
