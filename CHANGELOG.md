@@ -2,6 +2,225 @@
 
 ## [Unreleased]
 
+### 没声明页幅的页：点名才穿图框，量出来的纸幅自己不作主（2026-11-01）
+
+整厂 53 张里 `D井场`、`Q井场`、`换热器CD`、`集注站 凝析油一级闪蒸分离器B` 四张**根本没声明页幅**，
+`model.rs` 的 `if let Some(page) = page_mm` 因此整段跳过模板判据，四张一个框都不穿。本轮把它结掉。
+
+- 先把四张文件里的链记录翻出来（`.igr` / `.IGR` 原始字节搜索）：**只有 `Q井场` 点名** ——
+  `CPECCHB-SQ-A1.igr` 与 DOS 8.3 别名 `CPECCH~3.IGR` 各一条；另外三张一条 `.igr` 链都没有。
+  `Q井场` 自己可出图的墨迹量出来 **841 × 594**，正是该模板的 extent，误差 0.00 mm。
+- 判据来自参考件而不是口味：`换热器CD` 是这四张里**唯一有参考出图**的，那张出图**没有框、没有标题栏**
+  （PASS，1370 图元 / 251 文字）。所以「尺寸碰巧等于某模板」不构成穿它的理由。新分支：
+  有声明页幅 → 照旧；无声明页幅且没点名 → 不穿；无声明页幅但点名 → 用 `plottable_sheet_mm`
+  量出的纸幅进 `load_border_template`（仍是「名字是门票 + 10 mm 窗口」）。
+- 量纸幅只数**会出图的**图元（新 `ink_extent_mm_where` + `!suppressed_from_plot`）：隐藏层的墨到不了纸面，
+  让它参与就会把纸推大一档、再挂上尺寸不对的家具。`ink_extent_mm` 拆出 `where` 版本，`standard_sheet_for`
+  从 `resolved_page_mm` 里抽出来共用。`missing_templates` 的判据改到 `furniture_page.is_some()`。
+- 读数：挂模板 **49 → 50**（`CPECCHB-SQ-A1` 3 → 4 张），放置 **64** 不变（该模板不摆符号），标签 **175**；
+  `Q井场` 4363 → **4459 图元**、589 → **626 文字**、同位同字 **2**、缺符号 **2**，笔表新增模板自带的
+  `0.2500 / 0.3000 / 0.5000 / 0.7500 / 0.7999`。另外三张一个图元不动。
+  `style_witness`：干净页 **33 → 32**、带条目 **20 → 21**；`0.3000` (0, 24) → **(0, 32)**、
+  `0.5000` (24, 12) → **(24, 16)**。
+- 不给 `Q井场` 编结论：它没有参考出图，这条判据靠的是「文件自己点名的模板 + 墨迹恰好是那个尺寸」，
+  与另外 49 张同一把尺（先名字后尺寸）。分析写在
+  `docs/analysis/2026-11-01-a-page-that-states-no-sheet-still-names-its-border.md`。
+
+### 缺符号报告要说清「库里只有编号变体」（2026-11-01）
+
+`§2.3` 的 4 个缺失库文件补不上：12 个 `RefData~*.zip` 全扫过，`Pulsation Damper` 与
+`Clone of TT-Temperature Transmitter(1)` **0 命中**，`Wellhead Christmas Tree` 只有
+`01` / `02` 两个变体，**裸名不存在**。裸名映射到 `01` 会画错一个井口装置，所以只报告、不替换。
+
+- `SymbolLibrary::numbered_siblings`（新，`src/symbol_library.rs`）：按文件名的词干找 `Name 01` /
+  `Name(1)` / `Name-1` 这类编号兄弟，返回它们的文件名，**绝不参与解析**。
+- 缺件时报告里带上候选：`no library file for equipment\other equipment\wellhead christmas tree.sym
+  (library carries only Wellhead Christmas Tree 01.sym, Wellhead Christmas Tree 02.sym)`。
+- 单测 `a_bare_name_is_not_replaced_by_a_numbered_variant` 同时钉住两件事：裸名 `resolve` 仍为 `None`，
+  候选清单照实给出。纸面不变 —— 这些放置全部由图内缓存体画出，`missing_boxes = 0`。
+
+### `N井场` 那条出页竖排标签：口径定为照画、页裁剪、数着（2026-11-01）
+
+`15-TD-4101416-B2-EH40` 插入点 y = −1.546 mm，20 个字里 19 个落在页上。这页没有参考出图：挪位置是编造，
+拒画会丢掉 19 个字。所以保持照画（PDF 页面按页边裁），`export_plant_backup` 把「整厂恰好 1 条、
+−1.546 mm」钉成棘轮 —— 这是**继承源图的溢出**，不是导出器的位移；`beyond_the_sheet` 只拒整条在页外的笔画，
+理由记在 `PaperModel::primitives_past_the_edge` 的文档里。
+
+### 仍不由代码决定的（2026-11-01）
+
+- 两个笔宽档界 `0.3000 ∈ (0.25, 0.35)` / `0.5000 ∈ (0.35, 0.70)`：五张参考出图里没有一条 0.30 / 0.50
+  的笔画，`D04` 那 24 条 0.50 也没有参考件（全盘找不到 `D04` 的 PDF）。边界维持开区间，表不调。
+- 48 张无参考页：语料目录下只有 5 个 PDF，备份包 0 个。结构、样式 witness 与棘轮到顶，剩下的是数据。
+
+### 验证（2026-11-01）
+
+`cargo test -p pid-plot --locked`、`cargo clippy -p pid-plot --all-targets --locked -- -D warnings`、
+`cargo fmt --all -- --check` 全绿；`pid-parse` 新增单测 `symbol_library::tests::a_bare_name_is_not_replaced_by_a_numbered_variant` 通过。
+
+### 子集字体要有 `ABCDEF+` 前缀，同一个面只嵌一遍（2026-11-01）
+
+`I井场` 的导出页里每个字体都自称 `Arial`，而它实际是一个两字形的子集：`pdffonts` 对五条字体全报
+`sub no`。同一页还嵌了**两遍** `FangSong`（对象 9 与 11，两个不同子集、同一个面名）。
+
+- 子集标记按真实结果加，不靠猜：`fonts::subset_or_whole` 返回 `(bytes, subsetted)`，`PreparedFont`
+  与 `PlotFont` 各带 `subset`；`write::write_plot` 在 `subset == true` 时由 `declare_subset` 给
+  Type0 `/BaseFont`、CIDFont `/BaseFont`、FontDescriptor `/FontName` 三处同时写 `TAG+Name`
+  （ISO 32000-1 §9.6.4），tag 是字体字节的 FNV-1a 六字母 —— 同一子集两次导出字节相同。
+  整文件回退路径**不加**标记：它没挣到那个 tag。
+- 重复嵌入是兜底逻辑的缺口：`prepare_fonts` 的 CJK 兜底不看已有 faces，把已经按绘图命名的字面
+  加载过的同名面又 push 了一遍。改成「兜底面已在表里就用并集重新子集化并替换那一条」。
+- `ProbeOnly` 的文字不再逼出字体：`write::is_plotted`（`decoded` / `inferred`）成为唯一判据，
+  `has_inked_text` 与 `prepare_fonts` 的 `wanted` / `run_faces` 都走它。`0x0030`
+  `JStyleOverride` 的字不落在页上，却一直让导出加载并嵌入一个它从不绘制的面；新单测
+  `probe_only_lettering_asks_for_no_face` 钉住这条。
+- 读数：`pdffonts` 五条 → 四条，全部 `sub yes` 且带前缀（`KHWDNY+Arial` / `MKLVHB+Arial Narrow` /
+  `DKYVIB+FangSong` / `YTRSMC+SimSun`），文件 691 167 → 618 329 字节，图元 3839、页幅
+  1189.00 × 841.00 mm 不变。
+
+### 压到半宽仍出页的文字，现在会报出来（2026-11-01）
+
+`show_text` 把放不下的行沿自身方向压缩到 `MIN_CONDENSE` 0.5，压到 0.5 仍超出的部分由页框裁掉 ——
+而这件事此前完全静默：一份全对和一页尾部被裁的导出，读数与 PDF 本身都分不出来。
+
+- `write_plot_audited` 返回 `PlotAudit { runs_clipped_at_the_condensation_floor,
+  deepest_clip_mm }`，`write_plot` 委托它并丢弃账目；`pid_plot` 每次导出都打印这一行（0 也打印），
+  `export_plant_backup` 把 53 张的总数钉成棘轮。
+- 读数：53 张整厂 **0 处**，`deepest_clip_mm 0.000`。不是「相信没发生」，是把这件事钉成一个数，
+  下一次多一处就会红。
+
+### witness 与写图器说同一个面名（2026-11-01）
+
+`witness::vocabularies` 的面维此前用文件里的拼写（`宋体` / `仿宋`），而模块文档写的是「compared by
+the name the writer embeds」。于是参考页说 `SimSun` 的那一页，把同一份文件的 `宋体` 证书成未验证。
+
+- 改用 `fonts::typeface_key`：五个参考页的字面表由 `["Arial", "Arial Narrow", "SimSun", "仿宋", "宋体"]`
+  收敛为四条 `["Arial", "Arial Narrow", "FangSong", "SimSun"]`（`宋体` / `ËÎÌå` / `SimSun` 选同一个
+  文件，`仿宋` / `FangSong` 同理）—— 一个面被验证过，它的每个拼写都算验证过。
+- `style_witness` 88.22 s 通过：33 张干净 / 20 张带条目的读数不变。
+
+### 临时探针搬出 `cargo --all-targets`（2026-11-01）
+
+`pid-plot/examples/tmp_*.rs` 的 8 个文件让 `cargo clippy --all-targets -D warnings` 报 8 个错（死函数、
+`for_kv_map`、collapsible if）—— 根 `.gitignore` 的 `examples/tmp_*.rs` 只覆盖根目录，管不到
+`pid-plot/examples/`。移到 `pid-plot/scratch/` 并把该目录加进 `.gitignore`，`--all-targets` 回到 0。
+
+### 验证
+
+`cargo test -p pid-plot --locked` EXIT=0（lib 119，含新增的 `probe_only_lettering_asks_for_no_face`；
+11 个集成二进制全绿，含 `export_plant_backup` 90.65 s、`style_witness` 88.22 s）；
+`cargo clippy -p pid-plot --all-targets --locked -- -D warnings` 0；`cargo fmt --all -- --check` 0。
+
+### 填充轮廓不是一支笔：14 段笔宽差异清零，五道上限全为 0（2026-10-30）
+
+上一节把笔重一致数钉进对比门时，`I井场` 6、`分离器B` 7、`低温分离器A` 1 三段上限只能等于读数，
+当时的解释是「我方填充不描边，参考给轮廓压了 0.17 mm」。逐段指名后这条不成立。
+
+- `pid-plot/examples/probe_pen_width_sites.rs`（新增）复刻 `pen_pairs` 的配对规则，多印每段差异
+  属于哪条图元、参考在该处的全部宽度与最近 6 条线段。结果：13 段是模板 `/Sheet6` 填充的环边，
+  **我方在同一位置已经印了 0.17 mm 细线**（`.igr` 自己的成员线），参考那里也既填（`0.00`）又描
+  （`0.17`）；差异来自长度比 —— 参考的填充路径把那段曲线切成一条 0.61 mm 弦，我们的环切成
+  0.29 mm 两半，`0.47 < PEN_LENGTH_RATIO` 把两个孪生都拒掉，0.00 的轮廓落到更远的 0.17 描边上。
+  第 14 段是 `Diaphragm Actuator.sym` 的弧：0.22 mm 弦对 0.85 mm 弦，笔宽其实一致（双方 0.34），
+  差的是 0.18 mm 矢高。
+- `pid-plot/examples/probe_does_the_plotter_stroke_fills.rs`（新增）量清参考图的填充：890 条轮廓
+  描了 730 条（细 200 / 中 530），只填不描 160 条；反过来问，参考自己的描边有 11 782 道我方同笔
+  印出、20 道异笔、4 511 道未印（主要是字形轮廓）。所以**给 `Fill` 补描边是错的**：边界笔已由
+  成员线画出，再描一次是黑上压黑、线宽加倍，而且新画的 0.29 mm 描边长度比仍是 0.47，一样被拒。
+- `compare::pen_pairs` 改的是配对，不是笔表：填充轮廓（宽度 0）只比位置与大致方向
+  （`PEN_FILL_DOT` 0.95）；一条笔画若落在参考笔画的线上、且在它两端之间（垂距 `PEN_ON_MM`
+  0.08 mm），算同一条曲线的更细切分；候选宽度**已经相同**时垂距放宽到
+  `PEN_SAME_PEN_ON_MM` 0.20 mm —— 第三条只在同笔时生效，所以它只容忍切分位置，永不放宽笔宽。
+- 读数：**15 121 一致 / 14 差异 → 15 409 / 0**，未配对 2 117 → 1 843，配对总数 15 135 → 15 409，
+  没有一页下降。`plot_compare` 五道 `max_pen_differed` 全部为 **0**，下限改为
+  `8390 / 1196 / 1335 / 1619 / 2869`（`pen.differed > 0` 即失败，这是这道门最尖锐的形态）。
+- 四条新单测：填充轮廓与更长的参考轮廓配对；笔画是参考笔画子段时配对；同笔跨 0.18 mm 矢高配对而
+  异笔跨同样矢高**不配**（落进 `unpaired`）；正交相交的墨不算子段。
+- 验证：`cargo test -p pid-plot --lib`（118 passed）、`--test plot_compare`（30.8 s 通过）、
+  `cargo clippy -p pid-plot --all-targets -- -D warnings`、`cargo fmt --all -- --check` 全绿。
+
+### 对比门改为自己写页：写图器一改就响（2026-10-30）
+
+`five_drawings_hold_the_ratchet` 原先读盘上的 `plot/<name>.pdf`，那是 `write_five_drawings` 写下的
+成品。于是**写图器的改动进不了这道门**：把 `pen_width_mm` 的细/中档界抬到 0.40，内存复算读到
+9 395 一致 / 5 877 差异，而门照样全绿 —— 盘上的 PDF 是上一个版本写的。
+
+- 门改成从模型自己写出这一页：一次 `lay_out_drawing` × 5、一次 `prepare_fonts`、每页
+  `write_plot` 进内存再读回，其余断言一字未动。盘上的 `plot/*.pdf` 仍是交付物，由
+  `write_five_drawings` 写；这道门管的是**会写出它的那个写图器**。
+- 同一把刀再落一次：档界抬到 0.40 后门立刻失败，报
+  `I井场 … pen agreed 5087 < 8390 (3263 strokes now differ: 0.17 vs 0.00 mm x275, 0.17 vs 0.34 mm x2988)`，
+  随后复原、复跑通过（29.8 s）。耗时基本不变（30.8 s 对 30.9 s）：五页的写出远小于配对与排版的成本。
+
+### 笔重一致数进了对比门：五张参考页各自钉住（2026-10-30）
+### 笔重一致数进了对比门：五张参考页各自钉住（2026-10-30）
+
+上一节让报告说出了笔宽，这一节让门禁盯住它。一页可以把参考完全盖住、文字全配对，而每根线带着
+错的笔 —— 更重的笔落在同一条线上，覆盖率和多画量都不动，所以只有配对宽度能看见。这正是 305 段
+在 `body_stroke` 修好前一直沉默的原因：五个符号族把占位样式的 0.35 当成声明，几何一点没变。
+
+- `pid-plot/tests/plot_compare.rs` 的 `Baseline` 新增 `min_pen_agreed` / `max_pen_differed`，五张
+  页各自的下限与上限就是它的读数：`I井场` 8284 / 6、`分离器A` 1165 / 0、`分离器B` 1251 / 7、
+  `低温分离器A` 1594 / 1、`换热器CD` 2827 / 0。两个数是同一次测量的下限与上限，一根线换错笔就
+  从前者掉进后者，所以两道都会响。
+- 同一测试先查内部自洽再查棘轮：`paired == agreed + differed`、`pairs` 的 `strokes` 合计等于
+  `paired`、`!agrees()` 的合计等于 `differed`。失败信息直接列出差异清单
+  （`0.00 vs 0.17 mm x6`），不用再跑探针找原因。
+- 上限不等于 0 的三张（`I` 6、`B` 7、`低温分离器A` 1）当时记成「我方填充不描边，参考的轮廓线
+  压在 0.17 mm 上」。**这条已在上一节撤回**：我方在同一位置本来就有 0.17 mm，差异是长度比拒配。
+- 验证：把 `分离器A` 的下限抬到 1166、`I井场` 的上限压到 5 各跑一次，两条断言分别以
+  `pen agreed 1165 < 1166` 与 `pen differed 6 > 5 (0.9993): 0.00 vs 0.17 mm x6` 失败，随后复原；
+  复原后 `plot_compare` 通过（31.1 s），`fmt --check` 干净。
+
+### 笔宽配对收进对比报告：每张参考页都给出笔重一致数与差异清单（2026-10-30）
+
+`compare` 报告此前只管几何：墨在哪里、覆盖多少参考、文字配不配对得上。一页可以把参考完全盖住而
+每一根线带着错的笔。配对逻辑本来只在 `probe_pen_width_pairs` 里，打完就没了 —— 现在它是报告的
+一节。
+
+- `compare::CompareReport` 新增 `pen: PenReport`：`paired` / `agreed` / `differed` / `unpaired`，
+  加 `pairs: Vec<PenPair>`（`ours_centi_mm` / `reference_centi_mm` / `strokes`，按宽度升序）。
+  另一个入口 `compare_plots_with_model` 继承同一节，因为两者都走 `compare_plots_with_sources`。
+- `pid_plot_compare` 在覆盖行之后打印
+  `pen 8284/8290 agree (0.9993) 6 differ 929 unpaired`，再逐行列出不同的宽度对
+  （`ours 0.00 mm  reference 0.17 mm  6 strokes`），并写进 `<stem>.json`。
+- 配对规则与探针逐字一致（1 mm 窗口、方向余弦 0.99、长度比 0.5、短于 0.2 mm 的段不计），
+  所以读数不动：五张页合计仍为 **15 121 一致 / 14 差异 / 2 117 未配对**；
+  `probe_pen_width_pairs` 现在只打印报告的这一节，另保留一张「声明值 → 参考印刷值」表
+  （档界量的是声明值，不是页面计数）。
+- 单测：`a_thin_stroke_where_the_reference_printed_thick_is_a_pen_difference`、
+  `a_stroke_that_pairs_with_nothing_is_not_a_pen_verdict`（空页无笔况，`agreement` 读 1）、
+  `a_fill_outline_at_the_same_place_does_not_hide_the_reference_pen`（同一位置多条参考
+  线宽，任一条相同即一致）。`PenReport::agreement()` 在无配对时读 1，避免棘轮要求一页拥有它
+  本没有的墨。
+
+### `As Drawn` 不是一支笔：`Remarks` 等五个符号族改按体自备宽度画（2026-10-30）
+
+上一轮留下的问题是「`Remarks` 这个放置到底引用哪条线样式，为什么它算出来是 0.50 mm 而参考印细笔」。
+查清了它引用的是**占位样式**，不是条目样式：`igSymbol2d +25` 的 `style_ref` 在该图 `StyleCluster`
+里唯一命中的那条，librarian 给的名字是 `As Drawn`，而它的 id / 宽度 / 颜色每张图都不同 ——
+`I井场` 是 10 / 0.3500 / 黑、`烃水露点（二）` 是 9 / 0.3500 / 黑、其余三张是 40、46、63 / 0.5000 / 蓝。
+同图里的真条目样式从不这样动（`36` 永远橄榄 0.35 工艺、`39` 永远绿 0.35 仪表、`29` 永远暗红
+0.35 设备）。`body_stroke` 把这条占位值当成笔宽声明，于是 0.01 mm 的体被刷成中笔。
+
+- 新增 `model::as_drawn_style_ids`（按名字收集该图所有 `As Drawn` 记录）与 `body_stroke` 的
+  `as_drawn` 参数：放置命中占位样式 ⇒ 该样式**不声明笔**，体的自备宽度站住；颜色仍随放置。
+- 读数：`probe_pen_width_pairs` 由 14 817 一致 / 318 不一致（其中 305 段中笔↔细笔）变为
+  **15 121 一致 / 14 不一致**，配对总数 15 135 不变，一致只增不减。剩下的 14 段是 13 段填充
+  轮廓（我方填充不描边）加 1 段近邻误配，均与本条无关。
+- 命中的五个族 —— `Circle`、`Block`、`Remarks`、`Remarks Chinese_large`、`Item Note & Label` ——
+  体自备 0.01 mm（`Item Note` 为 0.13 mm），参考一律印 0.169 mm，改后逐段一致。
+  `Ball Valve Type 2.sym` 这类真条目样式（36）仍由放置的笔压过体，规则未被推翻。
+- **连带作废一条锚点**：`d625ec2` 的三支笔表中/粗档界曾引「0.50 mm 符号描边落在 0.96 pt」，
+  那批 0.50 mm 描边就是这条占位值，参考在它们身上印的是 0.48 pt。中/粗档界只剩 `0.35 印中、
+  0.70 印粗` 夹出的 **(0.35, 0.70)**，`pen_width_mm` 的 0.55 是区间内的选择而非测量；
+  `2026-10-17` 与 `2026-10-20` 两页已就地标注撤回。不可证集合因此多一条：`D04` 用 0.5000 mm
+  画的 24 段图内墨，`pid-plot/tests/style_witness.rs` 已重钉（八个未见证宽度、`0.3000 → 0/24`、
+  `0.5000 → 24/12`）。
+- 新探针 `probe_as_drawn_across_drawings`（五张图的 id/宽度/颜色）、`probe_symbol_body_pens`
+  （每族体自备宽度）、`probe_which_primitive_prints_thin`（谁画了参考笔不同的那几段）；
+  单测 `a_placement_naming_as_drawn_states_no_pen_so_the_body_keeps_its_own`。详见
+  `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`。
+
 ### 更正：`7f202e9` 的两次语料读数被写成同一个数，共享目录是 175 格字而非 225（2026-10-28）
 
 `7f202e9` 的提交信息末段写「the disk corpus in 97.11 s over 47 sheets wearing furniture and 225

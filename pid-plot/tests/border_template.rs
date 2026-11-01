@@ -306,6 +306,7 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
     let pdf = write_plot(&model, &fonts).unwrap_or_else(|error| panic!("write: {error}"));
@@ -555,6 +556,7 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
     let pdf = write_plot(&model, &fonts).unwrap_or_else(|error| panic!("write: {error}"));
@@ -798,6 +800,7 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
     let pdf = write_plot(&model, &fonts).unwrap_or_else(|error| panic!("write: {error}"));

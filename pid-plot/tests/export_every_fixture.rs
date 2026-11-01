@@ -68,6 +68,7 @@ fn every_fixture_drawing_exports_a_pdf() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
 

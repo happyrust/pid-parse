@@ -50,6 +50,7 @@ fn five_drawings_round_trip_through_pdf() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
     let plot_dir = corpus.join("plot");

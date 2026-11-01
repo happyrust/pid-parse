@@ -91,7 +91,7 @@ use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
 };
 use pid_plot::read::read_plot;
-use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_plot};
+use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
 fn corpus_dir() -> PathBuf {
@@ -155,7 +155,10 @@ fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
 /// than quietly drawing less.
 const KNOWN_LIBRARY_GAPS: [&str; 3] = [
     r"piping\specialty components\misc\pulsation damper.sym",
-    r"equipment\other equipment\wellhead christmas tree.sym",
+    // The library carries only the numbered variants of this name, so the
+    // report names them rather than picking one: `01` and `02` are different
+    // wellheads.
+    r"equipment\other equipment\wellhead christmas tree.sym (library carries only Wellhead Christmas Tree 01.sym, Wellhead Christmas Tree 02.sym)",
     r"instrumentation\off-line\without implied components\temperature\clone of tt-temperature transmitter(1).sym",
 ];
 
@@ -183,6 +186,17 @@ const EDGE_SLACK_MM: f64 = 0.5;
 /// sheet fails here rather than quietly taking the ink's own box, and a sheet
 /// that starts stating its page lowers this number deliberately.
 const DERIVED_PAGES: usize = 4;
+
+/// Runs the page cuts because the condensation floor cannot hold them.
+///
+/// A label the sheet cannot hold is condensed along its own direction until it
+/// fits; a run that would have to be squeezed below half width keeps its size
+/// and loses its tail to the page clip. That used to happen with nothing said
+/// about it, so a page whose labels all fitted and a page whose last glyphs
+/// went over the edge read the same. Pinned as an equality both ways round: a
+/// new clipped run is a defect to explain, and losing this one means the floor
+/// stopped being reached.
+const CLIPPED_AT_CONDENSATION_FLOOR: usize = 0;
 
 /// Sheets that carry a border template. A floor for the same reason
 /// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets — the 16 that
@@ -1237,10 +1251,13 @@ fn every_backup_drawing_exports_a_readable_page() {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
 
     let mut derived = 0usize;
+    let mut clipped_at_floor = 0usize;
+    let mut deepest_clip_mm = 0.0f64;
     let mut past_the_edge: Vec<String> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
@@ -1293,7 +1310,10 @@ fn every_backup_drawing_exports_a_readable_page() {
             model.missing_boxes
         );
 
-        let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let (pdf, audit) =
+            write_plot_audited(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        clipped_at_floor += audit.runs_clipped_at_the_condensation_floor;
+        deepest_clip_mm = deepest_clip_mm.max(audit.deepest_clip_mm);
         assert!(
             pdf.len() < PAGE_CEILING,
             "{name}: the page weighs {} bytes; the faces are not subset",
@@ -1359,6 +1379,18 @@ fn every_backup_drawing_exports_a_readable_page() {
         past_the_edge[0]
     );
     eprintln!("past the page: {}", past_the_edge[0]);
+    // Lettering the sheet cannot hold even at half width loses its tail to
+    // the page clip. The writer used to do that silently, so no one could tell
+    // a page whose labels all fit from one whose last glyphs were cut away.
+    assert_eq!(
+        clipped_at_floor, CLIPPED_AT_CONDENSATION_FLOOR,
+        "{clipped_at_floor} run(s) are cut by the page at the condensation floor \
+         (deepest {deepest_clip_mm:.3} mm past the edge); \
+         {CLIPPED_AT_CONDENSATION_FLOOR} were when this ratchet was set"
+    );
+    eprintln!(
+        "clipped at the condensation floor: {clipped_at_floor} run(s), deepest {deepest_clip_mm:.3} mm past the edge"
+    );
     eprintln!(
         "{} backup drawings exported, {} of them on a measured page, {} faces embedded",
         models.len(),

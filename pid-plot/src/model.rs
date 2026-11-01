@@ -15,6 +15,7 @@
 //! records ink over it, and the page reports which file it came from in
 //! [`PaperModel::template`].
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use pid_parse::refdata_archive::{
@@ -273,12 +274,8 @@ impl PaperModel {
         if !any {
             return None;
         }
-        for sheet in STANDARD_SHEETS_MM {
-            for page in [sheet, [sheet[1], sheet[0]]] {
-                if max_x <= page[0] + SHEET_FIT_SLACK_MM && max_y <= page[1] + SHEET_FIT_SLACK_MM {
-                    return Some(page);
-                }
-            }
+        if let Some(page) = standard_sheet_for([max_x, max_y]) {
+            return Some(page);
         }
         Some([max_x.ceil().max(1.0), max_y.ceil().max(1.0)])
     }
@@ -342,6 +339,39 @@ fn extent_points(shape: &PaperShape) -> Vec<[f64; 2]> {
         PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
         PaperShape::Text { origin_mm, .. } => vec![*origin_mm],
     }
+}
+
+/// The smallest [`STANDARD_SHEETS_MM`] sheet `max_mm` fits, either way up.
+///
+/// A sheet is chosen by the corner the ink is drawn up to, not by its extent:
+/// `max_mm` is the largest point the drawing reaches in each axis.
+fn standard_sheet_for(max_mm: [f64; 2]) -> Option<[f64; 2]> {
+    for sheet in STANDARD_SHEETS_MM {
+        for page in [sheet, [sheet[1], sheet[0]]] {
+            if max_mm[0] <= page[0] + SHEET_FIT_SLACK_MM
+                && max_mm[1] <= page[1] + SHEET_FIT_SLACK_MM
+            {
+                return Some(page);
+            }
+        }
+    }
+    None
+}
+
+/// The standard sheet this drawing's own plottable ink lands on.
+///
+/// Measured exactly as [`PaperModel::resolved_page_mm`] measures a page the
+/// drawing never states, but over the entities a plot actually draws: ink on a
+/// hidden layer reaches no sheet, so it may not push the sheet a size up and
+/// hand the page furniture of the wrong size. `None` for a drawing whose ink
+/// fits no standard sheet — only a template it names may bring furniture to a
+/// page that far off.
+fn plottable_sheet_mm(geometry: &NormalizedPidGeometry) -> Option<[f64; 2]> {
+    let [width_mm, height_mm] =
+        ink_extent_mm_where(geometry, |entity| !suppressed_from_plot(entity))?;
+    // A drawing is laid out from the sheet's own origin, so the ink's own box
+    // is also the corner it is drawn up to.
+    standard_sheet_for([width_mm.max(0.0), height_mm.max(0.0)])
 }
 
 /// A 30 mm square around a symbol the library did not draw.
@@ -915,6 +945,7 @@ pub fn lay_out_with_symbol_roots(
     let styles = pid_parse::style_link::text_styles_for_document(&doc);
     let line_styles = pid_parse::style_link::line_styles_for_document(&doc);
     let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
+    let as_drawn = as_drawn_style_ids(&doc);
     let geometry = build_normalized_geometry(&doc);
     let page_mm = geometry
         .page_dimensions_mm
@@ -939,20 +970,37 @@ pub fn lay_out_with_symbol_roots(
         .flat_map(|site| site.ole_links.iter().cloned())
         .collect();
     let package = drawing_package_dir(pid, corpus);
-    let furniture = page_mm.and_then(|page| {
+    let linked_prefixes = linked_template_prefixes(&linked_templates);
+    // A sheet that states no page is still placed on one — the smallest
+    // standard sheet its ink fits ([`PaperModel::resolved_page_mm`]) — but a
+    // *measured* page may not pick furniture on its own. `换热器CD`, one of the
+    // four sheets that state no page, is the one of them drawn on a reference
+    // plot, and that page carries no frame and no title block at all: an
+    // unnamed sheet whose box merely matches a template's extent does not wear
+    // it. A sheet that names its template has said which drawing it is, and
+    // that name is the ticket every templated sheet was picked on — `Q井场`
+    // links `CPECCHB-SQ-A1.igr` twice and its ink measures `841 × 594`, that
+    // template exactly, so it wears the frame its own file asks for.
+    let furniture_page = match page_mm {
+        Some(page) => Some(page),
+        None if linked_prefixes.is_empty() => None,
+        None => plottable_sheet_mm(&geometry),
+    };
+    let furniture = furniture_page.and_then(|page| {
         load_border_template(corpus, package.as_deref(), page, &linked_templates)
             .map(|furniture| (page, furniture))
     });
-    if page_mm.is_some() && furniture.is_none() {
+    if furniture_page.is_some() && furniture.is_none() {
         // A page that named a template and got none is missing furniture, not
         // a page that never asked for any: report the name that went
         // unanswered so the gap is readable rather than silent.
-        missing_templates = linked_template_prefixes(&linked_templates);
+        missing_templates = linked_prefixes;
     }
     if let Some((page, furniture)) = furniture {
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
+        let template_as_drawn = as_drawn_style_ids(&furniture.doc);
         let before = primitives.len();
         // One tally for the whole template, kept rather than dropped: which of
         // its placements had to be drawn from the cache, and which found
@@ -971,6 +1019,7 @@ pub fn lay_out_with_symbol_roots(
                     &furniture.geometry,
                     &mut symbols,
                     &template_lines,
+                    &template_as_drawn,
                     Some(page),
                     &mut furniture_placements,
                 );
@@ -1026,6 +1075,7 @@ pub fn lay_out_with_symbol_roots(
                 &geometry,
                 &mut symbols,
                 &line_styles,
+                &as_drawn,
                 page_mm,
                 &mut placements,
             ),
@@ -1096,12 +1146,18 @@ struct SymbolPlacements {
 /// (the templates' `C:\…\Temp\BLFH.sym` is long gone) — then the `.sym` the
 /// placement names, from the symbol library. A placement that finds neither
 /// leaves a box where it stood rather than disappearing.
+///
+/// The line-style index and the `As Drawn` set travel together because the pen
+/// a body draws with is decided from both at once; a struct holding them would
+/// be the deeper signature, and is not worth churning every call site for.
+#[allow(clippy::too_many_arguments)]
 fn push_symbol_instance(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
     geometry: &NormalizedPidGeometry,
     symbols: &mut SymbolLibrary,
     line_styles: &LineStyleIndex,
+    as_drawn_styles: &BTreeSet<u32>,
     page_mm: Option<[f64; 2]>,
     tally: &mut SymbolPlacements,
 ) {
@@ -1125,6 +1181,21 @@ fn push_symbol_instance(
     let name_gap = symbol_path
         .as_deref()
         .and_then(|path| symbols.name_miss(path));
+    // A name the library holds only numbered variants of is a data gap, not a
+    // path error: `Wellhead Christmas Tree 01` and `02` are different
+    // wellheads and neither of them is the bare name. Report the variants the
+    // placement could have meant; never pick one.
+    let numbered = match (symbol_path.as_deref(), &body) {
+        (Some(path), None) => symbols.numbered_siblings(path),
+        _ => Vec::new(),
+    };
+    let missing_name = |key: &str| -> String {
+        if numbered.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{key} (library carries only {})", numbered.join(", "))
+        }
+    };
     if symbol_path.is_some()
         && body.is_some()
         && let Some(key) = key.clone()
@@ -1138,6 +1209,8 @@ fn push_symbol_instance(
         symbol: symbol_path.clone(),
     };
     let placement_style = entity_style(entity, line_styles);
+    // A placement naming the drawing's `As Drawn` style states no pen.
+    let as_drawn = placement_style.is_some_and(|style| as_drawn_styles.contains(&style.style_id));
     let library_available = body.is_some();
     let before = out.len();
     let source = if let Some(definition) =
@@ -1147,7 +1220,7 @@ fn push_symbol_instance(
             && body.is_none()
             && let Some(key) = key.clone()
         {
-            tally.missing.insert(key);
+            tally.missing.insert(missing_name(&key));
         }
         for (primitive, body_style, lettering) in definition.visible_styled() {
             push_symbol_primitive(
@@ -1160,6 +1233,7 @@ fn push_symbol_instance(
                     lettering,
                 },
                 placement_style,
+                as_drawn,
                 page_mm,
             );
         }
@@ -1176,6 +1250,7 @@ fn push_symbol_instance(
                     lettering: styled.lettering.as_ref(),
                 },
                 placement_style,
+                as_drawn,
                 page_mm,
             );
         }
@@ -1185,7 +1260,7 @@ fn push_symbol_instance(
             tally
                 .missing_boxes
                 .push(missing_box(&key, [insertion.x, insertion.y]));
-            tally.missing.insert(key);
+            tally.missing.insert(missing_name(&key));
         }
         SymbolBodySource::Missing
     };
@@ -1587,6 +1662,14 @@ fn refdata_archive_files(corpus: &Path) -> Vec<PathBuf> {
 /// outermost ink, and a label that hangs a millimetre past it must not move the
 /// sheet it is being matched against.
 fn ink_extent_mm(geometry: &NormalizedPidGeometry) -> Option<[f64; 2]> {
+    ink_extent_mm_where(geometry, |_| true)
+}
+
+/// [`ink_extent_mm`], over the entities `keep` admits.
+fn ink_extent_mm_where(
+    geometry: &NormalizedPidGeometry,
+    keep: impl Fn(&PidGraphicEntity) -> bool,
+) -> Option<[f64; 2]> {
     let mut min = [f64::MAX; 2];
     let mut max = [f64::MIN; 2];
     let mut seen = false;
@@ -1599,7 +1682,7 @@ fn ink_extent_mm(geometry: &NormalizedPidGeometry) -> Option<[f64; 2]> {
             seen = true;
         }
     };
-    for entity in &geometry.entities {
+    for entity in geometry.entities.iter().filter(|entity| keep(entity)) {
         match &entity.kind {
             PidGraphicKind::Line { start, end } => {
                 take([start.x, start.y]);
@@ -1870,6 +1953,39 @@ fn symbol_key(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// The style ids the drawing's own librarian calls `As Drawn`.
+///
+/// `As Drawn` is not a pen. `SmartPlant` names one line style that way on every
+/// drawing and lets it drift: `0.35 mm` black on two of the five reference
+/// drawings, `0.50 mm` blue on the other three, and a different style id on
+/// each (`10`, `9`, `40`, `46`, `63`). A real item-class style never moves like
+/// that — `Primary Piping` stays olive at `0.35` and the instrument styles stay
+/// green at `0.18` wherever they appear. The record exists so an object can
+/// point at *some* line style; its width is the drawing's default, not a
+/// statement about the object, which is exactly what "as drawn" says: the
+/// object keeps the pen it was drawn with.
+///
+/// The reference plots confirm it on all five pages. Every placement naming
+/// this style prints at its body's width — `Circle.sym`, `Block.sym`,
+/// `Remarks.sym`, `Remarks Chinese_large.sym` and `Item Note & Label.sym`, whose
+/// bodies declare `0.01`–`0.13 mm` and which print at the `0.169 mm` pen — and
+/// every placement naming an item style prints at the placement's pen, agreeing
+/// with the reference on 14 324 strokes. See
+/// `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`.
+fn as_drawn_style_ids(doc: &PidDocument) -> BTreeSet<u32> {
+    doc.style_tables
+        .values()
+        .flat_map(|table| table.records())
+        .filter(|record| {
+            record
+                .name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("As Drawn"))
+        })
+        .map(|record| record.style_id)
+        .collect()
+}
+
 /// The resolved line style one entity's record asks for.
 fn entity_style<'a>(
     entity: &PidGraphicEntity,
@@ -1903,6 +2019,12 @@ fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
 /// the body's own; the dash falls back to the body's when the placement
 /// draws solid — the same rule OpenCADStudio applies.
 ///
+/// `as_drawn` is the one placement that names no pen at all: the drawing's
+/// `As Drawn` style (see [`as_drawn_style_ids`]). Its width is the drawing's
+/// default rather than a statement about the object, so the body's own pen
+/// stands — which is what the reference plots print for every mark placed
+/// under it.
+///
 /// The one exception is a placement width no pen could carry, which is a
 /// validation mark rather than a pen: `Q井场`'s globe valve is placed under
 /// `BandAid`, the 10 mm band `SmartPlant` paints over an object an engineer has
@@ -1914,22 +2036,26 @@ fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
 fn body_stroke(
     body_style: Option<&PrimitiveStyle>,
     placement_style: Option<&ResolvedLineStyle>,
+    as_drawn: bool,
 ) -> Option<PaperStroke> {
     if body_style.is_none() && placement_style.is_none() {
         return None;
     }
+    // The pen comes from the placement unless the placement names no pen —
+    // its style is the drawing's `As Drawn` placeholder.
+    let stated_pen = placement_style.filter(|_| !as_drawn);
     Some(PaperStroke {
         rgb: placement_style.map_or_else(
             || body_style.map_or([0, 0, 0], |style| style.rgb),
             |style| style.symbology.rgb(),
         ),
-        width_mm: placement_style
+        width_mm: stated_pen
             .filter(|style| carries_a_pen(style.symbology.width_mm()))
             .map_or_else(
                 || body_style.map_or(0.25, |style| style.width_mm),
                 |style| style.symbology.width_mm(),
             ),
-        dash_mm: placement_style
+        dash_mm: stated_pen
             .and_then(|style| style.dash.as_ref())
             .map(|dash| {
                 dash.segments_mm()
@@ -2493,6 +2619,7 @@ fn push_symbol_primitive(
     placement: &Placement,
     item: SymbolItem<'_>,
     placement_style: Option<&ResolvedLineStyle>,
+    as_drawn: bool,
     page_mm: Option<[f64; 2]>,
 ) {
     let primitive_shape = item.shape;
@@ -2643,7 +2770,7 @@ fn push_symbol_primitive(
                     out.push(primitive(
                         entity,
                         placement,
-                        body_stroke(body_style, placement_style),
+                        body_stroke(body_style, placement_style, as_drawn),
                         PaperShape::Line {
                             start_mm: pair[0],
                             end_mm: pair[1],
@@ -2658,7 +2785,7 @@ fn push_symbol_primitive(
         out.push(primitive(
             entity,
             placement,
-            body_stroke(body_style, placement_style),
+            body_stroke(body_style, placement_style, as_drawn),
             shape,
         ));
     }
@@ -3810,6 +3937,7 @@ mod tests {
             &placement(),
             plain_item(&shape),
             None,
+            false,
             None,
         );
         assert!(out.is_empty());
@@ -3830,6 +3958,7 @@ mod tests {
             &placement(),
             plain_item(&shape),
             None,
+            false,
             None,
         );
         assert!(out.is_empty());
@@ -3850,6 +3979,7 @@ mod tests {
             &placement(),
             plain_item(&shape),
             None,
+            false,
             None,
         );
         assert_eq!(out.len(), 1);
@@ -3904,6 +4034,7 @@ mod tests {
                 lettering: styled.lettering.as_ref(),
             },
             None,
+            false,
             None,
         );
         assert_eq!(out.len(), 1, "one label in the table: {out:?}");
@@ -3941,6 +4072,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -4054,6 +4186,7 @@ mod tests {
             &placement(),
             lettered_item(&shape, &lettering),
             None,
+            false,
             None,
         );
         assert_eq!(out.len(), 1);
@@ -4106,6 +4239,7 @@ mod tests {
             &mirrored_pi,
             lettered_item(&esd, &lettering),
             None,
+            false,
             None,
         );
         let PaperShape::Text {
@@ -4138,6 +4272,7 @@ mod tests {
             &mirrored_neg_half,
             lettered_item(&d_shape, &top_lettering),
             None,
+            false,
             None,
         );
         let PaperShape::Text { rotation, line, .. } = &out_vert[0].shape else {
@@ -4333,6 +4468,7 @@ mod tests {
             &stretched,
             plain_item(&circle),
             None,
+            false,
             None,
         );
         let PaperShape::Polyline {
@@ -4634,10 +4770,11 @@ mod tests {
         };
         // The valve's own pen: nothing placed, and every pen a placement can
         // carry, keeps the body's outline as the body draws it.
-        let plain = body_stroke(Some(&body), None).expect("a pen");
+        let plain = body_stroke(Some(&body), None, false).expect("a pen");
         assert!((plain.width_mm - 0.13).abs() < 1e-9);
         for pen in [0.13, 0.35, 0.70] {
-            let styled = body_stroke(Some(&body), Some(&placement_style(pen))).expect("a pen");
+            let styled =
+                body_stroke(Some(&body), Some(&placement_style(pen)), false).expect("a pen");
             assert!(
                 (styled.width_mm - pen).abs() < 1e-9,
                 "a placement's {pen} mm pen paints the body, not {} mm",
@@ -4647,7 +4784,8 @@ mod tests {
         }
         // `Q井场`'s globe valve is placed under `BandAid`: 10 mm of validation
         // band, which used to repaint a hairline valve with the thick pen.
-        let band_aid = body_stroke(Some(&body), Some(&placement_style(10.0))).expect("a pen");
+        let band_aid =
+            body_stroke(Some(&body), Some(&placement_style(10.0)), false).expect("a pen");
         assert!(
             (band_aid.width_mm - 0.13).abs() < 1e-9,
             "the band's 10 mm is a mark, so the body keeps its own pen ({}) mm",
@@ -4655,8 +4793,46 @@ mod tests {
         );
         // A body that states nothing falls back the same way a bare placement
         // does, so the mark still leaves a drawable pen behind it.
-        let bare = body_stroke(None, Some(&placement_style(10.0))).expect("a pen");
+        let bare = body_stroke(None, Some(&placement_style(10.0)), false).expect("a pen");
         assert!((bare.width_mm - 0.25).abs() < 1e-9, "{} mm", bare.width_mm);
+    }
+
+    #[test]
+    fn a_placement_naming_as_drawn_states_no_pen_so_the_body_keeps_its_own() {
+        // The five drawings' `As Drawn` records drift: `0.35 mm` black on two,
+        // `0.50 mm` blue on three. A mark placed under one prints at its body's
+        // width on every reference plot, so the record is a placeholder and
+        // never a pen.
+        let circle = PrimitiveStyle {
+            rgb: [0, 0, 0],
+            width_mm: 0.01,
+            dash_mm: Vec::new(),
+        };
+        for placeholder_pen in [0.35, 0.50] {
+            let stroke = body_stroke(Some(&circle), Some(&placement_style(placeholder_pen)), true)
+                .expect("a pen");
+            assert!(
+                (stroke.width_mm - 0.01).abs() < 1e-9,
+                "`As Drawn`'s {placeholder_pen} mm is a placeholder, not a pen: {} mm",
+                stroke.width_mm
+            );
+        }
+        // The colour is still the placement's — that palette is what
+        // `SmartPlant` paints on screen, and this plot inks every colour black.
+        let blue = body_stroke(Some(&circle), Some(&placement_style(0.50)), true).expect("a pen");
+        assert_eq!(blue.rgb, [255, 167, 119], "the screen palette stands");
+        // A body that states nothing still leaves a drawable pen behind it.
+        let bare = body_stroke(None, Some(&placement_style(0.50)), true).expect("a pen");
+        assert!((bare.width_mm - 0.25).abs() < 1e-9, "{} mm", bare.width_mm);
+        // The same placement under a real item style keeps painting the body:
+        // the rule is about the name, not about the width it happens to store.
+        let styled =
+            body_stroke(Some(&circle), Some(&placement_style(0.35)), false).expect("a pen");
+        assert!(
+            (styled.width_mm - 0.35).abs() < 1e-9,
+            "{} mm",
+            styled.width_mm
+        );
     }
 
     #[test]
