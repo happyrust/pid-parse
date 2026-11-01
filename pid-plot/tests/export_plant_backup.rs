@@ -206,7 +206,12 @@ const CLIPPED_AT_CONDENSATION_FLOOR: usize = 0;
 /// The last two are `1200td` and `N井场`: both name their template in a `.PID`
 /// link and state a page 2.09 / 2.46–2.71 mm larger than it, so the pick keeps
 /// them on the name's 10 mm window rather than the 2 mm an unnamed sheet gets.
-const TEMPLATED_SHEETS: usize = 49;
+///
+/// The 50th is `Q井场`: it states no page at all, so it reaches the pick through
+/// neither branch above — it names `CPECCH~3.IGR` and gets the sheet its own
+/// inked extent lands on, which is CCHB's A1. `换热器CD` states no page either
+/// and names nothing, so it stays bare, as its reference plot is.
+const TEMPLATED_SHEETS: usize = 50;
 
 /// One symbol a pinned template places, as the `.igr` states it: the file name
 /// the placement stores and the point it sits at, in paper millimetres.
