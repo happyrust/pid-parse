@@ -180,7 +180,7 @@ pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>,
 
 /// What the writer had to do because the sheet ends, not because the drawing
 /// says so.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotAudit {
     /// Runs condensed all the way to [`MIN_CONDENSE`] that still run past the
     /// sheet edge, so the page clip takes their tail.
@@ -194,6 +194,27 @@ pub struct PlotAudit {
     pub runs_clipped_at_the_condensation_floor: usize,
     /// How far past the edge the worst of those runs reaches, in millimetres.
     pub deepest_clip_mm: f64,
+    /// Runs the sheet had no room for at the width the drawing set, so they
+    /// were condensed along their own direction until they fitted.
+    ///
+    /// This was silent until now: a run squeezed to 0.8 is still legible, so
+    /// nothing said it happened, and no one could answer whether a sheet held
+    /// any. The size is not touched — glyphs keep their height and only the
+    /// advance shrinks — so [`Self::smallest_condense`] is how far that went.
+    pub runs_condensed: usize,
+    /// The smallest condensation applied to any run; `1.0` when none was.
+    pub smallest_condense: f64,
+}
+
+impl Default for PlotAudit {
+    fn default() -> Self {
+        Self {
+            runs_clipped_at_the_condensation_floor: 0,
+            deepest_clip_mm: 0.0,
+            runs_condensed: 0,
+            smallest_condense: 1.0,
+        }
+    }
 }
 
 /// Write `model` to PDF bytes and report what the sheet edge decided.
@@ -956,6 +977,10 @@ fn show_text(
         let reach = page_reach_mm(start, [cos, sin], page);
         if reach > 0.0 && laid_out_mm > reach {
             condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
+            if condense < 1.0 {
+                audit.runs_condensed += 1;
+                audit.smallest_condense = audit.smallest_condense.min(condense);
+            }
             // Even half width leaves it hanging over the edge, so the page
             // clip takes the tail. Said out loud in [`PlotAudit`]: a run whose
             // last glyphs are off the sheet is a defect of the page, and the

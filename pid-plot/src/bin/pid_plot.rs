@@ -92,6 +92,13 @@ fn main() -> ExitCode {
         "text_clipped_at_condensation_floor {} deepest_clip_mm {:.3}",
         audit.runs_clipped_at_the_condensation_floor, audit.deepest_clip_mm
     );
+    // A run the sheet cannot hold at its set width is condensed instead of
+    // clipped wherever it can fit that way, which draws the label narrower than
+    // the drawing asked — printed for the same reason, zero included.
+    println!(
+        "text_condensed {} smallest_condense {:.3}",
+        audit.runs_condensed, audit.smallest_condense
+    );
     ExitCode::SUCCESS
 }
 

@@ -198,6 +198,15 @@ const DERIVED_PAGES: usize = 4;
 /// stopped being reached.
 const CLIPPED_AT_CONDENSATION_FLOOR: usize = 0;
 
+/// Runs condensed, rather than clipped, to stay on the page.
+///
+/// A label wider than the room left on its sheet is squeezed along its own
+/// direction until it fits, which keeps every glyph but draws the run narrower
+/// than the drawing set it. Nothing said so before, so a page that never
+/// squeezed a run and one that squeezed one to 0.7 read the same. Pinned as an
+/// equality both ways round.
+const CONDENSED_RUNS: usize = 0;
+
 /// Sheets that carry a border template. A floor for the same reason
 /// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets — the 16 that
 /// sat on none until the backup's own `RefData~4~682.zip`, whose templates the
@@ -1263,6 +1272,8 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut derived = 0usize;
     let mut clipped_at_floor = 0usize;
     let mut deepest_clip_mm = 0.0f64;
+    let mut condensed = 0usize;
+    let mut smallest_condense = 1.0f64;
     let mut past_the_edge: Vec<String> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
@@ -1319,6 +1330,8 @@ fn every_backup_drawing_exports_a_readable_page() {
             write_plot_audited(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         clipped_at_floor += audit.runs_clipped_at_the_condensation_floor;
         deepest_clip_mm = deepest_clip_mm.max(audit.deepest_clip_mm);
+        condensed += audit.runs_condensed;
+        smallest_condense = smallest_condense.min(audit.smallest_condense);
         assert!(
             pdf.len() < PAGE_CEILING,
             "{name}: the page weighs {} bytes; the faces are not subset",
@@ -1396,6 +1409,11 @@ fn every_backup_drawing_exports_a_readable_page() {
     eprintln!(
         "clipped at the condensation floor: {clipped_at_floor} run(s), deepest {deepest_clip_mm:.3} mm past the edge"
     );
+    assert_eq!(
+        condensed, CONDENSED_RUNS,
+        "{condensed} run(s) were condensed to stay on the page (smallest scale          {smallest_condense:.3}); {CONDENSED_RUNS} did when this ratchet was set"
+    );
+    eprintln!("condensed to fit: {condensed} run(s), smallest scale {smallest_condense:.3}");
     eprintln!(
         "{} backup drawings exported, {} of them on a measured page, {} faces embedded",
         models.len(),

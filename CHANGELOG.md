@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### 被页边压窄的标签现在会说出来（2026-11-01）
+
+`show_text` 对放不下的 run 一直有两条路：沿自身方向压窄到能进页，或压到 `MIN_CONDENSE`（0.5）
+仍出页就把尾巴交给页裁剪。第二条早就记账（`runs_clipped_at_the_condensation_floor` /
+`deepest_clip_mm`），**第一条完全静默** —— 一个被压到 0.7 的标签画出来比图纸窄 30 %，而页面上
+和命令行里都没有一个字，于是「一次没压过」和「压到 0.86」两类页读起来一模一样。
+
+- `PlotAudit` 加两字段：`runs_condensed` 与 `smallest_condense`（没压过是 `1.0`）。因此 `Default`
+  改成手写 —— derive 会给 `0.0`，把「一条没压」读成「压到 0」。
+- `pid_plot` 每次导出都打印 `text_condensed <n> smallest_condense <x>`，0 也打印，与既有的
+  `text_clipped_at_condensation_floor` 同规矩。
+- `export_plant_backup` 钉成等式 `CONDENSED_RUNS = 0`：整厂 **53 张 / 60 张图 0 条**被压窄。
+  另 10 张（`test-file` 5 + 语料 5）逐张导出复核，同样 0 条、`smallest_condense 1.000`。
+  读数而不是信念：这批图上没有一个标签比它的位置更宽，压窄那条路至今没被走过。
+
 ### 没声明页幅的页：点名才穿图框，量出来的纸幅自己不作主（2026-11-01）
 
 整厂 53 张里 `D井场`、`Q井场`、`换热器CD`、`集注站 凝析油一级闪蒸分离器B` 四张**根本没声明页幅**，
