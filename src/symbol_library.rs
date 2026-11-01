@@ -1792,6 +1792,59 @@ impl SymbolLibrary {
         (!unique).then_some(NameMiss::NotUnique)
     }
 
+    /// File names this library carries that are numbered variants of the name
+    /// `symbol_path` states.
+    ///
+    /// `Wellhead Christmas Tree` names no file, but the backup's
+    /// `RefData~4~681.zip` carries `Wellhead Christmas Tree 01` and `02`.
+    /// Returning those names is what turns a naming gap into a readable fact.
+    /// They are **never** substituted, though: `01` and `02` are different
+    /// wellheads, and picking one would draw the wrong symbol on the sheet. A
+    /// path naming no `.sym`, or a name with no numbered siblings, gets an
+    /// empty list.
+    ///
+    /// The index is built here if no lookup needed it yet.
+    #[must_use]
+    pub fn numbered_siblings(&mut self, symbol_path: &str) -> Vec<String> {
+        let Some(name) = symbol_file_name(symbol_path) else {
+            return Vec::new();
+        };
+        let Some(stem) = name.strip_suffix(".sym").map(str::to_ascii_lowercase) else {
+            return Vec::new();
+        };
+        self.index_by_name();
+        let Some(index) = self.by_name.as_ref() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (lower_name, matches) in index {
+            let Some(lower_stem) = lower_name.strip_suffix(".sym") else {
+                continue;
+            };
+            let Some(rest) = lower_stem.strip_prefix(&stem) else {
+                continue;
+            };
+            // `Name 01`, `Name 1`, `Name(1)`, `Name-1`: the stem, then a
+            // separator, then digits, and nothing else.
+            let digits = rest
+                .trim_start_matches([' ', '(', '-', '_'])
+                .trim_end_matches(')')
+                .trim();
+            if rest.is_empty() || digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let file = matches
+                .first()
+                .and_then(|(_, relative)| relative.rsplit('/').next());
+            if let Some(file) = file {
+                found.push(file.to_owned());
+            }
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
+
     /// Map every `.sym` in the roots and archives by file name, once.
     ///
     /// Archives are indexed after the directories, so a name a directory and
@@ -1994,6 +2047,37 @@ mod tests {
     }
 
     const CIRCLE_UNC: &str = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
+
+    /// A bare name the library holds only numbered variants of is reported,
+    /// never substituted: `01` and `02` are different wellheads.
+    #[test]
+    fn a_bare_name_is_not_replaced_by_a_numbered_variant() {
+        let root = std::env::temp_dir().join(format!("pid-symbol-variants-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Equipment")).expect("create scratch root");
+        for name in [
+            "Wellhead Christmas Tree 01.sym",
+            "Wellhead Christmas Tree 02.sym",
+        ] {
+            std::fs::write(root.join("Equipment").join(name), b"").expect("write scratch symbol");
+        }
+        let shared =
+            r"\MM-128\PID_SQProject\SQPlant\Ref\Symbols\Equipment\Wellhead Christmas Tree.sym";
+        let mut library = SymbolLibrary::new(&root);
+        assert!(
+            library.resolve(shared).is_none(),
+            "a bare name has no body of its own"
+        );
+        assert_eq!(
+            library.numbered_siblings(shared),
+            [
+                "Wellhead Christmas Tree 01.sym",
+                "Wellhead Christmas Tree 02.sym"
+            ],
+            "the numbered variants are reported, not picked from"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn library_relative_path_strips_every_site_prefix() {
