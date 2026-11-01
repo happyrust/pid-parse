@@ -40,8 +40,6 @@ use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextLine};
 use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
-/// The pen a stroke with no resolved style falls back to.
-const STROKE_MM: f64 = 0.25;
 /// Body size for symbol text whose source record does not carry one.
 pub const DEFAULT_TEXT_MM: f64 = 2.5;
 
@@ -73,6 +71,16 @@ fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
 const PEN_THIN_MM: f64 = 0.169;
 const PEN_MID_MM: f64 = 0.339;
 const PEN_THICK_MM: f64 = 0.678;
+
+/// The pen a stroke with no resolved style falls back to.
+///
+/// It is the mid pen itself, not a width beside it. A page states its default
+/// pen once, before any stroke, and a viewer or a compare pass reads that
+/// statement as one of the page's widths: a default outside the three makes
+/// every page claim a fourth pen the reference plotter never carries. The
+/// resolved path already sends a width it cannot use to the mid pen
+/// ([`pen_width_mm`]); a stroke with no style at all lands on the same one.
+const STROKE_MM: f64 = PEN_MID_MM;
 
 /// Snap a declared stroke width onto the plot's three pens.
 ///
@@ -1282,7 +1290,10 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShownText, plotted_size_pt, text_segments, write_plot};
+    use super::{
+        PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, STROKE_MM, ShownText, pen_width_mm, plotted_size_pt,
+        text_segments, write_plot,
+    };
     use crate::model::{
         PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
     };
@@ -2133,6 +2144,24 @@ mod tests {
         let pdf = write_plot(&model, &[]).expect("no run letters, so no face is needed");
         let ink = read_plot(&pdf).expect("read");
         assert!(ink.spans.is_empty(), "{:?}", ink.spans);
+    }
+
+    /// The page's default pen is one of the three the reference plotter used.
+    ///
+    /// The writer states a `w` once per page before any stroke, and the compare
+    /// side reads those statements as the page's pen vocabulary. Every page
+    /// used to announce `0.25 mm` there — a fourth width no reference page
+    /// carries — even though the next stroke always overrode it.
+    #[test]
+    fn the_page_default_pen_is_one_of_the_three() {
+        for pen in [PEN_THIN_MM, PEN_MID_MM, PEN_THICK_MM] {
+            assert_eq!(pen_width_mm(pen), pen, "a table pen must survive the snap");
+        }
+        assert_eq!(
+            pen_width_mm(STROKE_MM),
+            STROKE_MM,
+            "the default pen is a width the table does not carry"
+        );
     }
 
     fn anchor_row(anchor: TextAnchor) -> u8 {
