@@ -101,6 +101,22 @@ fn main() -> ExitCode {
         report.fit.within_threshold,
         report.fit.finding.unwrap_or_default()
     );
+    println!(
+        "pen {}/{} agree ({:.4}) {} differ {} unpaired",
+        report.pen.agreed,
+        report.pen.paired,
+        report.pen.agreement(),
+        report.pen.differed,
+        report.pen.unpaired
+    );
+    for pair in report.pen.differences() {
+        println!(
+            "  ours {:>5.2} mm  reference {:>5.2} mm  {:>5} strokes",
+            pair.ours_mm(),
+            pair.reference_mm(),
+            pair.strokes
+        );
+    }
     for class in &report.text_offsets {
         println!(
             "  {:<20} n {:>4}  along {:+.3}  down {:+.3}  width {:+.3}  max {:.2} mm",

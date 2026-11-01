@@ -78,9 +78,15 @@ const PEN_THICK_MM: f64 = 0.678;
 ///
 /// A `.pid` declares its widths on the ISO 128 ladder — 0.13 / 0.18 / 0.35 /
 /// 0.70 mm on the I drawing — and plotting those literally gives four widths
-/// where every reference page has three. The boundaries are the measured
-/// anchors: the title block's 0.25 mm rules print thin, a 0.50 mm symbol
-/// stroke prints mid, and a 0.70 mm process main prints thick.
+/// where every reference page has three. The boundaries are measured, and they
+/// are intervals rather than values: the title block's 0.25 mm rules print thin
+/// while 0.35 mm symbol strokes print mid, so the thin/mid boundary lies inside
+/// `(0.25, 0.35)`; 0.70 mm process mains print thick, so the mid/thick boundary
+/// lies inside `(0.35, 0.70)`. No reference page prints ink that declares a
+/// width between 0.35 and 0.70 — the 0.50 mm strokes this table used to cite as
+/// a mid-pen anchor were the drawing's `As Drawn` placeholder, which prints
+/// *thin* (see `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`) — so the
+/// 0.55 mm threshold below is a choice inside that interval, not a measurement.
 ///
 /// A width that is not finite or not positive falls back to the mid pen, which
 /// is what an unresolved style draws with.
@@ -120,8 +126,14 @@ pub fn carries_a_pen(declared_mm: f64) -> bool {
 pub struct PlotFont<'a> {
     /// Canonical name from [`typeface_key`]. Empty means last resort only.
     pub key: &'a str,
-    /// Static TrueType or OpenType bytes.
+    /// Static TrueType or OpenType bytes, whole or subset.
     pub bytes: &'a [u8],
+    /// Whether `bytes` is a subset of the face's file rather than the file.
+    ///
+    /// ISO 32000-1 §9.6.4 requires a subset's `BaseFont` and `FontName` to be
+    /// `ABCDEF+Name`, and a whole program's names to carry no such tag; the
+    /// writer can only honour that if it is told which one it was handed.
+    pub subset: bool,
 }
 
 /// Why a paper model could not be written.
@@ -151,7 +163,36 @@ impl std::fmt::Display for PlotWriteError {
 impl std::error::Error for PlotWriteError {}
 
 /// Write `model` to PDF bytes, setting each run in the matching face.
+///
+/// What the sheet's edge, rather than the drawing, decided is
+/// [`write_plot_audited`]'s answer; this drops it.
 pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>, PlotWriteError> {
+    write_plot_audited(model, fonts).map(|(pdf, _)| pdf)
+}
+
+/// What the writer had to do because the sheet ends, not because the drawing
+/// says so.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlotAudit {
+    /// Runs condensed all the way to [`MIN_CONDENSE`] that still run past the
+    /// sheet edge, so the page clip takes their tail.
+    ///
+    /// This count used to be invisible: a label longer than the sheet was
+    /// squeezed to half width and then lost whatever still spilled, and
+    /// nothing in the PDF or in the export's output said which runs they
+    /// were. Half is the floor because a run squashed further is not a label
+    /// any more — but a non-zero count is a page whose lettering is not all
+    /// on the sheet, and that is a fact the export owes its caller.
+    pub runs_clipped_at_the_condensation_floor: usize,
+    /// How far past the edge the worst of those runs reaches, in millimetres.
+    pub deepest_clip_mm: f64,
+}
+
+/// Write `model` to PDF bytes and report what the sheet edge decided.
+pub fn write_plot_audited(
+    model: &PaperModel,
+    fonts: &[PlotFont<'_>],
+) -> Result<(Vec<u8>, PlotAudit), PlotWriteError> {
     // A drawing can hold no lettering at all: `D03` in the plant backup is a
     // template with zero primitives, so `prepare_fonts` loads nothing. The
     // page still writes; only a run that needs a face without one is fatal.
@@ -178,6 +219,14 @@ pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>,
             .ok_or_else(|| {
                 PlotWriteError::Font("embedded font is missing from the resource dict".into())
             })?;
+        if font.subset {
+            let Object::Ref(reference) = &font_ref else {
+                return Err(PlotWriteError::Font(
+                    "embedded font is not a reference".into(),
+                ));
+            };
+            declare_subset(&mut doc, *reference, &family, font.bytes)?;
+        }
         let font_dict = doc
             .dict(&font_ref)
             .ok_or_else(|| PlotWriteError::Font("embedded font is not a dictionary".into()))?;
@@ -210,9 +259,14 @@ pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>,
     .map_err(|error| PlotWriteError::Save(error.to_string()))?;
 
     let mut ops = Vec::new();
+    let mut audit = PlotAudit::default();
     let page = [page_w, page_h];
-    push_layer(&mut ops, model, &fonts, "decoded", "Decoded", page)?;
-    push_layer(&mut ops, model, &fonts, "inferred", "Inferred", page)?;
+    push_layer(
+        &mut ops, model, &fonts, "decoded", "Decoded", page, &mut audit,
+    )?;
+    push_layer(
+        &mut ops, model, &fonts, "inferred", "Inferred", page, &mut audit,
+    )?;
 
     let contents = doc.add(Object::Stream(Stream::flate(
         Dict::new(),
@@ -253,8 +307,83 @@ pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>,
     })
     .map_err(|error| PlotWriteError::Save(error.to_string()))?;
 
-    pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
-        .map_err(|error| PlotWriteError::Save(error.to_string()))
+    let pdf = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
+        .map_err(|error| PlotWriteError::Save(error.to_string()))?;
+    Ok((pdf, audit))
+}
+
+/// Declare an embedded program a subset in the PDF's own names.
+///
+/// ISO 32000-1 §9.6.4: "For a font subset, the PostScript name of the font —
+/// the value of the `BaseFont` entry and the font descriptor's `FontName`
+/// entry — shall begin with a tag followed by a plus sign", the tag being six
+/// upper-case letters. `pdfcraft`'s embedder writes the family name it was
+/// given into all three places, so the page said `Arial` about a two-glyph
+/// program and `pdffonts` reported `sub no` for every face on the sheet.
+///
+/// The tag is derived from the program, so the same subset always carries the
+/// same tag and two subsets of one face never share one.
+fn declare_subset(
+    doc: &mut Document,
+    font: pdfcraft_cos::ObjRef,
+    family: &str,
+    bytes: &[u8],
+) -> Result<(), PlotWriteError> {
+    let tagged = format!("{}+{family}", subset_tag(bytes));
+    let Some(top) = doc.dict(&Object::Ref(font)) else {
+        return Err(PlotWriteError::Font(
+            "embedded font is not a dictionary".into(),
+        ));
+    };
+    // A composite face names the program's own CIDFont as a descendant; a
+    // simple one carries its descriptor directly. Both spell `BaseFont`, and
+    // the descriptor spells `FontName`.
+    let mut targets: Vec<(pdfcraft_cos::ObjRef, &'static [u8])> = vec![(font, b"BaseFont")];
+    let descendant = match top.get(b"DescendantFonts") {
+        Some(Object::Array(kids)) => kids.first().and_then(|kid| match kid {
+            Object::Ref(child) => Some(*child),
+            _ => None,
+        }),
+        _ => None,
+    };
+    if let Some(cid) = descendant {
+        if let Some(Object::Ref(descriptor)) = doc
+            .dict(&Object::Ref(cid))
+            .and_then(|dict| dict.get(b"FontDescriptor").cloned())
+        {
+            targets.push((descriptor, b"FontName"));
+        }
+        targets.push((cid, b"BaseFont"));
+    } else if let Some(Object::Ref(descriptor)) = top.get(b"FontDescriptor").cloned() {
+        targets.push((descriptor, b"FontName"));
+    }
+    for (target, key) in targets {
+        doc.update_dict(target, |dict| {
+            dict.set(key.to_vec(), Object::name(&tagged));
+        })
+        .map_err(|error| PlotWriteError::Save(error.to_string()))?;
+    }
+    Ok(())
+}
+
+/// The six upper-case letters ISO 32000-1 §9.6.4 asks a subset tag to be.
+///
+/// FNV-1a over the program: deterministic for the same bytes, different for a
+/// different subset, and free of the allocation and dependency a random tag
+/// would need — a plot has to be byte-identical between two runs of the same
+/// export.
+fn subset_tag(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let mut tag = String::with_capacity(6);
+    for shift in 0..6 {
+        let letter = b'A' + ((hash >> (shift * 5)) % 26) as u8;
+        tag.push(char::from(letter));
+    }
+    tag
 }
 
 fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
@@ -271,11 +400,27 @@ fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
 /// either.
 fn has_inked_text(model: &PaperModel) -> bool {
     model.primitives.iter().any(|primitive| {
-        matches!(
-            &primitive.shape,
-            PaperShape::Text { value, .. } if !value.trim().is_empty()
-        )
+        is_plotted(primitive.confidence)
+            && matches!(
+                &primitive.shape,
+                PaperShape::Text { value, .. } if !value.trim().is_empty()
+            )
     })
+}
+
+/// Whether a primitive's confidence puts it on the page.
+///
+/// Two layers are painted — `decoded` and `inferred` — and `ProbeOnly` is not:
+/// its byte provenance is sound but no reading of its bytes is, so it carries
+/// no position and draws nothing. Everything downstream of "what the page
+/// holds" has to use this one predicate, or a record that draws nothing still
+/// asks the export for a typeface: `0x0030` `JStyleOverride` lettering is
+/// `ProbeOnly`, and a page whose only Han characters came from one of those
+/// used to make [`crate::fonts::prepare_fonts`] load and embed a face the page
+/// never drew.
+#[must_use]
+pub fn is_plotted(confidence: &str) -> bool {
+    confidence == "decoded" || confidence == "inferred"
 }
 
 fn pages_ref(doc: &Document) -> Result<pdfcraft_cos::ObjRef, PlotWriteError> {
@@ -304,6 +449,7 @@ fn push_layer(
     confidence: &str,
     property: &str,
     page: [f64; 2],
+    audit: &mut PlotAudit,
 ) -> Result<(), PlotWriteError> {
     let primitives: Vec<_> = model
         .primitives
@@ -360,6 +506,7 @@ fn push_layer(
                     furniture: primitive.furniture,
                 },
                 page,
+                audit,
             )?;
         }
     }
@@ -737,6 +884,7 @@ fn show_text(
     faces: &[ReadyFace<'_>],
     text: ShownText<'_>,
     page: [f64; 2],
+    audit: &mut PlotAudit,
 ) -> Result<(), PlotWriteError> {
     if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
         return Ok(());
@@ -800,6 +948,15 @@ fn show_text(
         let reach = page_reach_mm(start, [cos, sin], page);
         if reach > 0.0 && laid_out_mm > reach {
             condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
+            // Even half width leaves it hanging over the edge, so the page
+            // clip takes the tail. Said out loud in [`PlotAudit`]: a run whose
+            // last glyphs are off the sheet is a defect of the page, and the
+            // PDF alone cannot tell anyone it happened.
+            let held_mm = laid_out_mm * MIN_CONDENSE;
+            if held_mm > reach {
+                audit.runs_clipped_at_the_condensation_floor += 1;
+                audit.deepest_clip_mm = audit.deepest_clip_mm.max(held_mm - reach);
+            }
         }
     }
     let scale = plate * condense;
@@ -1266,6 +1423,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1436,6 +1594,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1628,6 +1787,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1693,6 +1853,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1760,6 +1921,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1884,6 +2046,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -1925,6 +2088,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");
@@ -2016,6 +2180,7 @@ mod tests {
             &[PlotFont {
                 key: "",
                 bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
             }],
         )
         .expect("write");

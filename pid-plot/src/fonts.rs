@@ -20,8 +20,15 @@ use crate::model::{PaperModel, PaperShape};
 pub struct PreparedFont {
     /// Canonical typeface name, such as `SimSun` or `Arial Narrow`.
     pub key: String,
-    /// The font file's complete bytes.
+    /// The program to embed: the file itself, or `fontcull`'s subset of it.
     pub bytes: Vec<u8>,
+    /// Whether `bytes` is a subset rather than the whole file.
+    ///
+    /// A subset has to say so in the PDF's own names — ISO 32000-1 §9.6.4
+    /// wants `ABCDEF+Name` on both `BaseFont` and `FontName` — while a whole
+    /// file must not wear a tag it has not earned. The writer needs the fact,
+    /// not a guess at it from the bytes.
+    pub subset: bool,
 }
 
 /// Which face a run should use.
@@ -87,6 +94,9 @@ pub fn prepare_fonts(
     let mut wanted: BTreeMap<&'static str, String> = BTreeMap::new();
     for model in models {
         for primitive in &model.primitives {
+            if !crate::write::is_plotted(primitive.confidence) {
+                continue;
+            }
             let PaperShape::Text { value, font, .. } = &primitive.shape else {
                 continue;
             };
@@ -102,7 +112,7 @@ pub fn prepare_fonts(
     let mut faces: Vec<PreparedFont> = Vec::new();
     let mut covered = String::new();
     for (key, text) in &wanted {
-        let bytes = load_face(dirs, key, text)?;
+        let (bytes, subset) = load_face(dirs, key, text)?;
         for ch in text.chars() {
             let mut buf = [0u8; 4];
             if pdfcraft_fonts::embedding::covers(&bytes, ch.encode_utf8(&mut buf)) {
@@ -112,6 +122,7 @@ pub fn prepare_fonts(
         faces.push(PreparedFont {
             key: (*key).to_string(),
             bytes,
+            subset,
         });
     }
     // A run inside a label may name a face the label's own style does not —
@@ -125,6 +136,9 @@ pub fn prepare_fonts(
     let mut run_faces: BTreeMap<&'static str, String> = BTreeMap::new();
     for model in models {
         for primitive in &model.primitives {
+            if !crate::write::is_plotted(primitive.confidence) {
+                continue;
+            }
             let PaperShape::Text { value, spans, .. } = &primitive.shape else {
                 continue;
             };
@@ -149,12 +163,13 @@ pub fn prepare_fonts(
         let Some(bytes) = face_file(dirs, key)? else {
             continue;
         };
-        let Ok(bytes) = subset_or_whole(key, &bytes, text) else {
+        let Ok((bytes, subset)) = subset_or_whole(key, &bytes, text) else {
             continue;
         };
         faces.push(PreparedFont {
             key: (*key).to_string(),
             bytes,
+            subset,
         });
     }
     // A character no named face covers borrows a CJK fallback.
@@ -164,7 +179,6 @@ pub fn prepare_fonts(
         .filter(|ch| !covered.contains(*ch) && !ch.is_whitespace())
         .collect();
     if !uncovered.is_empty() {
-        let fallback_text: String = uncovered.iter().collect();
         for fallback in ["FangSong", "SimSun"] {
             let still: Vec<char> = uncovered
                 .iter()
@@ -174,12 +188,28 @@ pub fn prepare_fonts(
             if still.is_empty() {
                 break;
             }
-            if let Some(bytes) = face_file(dirs, fallback)? {
-                let bytes = subset_or_whole(fallback, &bytes, &fallback_text)?;
-                faces.push(PreparedFont {
+            let Some(bytes) = face_file(dirs, fallback)? else {
+                continue;
+            };
+            // The fallback is often already on the page because the drawing
+            // names it — FangSong is the default for Han lettering — and then
+            // its one program has to carry the borrowed characters as well.
+            // Pushing a second entry for the same face embeds one typeface
+            // twice, once per subset: the I drawing's export carried two
+            // `/FangSong` resources for one name and `pdffonts` listed both.
+            let mut text = wanted.get(fallback).cloned().unwrap_or_default();
+            text.extend(still);
+            let (bytes, subset) = subset_or_whole(fallback, &bytes, &text)?;
+            match faces.iter().position(|face| face.key == fallback) {
+                Some(index) => {
+                    faces[index].bytes = bytes;
+                    faces[index].subset = subset;
+                }
+                None => faces.push(PreparedFont {
                     key: fallback.to_string(),
                     bytes,
-                });
+                    subset,
+                }),
             }
         }
         let still: String = uncovered
@@ -207,8 +237,8 @@ fn face_covers(faces: &[PreparedFont], ch: char) -> bool {
 }
 
 /// The face `key`'s file, subset to the run's characters when the source
-/// program is worth shrinking.
-fn load_face(dirs: &[PathBuf], key: &str, text: &str) -> Result<Vec<u8>, String> {
+/// program is worth shrinking, and whether what came back is a subset.
+fn load_face(dirs: &[PathBuf], key: &str, text: &str) -> Result<(Vec<u8>, bool), String> {
     let bytes = face_file(dirs, key)?.ok_or_else(|| missing_face(dirs, key))?;
     subset_or_whole(key, &bytes, text)
 }
@@ -217,15 +247,19 @@ fn load_face(dirs: &[PathBuf], key: &str, text: &str) -> Result<Vec<u8>, String>
 /// baseline; the whole file where subsetting fails or the program already
 /// fits — a file that fits is validated the same way a subset is, so a
 /// bad file never loads silently.
-fn subset_or_whole(key: &str, bytes: &[u8], text: &str) -> Result<Vec<u8>, String> {
+///
+/// The second value says which of the two happened, because the PDF's own
+/// names have to agree with it: a subset's `BaseFont` and `FontName` carry an
+/// `ABCDEF+` tag (ISO 32000-1 §9.6.4) and a whole file's must not.
+fn subset_or_whole(key: &str, bytes: &[u8], text: &str) -> Result<(Vec<u8>, bool), String> {
     let chars: HashSet<char> = ('\u{20}'..='\u{7e}').chain(text.chars()).collect();
     if let Ok(subset) = subset_face(bytes, &chars)
         && pdfcraft_fonts::embedding::validate(&subset).is_ok()
     {
-        return Ok(subset);
+        return Ok((subset, true));
     }
     pdfcraft_fonts::embedding::validate(bytes).map_err(|error| format!("{key}: {error}"))?;
-    Ok(bytes.to_vec())
+    Ok((bytes.to_vec(), false))
 }
 
 /// `fontcull`'s own plan with one fix: the name table stays whole — the
@@ -372,7 +406,8 @@ mod tests {
         };
         let bytes = std::fs::read(dir.join("simsun.ttf")).expect("read simsun.ttf");
         let text = "PT 1001101A 阀泵换热器 低温分离";
-        let subset = subset_or_whole("SimSun", &bytes, text).expect("subset SimSun");
+        let (subset, subsetted) = subset_or_whole("SimSun", &bytes, text).expect("subset SimSun");
+        assert!(subsetted, "SimSun is too large to embed whole");
         assert!(
             pdfcraft_fonts::embedding::validate(&subset).is_ok(),
             "the subset has to stay embeddable"
@@ -483,6 +518,28 @@ mod tests {
             keys,
             vec!["Arial"],
             "the missing run face is skipped, not fatal"
+        );
+    }
+
+    /// A `ProbeOnly` record draws nothing, so it must not ask for a face
+    /// either. `0x0030` `JStyleOverride` lettering is exactly that: its bytes
+    /// are sound and no reading of them is, so the page never letters it — yet
+    /// its characters used to pull a face out of the font directories, and a
+    /// page whose only Han text came from one of those embedded a typeface it
+    /// never drew.
+    #[test]
+    fn probe_only_lettering_asks_for_no_face() {
+        let dir = scratch_dir("probe-only", &[]);
+        let mut model = labelled(Vec::new());
+        model.primitives[0].confidence = "probe_only";
+        let faces = prepare_fonts(&[&model], &[dir]).expect("nothing was asked for");
+        assert!(
+            faces.is_empty(),
+            "a record the page never draws asked for {faces:?}",
+            faces = faces
+                .iter()
+                .map(|face| face.key.as_str())
+                .collect::<Vec<_>>()
         );
     }
 

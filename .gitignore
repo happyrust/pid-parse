@@ -52,3 +52,7 @@ test-file/symbols-full/
 test-file/*.zip
 
 .freebuff/
+
+# Throwaway probes kept out of `cargo --all-targets`; promote with a
+# `probe_<question>.rs` name in `examples/` when the answer is worth citing.
+/pid-plot/scratch/

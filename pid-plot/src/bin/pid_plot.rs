@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::lay_out_drawing;
-use pid_plot::write::{PlotFont, write_plot};
+use pid_plot::write::{PlotFont, write_plot_audited};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -40,6 +40,7 @@ fn main() -> ExitCode {
             Ok(bytes) => prepared.push(pid_plot::fonts::PreparedFont {
                 key: String::new(),
                 bytes,
+                subset: false,
             }),
             Err(error) => {
                 eprintln!("read {path}: {error}");
@@ -52,10 +53,11 @@ fn main() -> ExitCode {
         .map(|face| PlotFont {
             key: &face.key,
             bytes: &face.bytes,
+            subset: face.subset,
         })
         .collect();
-    let pdf = match write_plot(&model, &fonts) {
-        Ok(pdf) => pdf,
+    let (pdf, audit) = match write_plot_audited(&model, &fonts) {
+        Ok(written) => written,
         Err(error) => {
             eprintln!("{pid}: {error}");
             return ExitCode::from(1);
@@ -82,6 +84,13 @@ fn main() -> ExitCode {
         page[0],
         page[1],
         pdf.len()
+    );
+    // Said out loud even when zero: a run the sheet cannot hold at half width
+    // loses its tail to the page clip, and nothing on the page records that it
+    // happened.
+    println!(
+        "text_clipped_at_condensation_floor {} deepest_clip_mm {:.3}",
+        audit.runs_clipped_at_the_condensation_floor, audit.deepest_clip_mm
     );
     ExitCode::SUCCESS
 }

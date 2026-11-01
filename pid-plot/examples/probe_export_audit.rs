@@ -193,6 +193,7 @@ fn main() {
             .map(|face| PlotFont {
                 key: &face.key,
                 bytes: &face.bytes,
+                subset: face.subset,
             })
             .collect();
         let pdf = match write_plot(&model, &fonts) {

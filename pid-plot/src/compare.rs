@@ -5,7 +5,7 @@
 //! the reference every 0.5 mm; a sample counts when our nearest segment is
 //! within 0.5 mm. Text matches after whitespace is collapsed, within 1 mm.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -252,6 +252,87 @@ pub struct LengthGroup {
     pub length_mm: f64,
 }
 
+/// One width our strokes carried against the width the reference printed at
+/// the same place.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PenPair {
+    /// Our stroke width, hundredths of a millimetre.
+    pub ours_centi_mm: u64,
+    /// The reference's width at the same place, hundredths of a millimetre.
+    pub reference_centi_mm: u64,
+    /// Strokes at this pair of widths.
+    pub strokes: usize,
+}
+
+impl PenPair {
+    /// Whether both pages printed the same pen.
+    #[must_use]
+    pub fn agrees(&self) -> bool {
+        self.ours_centi_mm == self.reference_centi_mm
+    }
+
+    /// Our width, millimetres.
+    #[must_use]
+    pub fn ours_mm(&self) -> f64 {
+        self.ours_centi_mm as f64 / 100.0
+    }
+
+    /// The reference's width, millimetres.
+    #[must_use]
+    pub fn reference_mm(&self) -> f64 {
+        self.reference_centi_mm as f64 / 100.0
+    }
+}
+
+/// Pen weight, stroke by stroke: does the pen table put the reference's pen on
+/// the reference's ink?
+///
+/// [`CompareReport`]'s first three numbers measure geometry — where ink lies,
+/// how much of the reference it covers, whether the text pairs. A page can
+/// cover the reference exactly while every stroke carries the wrong pen, so
+/// the widths are paired on their own.
+///
+/// Both pages go through the same reader, so a stroke at one place on the
+/// reference has a stroke at the same place on ours. A pair whose widths
+/// differ is a stroke the table got wrong, and [`Self::pairs`] is the list.
+///
+/// Segments with no partner at all are counted apart rather than guessed at:
+/// they are a geometry difference, which coverage already owns.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PenReport {
+    /// Our strokes that found a reference stroke at the same place.
+    pub paired: usize,
+    /// Of those, the ones whose width is the reference's.
+    pub agreed: usize,
+    /// Of those, the ones whose width is not.
+    pub differed: usize,
+    /// Our strokes with no reference stroke at the same place.
+    pub unpaired: usize,
+    /// Every width pair that occurred, ours first, ascending.
+    pub pairs: Vec<PenPair>,
+}
+
+impl PenReport {
+    /// The pairs whose widths disagree — the page's pen findings.
+    pub fn differences(&self) -> impl Iterator<Item = &PenPair> {
+        self.pairs.iter().filter(|pair| !pair.agrees())
+    }
+
+    /// Agreed strokes over paired strokes, or 1 when nothing paired.
+    ///
+    /// A page whose strokes all failed to pair has no pen evidence either way,
+    /// and reads 1 rather than 0 so a ratchet on this number never asks a page
+    /// to have ink it does not.
+    #[must_use]
+    pub fn agreement(&self) -> f64 {
+        if self.paired == 0 {
+            1.0
+        } else {
+            self.agreed as f64 / self.paired as f64
+        }
+    }
+}
+
 /// The three ratchet numbers, plus the fit and the text that missed.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CompareReport {
@@ -302,6 +383,10 @@ pub struct CompareReport {
     /// outside the pairing window.
     #[serde(default)]
     pub text_offsets: Vec<TextOffsetClass>,
+    /// Pen weight, stroke by stroke. Empty on a page whose strokes paired with
+    /// nothing, which is a geometry result rather than a pen one.
+    #[serde(default)]
+    pub pen: PenReport,
     /// Our ink far from the reference and inside a missing-symbol box.
     ///
     /// Zero unless [`compare_plots_with_model`] supplied the boxes.
@@ -349,6 +434,7 @@ pub fn compare_plots_with_sources(
         false,
     );
     let text = match_text(&reference.spans, &ours.spans, &fit, masks, sources);
+    let pen = pen_pairs(reference, ours, &fit);
     let coverage = if reference_length > 0.0 {
         covered / reference_length
     } else {
@@ -369,10 +455,223 @@ pub fn compare_plots_with_sources(
         unmatched_reference_text: text.unmatched_reference,
         unmatched_our_text: text.unmatched_ours,
         text_offsets: text.offsets,
+        pen,
         extra_inside_missing_mm: 0.0,
         extra_outside_missing_mm: 0.0,
         extra_outside_by_symbol: Vec::new(),
         uncovered_reference: Vec::new(),
+    }
+}
+
+/// How far a stroke of ours may sit from the reference's to be the same stroke,
+/// paper millimetres. Both pages are the same drawing at the same page size.
+const PEN_WINDOW_MM: f64 = 1.0;
+/// How parallel two strokes have to be, as the absolute cosine of their angle.
+const PEN_DOT: f64 = 0.99;
+/// The same guard for a fill's outline, which is not a stroke and need not run
+/// parallel to the reference's.
+///
+/// A ring's edge is a chord of whatever curve it follows, and the two pages
+/// need not cut that curve at the same place: the template glyph this crate
+/// fills with 0.21 mm chords is one 0.61 mm chord in the reference, nine degrees
+/// off. Eighteen degrees still refuses ink crossing the locus at an angle.
+const PEN_FILL_DOT: f64 = 0.95;
+/// The shortest stroke that carries a pen, paper millimetres. A shorter one is
+/// a dash stub whose midpoint names a locus the pen did not draw.
+const PEN_MIN_MM: f64 = 0.2;
+/// How much of a stroke's own length the reference's has to state, as the
+/// smaller ratio of the two. A long line and a short dash can share a midpoint
+/// and a direction.
+///
+/// A fill's outline is exempt: see [`pen_pairs`].
+const PEN_LENGTH_RATIO: f64 = 0.5;
+
+/// How far off the reference stroke's own line a sub-piece may sit, paper
+/// millimetres. Half of the thin pen: ink further off is beside the stroke, not
+/// on it.
+const PEN_ON_MM: f64 = 0.08;
+/// The same tolerance when our stroke and the candidate already state the same
+/// width.
+///
+/// Two pages cut one curve into chords at different places, and the coarser
+/// chord's line sits a sagitta away from the finer one's — 0.18 mm on the
+/// `Diaphragm Actuator`'s arc, whose 0.34 mm chord is 0.85 mm long against our
+/// 0.22 mm. A same-width stroke that far off is the same pen on the same curve;
+/// a *different* width that far off stays a difference, so this never forgives
+/// a wrong pen, only a placement.
+const PEN_SAME_PEN_ON_MM: f64 = 0.20;
+
+/// A width in hundredths of a millimetre, which is the resolution both readers
+/// state and keeps the tally free of float keys.
+fn centi_mm(width: f64) -> u64 {
+    (width * 100.0).round().max(0.0) as u64
+}
+
+/// Whether our stroke is a piece **of** the reference stroke: both its ends lie
+/// on the candidate's own line and between the candidate's ends.
+///
+/// Two pages cut a curve into chords at different places, so the same pen can
+/// print as one 0.85 mm chord on the reference and a run of 0.22 mm chords on
+/// ours. The length ratio refuses that pair (0.26) while the geometry states it
+/// plainly: the short stroke is part of the long one, at the same angle and on
+/// the same line. `[0.08] mm` off the line is half the thin pen.
+fn is_sub_piece(
+    start: [f64; 2],
+    end: [f64; 2],
+    candidate_start: [f64; 2],
+    candidate_end: [f64; 2],
+    tolerance_mm: f64,
+) -> bool {
+    let along = [
+        candidate_end[0] - candidate_start[0],
+        candidate_end[1] - candidate_start[1],
+    ];
+    let candidate_len = along[0].hypot(along[1]);
+    if candidate_len < 1e-9 {
+        return false;
+    }
+    let unit = [along[0] / candidate_len, along[1] / candidate_len];
+    [start, end].into_iter().all(|point| {
+        let delta = [point[0] - candidate_start[0], point[1] - candidate_start[1]];
+        let along_mm = delta[0] * unit[0] + delta[1] * unit[1];
+        let across_mm = (delta[0] * unit[1] - delta[1] * unit[0]).abs();
+        across_mm <= tolerance_mm
+            && (-tolerance_mm..=candidate_len + tolerance_mm).contains(&along_mm)
+    })
+}
+
+/// Pair every stroke of ours with the reference strokes at the same place, and
+/// tally the two widths.
+///
+/// Several reference strokes can sit at one locus — a filled region's outline
+/// and its stroke are the same polygon — so a width agrees when **any** stroke
+/// there states it. Taking only the nearest would charge our stroke against the
+/// fill and report a difference the page does not have.
+///
+/// A fill's outline (width 0) is compared on direction and locus alone, without
+/// [`PEN_LENGTH_RATIO`]. Its segmentation is the writer's tessellation, not the
+/// pen's: a curved ring edge is one chord in the reference's fill path and two
+/// half-chords in ours, and the same 0.6 mm edge read as 0.29 mm of ours states
+/// a ratio of 0.47 — below the dash guard, so the pair is dropped and the
+/// outline is charged against whatever nearby pen did survive. Three template
+/// fills on the `I` / `B` / `低温分离器A` pages lost their partner that way while
+/// the page already stroked the same edge at 0.17 mm.
+fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
+    let mut tally: BTreeMap<(u64, u64), usize> = BTreeMap::new();
+    let mut paired = 0usize;
+    let mut unpaired = 0usize;
+    for segment in &ours.segments {
+        let length = (segment.start_mm[0] - segment.end_mm[0])
+            .hypot(segment.start_mm[1] - segment.end_mm[1]);
+        if length < PEN_MIN_MM {
+            continue;
+        }
+        let ours_width = centi_mm(segment.width_mm);
+        let mapped = [
+            fit.scale * segment.start_mm[0] + fit.translation_mm[0],
+            fit.scale * segment.start_mm[1] + fit.translation_mm[1],
+        ];
+        let mapped_end = [
+            fit.scale * segment.end_mm[0] + fit.translation_mm[0],
+            fit.scale * segment.end_mm[1] + fit.translation_mm[1],
+        ];
+        let direction = [mapped_end[0] - mapped[0], mapped_end[1] - mapped[1]];
+        let len = direction[0].hypot(direction[1]);
+        if len < 1e-9 {
+            continue;
+        }
+        let unit = [direction[0] / len, direction[1] / len];
+        let midpoint = [
+            (mapped[0] + mapped_end[0]) / 2.0,
+            (mapped[1] + mapped_end[1]) / 2.0,
+        ];
+        let mut widths_here: Vec<u64> = Vec::new();
+        let mut nearest: Option<(f64, u64)> = None;
+        for candidate in &reference.segments {
+            let candidate_mid = [
+                (candidate.start_mm[0] + candidate.end_mm[0]) / 2.0,
+                (candidate.start_mm[1] + candidate.end_mm[1]) / 2.0,
+            ];
+            let distance = (candidate_mid[0] - midpoint[0]).hypot(candidate_mid[1] - midpoint[1]);
+            if distance > PEN_WINDOW_MM {
+                continue;
+            }
+            let other = [
+                candidate.end_mm[0] - candidate.start_mm[0],
+                candidate.end_mm[1] - candidate.start_mm[1],
+            ];
+            let other_len = other[0].hypot(other[1]);
+            if other_len < 1e-9 {
+                continue;
+            }
+            let dot = (unit[0] * other[0] / other_len + unit[1] * other[1] / other_len).abs();
+            let dot_min = if ours_width == 0 {
+                PEN_FILL_DOT
+            } else {
+                PEN_DOT
+            };
+            if dot < dot_min {
+                continue;
+            }
+            let ratio = (other_len / len).min(len / other_len);
+            // A fill's ring is compared on locus and rough direction only —
+            // see [`pen_pairs`] — and a stroke that is a piece of the
+            // reference's is the same pen on a coarser chord.
+            let width = centi_mm(candidate.width_mm);
+            let tolerance = if width == ours_width {
+                PEN_SAME_PEN_ON_MM
+            } else {
+                PEN_ON_MM
+            };
+            if ours_width != 0
+                && ratio < PEN_LENGTH_RATIO
+                && !is_sub_piece(
+                    mapped,
+                    mapped_end,
+                    candidate.start_mm,
+                    candidate.end_mm,
+                    tolerance,
+                )
+            {
+                continue;
+            }
+            widths_here.push(width);
+            if nearest.is_none_or(|(best_distance, _)| distance < best_distance) {
+                nearest = Some((distance, width));
+            }
+        }
+        match nearest {
+            Some((_, fallback)) => {
+                paired += 1;
+                let matched = if widths_here.contains(&ours_width) {
+                    ours_width
+                } else {
+                    fallback
+                };
+                *tally.entry((ours_width, matched)).or_default() += 1;
+            }
+            None => unpaired += 1,
+        }
+    }
+    let pairs: Vec<PenPair> = tally
+        .into_iter()
+        .map(|((ours_centi_mm, reference_centi_mm), strokes)| PenPair {
+            ours_centi_mm,
+            reference_centi_mm,
+            strokes,
+        })
+        .collect();
+    let agreed = pairs
+        .iter()
+        .filter(|pair| pair.agrees())
+        .map(|pair| pair.strokes)
+        .sum();
+    PenReport {
+        paired,
+        agreed,
+        differed: paired - agreed,
+        unpaired,
+        pairs,
     }
 }
 
@@ -1718,6 +2017,244 @@ mod tests {
             advance_mm,
             direction: [1.0, 0.0],
         }
+    }
+
+    #[test]
+    fn a_thin_stroke_where_the_reference_printed_thick_is_a_pen_difference() {
+        // Three strokes: one the reference printed with our pen, one it printed
+        // thicker, and one with no reference stroke anywhere near it. The fit
+        // is the identity, so nothing moves.
+        let reference = ink(
+            vec![
+                InkSegment {
+                    start_mm: [0.0, 10.0],
+                    end_mm: [40.0, 10.0],
+                    width_mm: 0.17,
+                },
+                InkSegment {
+                    start_mm: [0.0, 20.0],
+                    end_mm: [40.0, 20.0],
+                    width_mm: 0.68,
+                },
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![
+                InkSegment {
+                    start_mm: [0.0, 10.0],
+                    end_mm: [40.0, 10.0],
+                    width_mm: 0.17,
+                },
+                InkSegment {
+                    start_mm: [0.0, 20.0],
+                    end_mm: [40.0, 20.0],
+                    width_mm: 0.34,
+                },
+                InkSegment {
+                    start_mm: [0.0, 70.0],
+                    end_mm: [40.0, 70.0],
+                    width_mm: 0.34,
+                },
+            ],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 2, "{:?}", report.pen);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.unpaired, 1, "{:?}", report.pen);
+        let differences: Vec<(f64, f64, usize)> = report
+            .pen
+            .differences()
+            .map(|pair| (pair.ours_mm(), pair.reference_mm(), pair.strokes))
+            .collect();
+        assert_eq!(differences, vec![(0.34, 0.68, 1)]);
+        assert!((report.pen.agreement() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_stroke_that_pairs_with_nothing_is_not_a_pen_verdict() {
+        // Both pages are empty of ink: no pair, no pen finding, and the
+        // agreement reads 1 so a ratchet never asks for ink that is not there.
+        let report = compare_plots(&ink(vec![], vec![]), &ink(vec![], vec![]), &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert!(report.pen.differences().next().is_none());
+        assert!((report.pen.agreement() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_fill_outline_at_the_same_place_does_not_hide_the_reference_pen() {
+        // A filled region's outline lies on the stroke that borders it, so the
+        // reference states two widths at one locus: 0 for the outline and
+        // 0.17 mm for the stroke. Any of them agrees — charging our stroke
+        // against the outline would report a difference the page does not
+        // have.
+        let reference = ink(
+            vec![
+                InkSegment {
+                    start_mm: [0.0, 10.0],
+                    end_mm: [40.0, 10.0],
+                    width_mm: 0.0,
+                },
+                InkSegment {
+                    start_mm: [0.0, 10.0],
+                    end_mm: [40.0, 10.0],
+                    width_mm: 0.17,
+                },
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 10.0],
+                end_mm: [40.0, 10.0],
+                width_mm: 0.17,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_fill_outline_pairs_with_a_longer_reference_outline() {
+        // The template glyph on the `I` / `B` / `低温分离器A` pages: the
+        // reference fills the shape with 0.61 mm chords and ours with 0.29 mm
+        // ones, so the length ratio is 0.47 and the outline has to pair on its
+        // locus, not its length. The reference also states 0.17 mm at the same
+        // place — the stroke along that edge — and taking that as the partner
+        // is what charged these outlines as pen differences.
+        let reference = ink(
+            vec![
+                InkSegment {
+                    start_mm: [1.0, 10.0],
+                    end_mm: [7.0, 10.0],
+                    width_mm: 0.0,
+                },
+                InkSegment {
+                    start_mm: [0.0, 10.0],
+                    end_mm: [5.0, 10.0],
+                    width_mm: 0.17,
+                },
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [2.0, 10.0],
+                end_mm: [4.8, 10.0],
+                width_mm: 0.0,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_stroke_that_is_a_piece_of_the_reference_stroke_pairs() {
+        // One curve, cut differently: 0.85 mm of chord on the reference, 0.22
+        // mm on ours, both with the 0.34 mm pen. The length ratio is 0.26 and
+        // the old guard dropped the pair, leaving the stroke on its own.
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 10.0],
+                end_mm: [8.5, 10.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [3.0, 10.0],
+                end_mm: [5.2, 10.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn the_same_pen_pairs_across_a_sagitta_but_another_pen_does_not() {
+        // A coarse chord's line sits a sagitta away from the finer chord's —
+        // 0.18 mm on the `Diaphragm Actuator`. The same pen pairs across that
+        // gap; a different pen at the same place stays a difference, so the
+        // tolerance can never hide a wrong pen.
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 10.0],
+                end_mm: [8.5, 10.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![
+                InkSegment {
+                    start_mm: [3.0, 10.18],
+                    end_mm: [5.2, 10.18],
+                    width_mm: 0.34,
+                },
+                InkSegment {
+                    start_mm: [3.0, 30.18],
+                    end_mm: [5.2, 30.18],
+                    width_mm: 0.17,
+                },
+            ],
+            vec![],
+        );
+        let reference = ink(
+            [
+                reference.segments.clone(),
+                vec![InkSegment {
+                    start_mm: [0.0, 30.0],
+                    end_mm: [8.5, 30.0],
+                    width_mm: 0.34,
+                }],
+            ]
+            .concat(),
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+        assert_eq!(
+            report.pen.unpaired, 1,
+            "the 0.17 mm stroke is too far off to be a piece of the 0.34 mm one: {:?}",
+            report.pen
+        );
+    }
+
+    #[test]
+    fn ink_crossing_a_stroke_at_an_angle_is_not_a_piece_of_it() {
+        // The sub-piece rule is about one curve read twice, not about two
+        // strokes that happen to meet: a perpendicular stroke has no partner.
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [5.0, 0.0],
+                end_mm: [5.0, 8.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [3.9, 4.0],
+                end_mm: [6.1, 4.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.unpaired, 1, "{:?}", report.pen);
     }
 
     #[test]

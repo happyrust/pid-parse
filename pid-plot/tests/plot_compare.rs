@@ -12,20 +12,60 @@
 //! L 167/167, H 249/249 — and every floor is its reading exactly. I's floor
 //! came up from 544 once its last two runs, the electric-motor `M`s the
 //! baseline note describes, paired.
+//!
+//! The pen figures are gated the same way: how many of our strokes the
+//! reference prints at the width we print them, and how many it does not
+//! (`CompareReport::pen`). A page can cover its reference exactly and pair
+//! every label while every stroke carries a pen two bands off, which is what
+//! five symbol families did until `body_stroke` stopped reading their
+//! placeholder style (`docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`) —
+//! 305 of our strokes printed a band heavier than the reference's, and neither
+//! the coverage nor the extra-ink figure could see it, because a heavier pen
+//! covers the same line. The floors are exact readings too, and every ceiling
+//! is **zero**. The 14 strokes they used to hold were not pens we got wrong:
+//! each was an edge our decoder cuts into 0.21-0.29 mm chords where the
+//! reference's fill path carries one 0.61 mm chord (and one `Diaphragm
+//! Actuator` arc chord of 0.22 against 0.85 mm). The pairing's length guard
+//! refused a piece that short, so the outline fell back to whatever pen nearby
+//! survived — the 0.17 mm hairline the page *does* print along that very edge.
+//! `probe_pen_width_sites` names all 14 and the primitive behind each;
+//! `probe_does_the_plotter_stroke_fills` shows the reference strokes 730 of its
+//! 890 fill outlines, and that 11 782 of its own strokes come back from our page
+//! at the same pen. A fill's ring is now compared on locus and rough direction,
+//! and a stroke that is a collinear piece of the reference's — or the same pen a
+//! sagitta further off — pairs. Neither forgives a different width, so a stroke
+//! whose pen really changed still lands in `max_pen_differed` and fails.
+//!
+//! The pen count only pairs a stroke with ink at the same place, direction and
+//! (for a stroke) run, so it is not a second coverage figure: a stroke we never
+//! drew is counted unpaired, not wrong. That is what keeps the two gates
+//! independent — coverage and extra ink say the ink is in the right place, this
+//! one says it is laid with the right pen.
 
 use std::path::PathBuf;
 
 use pid_plot::compare::{
     MaskRect, compare_plots_with_model, template_masks, write_overlay, write_report,
 };
-use pid_plot::model::lay_out_drawing;
+use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::read::read_plot;
+use pid_plot::write::{PlotFont, write_plot};
 
 struct Baseline {
     name: &'static str,
     min_coverage: f64,
     max_extra_mm: f64,
     min_text_matched: usize,
+    /// Smallest number of our paired strokes the reference plots at the width
+    /// we plot them. A pen regression moves strokes out of this count into
+    /// `max_pen_differed`, so the two figures are one measurement stated as a
+    /// floor and a ceiling.
+    min_pen_agreed: usize,
+    /// Largest number of our paired strokes the reference plots at another
+    /// width. Zero on every page: a ring edge cut into different chords and a
+    /// same-pen stroke a sagitta off both pair, and nothing else is forgiven.
+    max_pen_differed: usize,
 }
 
 /// Smallest lettering class the offset gate judges, in labels.
@@ -188,30 +228,40 @@ const BASELINES: [Baseline; 5] = [
         min_coverage: 0.9993,
         max_extra_mm: 1.0,
         min_text_matched: 546,
+        min_pen_agreed: 8390,
+        max_pen_differed: 0,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9995,
         max_extra_mm: 0.5,
         min_text_matched: 151,
+        min_pen_agreed: 1196,
+        max_pen_differed: 0,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
         min_coverage: 0.9995,
         max_extra_mm: 0.5,
         min_text_matched: 123,
+        min_pen_agreed: 1335,
+        max_pen_differed: 0,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9995,
         max_extra_mm: 0.5,
         min_text_matched: 167,
+        min_pen_agreed: 1619,
+        max_pen_differed: 0,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
         min_coverage: 0.9989,
         max_extra_mm: 0.5,
         min_text_matched: 249,
+        min_pen_agreed: 2869,
+        max_pen_differed: 0,
     },
 ];
 
@@ -225,21 +275,46 @@ fn corpus_dir() -> PathBuf {
 #[test]
 fn five_drawings_hold_the_ratchet() {
     let corpus = corpus_dir();
-    let first_ours = corpus.join(format!("plot/{}.pdf", BASELINES[0].name));
     let first_reference = corpus.join(format!("{}.pdf", BASELINES[0].name));
-    if !first_ours.is_file() || !first_reference.is_file() {
-        eprintln!("skipping plot ratchet; {} is absent", first_ours.display());
+    if !first_reference.is_file() {
+        eprintln!(
+            "skipping plot ratchet; {} is absent",
+            first_reference.display()
+        );
         return;
     }
     let out_dir = corpus.join("plot/compare");
     std::fs::create_dir_all(&out_dir).expect("mkdir compare");
-    for baseline in BASELINES {
+    // Our page is written here, from the model, rather than read from
+    // `plot/<name>.pdf`. Reading the stored file made the gate blind to the
+    // writer: raising `pen_width_mm`'s thin/mid boundary to 0.40 moved 5 877
+    // strokes off the reference's pen and this gate stayed green, because the
+    // PDF on disk had been written by the previous build. The stored plot is
+    // still the deliverable — `write_five_drawings` writes it — but what this
+    // gate measures is the writer that would write it.
+    let models: Vec<PaperModel> = BASELINES
+        .iter()
+        .map(|baseline| {
+            lay_out_drawing(&corpus.join(format!("{}.pid", baseline.name)), &corpus)
+                .expect("layout")
+        })
+        .collect();
+    let dirs = font_dirs(Some(&corpus));
+    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
+    for (baseline, model) in BASELINES.iter().zip(&models) {
         let name = baseline.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
-        let our_bytes = std::fs::read(corpus.join(format!("plot/{name}.pdf"))).expect("ours");
         let reference = read_plot(&reference_bytes).expect("read reference");
+        let our_bytes = write_plot(model, &fonts).expect("write ours");
         let ours = read_plot(&our_bytes).expect("read ours");
-        let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
             .missing_boxes
@@ -250,7 +325,7 @@ fn five_drawings_hold_the_ratchet() {
                 max_mm: box_.max_mm,
             })
             .collect();
-        let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
+        let report = compare_plots_with_model(&reference, &ours, &template, &missing, model);
         let json_path = out_dir.join(format!("{name}.json"));
         let png_path = out_dir.join(format!("{name}.png"));
         write_report(&json_path, &report).expect("json");
@@ -281,6 +356,68 @@ fn five_drawings_hold_the_ratchet() {
             "{name} text_matched {} < {}",
             report.text_matched,
             baseline.min_text_matched
+        );
+        // The pen section is one measurement stated three ways, so it is
+        // checked for internal agreement before its ratchet: a stroke is
+        // either agreed or differed once it has a partner, and no pair may
+        // count a stroke twice.
+        let pen = &report.pen;
+        assert_eq!(
+            pen.paired,
+            pen.agreed + pen.differed,
+            "{name} pen pairs {}/{}/{}",
+            pen.paired,
+            pen.agreed,
+            pen.differed
+        );
+        let counted: usize = pen.pairs.iter().map(|pair| pair.strokes).sum();
+        assert_eq!(
+            counted, pen.paired,
+            "{name} pen pairs carry {counted} of {} paired strokes",
+            pen.paired
+        );
+        let differed: usize = pen
+            .pairs
+            .iter()
+            .filter(|pair| !pair.agrees())
+            .map(|pair| pair.strokes)
+            .sum();
+        assert_eq!(
+            differed, pen.differed,
+            "{name} disagreeing pairs carry {differed} of {} differing strokes",
+            pen.differed
+        );
+        assert!(
+            pen.agreed >= baseline.min_pen_agreed,
+            "{name} pen agreed {} < {} ({} strokes now differ: {})",
+            pen.agreed,
+            baseline.min_pen_agreed,
+            pen.differed,
+            pen.differences()
+                .map(|pair| format!(
+                    "{:.2} vs {:.2} mm x{}",
+                    pair.ours_mm(),
+                    pair.reference_mm(),
+                    pair.strokes
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert!(
+            pen.differed <= baseline.max_pen_differed,
+            "{name} pen differed {} > {} ({}): {}",
+            pen.differed,
+            baseline.max_pen_differed,
+            pen.agreement(),
+            pen.differences()
+                .map(|pair| format!(
+                    "{:.2} vs {:.2} mm x{}",
+                    pair.ours_mm(),
+                    pair.reference_mm(),
+                    pair.strokes
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         // A class whose mean is not zero is a placement rule that is wrong
         // for every label in it, while every one of those labels still pairs

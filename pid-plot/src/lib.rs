@@ -13,6 +13,7 @@ pub mod compare;
 pub mod fonts;
 pub mod model;
 pub mod read;
+pub mod witness;
 pub mod write;
 
 /// Confirms the pinned PDF toolchain and the parser are linked into this crate.
