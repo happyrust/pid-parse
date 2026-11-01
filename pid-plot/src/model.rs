@@ -4688,10 +4688,17 @@ mod tests {
             super::load_border_template(&corpus, None, [593.75, 419.63], &cchb).is_none(),
             "a named A2 page wore another family's furniture"
         );
+        // Two A2 families now sit in the fixture tree and both are 0.37 mm
+        // from this size — `CPECCHB-SQ-A2` is 593.94 × 420.00 and `CPE-SQ-A2`
+        // 594.00 × 420.00 — so their ranks tie at the extent quantum and the
+        // path orders them. The corpus holds both as well, so this reads the
+        // tie the tree actually has rather than a set of one: an A2 sheet that
+        // names nothing cannot be attributed from its size alone, which is the
+        // same reason a named one is never handed a stranger.
         let unnamed = super::load_border_template(&corpus, None, [593.75, 419.63], &[])
-            .expect("the A2 template is 0.37 mm away");
+            .expect("an A2 template is 0.37 mm away");
         assert!(
-            unnamed.path.ends_with("CPECCHB-SQ-A2.igr"),
+            unnamed.path.ends_with("CPE-SQ-A2.igr"),
             "{}",
             unnamed.path.display()
         );

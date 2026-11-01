@@ -23,6 +23,13 @@
 //! no furniture — and passed because the template directory held A0/A1 only,
 //! not because the page had no frame.
 //!
+//! The second A2 case is `A01`, whose frame is embedded rather than linked and
+//! so names nothing: `CPE-SQ-A2.igr` answers it by extent alone. That file is
+//! the A1 family's own A2 — the same 175 strokes, the same 34 labels, the
+//! `比例` wave 247.000 mm left (841 − 594) — and it joined
+//! `test-file/Ref/Template Files` on 2026-11-01 from the corpus's own copy, so
+//! the case no longer needs the authoring machine to be read.
+//!
 //! Soft-skips when the corpus or the fixture is absent, which is what CI sees.
 
 use std::path::{Path, PathBuf};
@@ -814,6 +821,216 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
         assert!(
             ink.spans.iter().any(|span| span.text.trim() == expected),
             "D06: {expected:?} did not reach the page"
+        );
+    }
+}
+
+#[test]
+fn the_a01_sheets_embedded_frame_draws_the_a2_template_it_states() {
+    // `A01`'s frame record is `Embedded / LocallyLinked`: the object it holds
+    // is stored in the drawing rather than linked to a file, and it declares
+    // 594.00 x 420.00 — A2. The furniture itself is not in the `.pid` (no
+    // `Ole` stream, no OLE storage anywhere in its six `JSite`s), so the page
+    // can only be completed the way an unnamed sheet always is: by the one
+    // template whose own ink is that extent.
+    //
+    // Until `CPE-SQ-A2.igr` landed beside the A0/A1 files nothing in the
+    // repository could answer that, so the case was only ever readable against
+    // the corpus on the authoring machine. It is the A1 file's own family one
+    // size down, and its census is the A1 census: 175 strokes, 34 labels, and
+    // the `比例` wave 247.000 mm to the left — which is 841 - 594, the
+    // difference between the two page widths, exactly as the A0 case is the
+    // same wave 348.000 mm to the right.
+    let fixture = fixture_dir().join("export-test/publish-data/A01/A01.pid");
+    if !fixture.is_file() {
+        eprintln!("skipping border template; {} is absent", fixture.display());
+        return;
+    }
+    let corpus = fixture_dir();
+    let model = lay_out_drawing(&fixture, &corpus).unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        near(model.page_mm.unwrap_or([0.0, 0.0]), [594.0, 420.0], 0.01),
+        "A01 states {:?}",
+        model.page_mm
+    );
+
+    let template = model
+        .template
+        .as_ref()
+        .unwrap_or_else(|| panic!("A01's embedded frame drew no furniture"));
+    assert!(
+        template.path.ends_with("CPE-SQ-A2.igr"),
+        "A01 drew {}",
+        template.path
+    );
+    assert!(
+        near(
+            [template.extent_mm[0], template.extent_mm[1]],
+            [594.0, 420.0],
+            0.5
+        ),
+        "the template's own extent is {:?}",
+        template.extent_mm
+    );
+    assert_eq!(template.primitives, 175, "furniture primitives");
+    assert_eq!(
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.furniture)
+            .count(),
+        175,
+        "primitives flagged as furniture"
+    );
+    assert_eq!(
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.furniture)
+            .filter(|primitive| matches!(primitive.shape, PaperShape::Text { .. }))
+            .count(),
+        34,
+        "furniture labels"
+    );
+
+    // The two frames: the outer one on the page edge, the inner one 25 mm in on
+    // the binding side and 10 mm elsewhere — the CPE-SQ margins, not the A2
+    // CCHB template's 35.354 / 7.071.
+    let boxes = frame_boxes(&model);
+    assert!(
+        boxes
+            .iter()
+            .any(|(min, max)| near(*min, [0.0, 0.0], 0.5) && near(*max, [594.0, 420.0], 0.5)),
+        "no outer frame: {boxes:?}"
+    );
+    assert!(
+        boxes
+            .iter()
+            .any(|(min, max)| near(*min, [25.0, 10.0], 0.5) && near(*max, [584.0, 410.0], 0.5)),
+        "no inner frame: {boxes:?}"
+    );
+
+    // The `比例` value cell's wave, moved with the page: the A1 page places the
+    // same symbol's two arcs at 750.39 / 752.69 / 755.01, this one at those
+    // less 247.000. The template's ink is the sheet's to the millimetre, so the
+    // wave is read at its own insertion point rather than copied from A1.
+    let mut wave: Vec<([f64; 2], [f64; 2])> = model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+        .filter_map(|primitive| arc_ends(&primitive.shape))
+        .filter(|(start, end)| {
+            [start, end].iter().all(|point| {
+                (493.0..=513.0).contains(&point[0]) && (17.0..=21.0).contains(&point[1])
+            })
+        })
+        .collect();
+    wave.sort_by(|left, right| left.0[0].total_cmp(&right.0[0]));
+    assert_eq!(wave.len(), 2, "the 比例 cell's wave: {wave:?}");
+    assert!(near(wave[0].0, [503.39, 19.41], 0.1), "{:?}", wave[0].0);
+    assert!(near(wave[0].1, [505.69, 19.00], 0.1), "{:?}", wave[0].1);
+    assert!(near(wave[1].0, [505.69, 19.00], 0.1), "{:?}", wave[1].0);
+    assert!(near(wave[1].1, [508.01, 18.56], 0.1), "{:?}", wave[1].1);
+
+    // One placement, drawn from the template's own cache. The `.sym` it names
+    // is an absolute path on the authoring machine, so no library root can
+    // address it; the body the `.igr` keeps is what the wave is.
+    assert_eq!(template.symbols.len(), 1, "{:?}", template.symbols);
+    let symbol = &template.symbols[0];
+    assert!(
+        symbol.key.to_ascii_lowercase().ends_with("blfh.sym"),
+        "the template places {} instead",
+        symbol.key
+    );
+    assert!(
+        near(symbol.insertion_mm, [505.692, 19.000], 0.001),
+        "{:?}",
+        symbol.insertion_mm
+    );
+    assert_eq!(
+        symbol.body,
+        SymbolBodySource::Cached,
+        "{} drew from {:?}",
+        symbol.key,
+        symbol.body
+    );
+    assert!(
+        !symbol.library_available,
+        "{} resolved a library body",
+        symbol.key
+    );
+    assert_eq!(
+        symbol.name_gap,
+        Some(NameMiss::NoSuchFile),
+        "{} was refused for some other reason",
+        symbol.key
+    );
+    assert!(
+        symbol.extent_mm.is_some(),
+        "the placement drew nothing; the wave is from its cache"
+    );
+    assert!(
+        !model
+            .missing_symbols
+            .iter()
+            .any(|missing| missing.to_ascii_lowercase().contains("blfh")),
+        "the template's absent .sym leaked into missing_symbols: {:?}",
+        model.missing_symbols
+    );
+    assert!(
+        model.missing_boxes.is_empty(),
+        "the placement drew a placeholder box: {:?}",
+        model.missing_boxes
+    );
+
+    // And the furniture reaches the page. A01 has no reference plot — it is a
+    // publish fixture, not a corpus drawing — so the labels are read back by
+    // their characters rather than by measured widths.
+    let labels = labels(&model);
+    for expected in [
+        "会 签 专 业",
+        "签     署",
+        "日    期",
+        "修改号",
+        "次数",
+        "页次",
+        "中国石油集团工程设计有限责任公司华北分公司",
+        "设计证书号",
+        "勘察证书号",
+        "A111001641",
+        "010065-kj",
+        "华北油田苏桥储气库群",
+    ] {
+        assert!(
+            labels.contains(&expected),
+            "A01: no furniture label {expected:?}"
+        );
+    }
+
+    let dirs = font_dirs(Some(&corpus_dir()));
+    if !dirs.iter().any(|dir| dir.is_dir()) {
+        eprintln!("skipping the page render; no font directory is present");
+        return;
+    }
+    let prepared = prepare_fonts(&[&model], &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
+    let pdf = write_plot(&model, &fonts).unwrap_or_else(|error| panic!("write: {error}"));
+    let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("read back: {error}"));
+    for expected in [
+        "中国石油集团工程设计有限责任公司华北分公司",
+        "会 签 专 业",
+        "勘察证书号",
+    ] {
+        assert!(
+            ink.spans.iter().any(|span| span.text.trim() == expected),
+            "A01: {expected:?} did not reach the page"
         );
     }
 }
