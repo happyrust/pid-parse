@@ -22,7 +22,8 @@
 //!
 //! The `our centres` line reports where the current layout stamps: one per
 //! fitted cell, centred in it, except that a run fitting a single glyph keeps
-//! the pattern's own advance and puts that glyph half a period in.
+//! the pattern's own advance and puts that glyph half a period in — or at the
+//! run's centre when the run outgrows that advance.
 //!
 //! The two walls of a pipe carry the same glyph, and either wall's marks fall
 //! within a few millimetres of the other's line; the `side` filter keeps a run's
@@ -237,13 +238,13 @@ fn main() {
                     .join(" "),
                 if fitted <= 1 {
                     // A stub that fits one glyph keeps the pattern's own
-                    // advance, so its mark sits half a period in — unless the
-                    // run stops short of that, in which case no glyph is
-                    // stamped at all.
+                    // advance, so its mark sits half a period in; a run longer
+                    // than the advance centres it instead, and a run shorter
+                    // than half an advance gets no glyph at all.
                     if run < period * 0.5 {
                         "none".to_string()
                     } else {
-                        format!("{:6.2}", period * 0.5)
+                        format!("{:6.2}", (period * 0.5).max(run * 0.5))
                     }
                 } else {
                     let step = run / fitted as f64;
