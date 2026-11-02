@@ -266,6 +266,13 @@ what it reads: `examples/probe_<the question>.rs` (268 of the 276
 tracked root examples carry that prefix; the other eight predate the
 convention and keep their names).
 
+`probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
+its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
+centroid reading is 0.64–0.71 mm early for every mark of that glyph. The fit
+still assumes the page inks the style's own strokes — a mirrored or
+differently-armed run can read up to 0.7 mm off, and the acceptance gate's
+coverage is the arbiter for those.
+
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
 and it disappears once the answer lands. When the numbers do turn

@@ -25,6 +25,20 @@
 //! the pattern's own advance and puts that glyph half a period in — or at the
 //! run's centre when the run outgrows that advance.
 //!
+//! `ref centres` is the glyph's **anchor**, not the centroid of its ink. The
+//! hydraulic glyph is an L — one arm along the run, one across it — so the two
+//! arms' midpoints sit 0.64 mm apart along the run, and averaging them (what
+//! this probe did until 2026-11-03) reads every mark of that glyph 0.64 mm
+//! early. That is what made the 3.83 mm tails look like a phase reset: their
+//! ink is anchored at 3.68 mm while the centroid of the two arms projects to
+//! 3.04. Matching each stroke to the local arm that drew it and subtracting
+//! that arm's own midpoint offset recovers the anchor.
+//!
+//! The fit assumes the page inks the style's own local strokes; a run whose
+//! glyph is mirrored or built from different arms still reads up to 0.7 mm
+//! off, so a reading is only as good as the acceptance gate's `coverage`
+//! beside it.
+//!
 //! The two walls of a pipe carry the same glyph, and either wall's marks fall
 //! within a few millimetres of the other's line; the `side` filter keeps a run's
 //! own marks only (the glyph half-width is 1.8 mm, so the neighbouring wall sits
@@ -192,10 +206,41 @@ fn main() {
                 .map(|mark| (mark.end.0 - mark.start.0).abs() * 1000.0)
                 .fold(0.0_f64, f64::max);
             let u = [(b[0] - a[0]) / run, (b[1] - a[1]) / run];
-            let mut theirs: Vec<f64> = Vec::new();
+            // One translation for the whole glyph, not one per stroke: the
+            // reference inks the same local strokes, so its ink centroid sits
+            // `mean local` rotated onto the page away from the anchor the
+            // pattern placed. Matching stroke by stroke cannot tell two
+            // parallel slashes apart and picks the wrong arm half the time.
+            let mut local = [0.0_f64; 2];
+            let mut arm_count = 0.0_f64;
+            for mark in complex
+                .strokes()
+                .iter()
+                .filter(|mark| !mark.is_degenerate())
+            {
+                local[0] += (mark.start.0 + mark.end.0) / 2.0 * 1000.0;
+                local[1] += (mark.start.1 + mark.end.1) / 2.0 * 1000.0;
+                arm_count += 1.0;
+            }
+            if arm_count <= 0.0 {
+                continue;
+            }
+            local[0] /= arm_count;
+            local[1] /= arm_count;
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let frame = if dx < -1e-9 || (dx.abs() <= 1e-9 && dy < 0.0) {
+                [-u[0], -u[1]]
+            } else {
+                u
+            };
+            let left = [-frame[1], frame[0]];
+            let mut mids: Vec<[f64; 2]> = Vec::new();
             let arms = arms_in_page(complex, a, b);
-            for (c, d) in marks.iter().filter(|s| matches_an_arm(s, &arms)) {
-                let mid = [(c[0] + d[0]) / 2.0, (c[1] + d[1]) / 2.0];
+            for stroke in marks.iter().filter(|s| matches_an_arm(s, &arms)) {
+                let mid = [
+                    (stroke.0[0] + stroke.1[0]) / 2.0,
+                    (stroke.0[1] + stroke.1[1]) / 2.0,
+                ];
                 // The run's own wall only: the glyph half-width is 1.8 mm, so a
                 // mark of the neighbouring wall sits ~3.8 mm out.
                 if side(mid, a, b).abs() > 2.2 {
@@ -205,8 +250,37 @@ fn main() {
                 if t < -2.0 || t > run + 2.0 {
                     continue;
                 }
-                theirs.push(t);
+                mids.push(mid);
             }
+            if mids.is_empty() {
+                continue;
+            }
+            // A mirrored placement flips the glyph's local y, so the same
+            // correction carries the other sign. The ink says which: ask the
+            // side of the run the marks lie on and take the handedness that
+            // predicts it. Without this the 空冷器 pages' mirrored runs read
+            // 2 x 0.64 mm off while their unmirrored neighbours read true.
+            let mean_side =
+                mids.iter().map(|mid| side(*mid, a, b)).sum::<f64>() / mids.len() as f64;
+            let predicted = |mirror: f64| {
+                let point = [
+                    a[0] + local[0] * frame[0] + mirror * local[1] * left[0],
+                    a[1] + local[0] * frame[1] + mirror * local[1] * left[1],
+                ];
+                side(point, a, b)
+            };
+            let mirror =
+                if (mean_side - predicted(1.0)).abs() <= (mean_side - predicted(-1.0)).abs() {
+                    1.0
+                } else {
+                    -1.0
+                };
+            let bias = local[0] * (frame[0] * u[0] + frame[1] * u[1])
+                + mirror * local[1] * (left[0] * u[0] + left[1] * u[1]);
+            let theirs: Vec<f64> = mids
+                .iter()
+                .map(|mid| (mid[0] - a[0]) * u[0] + (mid[1] - a[1]) * u[1] - bias)
+                .collect();
             let ref_marks = clusters(&theirs);
             if ref_marks.is_empty() {
                 continue;
