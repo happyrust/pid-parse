@@ -2461,7 +2461,8 @@ fn push_entity_with(
 /// Where the glyphs land is [`complex_dash_positions`]'s question: the advance
 /// is divided over the length left once one glyph has been reserved, not over
 /// the whole run, and a run that fits a single glyph keeps the pattern's own
-/// advance instead.
+/// advance — until the run outgrows that advance, when its one glyph moves to
+/// the run's centre.
 fn stamp_complex_dash(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
@@ -2584,6 +2585,14 @@ fn complex_dash_cells(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> usi
 /// far half of exactly those ticks (`docs/analysis/2026-10-24-
 /// one-glyph-stubs-centre-a-half-period-in.md`).
 ///
+/// A run that outgrows the advance centres its one glyph instead. The A sheets'
+/// 16.09 mm risers — two of them on the 空冷器A page alone — carry the reference's
+/// one glyph at 8.07 and 8.04 mm, while half an advance would ink it at 5.08 mm
+/// and leave the far half of the run bare; `L / 2` is 8.045 mm, inside 0.03 mm of
+/// both, and the same rule still puts the 6.19 / 6.54 mm stubs at their measured
+/// half period because their centre is nearer the start than that
+/// (`docs/plans/2026-11-02-the-a1-stem.md`).
+///
 /// A run shorter than half an advance carries **no** glyph at all. The centre
 /// is not pulled back to the run's end: the reference inks only the rail on
 /// those runs. Its nearest glyph on either side of them is 40.3–40.8 mm away,
@@ -2600,7 +2609,15 @@ fn complex_dash_positions(length_mm: f64, period_mm: f64, glyph_span_mm: f64) ->
         if length_mm < half {
             return Vec::new();
         }
-        return vec![half];
+        // A degenerate advance has no phase to keep and nothing to balance
+        // against: the one mark is pinned to the run's start.
+        if half <= 0.0 {
+            return vec![0.0];
+        }
+        // Half an advance in, but never nearer the start than the run's own
+        // centre: a stub keeps the pattern's phase, a run longer than the
+        // advance balances its one glyph instead.
+        return vec![half.max(length_mm * 0.5)];
     }
     let step = length_mm / cells as f64;
     (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
@@ -3124,18 +3141,25 @@ mod tests {
     }
 
     #[test]
-    fn one_glyph_on_a_stub_sits_half_a_period_in_not_at_the_end() {
+    fn a_lone_glyph_keeps_half_a_period_until_the_run_outgrows_it() {
         // `probe_complex_dash_marks` inks the 6.19 mm stubs' tick at 5.08 and
         // the 6.54 mm stubs' at 5.02 — half the 10.16 mm advance, while the
         // run's own end is 1.1-1.5 mm further on. The 7.62 mm advance's
         // 3.83 mm stubs land at 3.81, the same half period, so it is the
         // advance that anchors the mark and not the run.
+        //
+        // A run longer than its advance is the other reading of the same rule:
+        // the 空冷器A page's two 16.09 mm risers carry the reference's one glyph
+        // at 8.07 and 8.04 mm, and no half period reaches that far, so the lone
+        // glyph takes the run's centre (8.045 mm) instead.
         let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
         for (length, period, expected) in [
             (6.19_f64, 10.16_f64, 5.08_f64),
             (6.54, 10.16, 5.08),
             (5.17, 10.16, 5.08),
             (3.83, 7.62, 3.81),
+            (16.09, 10.16, 8.045),
+            (12.0, 10.16, 6.0),
         ] {
             let positions = complex_dash_positions(length, period, span);
             assert_eq!(positions.len(), 1);

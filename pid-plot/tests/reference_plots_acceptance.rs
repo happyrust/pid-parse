@@ -10,15 +10,15 @@
 //!
 //! What the readings say, 2026-11-02:
 //!
-//! * Ten of the eleven sit at coverage 0.9981–0.9997 with at most 8.210 mm of
+//! * Ten of the eleven sit at coverage 0.9986–0.9997 with at most 6.169 mm of
 //!   ink the reference does not have, every label it counts paired, and every
-//!   stroke on the reference's pen. The A1 sheets' 8.210 mm is one shared
-//!   residue, and it is not a missing stroke: the riser prints to 0.11 mm and
-//!   the leader and the side-run glyph match too. What differs is one stamped
-//!   complex-dash glyph on that 16.09 mm riser — it lands 5.08 mm from the run's
-//!   start (the style's half advance) where the reference inks it at 8.07 mm,
-//!   so only 37% of its two 3.59 mm strokes covers reference ink
-//!   (`docs/plans/2026-11-02-the-a1-stem.md`).
+//!   stroke on the reference's pen. The three A1 sheets carried one shared
+//!   8.210 mm residue that was never a missing stroke: the riser printed to
+//!   0.11 mm, and the leader and the side-run glyph matched too. It was one
+//!   stamped complex-dash glyph parked at the style's half advance, 5.08 mm
+//!   into a 16.09 mm run where the reference inks it at 8.07 mm. A lone glyph
+//!   now takes the run's midpoint once the run outgrows one advance, so those
+//!   three read extra 0.000 mm (`docs/plans/2026-11-02-the-a1-stem.md`).
 //! * The A2 sheet reads 0.9819 / 210.712 mm because it is the first A2 page
 //!   this crate has ever had a reference for, and its furniture is a third
 //!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
@@ -159,39 +159,39 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
     },
     Pin {
-        // The shared 8.210 mm is this riser's stamped glyph, not a missing
-        // vertical: see `docs/plans/2026-11-02-the-a1-stem.md`.
+        // The riser's stamped glyph centres itself now, so this sheet keeps
+        // no extra ink at all: see `docs/plans/2026-11-02-the-a1-stem.md`.
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9980,
-        max_extra_mm: 8.210 + EXTRA_SLACK_MM,
+        min_coverage: 0.9984,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3123,
+        min_pen_agreed: 3127,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
-        // Same 8.210 mm residue as the A sheet: one glyph on the riser.
+        // Same glyph, same fix as the A sheet: no extra ink left.
         name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9980,
-        max_extra_mm: 8.210 + EXTRA_SLACK_MM,
+        min_coverage: 0.9985,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3130,
+        min_pen_agreed: 3134,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
-        // Same 8.210 mm residue as the A sheet: one glyph on the riser.
+        // Same glyph, same fix as the A sheet: no extra ink left.
         name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9980,
-        max_extra_mm: 8.210 + EXTRA_SLACK_MM,
+        min_coverage: 0.9984,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3015,
+        min_pen_agreed: 3019,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
