@@ -67,10 +67,18 @@ fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     }
 }
 
-/// The three pens the reference plotter used, in paper millimetres.
+/// The four pens the reference plotter used, in paper millimetres.
+///
+/// Half, one, two and three times the mid pen: `0.169 / 0.339 / 0.678 /
+/// 1.017`. Three pens were all the five-drawing corpus ever showed. The A2
+/// reference plot added on 2026-11-02 prints a fourth: its
+/// `CPECCHB-SQ-A2.igr` title block declares 1.0606 / 1.1313 / 1.4141 mm
+/// rules, and the plot prints every one of them at `1.02` — the wide pen,
+/// not the thick one the table used to fold them onto.
 const PEN_THIN_MM: f64 = 0.169;
 const PEN_MID_MM: f64 = 0.339;
 const PEN_THICK_MM: f64 = 0.678;
+const PEN_WIDE_MM: f64 = 1.017;
 
 /// The pen a stroke with no resolved style falls back to.
 ///
@@ -82,11 +90,11 @@ const PEN_THICK_MM: f64 = 0.678;
 /// ([`pen_width_mm`]); a stroke with no style at all lands on the same one.
 const STROKE_MM: f64 = PEN_MID_MM;
 
-/// Snap a declared stroke width onto the plot's three pens.
+/// Snap a declared stroke width onto the plot's four pens.
 ///
 /// A `.pid` declares its widths on the ISO 128 ladder — 0.13 / 0.18 / 0.35 /
-/// 0.70 mm on the I drawing — and plotting those literally gives four widths
-/// where every reference page has three. The boundaries are measured, and they
+/// 0.70 mm on the I drawing — and plotting those literally gives more widths
+/// than the plotter carries. The boundaries are measured, and they
 /// are intervals rather than values: the title block's 0.25 mm rules print thin
 /// while 0.35 mm symbol strokes print mid, so the thin/mid boundary lies inside
 /// `(0.25, 0.35)`; 0.70 mm process mains print thick, so the mid/thick boundary
@@ -95,6 +103,11 @@ const STROKE_MM: f64 = PEN_MID_MM;
 /// a mid-pen anchor were the drawing's `As Drawn` placeholder, which prints
 /// *thin* (see `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`) — so the
 /// 0.55 mm threshold below is a choice inside that interval, not a measurement.
+///
+/// The thick/wide boundary sits inside `(0.70, 1.06)`: the CCHB A2 title block
+/// declares 1.0606 mm and up, and the plot prints those wide, while every
+/// 0.70 mm stroke on the same sheet prints thick. 0.85 mm is a choice inside
+/// that interval.
 ///
 /// A width that is not finite or not positive falls back to the mid pen, which
 /// is what an unresolved style draws with.
@@ -107,19 +120,24 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
         PEN_THIN_MM
     } else if declared_mm <= 0.55 {
         PEN_MID_MM
-    } else {
+    } else if declared_mm <= 0.85 {
         PEN_THICK_MM
+    } else {
+        PEN_WIDE_MM
     }
 }
 
 /// The widest width a drafting pen declares in this corpus, in millimetres.
 ///
 /// The ISO 128 ladder these drawings are authored on tops out at 0.70 mm, which
-/// [`pen_width_mm`] already snaps onto the thick pen. Past a millimetre a width
-/// stops being a pen: `SmartPlant` writes its *validation marks* into the same
-/// style table, and those carry the mark's own on-screen size instead —
-/// `BandAid`, which flags an object an engineer has to look at, states 10 mm.
-pub const WIDEST_PEN_MM: f64 = 1.0;
+/// [`pen_width_mm`] snaps onto the thick pen. A sheet template is authored on a
+/// different scale and can declare more: the CCHB A2 title block states
+/// 1.4141 mm for its heavy rails, and the plot prints it on the wide pen.
+/// Past that a width stops being a pen: `SmartPlant` writes its *validation
+/// marks* into the same style table, and those carry the mark's own on-screen
+/// size instead — `BandAid`, which flags an object an engineer has to look at,
+/// states 10 mm.
+pub const WIDEST_PEN_MM: f64 = 1.45;
 
 /// Whether a declared width is one a plotter pen can carry.
 ///
@@ -1354,8 +1372,8 @@ mod tests {
     }
 
     #[test]
-    fn declared_widths_snap_onto_the_three_plot_pens() {
-        use super::{PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, pen_width_mm};
+    fn declared_widths_snap_onto_the_four_plot_pens() {
+        use super::{PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm};
         // The I drawing's own ladder: 0.13 / 0.18 / 0.35 / 0.70 mm.
         for thin in [0.13, 0.18, 0.25, 0.30] {
             assert_eq!(pen_width_mm(thin), PEN_THIN_MM, "{thin} mm");
@@ -1363,34 +1381,44 @@ mod tests {
         for mid in [0.35, 0.50, 0.55] {
             assert_eq!(pen_width_mm(mid), PEN_MID_MM, "{mid} mm");
         }
-        for thick in [0.70, 1.0, 2.0] {
+        for thick in [0.70, 0.85] {
             assert_eq!(pen_width_mm(thick), PEN_THICK_MM, "{thick} mm");
+        }
+        // The CCHB A2 title block's heavy rails, and anything above them,
+        // print on the wide pen.
+        for wide in [1.0, 1.0606, 1.1313, 1.4141, 2.0] {
+            assert_eq!(pen_width_mm(wide), PEN_WIDE_MM, "{wide} mm");
         }
         // A width that is not a width draws the fallback pen.
         for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert_eq!(pen_width_mm(nonsense), PEN_MID_MM, "{nonsense}");
         }
-        // 0.169 / 0.339 / 0.678 mm are 0.48 / 0.96 / 1.92 pt, the only three
-        // widths the reference pages carry.
+        // 0.169 / 0.339 / 0.678 / 1.017 mm are 0.48 / 0.96 / 1.92 / 2.88 pt,
+        // the only four widths the reference pages carry.
         let points = |mm: f64| mm * 72.0 / 25.4;
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
+        assert!((points(PEN_WIDE_MM) - 2.88).abs() < 0.005);
     }
 
     #[test]
     fn a_validation_marks_width_is_not_a_pen() {
         use super::{WIDEST_PEN_MM, carries_a_pen, pen_width_mm};
-        // Every width a drafting pen in this corpus declares is a pen, and the
-        // top of the ladder still snaps onto the thick one.
-        for pen in [0.10, 0.13, 0.18, 0.25, 0.35, 0.50, 0.70] {
+        // Every width a drafting pen in this corpus declares is a pen — the
+        // CCHB A2 title block's 1.0606 / 1.1313 / 1.4141 mm rules included —
+        // and the top of the ladder prints on the widest pen.
+        for pen in [
+            0.10, 0.13, 0.18, 0.25, 0.35, 0.50, 0.70, 1.0, 1.0606, 1.1313, 1.4141,
+        ] {
             assert!(carries_a_pen(pen), "{pen} mm is a pen");
-            assert_eq!(pen_width_mm(pen), pen_width_mm(pen), "{pen} mm");
+            assert!(pen_width_mm(pen) >= super::PEN_THIN_MM, "{pen} mm");
         }
-        assert!((pen_width_mm(WIDEST_PEN_MM) - super::PEN_THICK_MM).abs() < 1e-9);
+        assert!((pen_width_mm(WIDEST_PEN_MM) - super::PEN_WIDE_MM).abs() < 1e-9);
+        assert!((pen_width_mm(0.70) - super::PEN_THICK_MM).abs() < 1e-9);
         // `BandAid` is the 10 mm band SmartPlant paints over a flagged object;
         // its size is the mark's, not a pen's.
-        for mark in [WIDEST_PEN_MM + 0.01, 1.414, 10.0] {
+        for mark in [WIDEST_PEN_MM + 0.01, 10.0] {
             assert!(!carries_a_pen(mark), "{mark} mm is a validation mark");
         }
         // The same values `pen_width_mm` refuses are not pens either.

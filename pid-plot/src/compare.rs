@@ -83,13 +83,18 @@ impl MaskRect {
     }
 }
 
-/// Title-block rectangles surveyed from the five reference plots.
+/// Title-block rectangles surveyed from the reference plots.
 ///
-/// A0 is the I井场 sheet. A1 is one set shared by the other four. The
+/// A0 is the I井场 sheet (the J K / L M sheets of the same size share it). A1
+/// is one set shared by the four smaller sheets the crate was first measured
+/// against. A2 is the CCHB sheet `集注站 轻烃分离器I…` is issued on. The
 /// rectangles are `assets/template-masks.json`: millimetres, origin at the
-/// bottom-left, y up. A page that matches neither sheet size gets an empty
-/// list. How the clusters were measured is written up in
-/// `docs/analysis/2026-10-12-template-mask-samples.md`.
+/// bottom-left, y up. A page that matches no surveyed sheet size gets an
+/// empty list. How the A0/A1 clusters were measured is written up in
+/// `docs/analysis/2026-10-12-template-mask-samples.md`; the A2 pair — a
+/// 35.75 mm sign-off column and a 274 × 115 mm title block, both wider or
+/// narrower than A1's because it is a third template family — in
+/// `docs/analysis/2026-11-02-the-a2-sheet-had-no-mask.md`.
 ///
 /// The left column's right edge is not a text origin: it is the rail of a
 /// 50 × 10 mm box the linked `.igr` hangs from the top frame at `x 25..75`
