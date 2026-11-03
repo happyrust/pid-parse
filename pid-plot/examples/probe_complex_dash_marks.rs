@@ -34,15 +34,18 @@
 //! 3.04. Matching each stroke to the local arm that drew it and subtracting
 //! that arm's own midpoint offset recovers the anchor.
 //!
-//! The fit assumes the page inks the style's own local strokes; a run whose
-//! glyph is mirrored or built from different arms still reads up to 0.7 mm
-//! off, so a reading is only as good as the acceptance gate's `coverage`
-//! beside it.
+//! Each stroke is matched to the arm that shares its direction and length, and
+//! carries that arm's own along-run midpoint; a stroke whose direction fits two
+//! parallel arms takes their mean. A run whose across-run arm merges with the
+//! pipe wall — the reader then hands back only the along-run stroke — still
+//! reads its anchor (L M's `oid 2861`), and the CD pair, whose arms sit
+//! ±0.64 mm about its centre, reads the pair's centre either way.
 //!
-//! The two walls of a pipe carry the same glyph, and either wall's marks fall
-//! within a few millimetres of the other's line; the `side` filter keeps a run's
-//! own marks only (the glyph half-width is 1.8 mm, so the neighbouring wall sits
-//! ~3.8 mm out).
+//! The two walls of a pipe carry the same glyph, and the neighbouring wall's
+//! along-run arm can fall inside a fixed few-millimetre window of this line
+//! (J K's `oid 33010`). The `side` filter is the glyph's own reach across the
+//! run — its widest local y plus 0.25 mm for the reader's offset — so only the
+//! run's own marks are kept.
 
 use std::path::Path;
 
@@ -67,13 +70,14 @@ fn side(point: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     ((point[0] - a[0]) * dy - (point[1] - a[1]) * dx) / square.sqrt()
 }
 
-/// The glyph's arms in the page's own frame, with their lengths in mm.
+/// The glyph's arms in the page's own frame, with their lengths and their
+/// along-run midpoints in mm.
 ///
 /// A glyph is stored in its own frame — +x along the run, +y across it — so an
 /// arm has to be rotated by the run's direction before its direction can be
 /// compared with a stroke on the page. The CD sheets' pair reads (2.5, 2.6) mm
 /// locally and prints at 135° on this sheet's vertical runs, not at 46°.
-fn arms_in_page(complex: &ComplexDash, a: [f64; 2], b: [f64; 2]) -> Vec<([f64; 2], f64)> {
+fn arms_in_page(complex: &ComplexDash, a: [f64; 2], b: [f64; 2]) -> Vec<([f64; 2], f64, f64)> {
     let run = b[0] - a[0];
     let rise = b[1] - a[1];
     let run_len = run.hypot(rise);
@@ -91,6 +95,7 @@ fn arms_in_page(complex: &ComplexDash, a: [f64; 2], b: [f64; 2]) -> Vec<([f64; 2
             (
                 [dx * u[0] + dy * n[0], dx * u[1] + dy * n[1]],
                 dx.hypot(dy) * 1000.0,
+                (mark.start.0 + mark.end.0) / 2.0 * 1000.0,
             )
         })
         .collect()
@@ -110,23 +115,31 @@ fn arms_in_page(complex: &ComplexDash, a: [f64; 2], b: [f64; 2]) -> Vec<([f64; 2
 /// arm of a mark cannot be much longer than the arm that drew it, and the
 /// window has to start well below 1 because the reader cuts a stroke where
 /// another line crosses it.
-fn matches_an_arm(stroke: &Stroke, arms: &[([f64; 2], f64)]) -> bool {
+fn matching_arms(stroke: &Stroke, arms: &[([f64; 2], f64, f64)]) -> Vec<usize> {
     let ink = [stroke.1[0] - stroke.0[0], stroke.1[1] - stroke.0[1]];
     let ink_len = ink[0].hypot(ink[1]);
     if ink_len <= 1e-9 {
-        return false;
+        return Vec::new();
     }
-    arms.iter().any(|(arm, arm_len_mm)| {
-        if *arm_len_mm <= 1e-9 || !(0.7..=1.3).contains(&(ink_len / arm_len_mm)) {
-            return false;
-        }
-        let arm_len = arm[0].hypot(arm[1]);
-        if arm_len <= 1e-9 {
-            return false;
-        }
-        let cosine = ((arm[0] * ink[0] + arm[1] * ink[1]) / (arm_len * ink_len)).abs();
-        cosine.min(1.0).acos().to_degrees() <= 8.0
-    })
+    arms.iter()
+        .enumerate()
+        .filter(|(_, (arm, arm_len_mm, _))| {
+            if *arm_len_mm <= 1e-9 || !(0.7..=1.3).contains(&(ink_len / arm_len_mm)) {
+                return false;
+            }
+            let arm_len = arm[0].hypot(arm[1]);
+            if arm_len <= 1e-9 {
+                return false;
+            }
+            let cosine = ((arm[0] * ink[0] + arm[1] * ink[1]) / (arm_len * ink_len)).abs();
+            cosine.min(1.0).acos().to_degrees() <= 8.0
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn matches_an_arm(stroke: &Stroke, arms: &[([f64; 2], f64, f64)]) -> bool {
+    !matching_arms(stroke, arms).is_empty()
 }
 
 /// A run's own marks, as the centres of the glyph's stroke pairs.
@@ -205,83 +218,55 @@ fn main() {
                 .filter(|mark| !mark.is_degenerate())
                 .map(|mark| (mark.end.0 - mark.start.0).abs() * 1000.0)
                 .fold(0.0_f64, f64::max);
-            let u = [(b[0] - a[0]) / run, (b[1] - a[1]) / run];
-            // One translation for the whole glyph, not one per stroke: the
-            // reference inks the same local strokes, so its ink centroid sits
-            // `mean local` rotated onto the page away from the anchor the
-            // pattern placed. Matching stroke by stroke cannot tell two
-            // parallel slashes apart and picks the wrong arm half the time.
-            let mut local = [0.0_f64; 2];
-            let mut arm_count = 0.0_f64;
-            for mark in complex
+            let across = complex
                 .strokes()
                 .iter()
                 .filter(|mark| !mark.is_degenerate())
-            {
-                local[0] += (mark.start.0 + mark.end.0) / 2.0 * 1000.0;
-                local[1] += (mark.start.1 + mark.end.1) / 2.0 * 1000.0;
-                arm_count += 1.0;
-            }
-            if arm_count <= 0.0 {
-                continue;
-            }
-            local[0] /= arm_count;
-            local[1] /= arm_count;
+                .map(|mark| mark.start.1.abs().max(mark.end.1.abs()) * 1000.0)
+                .fold(0.0_f64, f64::max);
+            // A whole pipe width out, the neighbouring wall's along-run arm
+            // still landed inside the fixed 2.2 mm window and dragged each
+            // cluster's centre (J K's `oid 33010` read 0.36 mm off). Keep only
+            // what this glyph reaches: its widest local y, plus the reader's
+            // own offset.
+            let reach_across = across + 0.25;
+            let u = [(b[0] - a[0]) / run, (b[1] - a[1]) / run];
+            // The page does not always ink every arm: an across-run arm lying
+            // on the pipe wall merges with it and the reader hands back only
+            // the along-run one (L M's `oid 2861` prints one stroke per mark).
+            // Each stroke therefore carries the offset of the arm it matches,
+            // not the mean of the glyph's arms; a stroke whose direction fits
+            // several parallel arms (the CD pair) takes their mean, which is
+            // that pair's own centre.
             let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
             let frame = if dx < -1e-9 || (dx.abs() <= 1e-9 && dy < 0.0) {
                 [-u[0], -u[1]]
             } else {
                 u
             };
-            let left = [-frame[1], frame[0]];
-            let mut mids: Vec<[f64; 2]> = Vec::new();
             let arms = arms_in_page(complex, a, b);
+            let mut mids: Vec<f64> = Vec::new();
             for stroke in marks.iter().filter(|s| matches_an_arm(s, &arms)) {
                 let mid = [
                     (stroke.0[0] + stroke.1[0]) / 2.0,
                     (stroke.0[1] + stroke.1[1]) / 2.0,
                 ];
-                // The run's own wall only: the glyph half-width is 1.8 mm, so a
-                // mark of the neighbouring wall sits ~3.8 mm out.
-                if side(mid, a, b).abs() > 2.2 {
+                if side(mid, a, b).abs() > reach_across {
                     continue;
                 }
                 let t = (mid[0] - a[0]) * u[0] + (mid[1] - a[1]) * u[1];
                 if t < -2.0 || t > run + 2.0 {
                     continue;
                 }
-                mids.push(mid);
+                let candidates = matching_arms(stroke, &arms);
+                let along = candidates.iter().map(|index| arms[*index].2).sum::<f64>()
+                    / candidates.len() as f64;
+                mids.push(t - along * (frame[0] * u[0] + frame[1] * u[1]));
             }
             if mids.is_empty() {
                 continue;
             }
-            // A mirrored placement flips the glyph's local y, so the same
-            // correction carries the other sign. The ink says which: ask the
-            // side of the run the marks lie on and take the handedness that
-            // predicts it. Without this the 空冷器 pages' mirrored runs read
-            // 2 x 0.64 mm off while their unmirrored neighbours read true.
-            let mean_side =
-                mids.iter().map(|mid| side(*mid, a, b)).sum::<f64>() / mids.len() as f64;
-            let predicted = |mirror: f64| {
-                let point = [
-                    a[0] + local[0] * frame[0] + mirror * local[1] * left[0],
-                    a[1] + local[0] * frame[1] + mirror * local[1] * left[1],
-                ];
-                side(point, a, b)
-            };
-            let mirror =
-                if (mean_side - predicted(1.0)).abs() <= (mean_side - predicted(-1.0)).abs() {
-                    1.0
-                } else {
-                    -1.0
-                };
-            let bias = local[0] * (frame[0] * u[0] + frame[1] * u[1])
-                + mirror * local[1] * (left[0] * u[0] + left[1] * u[1]);
-            let theirs: Vec<f64> = mids
-                .iter()
-                .map(|mid| (mid[0] - a[0]) * u[0] + (mid[1] - a[1]) * u[1] - bias)
-                .collect();
-            let ref_marks = clusters(&theirs);
+            let ref_marks = clusters(&mids);
             if ref_marks.is_empty() {
                 continue;
             }

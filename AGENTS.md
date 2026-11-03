@@ -268,10 +268,11 @@ convention and keep their names).
 
 `probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
 its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
-centroid reading is 0.64–0.71 mm early for every mark of that glyph. The fit
-still assumes the page inks the style's own strokes — a mirrored or
-differently-armed run can read up to 0.7 mm off, and the acceptance gate's
-coverage is the arbiter for those.
+centroid reading is 0.64–0.71 mm early for every mark of that glyph. Each
+stroke is matched to the arm sharing its direction, so a run whose across arm
+merges with the pipe wall still reads true, and the side window is the glyph's
+own reach across the run (its widest local y plus 0.25 mm) rather than a fixed
+2.2 mm, which used to admit the neighbouring wall's along arm.
 
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
