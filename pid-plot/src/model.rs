@@ -3179,6 +3179,48 @@ mod tests {
     }
 
     #[test]
+    fn a_lone_glyph_past_one_advance_takes_the_runs_centre() {
+        // The rule this test exists for: once a single-glyph run outgrows the
+        // style's advance, the mark balances the run instead of keeping the
+        // pattern's phase, so it sits at `L / 2` and not at `period / 2`.
+        // 空冷器A's two 16.09 mm risers carry the reference's glyph at 8.07 and
+        // 8.04 mm; half an advance would ink it 3 mm nearer the start and leave
+        // the far half bare, which is the 8.210 mm residue
+        // `docs/plans/2026-11-02-the-a1-stem.md` closes.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        let period = 10.16_f64;
+        // Every length stays under two advances less the glyph's own span, so
+        // the cells rule still fits one glyph and the lone-glyph branch decides.
+        for length in [10.5_f64, 12.0, 16.09, 17.0] {
+            assert_eq!(complex_dash_cells(length, period, span), 1);
+            let positions = complex_dash_positions(length, period, span);
+            assert_eq!(positions.len(), 1);
+            let centre = length * 0.5;
+            assert!(
+                (positions[0] - centre).abs() < 1e-9,
+                "{length} mm sits at {positions:?}"
+            );
+            // The bare half period would land here instead; a revert to it
+            // fails this assertion on every case rather than only on the long
+            // risers.
+            assert!(
+                positions[0] > period * 0.5 + 1e-6,
+                "{length} mm kept the pattern's phase"
+            );
+        }
+        // The measured risers bracket the centre from both sides.
+        for reference in [8.04_f64, 8.07] {
+            assert!((16.09_f64 * 0.5 - reference).abs() < 0.03);
+        }
+        // Exactly one advance is where the two readings meet, so the shortest
+        // run past it is the one that moves off the phase.
+        let at_advance = complex_dash_positions(period, period, span);
+        assert!((at_advance[0] - period * 0.5).abs() < 1e-9);
+        let just_past = complex_dash_positions(period + 0.01, period, span);
+        assert!((just_past[0] - (period + 0.01) * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn more_than_one_cell_divides_the_run_between_them() {
         // The cells stay where the reference inks them: 22.47 mm at 5.61 and
         // 16.78, 34.60 at 5.81 / 17.41 / 28.92.
