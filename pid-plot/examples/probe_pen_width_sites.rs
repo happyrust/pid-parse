@@ -13,11 +13,11 @@
 //! behind `docs/analysis/2026-10-30-a-fill-outline-is-not-a-pen.md`.
 //!
 //! ```text
-//! cargo run -p pid-plot --example probe_pen_width_sites
+//! cargo run -p pid-plot --example probe_pen_width_sites -- [drawing ...]
 //! ```
 //!
-//! Read-only. The corpus is `PID_PARSE_SELF_CHECK_DIR`, or
-//! `D:\work\cad\PID自研软件验证`.
+//! With no drawing names it walks the original five sheets. The corpus is
+//! `PID_PARSE_SELF_CHECK_DIR`, or `D:\work\cad\PID自研软件验证`. Read-only.
 
 use std::path::PathBuf;
 
@@ -97,6 +97,72 @@ fn ring_edge(chain: &[[f64; 2]], start: [f64; 2], end: [f64; 2]) -> bool {
     })
 }
 
+fn owner_of(primitive: &pid_plot::model::PaperPrimitive, is_fill: bool) -> String {
+    let declared = primitive
+        .stroke
+        .as_ref()
+        .map_or(0.25, |stroke| stroke.width_mm);
+    let kind = match primitive.shape {
+        pid_plot::model::PaperShape::Line { .. } => "line",
+        pid_plot::model::PaperShape::Arc { .. } => "arc",
+        pid_plot::model::PaperShape::Circle { .. } => "circle",
+        pid_plot::model::PaperShape::Polyline { .. } => "polyline",
+        pid_plot::model::PaperShape::Fill { .. } => "fill",
+        pid_plot::model::PaperShape::Text { .. } => "text",
+    };
+    let role = if is_fill { "fill" } else { "shape" };
+    let name = primitive
+        .symbol
+        .clone()
+        .or_else(|| primitive.stream_path.clone())
+        .unwrap_or_else(|| "(unnamed)".into());
+    let furniture = if primitive.furniture {
+        " furniture"
+    } else {
+        ""
+    };
+    format!(
+        "{kind} {role} {name} conf={} declared {declared:.4} mm{furniture}",
+        primitive.confidence
+    )
+}
+
+fn shape_gap(shape: &PaperShape, start: [f64; 2], end: [f64; 2]) -> Option<f64> {
+    let mid = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
+    match shape {
+        PaperShape::Line { start_mm, end_mm } => Some(dist_point_seg(mid, *start_mm, *end_mm)),
+        PaperShape::Polyline { points_mm, .. }
+        | PaperShape::Fill {
+            chain_mm: points_mm,
+            ..
+        } => points_mm
+            .windows(2)
+            .map(|pair| dist_point_seg(mid, pair[0], pair[1]))
+            .reduce(f64::min),
+        PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => Some((length(mid, *center_mm) - radius_mm).abs()),
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            ..
+        } => Some((length(mid, *center_mm) - radius_mm).abs()),
+        _ => None,
+    }
+}
+
+fn dist_point_seg(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length2 = dx * dx + dy * dy;
+    if length2 <= 1e-12 {
+        return length(point, start);
+    }
+    let t = (((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2).clamp(0.0, 1.0);
+    length(point, [start[0] + dx * t, start[1] + dy * t])
+}
+
 /// One stroke the tally charges as differing.
 struct Site {
     ours_centi_mm: u64,
@@ -115,7 +181,13 @@ fn main() {
     let dirs = font_dirs(Some(&corpus));
     let mut grand_differed = 0usize;
     let mut grand_fill = 0usize;
-    for name in NAMES {
+    let asked: Vec<String> = std::env::args().skip(1).collect();
+    let names: Vec<&str> = if asked.is_empty() {
+        NAMES.to_vec()
+    } else {
+        asked.iter().map(String::as_str).collect()
+    };
+    for name in names {
         let reference =
             read_plot(&std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference"))
                 .expect("read reference");
@@ -239,26 +311,24 @@ fn main() {
                     continue;
                 }
                 is_fill = matches!(primitive.shape, PaperShape::Fill { .. });
-                let declared = primitive
-                    .stroke
-                    .as_ref()
-                    .map_or(0.25, |stroke| stroke.width_mm);
-                owner = format!(
-                    "{} {} conf={} declared {declared:.2} mm{}",
-                    if is_fill { "fill" } else { "shape" },
-                    primitive
-                        .symbol
-                        .clone()
-                        .or_else(|| primitive.stream_path.clone())
-                        .unwrap_or_else(|| "(unnamed)".into()),
-                    primitive.confidence,
-                    if primitive.furniture {
-                        " furniture"
-                    } else {
-                        ""
-                    }
-                );
+                owner = owner_of(primitive, is_fill);
                 break;
+            }
+            if owner.starts_with("(nothing") {
+                let mut nearest: Option<(f64, String, bool)> = None;
+                for primitive in &model.primitives {
+                    let Some(distance) = shape_gap(&primitive.shape, start, end) else {
+                        continue;
+                    };
+                    if nearest.as_ref().is_none_or(|(best, _, _)| distance < *best) {
+                        let fill = matches!(primitive.shape, PaperShape::Fill { .. });
+                        nearest = Some((distance, owner_of(primitive, fill), fill));
+                    }
+                }
+                if let Some((distance, named, fill)) = nearest {
+                    is_fill = fill;
+                    owner = format!("nearest {distance:.3} mm: {named}");
+                }
             }
             near.sort_by(|left, right| left.0.total_cmp(&right.0));
             let mut detail = String::new();

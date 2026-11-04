@@ -15,6 +15,16 @@ use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor, TextLine}
 use crate::read::{InkSegment, PlotInk, TextSpan};
 
 const JOIN_GAP_MM: f64 = 3.0;
+/// Sideways tolerance for the join that fits long lines and paints the overlay.
+const JOIN_LATERAL_MM: f64 = 0.4;
+/// Sideways tolerance for the join extra ink is covered against.
+///
+/// A ball-valve stem sits 0.33 mm beside its pipe, inside [`JOIN_LATERAL_MM`],
+/// and the merged chord then leaves that stem — drawn on both pages — more
+/// than [`COVER_MM`] away. Dashes that have to stay one line sit within 0.20 mm
+/// on the sheets measured (J K, A2, the flash drum, the air cooler). At 0.20 mm
+/// J K, I and L M drop to no extra, and A2 stays at 210.712 mm.
+const EXTRA_JOIN_LATERAL_MM: f64 = 0.2;
 const COVER_MM: f64 = 0.5;
 const SAMPLE_MM: f64 = 0.5;
 const TEXT_MM: f64 = 1.0;
@@ -428,7 +438,10 @@ pub fn compare_plots_with_sources(
     // The fit pairs long lines, so it wants the merges: a dashed route is one
     // line to fit, not twenty dashes to refuse for being under `LONG_MM`.
     let fit = fit_lines(&reference_lines, &our_lines);
-    let reference_index = Grid::new(&reference_lines);
+    // Extra covers against a tighter sideways join. The fit's 0.4 mm swallows
+    // a stem that sits 0.33 mm beside the pipe, and the merged chord then
+    // misses ink both pages draw.
+    let reference_index = Grid::new(&join_centerlines_for_extra(&reference.segments));
     let our_index = Grid::new(&drawn_lines(&ours.segments, &fit));
     let (reference_length, covered, masked_reference) =
         cover(&strokes(&reference.segments), &our_index, masks, true);
@@ -473,6 +486,9 @@ pub fn compare_plots_with_sources(
 const PEN_WINDOW_MM: f64 = 1.0;
 /// How parallel two strokes have to be, as the absolute cosine of their angle.
 const PEN_DOT: f64 = 0.99;
+/// How close two chord lengths have to be before a nine-degree cut of the
+/// same pen counts as one stroke. The valve's chords are 1.01 mm against 1.07 mm.
+const SAME_CHORD_RATIO: f64 = 0.9;
 /// The same guard for a fill's outline, which is not a stroke and need not run
 /// parallel to the reference's.
 ///
@@ -610,7 +626,16 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
                 continue;
             }
             let dot = (unit[0] * other[0] / other_len + unit[1] * other[1] / other_len).abs();
-            let dot_min = if ours_width == 0 {
+            let width = centi_mm(candidate.width_mm);
+            let ratio = (other_len / len).min(len / other_len);
+            // The valve's outer circle is cut into chords about nine degrees
+            // apart: same width, midpoints within the cover radius, lengths
+            // within a tenth. A fill outline already uses this angle. A
+            // different width, or a same width that is only nearby, still
+            // has to clear [`PEN_DOT`].
+            let same_chord =
+                width == ours_width && distance <= COVER_MM && ratio >= SAME_CHORD_RATIO;
+            let dot_min = if ours_width == 0 || same_chord {
                 PEN_FILL_DOT
             } else {
                 PEN_DOT
@@ -618,11 +643,9 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
             if dot < dot_min {
                 continue;
             }
-            let ratio = (other_len / len).min(len / other_len);
             // A fill's ring is compared on locus and rough direction only —
             // see [`pen_pairs`] — and a stroke that is a piece of the
             // reference's is the same pen on a coarser chord.
-            let width = centi_mm(candidate.width_mm);
             let tolerance = if width == ours_width {
                 PEN_SAME_PEN_ON_MM
             } else {
@@ -855,6 +878,19 @@ fn drawn_lines(segments: &[InkSegment], fit: &Fit) -> Vec<Line> {
 }
 
 fn join_centerlines(segments: &[InkSegment]) -> Vec<Line> {
+    join_centerlines_within(segments, JOIN_LATERAL_MM)
+}
+
+/// The join [`compare_plots`] covers extra ink against.
+///
+/// Narrower than [`join_centerlines`]: a valve stem 0.33 mm beside the pipe
+/// is within the fit's 0.4 mm and the merged chord then misses the stem the
+/// page actually drew. Dashes that have to stay one line sit within 0.20 mm.
+fn join_centerlines_for_extra(segments: &[InkSegment]) -> Vec<Line> {
+    join_centerlines_within(segments, EXTRA_JOIN_LATERAL_MM)
+}
+
+fn join_centerlines_within(segments: &[InkSegment], lateral_mm: f64) -> Vec<Line> {
     let lines: Vec<Line> = segments
         .iter()
         .filter(|segment| hypot(segment.start_mm, segment.end_mm) >= 1e-4)
@@ -874,7 +910,7 @@ fn join_centerlines(segments: &[InkSegment]) -> Vec<Line> {
                 if other <= index {
                     continue;
                 }
-                if can_join(*line, lines[other]) {
+                if can_join(*line, lines[other], lateral_mm) {
                     union.join(index, other);
                 }
             }
@@ -890,7 +926,7 @@ fn join_centerlines(segments: &[InkSegment]) -> Vec<Line> {
         .collect()
 }
 
-fn can_join(left: Line, right: Line) -> bool {
+fn can_join(left: Line, right: Line, lateral_mm: f64) -> bool {
     let direction = left.direction();
     let other = right.direction();
     let dot = (direction[0] * other[0] + direction[1] * other[1]).abs();
@@ -902,7 +938,7 @@ fn can_join(left: Line, right: Line) -> bool {
         let vy = point[1] - left.a[1];
         (vx * -direction[1] + vy * direction[0]).abs()
     };
-    if perp(right.a) > 0.4 || perp(right.b) > 0.4 {
+    if perp(right.a) > lateral_mm || perp(right.b) > lateral_mm {
         return false;
     }
     let project = |point: [f64; 2]| {
@@ -1721,7 +1757,7 @@ fn group_lengths(
     missing: &[MaskRect],
     model: &PaperModel,
 ) -> GroupedLengths {
-    let reference_lines = join_centerlines(&reference.segments);
+    let reference_lines = join_centerlines_for_extra(&reference.segments);
     let reference_strokes = strokes(&reference.segments);
     let our_strokes = drawn_lines(&ours.segments, fit);
     let reference_index = Grid::new(&reference_lines);
@@ -2238,6 +2274,101 @@ mod tests {
     }
 
     #[test]
+    fn a_same_pen_chord_nine_degrees_off_pairs_ahead_of_a_thinner_parallel() {
+        // J K / L M: one chord of `PV-Pressure Regulating Valve with Flange`'s
+        // outer circle. The reference chord is the same 0.34 mm pen, 0.16 mm
+        // away, at dot 0.987. A 0.17 mm stroke 0.98 mm away is more parallel
+        // and used to be the partner, so the page was charged a difference.
+        let dot: f64 = 0.987;
+        let side = (1.0 - dot * dot).sqrt();
+        let ours_len = 1.01;
+        let reference_len = 1.07;
+        let mid_y = ours_len / 2.0;
+        let half = reference_len / 2.0;
+        let reference = ink(
+            vec![
+                InkSegment {
+                    start_mm: [0.16 - half * side, mid_y - half * dot],
+                    end_mm: [0.16 + half * side, mid_y + half * dot],
+                    width_mm: 0.34,
+                },
+                InkSegment {
+                    start_mm: [0.98, mid_y - 0.70],
+                    end_mm: [0.98, mid_y + 0.70],
+                    width_mm: 0.17,
+                },
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 0.0],
+                end_mm: [0.0, ours_len],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_different_pen_nine_degrees_off_does_not_pair() {
+        let dot: f64 = 0.987;
+        let side = (1.0 - dot * dot).sqrt();
+        let ours_len = 1.01;
+        let half = 1.07 / 2.0;
+        let mid_y = ours_len / 2.0;
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [0.16 - half * side, mid_y - half * dot],
+                end_mm: [0.16 + half * side, mid_y + half * dot],
+                width_mm: 0.17,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 0.0],
+                end_mm: [0.0, ours_len],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_same_pen_nine_degrees_off_but_farther_than_the_cover_does_not_pair() {
+        let dot: f64 = 0.987;
+        let side = (1.0 - dot * dot).sqrt();
+        let ours_len = 1.01;
+        let half = 1.07 / 2.0;
+        let mid_y = ours_len / 2.0;
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [0.80 - half * side, mid_y - half * dot],
+                end_mm: [0.80 + half * side, mid_y + half * dot],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [0.0, 0.0],
+                end_mm: [0.0, ours_len],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+    }
+
+    #[test]
     fn ink_crossing_a_stroke_at_an_angle_is_not_a_piece_of_it() {
         // The sub-piece rule is about one curve read twice, not about two
         // strokes that happen to meet: a perpendicular stroke has no partner.
@@ -2298,6 +2429,29 @@ mod tests {
         assert!(
             report.extra_length_mm < 0.2,
             "the blank counted {} mm",
+            report.extra_length_mm
+        );
+    }
+
+    #[test]
+    fn a_stem_beside_the_pipe_is_not_extra_when_both_pages_draw_it() {
+        // The pipe and two stubs just past its end, 0.33 mm to either side —
+        // a ball valve's stem next to the run it sits on. All three are
+        // within the fit's 0.4 mm sideways join, so they become one chord
+        // from the pipe's far end to one stub. The other stub is then 0.6 mm
+        // off that chord and the page that drew it is charged for ink the
+        // reference also has. Measured on J K's `Ball Valve Type 2` stems
+        // (0.33 mm off the pipe, 5.715 mm charged).
+        let body = vec![
+            line([0.0, 0.0], [0.0, 20.0]),
+            line([-0.35, 22.0], [-0.35, 26.0]),
+            line([0.33, 22.0], [0.33, 26.0]),
+        ];
+        let plot = ink(body, vec![]);
+        let report = compare_plots(&plot, &plot, &[]);
+        assert!(
+            report.extra_length_mm < 0.2,
+            "the stem counted {} mm",
             report.extra_length_mm
         );
     }

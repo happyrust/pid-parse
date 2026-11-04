@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use pid_plot::compare::{Fit, MaskRect, compare_plots_with_model, template_masks};
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
-use pid_plot::read::read_plot;
+use pid_plot::read::{read_plot, sheet_edge_mm};
 use pid_plot::write::{PlotFont, write_plot};
 
 const DEFAULT_DRAWING: &str = "I井场 注采阀组工艺及自控流程图";
@@ -185,8 +185,8 @@ fn union(parent: &mut [usize], left: usize, right: usize) {
 }
 
 /// `compare.rs`'s own join test, repeated: collinear to `dot >= 0.999`, within
-/// 0.4 mm of the line, a gap under 3 mm, and two ends that meet.
-fn can_join(left: Line, right: Line) -> bool {
+/// `lateral_mm` of the line, a gap under 3 mm, and two ends that meet.
+fn can_join(left: Line, right: Line, lateral_mm: f64) -> bool {
     let direction = left.direction();
     let other = right.direction();
     let dot = (direction[0] * other[0] + direction[1] * other[1]).abs();
@@ -198,7 +198,7 @@ fn can_join(left: Line, right: Line) -> bool {
         let vy = point[1] - left.a[1];
         (vx * -direction[1] + vy * direction[0]).abs()
     };
-    if perp(right.a) > 0.4 || perp(right.b) > 0.4 {
+    if perp(right.a) > lateral_mm || perp(right.b) > lateral_mm {
         return false;
     }
     let project = |point: [f64; 2]| {
@@ -254,7 +254,7 @@ fn merge_group(lines: &[Line], members: &[usize]) -> Option<Line> {
 
 /// `compare.rs`'s `join_centerlines`: a dashed route is one line to sample, and
 /// a symbol's blank is not bridged (its two sides are not collinear across it).
-fn join_centerlines(segments: &[Line]) -> Vec<Line> {
+fn join_centerlines(segments: &[Line], lateral_mm: f64) -> Vec<Line> {
     let lines: Vec<Line> = segments
         .iter()
         .copied()
@@ -285,7 +285,7 @@ fn join_centerlines(segments: &[Line]) -> Vec<Line> {
                         if *other <= index {
                             continue;
                         }
-                        if can_join(*line, lines[*other]) {
+                        if can_join(*line, lines[*other], lateral_mm) {
                             union(&mut parent, index, *other);
                         }
                     }
@@ -302,6 +302,97 @@ fn join_centerlines(segments: &[Line]) -> Vec<Line> {
         .into_values()
         .filter_map(|members| merge_group(&lines, &members))
         .collect()
+}
+
+/// How far sideways a pair that `can_join` accepts at 0.4 mm actually sits.
+fn print_join_laterals(lines: &[Line]) {
+    let mut endpoints: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        for end in [line.a, line.b] {
+            endpoints
+                .entry(cell_key(end, JOIN_GAP_MM))
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut seen: HashMap<(usize, usize), f64> = HashMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        for end in [line.a, line.b] {
+            let key = cell_key(end, JOIN_GAP_MM);
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let Some(bucket) = endpoints.get(&(key.0 + dx, key.1 + dy)) else {
+                        continue;
+                    };
+                    for other in bucket {
+                        if *other <= index {
+                            continue;
+                        }
+                        let pair = (index, *other);
+                        if seen.contains_key(&pair) {
+                            continue;
+                        }
+                        let Some(perp) = join_perp(*line, lines[*other]) else {
+                            continue;
+                        };
+                        if perp <= 0.4 {
+                            seen.insert(pair, perp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut counts = [0usize; 8];
+    let mut widest = 0.0_f64;
+    for perp in seen.values() {
+        widest = widest.max(*perp);
+        let bucket = ((perp / 0.05).floor() as usize).min(counts.len() - 1);
+        counts[bucket] += 1;
+    }
+    println!(
+        "  joins at 0.4 mm: {} pairs, widest {widest:.3} mm",
+        seen.len()
+    );
+    for (bucket, count) in counts.iter().enumerate() {
+        if *count == 0 {
+            continue;
+        }
+        let lo = bucket as f64 * 0.05;
+        println!("    {lo:.2}–{:.2} mm  {count}", lo + 0.05);
+    }
+}
+
+/// The sideways offset of a pair the join would consider, when the pair is
+/// collinear, gapped by at most 3 mm, and has ends that meet. `None` when
+/// the pair fails one of those, so the offset is not a join at any tolerance.
+fn join_perp(left: Line, right: Line) -> Option<f64> {
+    let direction = left.direction();
+    let other = right.direction();
+    let dot = (direction[0] * other[0] + direction[1] * other[1]).abs();
+    if dot < 0.999 {
+        return None;
+    }
+    let perp = |point: [f64; 2]| {
+        let vx = point[0] - left.a[0];
+        let vy = point[1] - left.a[1];
+        (vx * -direction[1] + vy * direction[0]).abs()
+    };
+    let offset = perp(right.a).max(perp(right.b));
+    let project = |point: [f64; 2]| {
+        (point[0] - left.a[0]) * direction[0] + (point[1] - left.a[1]) * direction[1]
+    };
+    let left_end = left.length();
+    let right_min = project(right.a).min(project(right.b));
+    let right_max = project(right.a).max(project(right.b));
+    let gap = if right_max < 0.0 {
+        -right_max
+    } else if left_end < right_min {
+        right_min - left_end
+    } else {
+        0.0
+    };
+    (gap <= JOIN_GAP_MM && ends_meet(left, right)).then_some(offset)
 }
 
 /// Our paper millimetres, back into the reference's page.
@@ -449,17 +540,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(COVER_MM);
 
-    // The reference side of the rule: merged centre lines.
-    let reference_index = Grid::new(join_centerlines(
-        &reference
-            .segments
-            .iter()
-            .map(|segment| Line {
-                a: segment.start_mm,
-                b: segment.end_mm,
-            })
-            .collect::<Vec<_>>(),
-    ));
+    // The reference side of the rule: merged centre lines. `LATERAL_MM`
+    // narrows the join's sideways tolerance (the extra sampler uses 0.20; the
+    // fit still uses 0.4) so a reading can say whether a parallel stroke was
+    // swallowed into the line beside it.
+    let lateral_mm: f64 = std::env::var("LATERAL_MM")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0.2);
+    let reference_lines: Vec<Line> = reference
+        .segments
+        .iter()
+        .map(|segment| Line {
+            a: segment.start_mm,
+            b: segment.end_mm,
+        })
+        .collect();
+    print_join_laterals(&reference_lines);
+    let reference_index = Grid::new(join_centerlines(&reference_lines, lateral_mm));
     // Our side: as drawn, mapped into the reference's frame.
     let our_lines: Vec<Line> = ours
         .segments
@@ -550,7 +648,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total += run.length_mm;
     }
     println!(
-        "{name}: report extra {:.3} mm (outside a missing box {:.3} / inside one {:.3}), fit scale {:.6}, cover {cover_mm:.2} mm",
+        "{name}: report extra {:.3} mm (outside a missing box {:.3} / inside one {:.3}), fit scale {:.6}, cover {cover_mm:.2} mm, lateral {lateral_mm:.2} mm",
         report.extra_length_mm,
         report.extra_outside_missing_mm,
         report.extra_inside_missing_mm,
@@ -586,7 +684,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run.length_mm, run.first_mm[0], run.first_mm[1], run.last_mm[0], run.last_mm[1]
         );
     }
+    println!("\n  named runs (/Sheet6, Flange, Remarks):");
+    for (label, run) in sorted.iter().filter(|(label, _)| {
+        label.contains("Sheet6") || label.contains("Flange") || label.contains("Remarks")
+    }) {
+        let edge = edge_distance(run.first_mm, run.last_mm, reference.page_mm);
+        let frame = sheet_edge_mm(run.first_mm, run.last_mm, reference.page_mm);
+        let band = mask_gap(run.first_mm, run.last_mm, &template);
+        println!(
+            "    {:.3} mm  ({:.2},{:.2})->({:.2},{:.2})  edge {edge:.2}  frame {frame}  {band}  {label}\n        {}",
+            run.length_mm,
+            run.first_mm[0],
+            run.first_mm[1],
+            run.last_mm[0],
+            run.last_mm[1],
+            nearest_text(run)
+        );
+    }
     Ok(())
+}
+
+fn nearest_text(run: &Run) -> String {
+    run.nearest_ink.map_or_else(
+        || "no ink within 60 mm".to_string(),
+        |line| {
+            format!(
+                "nearest {:.3} mm ({:.2},{:.2})->({:.2},{:.2})",
+                run.nearest_mm, line.a[0], line.a[1], line.b[0], line.b[1]
+            )
+        },
+    )
+}
+
+fn edge_distance(start: [f64; 2], end: [f64; 2], page_mm: [f64; 2]) -> f64 {
+    [start, end]
+        .into_iter()
+        .map(|point| {
+            point[0]
+                .min(point[1])
+                .min(page_mm[0] - point[0])
+                .min(page_mm[1] - point[1])
+        })
+        .fold(f64::MAX, f64::min)
+}
+
+fn mask_gap(start: [f64; 2], end: [f64; 2], masks: &[MaskRect]) -> String {
+    let mut best: Option<(f64, &str)> = None;
+    for point in [start, end] {
+        for mask in masks {
+            let gap = (mask.min_mm[0] - point[0])
+                .max(point[0] - mask.max_mm[0])
+                .max(mask.min_mm[1] - point[1])
+                .max(point[1] - mask.max_mm[1])
+                .max(0.0);
+            if best.is_none_or(|(so_far, _)| gap < so_far) {
+                best = Some((gap, mask.label.as_str()));
+            }
+        }
+    }
+    best.map_or_else(
+        || "no mask".to_string(),
+        |(gap, label)| format!("outside {label} by {gap:.2} mm"),
+    )
 }
 
 fn attribute(named_index: &Grid, named: &[(String, Line)], point: [f64; 2]) -> String {

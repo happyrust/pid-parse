@@ -10,15 +10,20 @@
 //!
 //! What the readings say, 2026-11-02:
 //!
-//! * Ten of the eleven sit at coverage 0.9986–0.9997 with at most 6.169 mm of
-//!   ink the reference does not have, every label it counts paired, and every
-//!   stroke on the reference's pen. The three A1 sheets carried one shared
-//!   8.210 mm residue that was never a missing stroke: the riser printed to
-//!   0.11 mm, and the leader and the side-run glyph matched too. It was one
-//!   stamped complex-dash glyph parked at the style's half advance, 5.08 mm
-//!   into a 16.09 mm run where the reference inks it at 8.07 mm. A lone glyph
-//!   now takes the run's midpoint once the run outgrows one advance, so those
-//!   three read extra 0.000 mm (`docs/plans/2026-11-02-the-a1-stem.md`).
+//! * Ten of the eleven sit at coverage 0.9986–0.9997. The extra ink on the
+//!   three A0 wellsites was a join: a valve stem 0.33 mm beside its pipe is
+//!   inside the fit's 0.4 mm sideways tolerance, and the merged chord then
+//!   misses the stem both pages draw. The extra sampler joins at 0.20 mm, so
+//!   I, J K and L M read 0.000 mm (`docs/analysis/2026-11-04-the-extra-join-was-swallowing-the-stem.md`).
+//!   Every label the reference counts is paired. A same-width chord within
+//!   0.5 mm, lengths within a tenth, uses the fill outline's angle, so the
+//!   three valve chords on J K and L M pair at 0.34 mm instead of the thinner
+//!   stroke 1 mm away. The three A1 sheets' shared 8.210 mm residue
+//!   was a lone complex-dash glyph at the run's midpoint, and they now read
+//!   extra 0.000 mm (`docs/plans/2026-11-02-the-a1-stem.md`).
+//!   The uncovered remainder on I, both flash drums, the cold separator and
+//!   the CD exchanger is the tip of a dash we already draw
+//!   (`docs/analysis/2026-11-04-the-five-uncovered-remainders-are-dash-tips.md`).
 //! * The A2 sheet reads 0.9819 / 210.712 mm because it is the first A2 page
 //!   this crate has ever had a reference for, and its furniture is a third
 //!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
@@ -28,8 +33,14 @@
 //!   what is left is one instrument cluster drawn ~16.9 mm high and ~1.9 mm
 //!   right of where the reference prints it — `TICA` and `H=-15℃` are both
 //!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm, so the 14
-//!   unmatched labels are a placement difference, not missing lettering —
-//!   plus 120 mm of frame ink at the sheet edge. The cluster is the same body at
+//!   unmatched labels are a placement difference, not missing lettering.
+//!   The 79.143 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
+//!   beside the reference leader, not frame ink
+//!   (`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`).
+//!   The 120.511 mm of uncovered `/Sheet6` is the same leader's reference copy,
+//!   the TT balloon at `(498.70, 220.37)`, and dash tips
+//!   (`docs/analysis/2026-11-04-the-a2-sheet6-uncovered-is-the-reference-leader.md`).
+//!   The cluster is the same body at
 //!   the same size — 12.698 mm across against the reference's 12.869, one pen
 //!   apart — simply translated, and its leader's far end stays put at `y≈342.4`
 //!   while the near end follows the bubble: the `.pid` records the bubble dragged
@@ -84,10 +95,10 @@ const PINS: [Pin; 11] = [
         name: "I井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
         min_coverage: 0.9994,
-        max_extra_mm: 0.305 + EXTRA_SLACK_MM,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 546,
         text_reference: 546,
-        min_pen_agreed: 8390,
+        min_pen_agreed: 8665,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
@@ -95,23 +106,22 @@ const PINS: [Pin; 11] = [
         name: "J K井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
         min_coverage: 0.9993,
-        max_extra_mm: 6.169 + EXTRA_SLACK_MM,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 775,
         text_reference: 775,
-        min_pen_agreed: 13150,
-        // Two 0.34 mm strokes the reference prints hairline.
-        max_pen_differed: 2,
+        min_pen_agreed: 13598,
+        max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
     Pin {
         name: "L M井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
         min_coverage: 0.9992,
-        max_extra_mm: 0.237 + EXTRA_SLACK_MM,
-        min_text_matched: 919,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        min_text_matched: 921,
         text_reference: 921,
-        min_pen_agreed: 15854,
-        max_pen_differed: 1,
+        min_pen_agreed: 16428,
+        max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
     Pin {
@@ -121,7 +131,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 151,
         text_reference: 151,
-        min_pen_agreed: 1196,
+        min_pen_agreed: 1221,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -132,7 +142,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 123,
         text_reference: 123,
-        min_pen_agreed: 1335,
+        min_pen_agreed: 1354,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -143,7 +153,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 167,
         text_reference: 167,
-        min_pen_agreed: 1619,
+        min_pen_agreed: 1642,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -154,7 +164,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 249,
         text_reference: 249,
-        min_pen_agreed: 2869,
+        min_pen_agreed: 2957,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -169,7 +179,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3127,
+        min_pen_agreed: 3199,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -182,7 +192,7 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3134,
+        min_pen_agreed: 3206,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -195,18 +205,21 @@ const PINS: [Pin; 11] = [
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3019,
+        min_pen_agreed: 3078,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
+        // The two `动火点` labels are the only whole-string font fallback on
+        // these sheets, both 2.5 mm and centred. Pitching that run at 1.524 mm
+        // a glyph brings both inside 1 mm. The other twelve stay out.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
         min_coverage: 0.9818,
         max_extra_mm: 210.712 + EXTRA_SLACK_MM,
-        min_text_matched: 211,
+        min_text_matched: 213,
         text_reference: 225,
-        min_pen_agreed: 2571,
+        min_pen_agreed: 2632,
         max_pen_differed: 0,
         missing_symbols: &[],
     },

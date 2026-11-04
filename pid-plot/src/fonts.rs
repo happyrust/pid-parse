@@ -446,6 +446,7 @@ mod tests {
                     font: Some("Arial".into()),
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    right_pad: false,
                     spans,
                 },
                 stream_path: None,

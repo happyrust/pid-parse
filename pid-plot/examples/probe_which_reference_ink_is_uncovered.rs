@@ -10,15 +10,18 @@
 //!
 //! Run with
 //! `cargo run -p pid-plot --example probe_which_reference_ink_is_uncovered` for
-//! the five sheets below, or `-- "<drawing>"` for one whose `plot/<name>.pdf`
-//! already exists.
+//! the five sheets below, or `-- "<drawing>"` for one sheet. A saved
+//! `plot/<name>.pdf` is read when it is there; otherwise the page is drawn
+//! for this reading and not written.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use pid_plot::compare::{Fit, MaskRect, compare_plots_with_model, template_masks};
+use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
+use pid_plot::write::{PlotFont, write_plot};
 
 const DRAWINGS: [&str; 5] = [
     "I井场 注采阀组工艺及自控流程图",
@@ -296,15 +299,28 @@ fn main() {
     for name in names {
         let reference_path = corpus.join(format!("{name}.pdf"));
         let ours_path = corpus.join(format!("plot/{name}.pdf"));
-        let (Ok(reference_bytes), Ok(our_bytes)) =
-            (std::fs::read(&reference_path), std::fs::read(&ours_path))
-        else {
-            eprintln!("skipping {name}: a PDF is absent");
+        let Ok(reference_bytes) = std::fs::read(&reference_path) else {
+            eprintln!("skipping {name}: the reference PDF is absent");
             continue;
+        };
+        let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
+        let our_bytes = if let Ok(saved) = std::fs::read(&ours_path) {
+            saved
+        } else {
+            let dirs = font_dirs(Some(&corpus));
+            let prepared = prepare_fonts(&[&model], &dirs).expect("fonts");
+            let fonts: Vec<PlotFont<'_>> = prepared
+                .iter()
+                .map(|face| PlotFont {
+                    key: &face.key,
+                    bytes: &face.bytes,
+                    subset: face.subset,
+                })
+                .collect();
+            write_plot(&model, &fonts).expect("write")
         };
         let reference = read_plot(&reference_bytes).expect("read reference");
         let ours = read_plot(&our_bytes).expect("read ours");
-        let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
 
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
@@ -435,6 +451,36 @@ fn main() {
             edges.len(),
             runs.iter().filter(|run| run.our_distance_mm >= 1.0).count()
         );
+        let mut all_by_symbol: HashMap<String, (f64, usize)> = HashMap::new();
+        for run in &runs {
+            let entry = all_by_symbol.entry(run.label.clone()).or_insert((0.0, 0));
+            entry.0 += run.length_mm;
+            entry.1 += 1;
+        }
+        let mut all_ranked: Vec<(String, f64, usize)> = all_by_symbol
+            .into_iter()
+            .map(|(label, (length, count))| (label, length, count))
+            .collect();
+        all_ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        println!("   every uncovered run by the nearest symbol:");
+        for (label, length, count) in all_ranked.iter().take(15) {
+            println!("     {label:<46} {count:>3} runs  {length:8.3} mm");
+        }
+        let mut by_symbol: HashMap<String, (f64, usize)> = HashMap::new();
+        for run in runs.iter().filter(|run| run.our_distance_mm >= 1.0) {
+            let entry = by_symbol.entry(run.label.clone()).or_insert((0.0, 0));
+            entry.0 += run.length_mm;
+            entry.1 += 1;
+        }
+        let mut ranked: Vec<(String, f64, usize)> = by_symbol
+            .into_iter()
+            .map(|(label, (length, count))| (label, length, count))
+            .collect();
+        ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        println!("   真缺 by the nearest symbol:");
+        for (label, length, count) in &ranked {
+            println!("     {label:<46} {count:>3} runs  {length:8.3} mm");
+        }
         println!(
             "   edge runs: longest {longest:.3} mm, widest {widest:.3} mm off the line, {on_dashes} of {} on a reference stroke shorter than 3 mm",
             edges.len()
@@ -463,6 +509,49 @@ fn main() {
                 );
             }
         }
+        println!("   /Sheet6 runs:");
+        let mut sheet6: Vec<&Run> = runs
+            .iter()
+            .filter(|run| run.label.contains("Sheet6"))
+            .collect();
+        sheet6.sort_by(|left, right| {
+            left.first_mm[1]
+                .total_cmp(&right.first_mm[1])
+                .then(left.first_mm[0].total_cmp(&right.first_mm[0]))
+        });
+        let mut leader_mm = 0.0;
+        let mut edge_mm = 0.0;
+        let mut miss_mm = 0.0;
+        for run in &sheet6 {
+            let on_leader = on_reference_leader(run);
+            let class = if on_leader {
+                leader_mm += run.length_mm;
+                "leader"
+            } else if run.our_distance_mm < 1.0 && run.stroke_mm < 3.0 {
+                edge_mm += run.length_mm;
+                "edge"
+            } else if run.our_distance_mm >= 1.0 {
+                miss_mm += run.length_mm;
+                "miss"
+            } else {
+                edge_mm += run.length_mm;
+                "near"
+            };
+            println!(
+                "     {class:<6} {:>6.3} mm  ({:8.3},{:8.3}) → ({:8.3},{:8.3})  our ink {:.3} mm  stroke {:.3}",
+                run.length_mm,
+                run.first_mm[0],
+                run.first_mm[1],
+                run.last_mm[0],
+                run.last_mm[1],
+                run.our_distance_mm,
+                run.stroke_mm
+            );
+        }
+        println!(
+            "     Sheet6 totals: leader {leader_mm:.3}  edge {edge_mm:.3}  miss {miss_mm:.3}  runs {}",
+            sheet6.len()
+        );
         if far == 0.0 {
             let mut worst: Vec<&Run> = runs.iter().collect();
             worst.sort_by(|left, right| {
@@ -517,6 +606,18 @@ fn main() {
         }
         println!();
     }
+}
+
+/// Both ends on the A2 reference leader, `x 498.69` from the bubble up to
+/// the far end. That is the run we draw at `x 500.69`.
+fn on_reference_leader(run: &Run) -> bool {
+    let x_on = [run.first_mm[0], run.last_mm[0]]
+        .into_iter()
+        .all(|x| (x - 498.69).abs() <= 0.4);
+    let y_on = [run.first_mm[1], run.last_mm[1]]
+        .into_iter()
+        .all(|y| (243.0..=343.0).contains(&y));
+    x_on && y_on
 }
 
 fn flush(

@@ -16,11 +16,16 @@
 //! `docs/analysis/2026-10-17-monochrome-plot-three-pen-table.md` and
 //! `docs/analysis/2026-10-20-the-page-is-plotted-through-one-black-pen.md`.
 //!
-//! Each text run is set in the face [`crate::fonts::typeface_key`] names,
-//! character by character: a run mixes faces where one face cannot encode the
-//! whole string (`120℃` keeps its Latin digits in Arial Narrow and only the
-//! `℃` borrows a CJK face), so an unsupported character never moves the
-//! encodable characters' widths. A style height that was measured on the
+//! Each text run is set in the face [`crate::fonts::typeface_key`] names.
+//! A run mixes faces where the named face can encode some of it and not the
+//! rest (`120℃` keeps its Latin digits in Arial Narrow and only the `℃`
+//! borrows a CJK face), so an unsupported character never moves the
+//! encodable characters' widths. A named face that can encode none of the
+//! characters hands the whole string to one face that can, so a label is not
+//! split because an earlier face happens to carry its last character. At a
+//! 2.5 mm body that borrowed run is pitched at 1.524 mm a glyph, the spacing
+//! the reference uses for that one label; every other height stays one em.
+//! A style height that was measured on the
 //! reference plots is written at that plot's `Tf`; every other height stays
 //! the style height in points. Every face must be a static TrueType or
 //! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
@@ -535,6 +540,7 @@ fn push_layer(
             font,
             anchor,
             line,
+            right_pad,
             spans,
         } = &primitive.shape
         {
@@ -549,6 +555,7 @@ fn push_layer(
                     value,
                     anchor: *anchor,
                     line: *line,
+                    right_pad: *right_pad,
                     spans,
                     furniture: primitive.furniture,
                 },
@@ -728,11 +735,32 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
 /// the first face that can — only that character moves, so `120℃` keeps its
 /// digits in the narrow face instead of dragging the whole run to a
 /// fallback whose Latin is wider.
+///
+/// A named face that encodes nothing in `value` is a different case. The
+/// first face that happens to own one character would cut the label apart
+/// (`动火` in SimSun, `点` in an earlier FangSong that has only that
+/// character), and the reader then sees two runs where the record states
+/// one. The whole string goes to the first face that can draw every
+/// character, and that run is reported as borrowed so the caller can pitch
+/// it. A named face that draws any character keeps the per-character split.
 fn encode_runs<'a>(
     faces: &'a [ReadyFace<'a>],
     key: &str,
     value: &str,
-) -> Result<Vec<(&'a ReadyFace<'a>, Vec<u8>)>, PlotWriteError> {
+) -> Result<(Vec<(&'a ReadyFace<'a>, Vec<u8>)>, bool), PlotWriteError> {
+    let char_encodes = |face: &ReadyFace<'_>, ch: char| {
+        let mut buf = [0u8; 4];
+        face.metrics.encode(ch.encode_utf8(&mut buf)).is_some()
+    };
+    let named = faces.iter().find(|face| face.key == key);
+    let named_draws_any = named.is_some_and(|face| value.chars().any(|ch| char_encodes(face, ch)));
+    if !named_draws_any
+        && let Some((face, bytes)) = faces
+            .iter()
+            .find_map(|face| face.metrics.encode(value).map(|bytes| (face, bytes)))
+    {
+        return Ok((vec![(face, bytes)], true));
+    }
     let face_for_char = |ch: char| -> Option<&'a ReadyFace<'a>> {
         let mut buf = [0u8; 4];
         let text = ch.encode_utf8(&mut buf);
@@ -766,7 +794,8 @@ fn encode_runs<'a>(
                 .map(|bytes| (face, bytes))
                 .ok_or_else(|| missing_glyph(&face.metrics, &text))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .map(|runs| (runs, false))
 }
 
 struct ShownText<'a> {
@@ -777,6 +806,8 @@ struct ShownText<'a> {
     value: &'a str,
     anchor: TextAnchor,
     line: TextLine,
+    /// Shift the trimmed run forward by the width of `value`'s trailing pad.
+    right_pad: bool,
     spans: &'a [PaperTextSpan],
     /// Whether this run is the sheet's furniture — the lettering a linked
     /// `.igr` border template carries, rather than the drawing's own.
@@ -926,6 +957,19 @@ const MIN_CONDENSE: f64 = 0.5;
 /// `docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`.
 const PLATE_TEXT_ADVANCE: f64 = 0.78;
 
+/// Advance of one glyph, as a fraction of the em, when the named face can
+/// draw none of a 2.5 mm label and the whole string is handed to another face.
+///
+/// The only such labels on the eleven acceptance sheets are the two
+/// `动火点` runs. The reference pitches them at 4.32 pt (1.524 mm) in a
+/// 9.6 pt NSimSun, and centres on that pitch. `1.524 / 2.5` is that pitch
+/// over the style height. A different body size is not multiplied: nothing
+/// else on those sheets takes this path, so there is no second height to
+/// measure. `120℃` is not this path either — its named face still draws the
+/// digits. See
+/// `docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`.
+const BORROWED_HAN_ADVANCE: f64 = 1.524 / 2.5;
+
 fn show_text(
     ops: &mut Vec<Op>,
     faces: &[ReadyFace<'_>],
@@ -957,8 +1001,11 @@ fn show_text(
     let segments = text_segments(&text, inked, height_mm);
     let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>)> = Vec::new();
     let mut width_mm = 0.0;
+    let mut borrowed_whole = !segments.is_empty();
     for segment in &segments {
-        for (face, bytes) in encode_runs(faces, segment.typeface, &segment.text)? {
+        let (runs, borrowed) = encode_runs(faces, segment.typeface, &segment.text)?;
+        borrowed_whole &= borrowed;
+        for (face, bytes) in runs {
             width_mm += run_width_mm(&face.metrics, segment.size_pt, &bytes);
             emitted.push((segment.size_pt, face, bytes));
         }
@@ -969,12 +1016,46 @@ fn show_text(
     // em. Height is *not* touched by this: the two sides' glyph boxes are the
     // same 4.74 / 5.08 / 5.93 / 6.60 mm for the 3.2 / 3.5 / 4.0 / 4.5 mm
     // template styles on both sheets. See [`PLATE_TEXT_ADVANCE`].
+    //
+    // A 2.5 mm string whose named face draws nothing is the A2 `动火点`
+    // class: the reference pitches it at 1.524 mm a glyph and centres on
+    // that width. Any other body, or a string the named face still partly
+    // draws (`120℃`), stays one em. See [`BORROWED_HAN_ADVANCE`].
+    let han_pitch = if !text.furniture && borrowed_whole && (height_mm - 2.5).abs() < 1e-3 {
+        BORROWED_HAN_ADVANCE
+    } else {
+        1.0
+    };
     let plate = if text.furniture {
         PLATE_TEXT_ADVANCE
     } else {
         1.0
-    };
+    } * han_pitch;
     let laid_out_mm = width_mm * plate;
+    // A left anchor is the left of the stored run, padding included. A
+    // right-aligned paragraph letters the trimmed glyphs at the right of
+    // that run, so the pad's own advance is added along the baseline and
+    // the pad itself is not drawn. The two L M line numbers `25-CI-…-B8- `
+    // start one Arial space to the right of the insertion; the same
+    // paragraph with no trailing pad stays on it.
+    let pad_mm = if text.right_pad && text.anchor == TextAnchor::Left {
+        let kept = text.value.trim_end();
+        let pad = &text.value[kept.len()..];
+        emitted
+            .last()
+            .and_then(|(size_pt, face, _)| {
+                face.metrics
+                    .encode(pad)
+                    .map(|bytes| run_width_mm(&face.metrics, *size_pt, &bytes) * plate)
+            })
+            .unwrap_or(0.0)
+    } else {
+        0.0
+    };
+    let origin_mm = [
+        text.origin_mm[0] + cos * pad_mm,
+        text.origin_mm[1] + sin * pad_mm,
+    ];
     // A run the page still cannot hold loses its tail to the page box, so it
     // is condensed along its own direction until it fits: the template states
     // the label and the page states its edge, and keeping every glyph on the
@@ -985,7 +1066,7 @@ fn show_text(
     let mut condense = 1.0;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
         let start = baseline_origin(
-            text.origin_mm,
+            origin_mm,
             text.rotation,
             laid_out_mm,
             height_mm,
@@ -1012,7 +1093,7 @@ fn show_text(
     }
     let scale = plate * condense;
     let origin_mm = baseline_origin(
-        text.origin_mm,
+        origin_mm,
         text.rotation,
         width_mm * scale,
         height_mm,
@@ -1591,6 +1672,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    right_pad: false,
                     spans: Vec::new(),
                 },
             )],
@@ -1629,6 +1711,7 @@ mod tests {
                         font: None,
                         anchor: TextAnchor::Left,
                         line: TextLine::Bottom,
+                        right_pad: false,
                         spans: Vec::new(),
                     },
                 ),
@@ -1837,6 +1920,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    right_pad: false,
                     spans: Vec::new(),
                 },
             )],
@@ -1875,6 +1959,87 @@ mod tests {
         );
     }
 
+    /// A left anchor stays on the insertion when its trailing pad is only
+    /// storage. A right-aligned paragraph letters the trimmed glyphs at the
+    /// right of that stored run, so the same pad moves the run by its own
+    /// width — and a second space moves it twice as far. L M's
+    /// `25-CI-…-B8- ` line numbers are that case.
+    #[test]
+    fn a_right_aligned_pad_shifts_the_trimmed_run_by_the_pad() {
+        let shape = |value: &str, y: f64, rotation: f64, right_pad: bool| PaperShape::Text {
+            origin_mm: [40.0, y],
+            height_mm: Some(3.175),
+            rotation,
+            value: value.to_string(),
+            font: None,
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            right_pad,
+            spans: Vec::new(),
+        };
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 200.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                primitive("decoded", shape("AB", 40.0, 0.0, false)),
+                primitive("decoded", shape("AB ", 60.0, 0.0, false)),
+                primitive("decoded", shape("AB ", 80.0, 0.0, true)),
+                primitive("decoded", shape("AB  ", 100.0, 0.0, true)),
+                primitive(
+                    "decoded",
+                    shape("AB ", 140.0, std::f64::consts::FRAC_PI_2, true),
+                ),
+            ],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let at = |y: f64| {
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.5)
+                .unwrap_or_else(|| panic!("no run near y = {y}: {:?}", ink.spans))
+        };
+        let plain = at(40.0);
+        let kept = at(60.0);
+        let one = at(80.0);
+        let two = at(100.0);
+        let turned = ink
+            .spans
+            .iter()
+            .find(|span| span.direction[1].abs() > 0.9)
+            .expect("vertical run");
+        assert!((kept.origin_mm[0] - plain.origin_mm[0]).abs() < 0.01);
+        let space = one.origin_mm[0] - plain.origin_mm[0];
+        assert!(space > 0.2, "one trailing space moves the run: {space}");
+        let twice = two.origin_mm[0] - plain.origin_mm[0];
+        assert!(
+            (twice - 2.0 * space).abs() < 0.05,
+            "two spaces move twice one: {twice} vs {space}"
+        );
+        assert!((turned.origin_mm[0] - 40.0).abs() < 0.05);
+        assert!(
+            (turned.origin_mm[1] - (140.0 + space)).abs() < 0.05,
+            "a vertical run takes the same pad along its baseline: {:?}",
+            turned.origin_mm
+        );
+    }
+
     /// A template's lettering is drawn one narrower glyph than the sheet's
     /// own, at the same height.
     ///
@@ -1893,6 +2058,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
+            right_pad: false,
             spans: Vec::new(),
         };
         let mut model = PaperModel {
@@ -1966,6 +2132,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    right_pad: false,
                     spans: vec![PaperTextSpan {
                         start: 0,
                         len: 1,
@@ -2040,6 +2207,7 @@ mod tests {
             value: "NULL*NUL",
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
+            right_pad: false,
             spans: &spans,
             furniture: false,
         };
@@ -2083,6 +2251,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    right_pad: false,
                     spans: vec![
                         PaperTextSpan {
                             start: 0,
@@ -2138,6 +2307,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
+                    right_pad: false,
                     spans: Vec::new(),
                 },
             )],
@@ -2185,6 +2355,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
+                    right_pad: false,
                     spans: Vec::new(),
                 },
             )],
@@ -2248,6 +2419,7 @@ mod tests {
                     font: None,
                     anchor,
                     line,
+                    right_pad: false,
                     spans: Vec::new(),
                 },
             )],
@@ -2315,5 +2487,193 @@ mod tests {
         let (s_pi, sweep_pi) = directed_arc(pi_plus_ulp, 0.0, true);
         assert!((s_pi - pi_plus_ulp).abs() < 1e-12);
         assert!((sweep_pi + std::f64::consts::PI).abs() < 1e-9);
+    }
+
+    /// FangSong carrying only `点` and SimSun carrying `动火点` used to cut an
+    /// Arial Narrow label into `动火` plus `点`, because the earlier face won
+    /// the one character it had. The named face encodes none of the
+    /// characters, so the whole label stays on SimSun. `120℃` still splits:
+    /// the digits stay on Arial Narrow.
+    #[test]
+    fn a_han_label_the_named_face_cannot_draw_stays_one_run() {
+        let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+            || std::path::PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+            std::path::PathBuf::from,
+        );
+        let dirs = crate::fonts::font_dirs(Some(&corpus));
+        let ready = |name: &str| dirs.iter().any(|dir| dir.join(name).is_file());
+        if !ready("simsun.ttf") || !ready("simfang.ttf") || !ready("ARIALN.TTF") {
+            eprintln!("skipping; FangSong, SimSun or Arial Narrow is absent");
+            return;
+        }
+        let label = |value: &str, font: &str, y: f64| {
+            primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [40.0, y],
+                    height_mm: Some(2.5),
+                    rotation: 0.0,
+                    value: value.to_string(),
+                    font: Some(font.to_string()),
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    right_pad: false,
+                    spans: Vec::new(),
+                },
+            )
+        };
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 200.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                label("动火点", "SimSun", 20.0),
+                label("点", "FangSong", 40.0),
+                label("动火点", "Arial Narrow", 80.0),
+                label("120℃", "Arial Narrow", 120.0),
+            ],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let prepared = crate::fonts::prepare_fonts(&[&model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
+        let pdf = write_plot(&model, &fonts).expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let texts: Vec<&str> = ink.spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(
+            texts.iter().filter(|text| **text == "动火点").count(),
+            2,
+            "the borrowed label stays one run: {texts:?}"
+        );
+        assert!(
+            !texts.contains(&"动火"),
+            "the label is not cut before its last character: {texts:?}"
+        );
+        assert_eq!(
+            texts.iter().filter(|text| **text == "点").count(),
+            1,
+            "only the FangSong seed letters 点 on its own: {texts:?}"
+        );
+        assert!(
+            texts.contains(&"120") && texts.iter().any(|text| text.contains('℃')),
+            "digits stay on the named face: {texts:?}"
+        );
+    }
+
+    /// The two A2 `动火点` labels are centred. The reference pitches that
+    /// borrowed run at 1.524 mm a glyph, so the baseline steps back by
+    /// `3 × 1.524 / 2` mm rather than by half of three ems. `120℃` is centred
+    /// in the same test and still steps back by its own em: the named face
+    /// draws the digits, so the pitch does not apply.
+    #[test]
+    fn a_centred_borrowed_han_run_steps_back_by_the_reference_pitch() {
+        let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+            || std::path::PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+            std::path::PathBuf::from,
+        );
+        let dirs = crate::fonts::font_dirs(Some(&corpus));
+        let ready = |name: &str| dirs.iter().any(|dir| dir.join(name).is_file());
+        if !ready("simsun.ttf") || !ready("simfang.ttf") || !ready("ARIALN.TTF") {
+            eprintln!("skipping; FangSong, SimSun or Arial Narrow is absent");
+            return;
+        }
+        let label = |value: &str, font: &str, x: f64, y: f64, anchor: TextAnchor| {
+            primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [x, y],
+                    height_mm: Some(2.5),
+                    rotation: 0.0,
+                    value: value.to_string(),
+                    font: Some(font.to_string()),
+                    anchor,
+                    line: TextLine::Bottom,
+                    right_pad: false,
+                    spans: Vec::new(),
+                },
+            )
+        };
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 200.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                label("动火点", "SimSun", 40.0, 20.0, TextAnchor::Left),
+                label("点", "FangSong", 40.0, 40.0, TextAnchor::Left),
+                label("动火点", "Arial Narrow", 100.0, 80.0, TextAnchor::Center),
+                label("120℃", "Arial Narrow", 40.0, 120.0, TextAnchor::Left),
+                label("120℃", "Arial Narrow", 100.0, 160.0, TextAnchor::Center),
+            ],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let prepared = crate::fonts::prepare_fonts(&[&model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
+        let pdf = write_plot(&model, &fonts).expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let borrowed = ink
+            .spans
+            .iter()
+            .find(|span| span.text == "动火点" && span.origin_mm[0] > 70.0)
+            .expect("the centred 动火点");
+        let pitched = 100.0 - 3.0 * 1.524 / 2.0;
+        let full_em = 100.0 - 3.0 * 2.5 / 2.0;
+        assert!(
+            (borrowed.origin_mm[0] - pitched).abs() < 0.05,
+            "left edge {:.3} mm, pitched {pitched:.3}, full em {full_em:.3}",
+            borrowed.origin_mm[0]
+        );
+        let digits = ink
+            .spans
+            .iter()
+            .find(|span| span.text == "120" && span.origin_mm[0] < 70.0)
+            .expect("left-anchored digits");
+        let degree = ink
+            .spans
+            .iter()
+            .find(|span| {
+                span.text.contains('℃') && (span.origin_mm[1] - digits.origin_mm[1]).abs() < 1.0
+            })
+            .expect("the degree that follows the left-anchored digits");
+        let centred_digits = ink
+            .spans
+            .iter()
+            .find(|span| span.text == "120" && span.origin_mm[0] > 70.0)
+            .expect("centred digits");
+        let em_width = degree.origin_mm[0] + degree.advance_mm - digits.origin_mm[0];
+        let retreat = 100.0 - centred_digits.origin_mm[0];
+        assert!(
+            (retreat - em_width / 2.0).abs() < 0.05,
+            "120℃ retreats {retreat:.3} mm, half its em is {:.3}",
+            em_width / 2.0
+        );
+        assert!(
+            (retreat - em_width / 2.0 * super::BORROWED_HAN_ADVANCE).abs() > 0.3,
+            "120℃ must not take the borrowed pitch"
+        );
     }
 }

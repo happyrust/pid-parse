@@ -515,6 +515,18 @@ pub enum PaperShape {
         /// and the reference puts the templates' own lettering on the middle
         /// line.
         line: TextLine,
+        /// Draw the trimmed glyphs one trailing-pad width along the baseline.
+        ///
+        /// A left anchor keeps the insertion at the left of the stored run.
+        /// When the paragraph is right-aligned and the run carries trailing
+        /// whitespace, the reference letters the trimmed glyphs at the right
+        /// of that stored advance: one space in, not a whole word back.
+        /// Measured on L M's two `25-CI-…-B8- ` line numbers (anchor `0x01`,
+        /// paragraph right), whose reference starts sit 1.17 mm — one Arial
+        /// space at 3.175 mm — to the right of the insertion, while the same
+        /// paragraph with no pad stays on the insertion.
+        #[serde(default, skip_serializing_if = "is_false")]
+        right_pad: bool,
         /// The label's own run partition, when it letters its characters in
         /// more than one style. Empty for every sheet label and for a symbol
         /// label in one style; `height_mm` and `font` are the single style a
@@ -2434,6 +2446,12 @@ fn push_entity_with(
                         ),
                         height_mm,
                         rotation: *rotation,
+                        right_pad: matches!(anchor, TextAnchor::Left)
+                            && matches!(
+                                styled.as_ref().and_then(|style| style.alignment),
+                                Some(TextAlignment::Right)
+                            )
+                            && line.text.trim_end().len() != line.text.len(),
                         spans: line_spans(&partitions, &line),
                         value: line.text,
                         font: styled.as_ref().and_then(|style| style.font_name.clone()),
@@ -2911,6 +2929,7 @@ fn symbol_text_shape(
         font: lettering.and_then(|lettering| lettering.font_name.clone()),
         anchor,
         line,
+        right_pad: false,
         spans: lettering.map_or_else(Vec::new, |lettering| {
             lettering
                 .spans
@@ -3615,6 +3634,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Middle,
+            right_pad: false,
             spans: Vec::new(),
         };
         assert!(!beyond_the_sheet(&off_page, page));
@@ -3657,6 +3677,7 @@ mod tests {
                 font: None,
                 anchor: TextAnchor::Center,
                 line: TextLine::Middle,
+                right_pad: false,
                 spans: Vec::new(),
             },
             furniture: false,
@@ -3838,6 +3859,81 @@ mod tests {
             (origin_mm[0] - (100.0 + 0.045_307 / 2.0 * 1000.0)).abs() < 1e-6,
             "box right edge, got {origin_mm:?}"
         );
+    }
+
+    /// An unboxed left anchor stays the insertion. A right-aligned paragraph
+    /// with a trailing pad does not move that point: it asks the writer to
+    /// start the trimmed glyphs one pad further along. The same paragraph
+    /// without a pad, a left paragraph with a pad, and a centred anchor do
+    /// not.
+    #[test]
+    fn a_right_aligned_trailing_pad_is_a_writer_shift() {
+        use pid_parse::style_link::{ResolvedTextHeight, ResolvedTextStyle, TextRunStatus};
+
+        let style = |alignment: TextAlignment| {
+            let lettering = ResolvedTextHeight {
+                style_id: 47,
+                height_m: 0.003_175,
+                colour: None,
+                alignment: Some(alignment),
+                line_spacing: Some(1.0),
+                font_name: Some("Arial".to_string()),
+            };
+            ResolvedTextStyle {
+                paragraph: Some(lettering),
+                run: None,
+                runs: TextRunStatus::NoRuns,
+                alignment: Some(alignment),
+                line_spacing: Some(1.0),
+                spans: Vec::new(),
+            }
+        };
+        let mut styles = pid_parse::style_link::TextStyleIndex::new();
+        styles.insert(("/Sheet6".to_string(), 1), style(TextAlignment::Right));
+        styles.insert(("/Sheet6".to_string(), 2), style(TextAlignment::Left));
+        let emit = |oid: u32, value: &str, anchor_code: u8| {
+            let mut record = entity(PidGraphicKind::Text {
+                insertion: PidPoint { x: 0.1, y: 0.2 },
+                value: value.to_string(),
+                height: 0.0,
+                rotation: 0.0,
+                anchor_code,
+                text_box_width: None,
+            });
+            record.graphic_oid = Some(oid);
+            record.source.stream_path = Some("/Sheet6".to_string());
+            let mut out = Vec::new();
+            push_entity(
+                &mut out,
+                &record,
+                None,
+                &styles,
+                &pid_parse::style_link::LineStyleIndex::new(),
+                &pid_parse::style_link::FillIndex::new(),
+                &mut std::collections::HashSet::new(),
+            );
+            let PaperShape::Text {
+                anchor,
+                right_pad,
+                origin_mm,
+                ..
+            } = &out[0].shape
+            else {
+                panic!("{:?}", out[0].shape);
+            };
+            (*anchor, *right_pad, *origin_mm)
+        };
+        let (anchor, pad, origin) = emit(1, "25-CI-2301201-B8- ", 0x01);
+        assert_eq!(anchor, TextAnchor::Left);
+        assert!(pad);
+        assert!((origin[0] - 100.0).abs() < 1e-6);
+        let (_, pad, _) = emit(1, "100-PG-2101301-D8-P40", 0x01);
+        assert!(!pad, "no trailing pad, nothing to shift");
+        let (_, pad, _) = emit(2, "25-CI-2601201-B8- ", 0x01);
+        assert!(!pad, "a left paragraph keeps the pad as storage");
+        let (anchor, pad, _) = emit(1, "25-CI-2301201-B8- ", 0x15);
+        assert_eq!(anchor, TextAnchor::Center);
+        assert!(!pad);
     }
 
     /// A left-anchored boxed record already sits on its box's left edge, so

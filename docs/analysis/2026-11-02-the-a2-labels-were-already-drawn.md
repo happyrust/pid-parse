@@ -44,8 +44,9 @@ A2 仍是 `0.9819 / 210.712 mm / 标签 211 of 225`。所以本轮**不涉及阈
 | `L=-5` (506.65, 231.48) | `L=-5` (508.16, 248.35) | **+16.87** |
 | `SP=-8℃` (506.14, 236.56) | `SP=-8℃` (508.10, 253.51) | **+16.95** |
 
-`compare.rs` 的配对容差是 `TEXT_MM = 1.0`，所以整簇 +16.9 mm 的 y 偏移足以让
-14 条全部落榜——这不是「标签没合成出来」，是同一簇被画高了 16.9 mm。
+`compare.rs` 的配对容差是 `TEXT_MM = 1.0`，所以这一簇 +16.9 mm 的 y 偏移足以让
+表里这几条落榜。14 条里另外 5 条不在这簇上，见
+`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`。
 
 对照 `.pid` 自己的插入点可以看到偏移发生在哪一层：`TICA` 记录写的是
 `(0.5008, 0.2563)` m，我方纸面就是 `256.32 mm`；参考页把它印在 `238.25 mm`。
@@ -85,9 +86,14 @@ Remarks.sym                         3 runs    1.941 mm
 
 这也解释了读数卡在 0.9819：`extra` 的 98.4（`DCS Func Access`）+ 24.6
 （`TT-Temperature Transmitter`）是「画在拖后位置的那一份」，`uncovered` 的
-90.6 是「参考页在拖前位置的那一份」，同一簇被算了两次。`/Sheet6` 的 79.1 mm
-仍是页边图框，`Flange Type 2.sym` 的 6.7 mm 与 `Remarks.sym` 的 1.9 mm 是同一簇
-边上的碎墨（离参考墨 0.81 / 0.98 mm，恰在 0.5 mm 覆盖半径之外）。
+90.6 是「参考页在拖前位置的那一份」，同一簇被算了两次。`/Sheet6` 的 79.143 mm
+后来逐条对过坐标，16 条都在 `x 500.69` 的这条引线上，不是页边框。
+`Flange Type 2.sym` 的 6.666 mm 仍离参考墨 0.813 mm；`Remarks.sym` 的 1.941 mm
+在拖后的气泡上，最近参考墨 9–10 mm。见
+`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`。
+未覆盖的 `/Sheet6` 120.511 mm 是这条引线在参考页的那一份、参考位置的 TT 气球，
+加上虚线头。见
+`docs/analysis/2026-11-04-the-a2-sheet6-uncovered-is-the-reference-leader.md`。
 
 ### 这不是渲染能补的
 
