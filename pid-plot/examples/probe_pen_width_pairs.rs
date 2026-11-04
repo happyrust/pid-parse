@@ -5,8 +5,9 @@
 //! geometry: where ink lies, how much of the reference it covers, whether the
 //! text pairs. It also paired the two pages' widths — [`CompareReport::pen`] —
 //! because a page can cover the reference exactly while every stroke carried
-//! the wrong pen; this probe prints that section across all five drawings at
-//! once, and adds the one measurement the report does not carry.
+//! the wrong pen; this probe prints that section for every drawing in the
+//! corpus that has a plot beside it, and adds the one measurement the report
+//! does not carry.
 //!
 //! The tally is how the table's boundaries are measured: the declared widths
 //! the reference pages do show are the only widths any boundary can be tested
@@ -23,7 +24,7 @@
 //! The corpus is `PID_PARSE_SELF_CHECK_DIR`, or `D:\work\cad\PID自研软件验证`.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pid_plot::compare::template_masks;
 use pid_plot::compare::{CompareReport, Fit, compare_plots};
@@ -31,16 +32,6 @@ use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot};
 use pid_plot::write::{PlotFont, write_plot};
-
-/// The five drawings whose own plot sits beside them. Each is one project's
-/// sheet, and together they are the only pages a pen can be tested against.
-const NAMES: [&str; 5] = [
-    "I井场 注采阀组工艺及自控流程图",
-    "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-    "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-    "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-    "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-];
 
 fn corpus_dir() -> PathBuf {
     std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -51,6 +42,41 @@ fn corpus_dir() -> PathBuf {
 
 fn hundredths(width: f64) -> u64 {
     (width * 100.0).round().max(0.0) as u64
+}
+
+/// Every top-level `.pid` that has a plot of the same name beside it.
+///
+/// The directory is flat: the five original sheets and the eleven acceptance
+/// sheets both sit next to their plots, so a recursive walk would only pick
+/// up copies filed under `plot/`.
+fn paired_sheets(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|extension| extension == "pid")
+                && path.with_extension("pdf").is_file()
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Where a straight stroke's declaration comes from.
+///
+/// Furniture wins over a symbol name: a template symbol is furniture, and the
+/// widths this probe exists to settle live on the border, not on the drawing.
+fn ink_kind(furniture: bool, symbol: bool) -> &'static str {
+    if furniture {
+        "furniture"
+    } else if symbol {
+        "symbol body"
+    } else {
+        "drawing ink"
+    }
 }
 
 /// Which pen the reference prints at the same place as each **declared**
@@ -66,7 +92,7 @@ fn declared_pairs(
     model: &PaperModel,
     reference: &PlotInk,
     fit: &Fit,
-    tally: &mut BTreeMap<(u64, u64, bool), usize>,
+    tally: &mut BTreeMap<(u64, u64, &'static str), usize>,
 ) {
     for primitive in &model.primitives {
         let PaperShape::Line { start_mm, end_mm } = &primitive.shape else {
@@ -122,8 +148,8 @@ fn declared_pairs(
         let [printed] = widths_here[..] else {
             continue;
         };
-        let is_symbol = primitive.symbol.is_some();
-        *tally.entry((declared, printed, is_symbol)).or_default() += 1;
+        let kind = ink_kind(primitive.furniture, primitive.symbol.is_some());
+        *tally.entry((declared, printed, kind)).or_default() += 1;
     }
 }
 
@@ -135,12 +161,20 @@ fn main() {
     let mut disagreed = 0usize;
     let mut unpaired = 0usize;
     let mut overall: BTreeMap<(u64, u64), usize> = BTreeMap::new();
-    let mut by_declared: BTreeMap<(u64, u64, bool), usize> = BTreeMap::new();
-    for name in NAMES {
-        let reference =
-            read_plot(&std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference"))
-                .expect("read reference");
-        let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
+    let mut by_declared: BTreeMap<(u64, u64, &'static str), usize> = BTreeMap::new();
+    let sheets = paired_sheets(&corpus);
+    if sheets.is_empty() {
+        eprintln!("{}: no .pid with a plot beside it", corpus.display());
+        std::process::exit(2);
+    }
+    for path in &sheets {
+        let name = path.file_stem().map_or_else(
+            || path.display().to_string(),
+            |stem| stem.to_string_lossy().into_owned(),
+        );
+        let reference = read_plot(&std::fs::read(path.with_extension("pdf")).expect("reference"))
+            .expect("read reference");
+        let model = lay_out_drawing(path, &corpus).expect("layout");
         let prepared = prepare_fonts(&[&model], &dirs).expect("fonts");
         let fonts: Vec<PlotFont<'_>> = prepared
             .iter()
@@ -189,16 +223,11 @@ fn main() {
     }
     println!("\n{agreed} strokes agree, {disagreed} differ, {unpaired} unpaired");
     println!("\nBY DECLARED WIDTH (straight strokes, reference width at the same place)");
-    for ((declared, printed, is_symbol), count) in &by_declared {
+    for ((declared, printed, kind), count) in &by_declared {
         println!(
-            "   declared {:>5.2} mm  prints {:>5.2} mm  {} {count:>6}",
+            "   declared {:>5.2} mm  prints {:>5.2} mm  {kind:<12} {count:>6}",
             *declared as f64 / 100.0,
             *printed as f64 / 100.0,
-            if *is_symbol {
-                "symbol body"
-            } else {
-                "drawing ink"
-            }
         );
     }
 }
