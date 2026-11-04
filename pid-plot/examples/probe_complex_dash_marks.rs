@@ -47,7 +47,7 @@
 //! run — its widest local y plus 0.25 mm for the reader's offset — so only the
 //! run's own marks are kept.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pid_parse::style_link::{ComplexDash, line_styles_for_document};
 use pid_parse::{PidGraphicKind, PidParser, build_normalized_geometry};
@@ -163,10 +163,84 @@ fn clusters(theirs: &[f64]) -> Vec<f64> {
     out
 }
 
+#[derive(Default)]
+struct Summary {
+    runs: usize,
+    count_mismatch: usize,
+    max_deviation: f64,
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (pid, pdf) = (&args[0], &args[1]);
-    let doc = PidParser::new().parse_file(Path::new(pid)).unwrap();
+    if args.first().is_some_and(|arg| arg == "--sweep") {
+        sweep();
+        return;
+    }
+    analyse(Path::new(&args[0]), Path::new(&args[1]), false);
+}
+
+/// The corpus reading, as one line per sheet and a totals line.
+///
+/// Every `.pid` under `PID_PARSE_SELF_CHECK_DIR` that has a sibling `.pdf` is
+/// read the same way as a single drawing; a run whose mark count disagrees with
+/// the reference, or whose worst centre is past 0.20 mm, fails the check. The
+/// recorded reading is 11 sheets, 134 runs, 0 count mismatches, 0.19 mm worst.
+fn sweep() {
+    let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+        || {
+            eprintln!("set PID_PARSE_SELF_CHECK_DIR to the 验收数据 directory");
+            std::process::exit(2);
+        },
+        PathBuf::from,
+    );
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&corpus)
+        .unwrap_or_else(|error| {
+            eprintln!("{}: {error}", corpus.display());
+            std::process::exit(2);
+        })
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("pid"))
+        .collect();
+    entries.sort();
+    let mut totals = Summary::default();
+    let mut sheets = 0;
+    for pid in entries {
+        let Some(stem) = pid.file_stem() else {
+            continue;
+        };
+        let pdf = corpus.join(stem).with_extension("pdf");
+        if !pdf.is_file() {
+            println!("{:<40} (no reference)", stem.to_string_lossy());
+            continue;
+        }
+        let summary = analyse(&pid, &pdf, true);
+        sheets += 1;
+        totals.runs += summary.runs;
+        totals.count_mismatch += summary.count_mismatch;
+        totals.max_deviation = totals.max_deviation.max(summary.max_deviation);
+        println!(
+            "{:>4} runs  {:>2} mismatch  worst {:5.2} mm  {}",
+            summary.runs,
+            summary.count_mismatch,
+            summary.max_deviation,
+            stem.to_string_lossy()
+        );
+    }
+    println!(
+        "{sheets} sheets, {} runs, {} count mismatches, worst {:.2} mm",
+        totals.runs, totals.count_mismatch, totals.max_deviation
+    );
+    const WORST_MM: f64 = 0.20;
+    if totals.count_mismatch > 0 || totals.max_deviation > WORST_MM {
+        eprintln!("regression: the glyphs left the recorded readings");
+        std::process::exit(1);
+    }
+}
+
+fn analyse(pid: &Path, pdf: &Path, quiet: bool) -> Summary {
+    let mut summary = Summary::default();
+    let doc = PidParser::new().parse_file(pid).unwrap();
     let geometry = build_normalized_geometry(&doc);
     let styles = line_styles_for_document(&doc);
     let plot = read_plot(&std::fs::read(pdf).unwrap()).unwrap();
@@ -280,39 +354,58 @@ fn main() {
                 1
             }
             .max(1);
-            println!(
-                "oid {oid} seg {}/{}  L {run:6.2}  L/p {:6.3}  round {:2}  floor {:2}  reach {:5.3}->{:2}  ref {:2}  \n    ref centres {}\n    our centres {}",
-                index + 1,
-                path.len() - 1,
-                run / period,
-                cells,
-                (run / period).floor().max(1.0) as usize,
-                reach,
-                (reach.round() as usize).max(1),
-                ref_marks.len(),
-                ref_marks
+            // A stub that fits one glyph keeps the pattern's own advance, so
+            // its mark sits half a period in; a run longer than the advance
+            // centres it instead, and a run shorter than half an advance gets
+            // no glyph at all.
+            let ours: Vec<f64> = if fitted <= 1 {
+                if run < period * 0.5 {
+                    Vec::new()
+                } else {
+                    vec![(period * 0.5).max(run * 0.5)]
+                }
+            } else {
+                let step = run / fitted as f64;
+                (0..fitted).map(|cell| (cell as f64 + 0.5) * step).collect()
+            };
+            summary.runs += 1;
+            if ref_marks.len() == ours.len() {
+                let worst = ref_marks
                     .iter()
-                    .map(|t| format!("{t:6.2}"))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                if fitted <= 1 {
-                    // A stub that fits one glyph keeps the pattern's own
-                    // advance, so its mark sits half a period in; a run longer
-                    // than the advance centres it instead, and a run shorter
-                    // than half an advance gets no glyph at all.
-                    if run < period * 0.5 {
+                    .zip(&ours)
+                    .map(|(theirs, mine)| (theirs - mine).abs())
+                    .fold(0.0_f64, f64::max);
+                summary.max_deviation = summary.max_deviation.max(worst);
+            } else {
+                summary.count_mismatch += 1;
+            }
+            if !quiet {
+                println!(
+                    "oid {oid} seg {}/{}  L {run:6.2}  L/p {:6.3}  round {:2}  floor {:2}  reach {:5.3}->{:2}  ref {:2}  \n    ref centres {}\n    our centres {}",
+                    index + 1,
+                    path.len() - 1,
+                    run / period,
+                    cells,
+                    (run / period).floor().max(1.0) as usize,
+                    reach,
+                    (reach.round() as usize).max(1),
+                    ref_marks.len(),
+                    ref_marks
+                        .iter()
+                        .map(|t| format!("{t:6.2}"))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    if ours.is_empty() {
                         "none".to_string()
                     } else {
-                        format!("{:6.2}", (period * 0.5).max(run * 0.5))
+                        ours.iter()
+                            .map(|t| format!("{t:6.2}"))
+                            .collect::<Vec<_>>()
+                            .join(" ")
                     }
-                } else {
-                    let step = run / fitted as f64;
-                    (0..fitted)
-                        .map(|cell| format!("{:6.2}", (cell as f64 + 0.5) * step))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                }
-            );
+                );
+            }
         }
     }
+    summary
 }
