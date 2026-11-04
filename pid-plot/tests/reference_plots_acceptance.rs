@@ -161,6 +161,8 @@ const PINS: [Pin; 11] = [
     Pin {
         // The riser's stamped glyph centres itself now, so this sheet keeps
         // no extra ink at all: see `docs/plans/2026-11-02-the-a1-stem.md`.
+        // The 23.031 mm still uncovered is the reference's air-cooler fan
+        // wave; neither the `.sym` nor the `.pid` cached body carries it (§7).
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
         min_coverage: 0.9984,
@@ -172,7 +174,8 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
     },
     Pin {
-        // Same glyph, same fix as the A sheet: no extra ink left.
+        // Same glyph, same fix as the A sheet: no extra ink left. The
+        // 23.031 mm still uncovered is the same reference-side fan wave (§7).
         name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
         page_mm: [841.0, 594.0],
         min_coverage: 0.9985,
@@ -184,7 +187,8 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
     },
     Pin {
-        // Same glyph, same fix as the A sheet: no extra ink left.
+        // Same glyph, same fix as the A sheet: no extra ink left. The
+        // 23.031 mm still uncovered is the same reference-side fan wave (§7).
         name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
         page_mm: [841.0, 594.0],
         min_coverage: 0.9984,

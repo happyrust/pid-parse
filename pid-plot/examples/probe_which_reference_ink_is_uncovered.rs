@@ -9,7 +9,9 @@
 //! geometry we never print is a real miss.
 //!
 //! Run with
-//! `cargo run -p pid-plot --example probe_which_reference_ink_is_uncovered`.
+//! `cargo run -p pid-plot --example probe_which_reference_ink_is_uncovered` for
+//! the five sheets below, or `-- "<drawing>"` for one whose `plot/<name>.pdf`
+//! already exists.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -287,7 +289,11 @@ impl Lookup<'_> {
 
 fn main() {
     let corpus = corpus_dir();
-    for name in DRAWINGS {
+    let requested = std::env::args().nth(1);
+    let names: Vec<&str> = requested
+        .as_deref()
+        .map_or_else(|| DRAWINGS.to_vec(), |name| vec![name]);
+    for name in names {
         let reference_path = corpus.join(format!("{name}.pdf"));
         let ours_path = corpus.join(format!("plot/{name}.pdf"));
         let (Ok(reference_bytes), Ok(our_bytes)) =
