@@ -32,8 +32,11 @@
 //!   0.9379 / 1132.334 mm. The surveyed A2 masks are what closed that gap, and
 //!   what is left is one instrument cluster drawn ~16.9 mm high and ~1.9 mm
 //!   right of where the reference prints it — `TICA` and `H=-15℃` are both
-//!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm, so the 14
-//!   unmatched labels are a placement difference, not missing lettering.
+//!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm. Twelve reference
+//!   labels still miss: nine are that cluster. The other three are the symbol
+//!   `D`, 1.005 mm off, and two pipeline strings whose text is the `.pid`'s
+//!   own. The two `动火点` labels now pair, so the text pin is 213 of 225
+//!   (`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`).
 //!   The 79.143 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
 //!   beside the reference leader, not frame ink
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`).
