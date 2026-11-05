@@ -618,6 +618,14 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;
         let exp_tables = pid_parse::publish::oracle_exp::ExpTables::read(&dump)
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let dump_only =
+            pid_parse::publish::oracle_exp::attach_dump_only_components(&mut drawing, &exp_tables)
+                .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        if dump_only > 0 {
+            eprintln!(
+                "oracle-exp: {dump_only} PIDPipingComponent from the dump, not drawn in the .pid"
+            );
+        }
         let tables = exp_tables
             .port_tables()
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;

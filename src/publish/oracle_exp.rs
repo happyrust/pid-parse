@@ -19,7 +19,7 @@ use std::fmt;
 
 use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
-    PidPublishDrawing, PidValueSource,
+    PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
 };
 
 const CHARSET_AL16UTF16: u16 = 2000;
@@ -137,6 +137,7 @@ pub struct ExpTables {
     itemnote: Table,
     modelitem: Table,
     plantitem: Table,
+    inlinecomp: Table,
     codelists: Table,
     drawing: Table,
 }
@@ -165,6 +166,7 @@ impl ExpTables {
             itemnote: read_table_tolerant(dump, "T_ITEMNOTE")?,
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
             plantitem: read_optional_table(dump, "T_PLANTITEM")?,
+            inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
             codelists: read_table(dump, "CODELISTS")?,
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
         })
@@ -255,6 +257,106 @@ impl ExpTables {
         Ok(runs)
     }
 
+    /// Piping components this drawing places that its `.pid` does not
+    /// draw, each with the representation that places it.
+    ///
+    /// A row is a `T_REPRESENTATION` on `drawing_uid` with
+    /// `REPRESENTATIONTYPE` 13 whose model item is a `PipingComp` and
+    /// whose own UID is not in `drawn`. The reference publishes such a
+    /// component with its ports and its representation; the item carries
+    /// `T_INLINECOMP.NOMINALDIAMETER` when the dump states one. Empty
+    /// when the dump has no `ITEMTYPENAME` column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when `T_REPRESENTATION` or
+    /// `T_MODELITEM` lacks a join column.
+    pub fn dump_only_piping_components(
+        &self,
+        drawing_uid: &str,
+        drawn: &HashSet<String>,
+    ) -> Result<Vec<(PidPublishItem, PidPublishRepresentation)>, ExpError> {
+        let drawing_uid = norm_uid(drawing_uid);
+        let models = &self.modelitem;
+        let model_id = column_index(models, "SP_ID")?;
+        let Some(model_type) = optional_column_index(models, "ITEMTYPENAME") else {
+            return Ok(Vec::new());
+        };
+        let components: HashSet<String> = models
+            .rows
+            .iter()
+            .filter(|row| text_of(row, model_type) == Some("PipingComp"))
+            .filter_map(|row| text_of(row, model_id).map(norm_uid))
+            .collect();
+        let mut diameters = HashMap::<String, i64>::new();
+        if let (Some(id), Some(diameter)) = (
+            optional_column_index(&self.inlinecomp, "SP_ID"),
+            optional_column_index(&self.inlinecomp, "NOMINALDIAMETER"),
+        ) {
+            for row in &self.inlinecomp.rows {
+                if let (Some(id), Some(code)) =
+                    (text_of(row, id), optional_cell_int(row, Some(diameter)))
+                {
+                    diameters.insert(norm_uid(id), code);
+                }
+            }
+        }
+
+        let reps = &self.representation;
+        let rep_id = column_index(reps, "SP_ID")?;
+        let rep_model = column_index(reps, "SP_MODELITEMID")?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
+        let rep_type = column_index(reps, "REPRESENTATIONTYPE")?;
+        let rep_oid = column_index(reps, "GRAPHICOID")?;
+        let mut found = Vec::new();
+        for row in &reps.rows {
+            if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str())
+                || optional_cell_int(row, Some(rep_type)) != Some(13)
+            {
+                continue;
+            }
+            let (Some(representation), Some(model)) = (
+                text_of(row, rep_id).map(norm_uid),
+                text_of(row, rep_model).map(norm_uid),
+            ) else {
+                continue;
+            };
+            if drawn.contains(&representation) || !components.contains(&model) {
+                continue;
+            }
+            let Some(graphic_oid) =
+                optional_cell_int(row, Some(rep_oid)).and_then(|oid| u32::try_from(oid).ok())
+            else {
+                continue;
+            };
+            let attributes = diameters
+                .get(&model)
+                .and_then(|code| nominal_spelling(*code))
+                .map(|value| PidPublishAttribute {
+                    interface: "IPipeCrossSectionItem",
+                    name: "NominalDiameter",
+                    value,
+                    source: backup("T_INLINECOMP", "NOMINALDIAMETER"),
+                })
+                .into_iter()
+                .collect();
+            found.push((
+                PidPublishItem {
+                    uid: model.clone(),
+                    model_item_type: "PipingComp".to_string(),
+                    class: Some("PIDPipingComponent"),
+                    attributes,
+                },
+                PidPublishRepresentation {
+                    uid: representation,
+                    item_uid: Some(model),
+                    graphic_oid,
+                },
+            ));
+        }
+        Ok(found)
+    }
+
     /// `T_PLANTITEM.ITEMTAG` keyed by the folded `SP_ID`. Empty when the
     /// dump carries no `T_PLANTITEM` or the table lacks either column.
     fn item_tags(&self) -> HashMap<String, String> {
@@ -338,9 +440,21 @@ impl ExpTables {
             itemnote: Table::blank(),
             modelitem: Table::blank(),
             plantitem: Table::blank(),
+            inlinecomp: Table::blank(),
             codelists: Table::blank(),
             drawing: Table::blank(),
         }
+    }
+
+    #[cfg(test)]
+    fn load_components(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
+            modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
+            inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
+            ..Self::blank()
+        })
     }
 
     fn load_ports(dump: &[u8]) -> Result<Self, ExpError> {
@@ -743,6 +857,47 @@ pub fn nominal_spelling(code: i64) -> Option<String> {
         format!("{whole}.{fraction:02}")
     };
     Some(format!("{body} in"))
+}
+
+/// Add the piping components this drawing places that its `.pid` does
+/// not draw ([`ExpTables::dump_only_piping_components`]), keeping
+/// [`PidPublishDrawing::items`] and [`PidPublishDrawing::representations`]
+/// ordered by UID. Run it before [`attach_oracle_ports`] so their ports
+/// hang on them. Returns how many were added.
+///
+/// # Errors
+///
+/// Returns [`ExpError::Table`] when a followed table lacks a join column.
+pub fn attach_dump_only_components(
+    drawing: &mut PidPublishDrawing,
+    tables: &ExpTables,
+) -> Result<usize, ExpError> {
+    let drawn: HashSet<String> = drawing
+        .representations
+        .iter()
+        .map(|representation| norm_uid(&representation.uid))
+        .collect();
+    let known: HashSet<String> = drawing
+        .items
+        .iter()
+        .map(|item| norm_uid(&item.uid))
+        .collect();
+    let found = tables.dump_only_piping_components(&drawing.drawing_uid, &drawn)?;
+    let mut added = 0;
+    for (item, representation) in found {
+        if !known.contains(&item.uid) {
+            drawing.items.push(item);
+            added += 1;
+        }
+        drawing.representations.push(representation);
+    }
+    drawing
+        .items
+        .sort_by(|left, right| left.uid.cmp(&right.uid));
+    drawing
+        .representations
+        .sort_by(|left, right| left.uid.cmp(&right.uid));
+    Ok(added)
 }
 
 /// Hang the dump's port rows on items [`published_parent_ids`] already emits.
@@ -2297,6 +2452,104 @@ mod tests {
         assert_eq!(plant_group_path(&groups, "LEAF"), "SQPlant \\ 00 \\ 00");
         assert_eq!(plant_group_path(&groups, ""), "");
         assert!(read_plant_groups(b"not a dump").unwrap().is_empty());
+    }
+
+    // Only a stockpiled piping component the .pid does not draw becomes a
+    // dump-only item: a run's representation, a representation the .pid
+    // already has, and another drawing's row are all left alone.
+    #[test]
+    fn dump_only_piping_components_come_from_this_drawings_representations() {
+        let mut dump = table(
+            "APPLICATIONS",
+            &[num("ID"), ch("NAME"), ch("SHORTNAME")],
+            &[row(&[
+                Some(one()),
+                Some(utf16("SmartPlant PID")),
+                Some(utf16("SPPID")),
+            ])],
+        );
+        let thirteen = vec![0xc1, 0x0e];
+        dump.extend(table(
+            "T_REPRESENTATION",
+            &[
+                ch("SP_ID"),
+                num("REPRESENTATIONTYPE"),
+                num("GRAPHICOID"),
+                ch("SP_DRAWINGID"),
+                ch("SP_MODELITEMID"),
+            ],
+            &[
+                // 44116
+                row(&[
+                    Some(utf16("REP1")),
+                    Some(thirteen.clone()),
+                    Some(vec![0xc3, 5, 42, 17]),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("COMP1")),
+                ]),
+                row(&[
+                    Some(utf16("REP2")),
+                    Some(thirteen.clone()),
+                    Some(one()),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("RUN1")),
+                ]),
+                row(&[
+                    Some(utf16("REP3")),
+                    Some(thirteen.clone()),
+                    Some(one()),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("COMP2")),
+                ]),
+                row(&[
+                    Some(utf16("REP4")),
+                    Some(thirteen.clone()),
+                    Some(one()),
+                    Some(utf16("DRAW2")),
+                    Some(utf16("COMP3")),
+                ]),
+                row(&[
+                    Some(utf16("REP5")),
+                    Some(vec![0xc1, 0x0d]),
+                    Some(one()),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("COMP4")),
+                ]),
+            ],
+        ));
+        dump.extend(table(
+            "T_MODELITEM",
+            &[ch("SP_ID"), ch("ITEMTYPENAME"), ch("DESCRIPTION")],
+            &[
+                row(&[Some(utf16("COMP1")), Some(utf16("PipingComp")), None]),
+                row(&[Some(utf16("RUN1")), Some(utf16("PipeRun")), None]),
+                row(&[Some(utf16("COMP2")), Some(utf16("PipingComp")), None]),
+                row(&[Some(utf16("COMP3")), Some(utf16("PipingComp")), None]),
+                row(&[Some(utf16("COMP4")), Some(utf16("PipingComp")), None]),
+            ],
+        ));
+        dump.extend(table(
+            "T_INLINECOMP",
+            &[ch("SP_ID"), num("NOMINALDIAMETER")],
+            // 5192 is 6 in.
+            &[row(&[Some(utf16("COMP1")), Some(vec![0xc2, 52, 93])])],
+        ));
+
+        let tables = ExpTables::load_components(&dump).unwrap();
+        let drawn = HashSet::from(["REP3".to_string()]);
+        let found = tables.dump_only_piping_components("DRAW1", &drawn).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        let (item, representation) = &found[0];
+        assert_eq!(item.uid, "COMP1");
+        assert_eq!(item.model_item_type, "PipingComp");
+        assert_eq!(item.class, Some("PIDPipingComponent"));
+        assert_eq!(item.attributes.len(), 1);
+        assert_eq!(item.attributes[0].interface, "IPipeCrossSectionItem");
+        assert_eq!(item.attributes[0].name, "NominalDiameter");
+        assert_eq!(item.attributes[0].value, "6 in");
+        assert_eq!(representation.uid, "REP1");
+        assert_eq!(representation.item_uid.as_deref(), Some("COMP1"));
+        assert_eq!(representation.graphic_oid, 44116);
     }
 
     #[test]

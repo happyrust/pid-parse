@@ -60,7 +60,7 @@ FluidSystem 参考为空、dump 有值：J K 34、L M 42、空冷器 A/B/C 各 3
 |---|---|---|
 | B 管线名 | 取 `T_PLANTITEM.ITEMTAG`，没有 plant item 时退回拼名 | 已修：L M、轻烃I 两张归零；空冷器 A/B/C 管线名全部配上 |
 | B' 不成管线 | ITEMTAG 为空或不含 `-` 就不成管线（全 dump 13 行；另一候选「OPERFLUIDCODE 为空」会去掉 160 行，未采用） | 随 B 一起修 |
-| C J K 3 个 dump-only 管件 | 按 `T_REPRESENTATION` 合成对象与 rel | 待做 |
+| C J K 3 个 dump-only 管件 | 按 `T_REPRESENTATION` 合成对象与 rel | 已修：J K 只剩 FluidSystem 上界一行 |
 | FluidSystem 上界 | 改为按图登记观测值 | 待做 |
 | D 空冷器 A/B/C 共用管线的 `IFluidSystem.FluidCode` | `OPERFLUIDCODE` 经 `SP_19` 映到标准 `{GUID}` 才写（样本只有 code 20 一个值） | 已修：空冷器 A/B/C、轻烃I exit 0；全包多写 44 个 `FluidCode` |
 
@@ -77,3 +77,11 @@ B 修完之后，L M（只剩 FluidSystem 42）和轻烃I（exit 0）的单图�
 - 数据侧：7 张参考图的 629 条 `PipingConnectors`，按管段 `OPERFLUIDCODE` 的 `SP_19` 映射目标分：无映射 503 条、目标是 `EE_*` 工程扩展码 123 条、目标是 `{GUID}` 标准枚举 3 条。写了 `FluidCode` 的恰好是这 3 条（同一条管线出现在 3 张图上），其余 626 条都没写。所以这批样本里「`SP_19` 目标是标准 `{GUID}` 才写」与观测完全一致，但正例只有一个值（code 20）。
 
 采用的规则：`OPERFLUIDCODE` 的 `SP_19_{code}` 目标是 8-4-4-4-12 的标准 GUID 时写 `FluidCode`，是 `EE_*` 或没有映射时不写（数据映射把每个目标都拼成 `@{…}`，所以要看括号里的形状）。全 dump 有 184 个 `SP_19` 代码映到标准 GUID，但 7 张参考图里实际出现、能检验这条规则的只有 code 20。别的标准代码一旦在参考图里出现、却没写 `FluidCode`，这条规则就要改。
+
+### 根因 C 的规则与外推面
+
+规则：`T_REPRESENTATION` 中 `SP_DRAWINGID` 是本图、`REPRESENTATIONTYPE` = 13、模型项 `ITEMTYPENAME` = `PipingComp`，且这个 representation 不在 `.pid` 里，就发布 `PIDPipingComponent`（带 `T_INLINECOMP.NOMINALDIAMETER`）、它的 `PIDRepresentation`，以及 `T_PIPINGPOINT` 端口。端口和 `PipingPortComposition` / `DrawingItems` / `DwgRepresentationComposition` 都走已有的路径。
+
+7 张参考图里命中这条规则的 representation 只有 J K 的 3 行，3 行都在参考里（3/3，没有反例）。另外 6 张图没有命中。全包里还有 C井场命中 27 行（同样是 `INSTOCKPILE=1`、`SP_ISTYPICAL=1` 的阀门、过滤器、异径管），所以 C井场多了 108 个对象、108 条 rel、140 个值。C井场没有参考图，这部分是外推，没有验证过。
+
+参考图里 `IPipingComponent.PipingComponentType*`、`PipModelCode` 和 `IPBSItem` 这类接口值，本仓库的 `.pid` 路径对已画出的管件也不写（对比时按 vendor composed 豁免）。合成出来的管件同样不写，只写 `NominalDiameter`。

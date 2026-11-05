@@ -728,6 +728,7 @@ fn attach_exp(
     drawing: &mut PidPublishDrawing,
     loaded: &LoadedDump,
 ) -> Result<(), super::oracle_exp::ExpError> {
+    super::oracle_exp::attach_dump_only_components(drawing, &loaded.tables)?;
     let ports = loaded.tables.port_tables()?;
     attach_oracle_ports(drawing, &ports, &loaded.path);
     drawing.connectivity_ends = loaded.tables.connectivity_ends(&drawing.drawing_uid)?;

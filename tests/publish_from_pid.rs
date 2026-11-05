@@ -970,11 +970,14 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["shells"], 2);
     // Pipelines are named by `T_PLANTITEM.ITEMTAG`; the 13 connectors whose
     // item tag has no `-` join no pipeline, and the 44 pipelines whose
-    // `OPERFLUIDCODE` maps to a standard GUID carry `FluidCode`
+    // `OPERFLUIDCODE` maps to a standard GUID carry `FluidCode`, and the
+    // 30 stockpiled piping components the dump places on C井场 (27) and
+    // J K井场 (3) but their `.pid` does not draw are published with their
+    // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
-    assert_eq!(index["objects"], 80_059);
-    assert_eq!(index["values"], 87_437);
-    assert_eq!(index["relationships"], 106_692);
+    assert_eq!(index["objects"], 80_179);
+    assert_eq!(index["values"], 87_598);
+    assert_eq!(index["relationships"], 106_812);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
     // aggregate + excluded == Σ drawings[] — and the declaration names
@@ -1015,7 +1018,7 @@ fn backup_directory_publishes_the_whole_package() {
             "{field}: aggregate + excluded != Σ drawings[]"
         );
     }
-    assert_eq!(index["piping_ports"], 9_557);
+    assert_eq!(index["piping_ports"], 9_617);
     assert_eq!(index["signal_ports"], 22_021);
     assert_eq!(index["connectivity_rels"], 19_371);
     assert_eq!(index["opc_branch_points"], 476);
