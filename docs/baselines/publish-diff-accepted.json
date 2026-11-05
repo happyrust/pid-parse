@@ -27,6 +27,36 @@
     "The FluidSystem allowances live in src/publish/diff.rs as FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES, one bound per reference DocUID. whole_package.registered_exceptions points at it rather than restating a second bound.",
     "`reference-only:` and `excused ...` lines are accounting, not differences, and are not listed here."
   ],
+  "revision_mismatch_figures": {
+    "what": "Four 验收数据 drawings whose `.pid` and the whole-package Export.dmp are different revisions: the drawing's own DocUID has no T_DRAWING row in the dump (0 UTF-16BE occurrences of it in the dump's 74,489,856 bytes), so the dump carries none of that sheet's ports, connectivity, compositions or pipelines. An `--oracle-exp` run over such a pair used to exit 0 having published the `.pid` alone; it now refuses with exit 2 and writes nothing. These are recorded because the pairing is wrong, not because a gate is waived: nothing here makes such a run pass.",
+    "expected_exit_code": 2,
+    "expected_stderr": "argument error: <dump> has no T_DRAWING row for DocUID <doc_uid>; the .pid is not this dump's revision",
+    "command_shape": "pid_publish_xml.exe <stem>.pid --diff-against <stem>_Data.xml --plant P01 --oracle-exp Export.dmp --datamap RefData~4~804.zip",
+    "doc_uid_evidence": "Each doc_uid below is the <Container DocUID> of that drawing's own vendor _Data.xml, which equals the .pid's own drawing UID. Both are absent from the dump.",
+    "figures": {
+      "凝析油A": {
+        "stem": "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+        "doc_uid": "D710241072D54ECCB8F5961357166E5D",
+        "dump_hits": 0
+      },
+      "凝析油B": {
+        "stem": "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
+        "doc_uid": "AAFCDC31FA3C4177BECB02EBBB6F776F",
+        "dump_hits": 0
+      },
+      "换热器CD": {
+        "stem": "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
+        "doc_uid": "5A552026D9144FF9BA325D9C8160064C",
+        "dump_hits": 0
+      },
+      "低温A": {
+        "stem": "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
+        "doc_uid": "DABA92D1739740EAB431DAC6DF5F6419",
+        "dump_hits": 0
+      }
+    },
+    "why_not_rebuilt": "These four are not in acceptance_figures and are not in this dump's T_DRAWING at all, so no `.pid`-alone run can be promoted to an `--oracle-exp` baseline: there is no dump content to publish. Their `.pid`-alone runs stay exit 0 and unchanged."
+  },
   "figures": {
     "A01": {
       "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 27 items below are accepted and recorded, not suppressed.",

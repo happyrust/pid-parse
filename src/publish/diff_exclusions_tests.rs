@@ -99,6 +99,33 @@ fn a_reference_only_class_the_file_cannot_state_is_excused() {
         text.contains("excused object PIDPipeline 1") && text.contains("PidTagRole::Enrichment"),
         "{text}"
     );
+    // Both classes are ones the catalog says the exp dump supplies, so the
+    // CLI can hold an `--oracle-exp` run to them. `.pid`-alone keeps the
+    // excuse; the report just carries the count.
+    assert_eq!(
+        diff.dump_supplied_excused,
+        vec![
+            ("PIDPipeline".to_string(), 1),
+            ("PIDSignalPort".to_string(), 1)
+        ]
+    );
+}
+
+/// A class the file *can* state is never excused, so it never lands in the
+/// dump-supplied tally either: an `--oracle-exp` run has no excuse to
+/// tighten there, and `.pid`-alone already reports it as a finding.
+#[test]
+fn a_file_stateable_class_is_not_a_dump_supplied_excuse() {
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <PIDNozzle><IObject UID="N" Name="N-1"/></PIDNozzle>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean());
+    assert!(diff.dump_supplied_excused.is_empty(), "{diff}");
 }
 
 #[test]

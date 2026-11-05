@@ -618,6 +618,21 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;
         let exp_tables = pid_parse::publish::oracle_exp::ExpTables::read(&dump)
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        // A dump of another revision has no content for this drawing. Attach
+        // nothing and refuse: publishing the `.pid` alone while claiming the
+        // dump's enrichment would be a silent zero.
+        let listed =
+            pid_parse::publish::oracle_exp::drawing_in_dump(&exp_tables, &drawing.drawing_uid)
+                .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        if !listed {
+            eprintln!(
+                "argument error: {} has no T_DRAWING row for DocUID {}; the .pid is not this \
+                 dump's revision",
+                dump_path.display(),
+                drawing.drawing_uid,
+            );
+            return Ok(2);
+        }
         let dump_only =
             pid_parse::publish::oracle_exp::attach_dump_only_components(&mut drawing, &exp_tables)
                 .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
@@ -802,6 +817,13 @@ fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> i32 
 /// `reference-only:` accounting line and one `excused` line per excused
 /// class follow the findings. A document that is not well-formed XML is
 /// not scored: the refusal goes to stdout and stderr and exits 1.
+///
+/// `oracle_exp` narrows one excuse: a class the catalog says the dump
+/// supplies (`PidTagRole::Port` / `PidTagRole::Enrichment`) excused with
+/// "this run published no <class>" is a finding in this mode, because the
+/// dump is in the run. Each such class prints
+/// `oracle-exp run excused <class> ×N the dump should supply` and the run
+/// exits 1.
 fn report_pid_diff(
     ref_path: &Path,
     xml: &str,
@@ -815,8 +837,21 @@ fn report_pid_diff(
         Err(malformed) => return Ok(refuse("Semantic diff", ref_path, &malformed)),
     };
     print!("{diff}");
+    // The dump is in this run, so a class it should have supplied is not an
+    // excuse. The `.pid`-alone mode keeps its excuse: there is no dump there.
+    let excused_dump_classes: Vec<(&str, usize)> = if oracle_exp {
+        diff.dump_supplied_excused
+            .iter()
+            .map(|(class, count)| (class.as_str(), *count))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for (class, count) in &excused_dump_classes {
+        println!("oracle-exp run excused {class} ×{count} the dump should supply");
+    }
     let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
-    if diff.is_clean() && !meta_dirty {
+    if diff.is_clean() && !meta_dirty && excused_dump_classes.is_empty() {
         eprintln!(
             "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
             ref_path.display(),
@@ -825,7 +860,7 @@ fn report_pid_diff(
             diff.rels,
         );
         Ok(0)
-    } else if diff.is_clean() {
+    } else if diff.is_clean() && excused_dump_classes.is_empty() {
         // The `_Meta.xml` gate is the only thing that found something: the run
         // is not clean, so no line may say it is.
         eprintln!(
@@ -837,9 +872,24 @@ fn report_pid_diff(
             diff.rels,
         );
         Ok(1)
+    } else if diff.is_clean() {
+        // Only the dump's own classes are missing: the run published no
+        // object of a class the dump it carries should have supplied.
+        eprintln!(
+            "Semantic diff against {} has no emitted-side finding in {mode} mode, but excused \
+             {} dump-supplied class(es) the dump should supply: {}; exit 1.",
+            ref_path.display(),
+            excused_dump_classes.len(),
+            excused_dump_classes
+                .iter()
+                .map(|(class, count)| format!("{class} ×{count}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        Ok(1)
     } else {
         eprintln!(
-            "Semantic diff against {} surfaced findings in .pid mode:\n  \
+            "Semantic diff against {} surfaced findings in {mode} mode:\n  \
              objects extra={} wrong_class={} missing={}\n  \
              values different={} not_in_reference={} missing={}\n  \
              rels not_in_reference={} missing={}\n\

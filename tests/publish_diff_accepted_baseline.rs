@@ -736,6 +736,87 @@ fn the_air_cooler_c_prints_exactly_the_registered_differences() {
     assert_acceptance_figure("空冷器C");
 }
 
+/// A `.pid` and a dump of another revision are not a pair: the dump has no
+/// `T_DRAWING` row for the drawing's own DocUID, so it carries none of that
+/// sheet's content. `--oracle-exp` must refuse (exit 2) instead of publishing
+/// the `.pid` alone and reporting success, and it must write nothing.
+#[test]
+fn a_drawing_absent_from_the_dump_is_refused_not_silently_published() {
+    let baseline = baseline();
+    let section = &baseline["revision_mismatch_figures"];
+    let expected_exit = section["expected_exit_code"].as_i64().expect("exit code");
+    let figures = section["figures"]
+        .as_object()
+        .expect("revision_mismatch_figures.figures");
+    assert_eq!(figures.len(), 4, "the four mismatched drawings");
+
+    let dump = package_dir().join("Export.dmp");
+    let datamap = package_dir().join("RefData~4~804.zip");
+    if !dump.is_file() || !datamap.is_file() {
+        eprintln!(
+            "skip: the exp dump or the datamap is absent ({})",
+            dump.display()
+        );
+        return;
+    }
+
+    for (key, figure) in figures {
+        let stem = figure["stem"].as_str().expect("stem");
+        let doc_uid = figure["doc_uid"].as_str().expect("doc_uid");
+        let pid = acceptance_dir().join(format!("{stem}.pid"));
+        let reference = acceptance_dir().join(format!("{stem}_Data.xml"));
+        if !pid.is_file() || !reference.is_file() {
+            eprintln!(
+                "skip: {key} acceptance drawing is absent ({})",
+                pid.display()
+            );
+            continue;
+        }
+        let scratch = Scratch::new("revision-mismatch");
+        let output = Command::new(CLI)
+            .arg(&pid)
+            .arg("--out-dir")
+            .arg(scratch.path())
+            .arg("--diff-against")
+            .arg(&reference)
+            .args(["--plant", "P01"])
+            .arg("--oracle-exp")
+            .arg(&dump)
+            .arg("--datamap")
+            .arg(&datamap)
+            .output()
+            .expect("spawn pid_publish_xml --oracle-exp");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            output.status.code(),
+            Some(i32::try_from(expected_exit).expect("i32")),
+            "{key}: a dump of another revision must be refused, not published\n\
+             stdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("has no T_DRAWING row for DocUID"),
+            "{key}: stderr must name the missing row:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(doc_uid),
+            "{key}: stderr must carry the drawing's own DocUID {doc_uid}:\n{stderr}"
+        );
+        let written: Vec<_> = std::fs::read_dir(scratch.path())
+            .expect("read the scratch dir")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert!(
+            written.is_empty(),
+            "{key}: a refused run writes nothing, found {written:?}"
+        );
+        assert!(
+            !stdout.contains("pid export diff:"),
+            "{key}: a refused run scores nothing, stdout:\n{stdout}"
+        );
+    }
+}
+
 /// The informational line each acceptance figure records names the bound
 /// `FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` registers for its `DocUID`, so
 /// the table and the baseline cannot drift apart.

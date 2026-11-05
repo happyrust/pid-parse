@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### `.pid` 与 dump 不是同一版本时 `--oracle-exp` 不再静默 exit 0（2026-11-05）
+
+`--oracle-exp` 以前不检查 `.pid` 的 `DocUID` 在 dump 的 `T_DRAWING` 里有没有行。验收数据里
+4 张图（凝析油 A/B、换热器 CD、低温分离器 A）的 `DocUID` 在 `Export.dmp` 里 0 次命中：
+dump 里没有这些图纸的端口、连通、组合关系与管线，于是跑出来只是「`.pid` 单发」，却报
+exit 0 且和参考图对得上（参考图也是这 4 张图自己的、`.pid` 单发能对上的内容）。
+
+- 新增 `oracle_exp::drawing_in_dump(&ExpTables, uid) -> Result<bool, ExpError>`：按
+  `backup_uid_key` 折叠后与 `T_DRAWING.SP_ID` 比对。CLI 在读完 `ExpTables` 之后、挂任何
+  dump 内容之前调用它；没有对应行就打印
+  `argument error: <dump> has no T_DRAWING row for DocUID <uid>; the .pid is not this dump's revision`
+  并退出 2，一个文件都不写（与现有参数错误一致）。
+- `report_pid_diff` 兜底：`--oracle-exp` 模式下，若参考侧某个整类仍被「this run published no
+  <class>」豁免，而目录里该类的角色是 `PidTagRole::Port` / `PidTagRole::Enrichment`（dump 本该
+  提供），该豁免不再成立。每类打印一行
+  `oracle-exp run excused <class> ×N the dump should supply` 并 exit 1。`.pid` 单发模式不变；
+  `diff_pid_export` 的签名不变，新增字段 `PidExportDiff::dump_supplied_excused`。
+  实测：6 张验收图 + I井场 的 `--oracle-exp` 运行里这类豁免行 0 条，规则不会误伤。
+- 基线新增 `revision_mismatch_figures` 段（4 张图，记 `DocUID` 与期望 exit 2），
+  `tests/publish_diff_accepted_baseline.rs` 增加 `a_drawing_absent_from_the_dump_is_refused_not_silently_published`。
+- 上一轮「重建基线」的建议更正为：这 4 张图的 `DocUID` 不在本 dump 里，无法用 `--oracle-exp`
+  建基线，只能记成「配对错误」；它们的 `.pid` 单发行为不动。见
+  `docs/analysis/2026-11-05-seven-reference-publish-diff.md`。
+
 ### publish 对照面扩到七张参考图（2026-11-05）
 
 验收数据里另外 6 张有原厂 `_Data.xml` 的图（J K / L M井场、轻烃分离器I、空冷器 A/B/C），

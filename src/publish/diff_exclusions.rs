@@ -28,6 +28,13 @@
 //! Excused content is counted and rendered as one `excused …` line per
 //! exclusion class that fired; a `PIDPipeline` object or `PipingConnectors`
 //! rel the by-name pairing already accounts for is counted, not excused.
+//!
+//! Source 1 is only an excuse for a run that has no dump. When the catalog
+//! says the exp dump supplies the class (`PidTagRole::Port` /
+//! `PidTagRole::Enrichment`), the excused count also lands in
+//! [`PidExportDiff::dump_supplied_excused`] so the CLI can hold an
+//! `--oracle-exp` run to it: the dump that should have supplied the class is
+//! right there in the run.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -116,6 +123,7 @@ pub(super) fn account_reference_side(
     let mut tag_named = 0usize;
     let mut composed_names: BTreeMap<&str, usize> = BTreeMap::new();
     let mut excused_rels: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut dump_supplied: BTreeMap<String, usize> = BTreeMap::new();
 
     let mut uids: Vec<&String> = reference.objects.keys().collect();
     uids.sort();
@@ -155,6 +163,9 @@ pub(super) fn account_reference_side(
                 .entry(class.as_str())
                 .or_insert((0, reason))
                 .0 += 1;
+            if matches!(role, PidTagRole::Port | PidTagRole::Enrichment) {
+                *dump_supplied.entry(class.clone()).or_insert(0usize) += 1;
+            }
         } else {
             diff.objects_not_in_generated += 1;
             missing_objects.push(format!("missing {class} {uid}"));
@@ -303,6 +314,7 @@ pub(super) fn account_reference_side(
         diff.exclusions
             .push(format!("excused rel {def_uid} {count} — {reason}"));
     }
+    diff.dump_supplied_excused = dump_supplied.into_iter().collect();
 }
 
 /// The tag-named duplicate element's `<attribute>` restates the block's own

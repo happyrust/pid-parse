@@ -611,6 +611,28 @@ pub fn backup_uid_key(text: &str) -> String {
     norm_uid(text)
 }
 
+/// Whether the dump behind `tables` carries a `T_DRAWING` row for `uid`.
+///
+/// A `.pid` and an exp dump describe the same revision of a sheet only
+/// when the drawing's own `DocUID` is one of the dump's `T_DRAWING.SP_ID`
+/// cells, compared the way [`backup_uid_key`] folds both. A miss means the
+/// dump belongs to another revision: none of its port, connectivity,
+/// composition or pipeline content applies to this drawing, so an
+/// `--oracle-exp` run that ignored the mismatch would publish the `.pid`
+/// alone and still report success.
+///
+/// # Errors
+///
+/// Returns [`ExpError::Table`] when `T_DRAWING` lacks one of the columns
+/// [`ExpTables::drawings`] projects.
+pub fn drawing_in_dump(tables: &ExpTables, uid: &str) -> Result<bool, ExpError> {
+    let key = backup_uid_key(uid);
+    Ok(tables
+        .drawings()?
+        .iter()
+        .any(|drawing| drawing.id_key == key))
+}
+
 /// `T_PLANTGROUP` rows.
 ///
 /// A dump with no such insert returns an empty list. Dates and byte
@@ -2405,6 +2427,72 @@ mod tests {
         assert_eq!(drawing.design_phase, "");
         assert_eq!(drawing.drawing_date, "");
         assert_eq!(drawing.last_publish_time, "");
+    }
+
+    /// The revision guard's hit side: the `.pid`'s `DocUID` is one of the
+    /// dump's `T_DRAWING.SP_ID` cells once both are folded.
+    #[test]
+    fn drawing_in_dump_finds_the_row_under_the_folded_uid() {
+        let dump = table(
+            "T_DRAWING",
+            &[
+                ch("SP_ID"),
+                ch("NAME"),
+                ch("PATH"),
+                ch("DRAWINGNUMBER"),
+                ch("SP_PLANTGROUPID"),
+            ],
+            &[
+                row(&[
+                    Some(utf16("D710241072D54ECCB8F5961357166E5D")),
+                    Some(utf16("一级闪蒸分离器A")),
+                    Some(utf16("\\a.pid")),
+                    Some(utf16("DWG-0000集05-01")),
+                    Some(utf16("G1")),
+                ]),
+                row(&[
+                    Some(utf16("AAFCDC31FA3C4177BECB02EBBB6F776F")),
+                    Some(utf16("一级闪蒸分离器B")),
+                    Some(utf16("\\b.pid")),
+                    Some(utf16("DWG-0000集05-02")),
+                    Some(utf16("G1")),
+                ]),
+            ],
+        );
+        let mut tables = ExpTables::blank();
+        tables.drawing = read_table_tolerant(&dump, "T_DRAWING").unwrap();
+
+        assert!(drawing_in_dump(&tables, "D710241072D54ECCB8F5961357166E5D").unwrap());
+        assert!(drawing_in_dump(&tables, "{D7102410-72D5-4ECC-B8F5-961357166E5D}").unwrap());
+        assert!(drawing_in_dump(&tables, "aafcdc31fa3c4177becb02ebbb6f776f").unwrap());
+    }
+
+    /// The revision guard's miss side: a drawing the dump does not list is
+    /// a different revision, not an empty one.
+    #[test]
+    fn drawing_in_dump_misses_a_uid_the_dump_does_not_carry() {
+        let dump = table(
+            "T_DRAWING",
+            &[
+                ch("SP_ID"),
+                ch("NAME"),
+                ch("PATH"),
+                ch("DRAWINGNUMBER"),
+                ch("SP_PLANTGROUPID"),
+            ],
+            &[row(&[
+                Some(utf16("D710241072D54ECCB8F5961357166E5D")),
+                Some(utf16("一级闪蒸分离器A")),
+                Some(utf16("\\a.pid")),
+                Some(utf16("DWG-0000集05-01")),
+                Some(utf16("G1")),
+            ])],
+        );
+        let mut tables = ExpTables::blank();
+        tables.drawing = read_table_tolerant(&dump, "T_DRAWING").unwrap();
+
+        assert!(!drawing_in_dump(&tables, "AAFCDC31FA3C4177BECB02EBBB6F776F").unwrap());
+        assert!(!drawing_in_dump(&tables, "").unwrap());
     }
 
     #[test]

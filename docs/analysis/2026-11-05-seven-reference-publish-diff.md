@@ -97,3 +97,65 @@ P3：整包重发到 `D:\work\cad\pid-test-data\publish-v3\`（160 件），`_By
 - `_Coverage.json` 51 件变化：每张图的 `pipeline_synthesis` 多了 `item_tag_not_a_name` 计数，管线有变化的图同时更新了计数。
 - `_Index.json` 合计：对象 80 085 → 80 179，值 87 419 → 87 598，关系 106 705 → 106 812，管线 2 395 → 2 369，`PipingConnectors` 3 128 → 3 115，管道端口 9 557 → 9 617。
 - 同一命令再跑一次，160/160 逐字节相同。
+
+## 补记：4 张旧集注站图的 `--oracle-exp` 是配对错误，不是干净运行（2026-11-05 晚）
+
+上一节把 10 张有发现的图里 4 张旧集注站图（凝析油 A/B、换热器 CD、低温分离器 A）记为
+「DocUID 不在这份备份里，被同名不同 UID 的参考误配」。这句只说了参考误配，漏了更严重的一半：
+**这 4 张图的 `.pid` 与 `Export.dmp` 也不是同一版本**，而 `--oracle-exp` 当时不检查这一点。
+
+### 证据
+
+`T_DRAWING` 53 行，每行 `SP_ID` 是图纸的 `DocUID`。把 4 张图的 `DocUID` 按 UTF-16BE
+（dump 的字符列编码）在 `Export.dmp` 的 74,489,856 字节里数命中：
+
+| 图 | DocUID | dump 内命中 |
+|---|---|---|
+| 凝析油A | `D710241072D54ECCB8F5961357166E5D` | 0 |
+| 凝析油B | `AAFCDC31FA3C4177BECB02EBBB6F776F` | 0 |
+| 换热器CD | `5A552026D9144FF9BA325D9C8160064C` | 0 |
+| 低温分离器A | `DABA92D1739740EAB431DAC6DF5F6419` | 0 |
+| 对照：J K井场 | `C80930B9697B4F2190640D8141C56FF7` | 3 743 |
+| 对照：轻烃分离器I | `A77BEFB93BFA4DFAB366BAB069D90B1A` | 1 015 |
+
+4 张图的 `DocUID` 同时也是它们自己 `_Data.xml` 的 `<Container DocUID>`。dump 里根本没有这 4 张图，
+所以 `T_PIPINGPOINT` / `T_CONNECTOR` / `T_PIPERUN` / `T_REPRESENTATION` 一行都不属于它们。
+运行输出也印证：`oracle-exp pipelines: 0 PIDPipeline`、`connectivity: 0 pairs`、`opc: 0 PIDBranchPoint`，
+而 `compositions: 377 nozzle pairs` 是全 dump 的共享值，不是本图的。
+
+结论：这 4 次 `--oracle-exp` 实际只是 `.pid` 单发，却报 exit 0。参考图恰好也是这 4 张图自己的
+`_Data.xml`，`.pid` 单发本来就能对上，于是「干净」是两次错误互相抵消的结果。
+
+### 修复
+
+1. **CLI 守卫（主修复）**：`src/publish/oracle_exp.rs` 新增
+   `drawing_in_dump(&ExpTables, uid) -> Result<bool, ExpError>`（折叠 `DocUID` 后与
+   `T_DRAWING.SP_ID` 比对，带 `///` 与命中/未命中两条单元测试）。`run_pid` 读完 `ExpTables` 后
+   立刻调用，未命中就打印
+   `argument error: <dump> has no T_DRAWING row for DocUID <uid>; the .pid is not this dump's revision`
+   并退出 2，不写出任何文件。
+2. **diff 兜底**：`report_pid_diff` 在 `--oracle-exp` 模式下，把「参考侧整类被
+   `this run published no <class>` 豁免、而目录说该类是 `PidTagRole::Port` /
+   `PidTagRole::Enrichment`」算作发现项，每类打印
+   `oracle-exp run excused <class> ×N the dump should supply` 并 exit 1。`.pid` 单发模式不动，
+   `diff_pid_export` 签名不动（新增 `PidExportDiff::dump_supplied_excused` 字段）。
+   **先查了有没有合理豁免**：6 张验收图 + I井场 的 `--oracle-exp` 运行里这类行 0 条，所以没有
+   收窄到「参考里有 ≥1、生成侧为 0」的必要；规则按「该类在目录里是 dump 角色且本次豁免了」
+   直接生效。
+
+### 对上一轮「重建基线」建议的更正
+
+上一节把 4 张图归到「范围外」，隐含的处理是以后补参考、重建基线。这次更正为：**这 4 张图
+无法用这份 `Export.dmp` 建 `--oracle-exp` 基线**——dump 里没有它们的任何内容，`--oracle-exp`
+对它们只能失败。它们被记进 `docs/baselines/publish-diff-accepted.json` 的新段
+`revision_mismatch_figures`（4 张图 + 两边 `DocUID` + 期望 exit 2），由
+`tests/publish_diff_accepted_baseline.rs::a_drawing_absent_from_the_dump_is_refused_not_silently_published`
+逐张断言。它们的 `.pid` 单发行为不变，仍 exit 0。
+
+轻烃分离器I 与空冷器A 的现有基线不动：`DocUID` 在 dump 里，配对正确。
+
+### 未受影响
+
+- 整包模式（`--out-dir` 指向备份目录）按 `T_DRAWING` 找 `.pid`，天然一致，本改动不经过它。
+  抽查重发一张图（J K井场），`_Data.xml` / `_Meta.xml` 与 `publish-v3` 逐字节相同。
+- 7 张参考图的 `--oracle-exp` 单图运行全部仍 exit 0。
