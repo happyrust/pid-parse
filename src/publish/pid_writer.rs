@@ -205,15 +205,14 @@ fn write_pipeline(buf: &mut String, pipeline: &PidPipeline) -> std::fmt::Result 
     ] {
         writeln!(buf, "      <{interface}/>")?;
     }
-    if let Some(fluid) = &pipeline.fluid_system {
-        writeln!(
-            buf,
-            r#"      <IFluidSystem FluidSystem="{}"/>"#,
-            escape_attr(fluid),
-        )?;
-    } else {
-        writeln!(buf, "      <IFluidSystem/>")?;
+    write!(buf, "      <IFluidSystem")?;
+    if let Some(code) = &pipeline.fluid_code {
+        write!(buf, r#" FluidCode="{}""#, escape_attr(code))?;
     }
+    if let Some(fluid) = &pipeline.fluid_system {
+        write!(buf, r#" FluidSystem="{}""#, escape_attr(fluid))?;
+    }
+    writeln!(buf, "/>")?;
     for interface in ["INoteCollection", "IExpandableThing", "IPIDTypical"] {
         writeln!(buf, "      <{interface}/>")?;
     }
@@ -1320,11 +1319,36 @@ mod tests {
     }
 
     #[test]
+    fn a_pipeline_writes_its_fluid_code_before_its_fluid_system() {
+        let mut drawing = drawing();
+        drawing.pipelines.push(PidPipeline {
+            uid: "PL1".to_string(),
+            name: "80-AB-001".to_string(),
+            fluid_code: Some("@{CODE}".to_string()),
+            fluid_system: Some("@{SYSTEM}".to_string()),
+            connector_uids: vec!["RUN".to_string()],
+        });
+        drawing.pipelines.push(PidPipeline {
+            uid: "PL2".to_string(),
+            name: "80-AB-002".to_string(),
+            fluid_code: Some("@{CODE}".to_string()),
+            fluid_system: None,
+            connector_uids: vec!["RUN".to_string()],
+        });
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(
+            xml.contains(r#"      <IFluidSystem FluidCode="@{CODE}" FluidSystem="@{SYSTEM}"/>"#)
+        );
+        assert!(xml.contains(r#"      <IFluidSystem FluidCode="@{CODE}"/>"#));
+    }
+
+    #[test]
     fn classes_is_a_census_of_the_sibling_documents_top_level_blocks() {
         let mut drawing = drawing();
         drawing.pipelines.push(PidPipeline {
             uid: "PL1".to_string(),
             name: "80-AB-001".to_string(),
+            fluid_code: None,
             fluid_system: Some("@{GUID}".to_string()),
             connector_uids: vec!["RUN".to_string()],
         });

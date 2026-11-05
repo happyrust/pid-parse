@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use super::oracle_exp::{ExpError, ExpTables, PipeRunRow};
 use super::pid_load::{PidPipeline, PidPublishDrawing, PipelineSynthesis};
-use crate::backup::{fluid_system_guid, DataMap};
+use crate::backup::{fluid_code_guid, fluid_system_guid, DataMap};
 
 /// DNS namespace UUID from RFC 4122. The pipeline root is version 5 of
 /// this namespace over the name `pid-parse/pipeline`.
@@ -37,8 +37,8 @@ const DNS_NAMESPACE: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 /// Hang synthesized pipelines on connectors this drawing already publishes.
 ///
-/// `datamap` supplies `FluidSystem`. Without it the pipelines are still
-/// written and `FluidSystem` stays empty.
+/// `datamap` supplies `FluidSystem` and `FluidCode`. Without it the
+/// pipelines are still written and both stay empty.
 ///
 /// # Errors
 ///
@@ -93,11 +93,16 @@ pub fn attach_pipelines(
             },
             _ => None,
         };
+        let fluid_code = datamap
+            .zip(run.fluid_code)
+            .and_then(|(map, code)| fluid_code_guid(map, code))
+            .map(str::to_string);
         grouped.insert(
             name.clone(),
             PidPipeline {
                 uid: pipeline_uid(plant, &name),
                 name,
+                fluid_code,
                 fluid_system,
                 connector_uids: vec![item.uid.clone()],
             },

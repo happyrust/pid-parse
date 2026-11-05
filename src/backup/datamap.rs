@@ -72,6 +72,31 @@ pub fn fluid_system_guid(map: &DataMap, code: i64) -> Option<&str> {
         .map(String::as_str)
 }
 
+/// `SP_19_{code}` in the enum map, but only when its target is a
+/// standard `@{GUID}` enum. A project-extension target (`EE_…`) is not
+/// published as `FluidCode`; across the seven reference drawings only
+/// the standard targets are, and code 20 is the only one observed.
+#[must_use]
+pub fn fluid_code_guid(map: &DataMap, code: i64) -> Option<&str> {
+    map.enum_to_enum
+        .get(&format!("SP_19_{code}"))
+        .map(String::as_str)
+        .filter(|value| is_guid_spelling(value))
+}
+
+/// `@{8-4-4-4-12}` hex. The map spells every target `@{…}`, so the
+/// braces alone do not tell a standard enum from an `EE_…` extension.
+fn is_guid_spelling(value: &str) -> bool {
+    let Some(inner) = value.strip_prefix("@{").and_then(|v| v.strip_suffix('}')) else {
+        return false;
+    };
+    let groups: Vec<&str> = inner.split('-').collect();
+    groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
+        && groups
+            .iter()
+            .all(|g| g.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn sppid_datamap_entry(bytes: &[u8]) -> Result<Vec<u8>, DataMapError> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive =
@@ -193,6 +218,27 @@ fn publish_guid(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fluid_code_is_published_only_when_codelist_19_maps_it_to_a_standard_guid() {
+        let xml = br#"
+            <Container>
+              <Rel>
+                <IRel UID1="SP_19_20" UID2="{663C8387-FD73-449D-9ABF-BB3ECC4037BE}" DefUID="MapEnumToEnum"/>
+              </Rel>
+              <Rel>
+                <IRel UID1="SP_19_10022" UID2="EE_PCDEC_1" DefUID="MapEnumToEnum"/>
+              </Rel>
+            </Container>
+        "#;
+        let map = parse_datamap_xml(xml).expect("xml");
+        assert_eq!(
+            fluid_code_guid(&map, 20),
+            Some("@{663C8387-FD73-449D-9ABF-BB3ECC4037BE}")
+        );
+        assert_eq!(fluid_code_guid(&map, 10022), None);
+        assert_eq!(fluid_code_guid(&map, 7), None);
+    }
 
     #[test]
     fn map_enum_and_list_names_are_read() {

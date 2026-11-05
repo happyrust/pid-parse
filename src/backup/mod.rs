@@ -55,7 +55,7 @@ pub mod zip_index;
 
 #[cfg(feature = "backup-mdf")]
 pub use boot_page::{parse_boot_page, BootPageError, BootPageInfo};
-pub use datamap::{fluid_system_guid, read_datamap, DataMap, DataMapError};
+pub use datamap::{fluid_code_guid, fluid_system_guid, read_datamap, DataMap, DataMapError};
 pub use folder::{
     parse_plant_data_filename, scan_backup_folder, BackupFolderScan, ExportDumpFormat,
     ExportDumpScan, PlantDataFile, RefDataFile, ScanProblem, ZipListing,

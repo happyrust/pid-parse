@@ -286,6 +286,9 @@ pub struct PidPipeline {
     /// `T_PLANTITEM.ITEMTAG`, or `{diameter}-{fluid}-{sequence}-{class}[-{insulation}]`
     /// when the run has no plant item.
     pub name: String,
+    /// `IFluidSystem.FluidCode`: the run's `OPERFLUIDCODE` through
+    /// `SP_19` when the data map sends it to a standard `@{GUID}`.
+    pub fluid_code: Option<String>,
     /// `@{GUID}` from the data map. Absent when the run has no code,
     /// the map was not given, or the code is not in the map.
     pub fluid_system: Option<String>,

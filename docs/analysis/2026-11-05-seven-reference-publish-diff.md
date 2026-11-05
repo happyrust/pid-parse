@@ -62,7 +62,7 @@ FluidSystem 参考为空、dump 有值：J K 34、L M 42、空冷器 A/B/C 各 3
 | B' 不成管线 | ITEMTAG 为空或不含 `-` 就不成管线（全 dump 13 行；另一候选「OPERFLUIDCODE 为空」会去掉 160 行，未采用） | 随 B 一起修 |
 | C J K 3 个 dump-only 管件 | 按 `T_REPRESENTATION` 合成对象与 rel | 待做 |
 | FluidSystem 上界 | 改为按图登记观测值 | 待做 |
-| D 空冷器 A/B/C 共用管线的 `IFluidSystem.FluidCode` | 见下 | 待定 |
+| D 空冷器 A/B/C 共用管线的 `IFluidSystem.FluidCode` | `OPERFLUIDCODE` 经 `SP_19` 映到标准 `{GUID}` 才写（样本只有 code 20 一个值） | 已修：空冷器 A/B/C、轻烃I exit 0；全包多写 44 个 `FluidCode` |
 
 B 修完之后，L M（只剩 FluidSystem 42）和轻烃I（exit 0）的单图差异只剩已登记类；空冷器 A/B/C 各剩一条
 `missing value PIDPipeline E5EFCC63… IFluidSystem.FluidCode: "@{663C8387-…}" not in generated`。
@@ -75,3 +75,5 @@ B 修完之后，L M（只剩 FluidSystem 42）和轻烃I（exit 0）的单图�
 - 这条管线的 FluidSystem 值 `{FD96270A…}` 是 `SP_20_1` 的目标；`FluidCode` 的 `{663C8387…}` 在映射里只出现一次，是 `SP_19_20` 的目标。所以 `FluidCode` 的值来自 OperFluidCode（`SP_19`），不是 FluidSystem 那条属性自己的枚举。
 - `EFAdapter.dll`（IDA 9.2，ida-bridge，库副本在 `D:\ida_scratch\publish-native\efadapter-fluid\`）：`EnumConversions` 是 `sub_5F5F4D60`。它是通用的枚举翻译：沿 `MapPropertyToProperty` / `MapEnumToEnum` / `MapEnumListMapEnumList` 查目标，查不到时记 `Warning!!! Found an unmapped SPMapProperty`。反汇编里没有针对某个代码或某条管线的特判，看不出离线可复现的「写 / 不写」判据。一个可能的解释是 FluidSystem 与 OperFluidCode 是同一棵层级枚举的上下两层、经 `MapEnumListMapEnumList` 取下层值，但这一点没有在反汇编里坐实。
 - 数据侧：7 张参考图的 629 条 `PipingConnectors`，按管段 `OPERFLUIDCODE` 的 `SP_19` 映射目标分：无映射 503 条、目标是 `EE_*` 工程扩展码 123 条、目标是 `{GUID}` 标准枚举 3 条。写了 `FluidCode` 的恰好是这 3 条（同一条管线出现在 3 张图上），其余 626 条都没写。所以这批样本里「`SP_19` 目标是标准 `{GUID}` 才写」与观测完全一致，但正例只有一个值（code 20）。
+
+采用的规则：`OPERFLUIDCODE` 的 `SP_19_{code}` 目标是 8-4-4-4-12 的标准 GUID 时写 `FluidCode`，是 `EE_*` 或没有映射时不写（数据映射把每个目标都拼成 `@{…}`，所以要看括号里的形状）。全 dump 有 184 个 `SP_19` 代码映到标准 GUID，但 7 张参考图里实际出现、能检验这条规则的只有 code 20。别的标准代码一旦在参考图里出现、却没写 `FluidCode`，这条规则就要改。

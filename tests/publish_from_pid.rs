@@ -969,10 +969,11 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["failed"], 0);
     assert_eq!(index["shells"], 2);
     // Pipelines are named by `T_PLANTITEM.ITEMTAG`; the 13 connectors whose
-    // item tag has no `-` join no pipeline
+    // item tag has no `-` join no pipeline, and the 44 pipelines whose
+    // `OPERFLUIDCODE` maps to a standard GUID carry `FluidCode`
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_059);
-    assert_eq!(index["values"], 87_393);
+    assert_eq!(index["values"], 87_437);
     assert_eq!(index["relationships"], 106_692);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
