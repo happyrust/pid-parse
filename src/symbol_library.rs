@@ -417,6 +417,10 @@ pub struct SymbolLettering {
     /// [`crate::style_link::TEXT_CHAR_HEIGHT_MODE_OFFSET`] byte.
     #[serde(default)]
     pub height_mode: Option<u8>,
+    /// Character width in thousandths of the face's own — the style's
+    /// [`crate::style_link::TEXT_CHAR_WIDTH_OFFSET`] word.
+    #[serde(default)]
+    pub width_permille: Option<u16>,
     /// Character colour as `[r, g, b]` when the resolved style states one.
     pub rgb: Option<[u8; 3]>,
     /// The paragraph's stated horizontal justification — the default
@@ -508,6 +512,7 @@ impl SymbolLettering {
             letter_height_m: record.letter_height_m,
             height_m: effective.as_ref().map(|style| style.height_m),
             height_mode: effective.as_ref().and_then(|style| style.height_mode),
+            width_permille: effective.as_ref().and_then(|style| style.width_permille),
             rgb: effective
                 .as_ref()
                 .and_then(crate::style_link::ResolvedTextHeight::rgb),
@@ -1343,6 +1348,7 @@ fn lettering_of(
         letter_height_m,
         height_m: effective.as_ref().map(|style| style.height_m),
         height_mode: effective.as_ref().and_then(|style| style.height_mode),
+        width_permille: effective.as_ref().and_then(|style| style.width_permille),
         rgb: effective
             .as_ref()
             .and_then(crate::style_link::ResolvedTextHeight::rgb),

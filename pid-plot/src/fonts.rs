@@ -447,6 +447,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans,
                 },

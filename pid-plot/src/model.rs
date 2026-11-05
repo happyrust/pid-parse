@@ -521,6 +521,11 @@ pub enum PaperShape {
         /// baseline down to `line`.
         #[serde(default, skip_serializing_if = "TextHeightBasis::is_cap")]
         height_basis: TextHeightBasis,
+        /// The width the style letters at, in thousandths of the face's own
+        /// advance — `JStyleTextChar +52`. `None` where the style states
+        /// none or `0`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_permille: Option<u16>,
         /// Draw the trimmed glyphs one trailing-pad width along the baseline.
         ///
         /// A left anchor keeps the insertion at the left of the stored run.
@@ -2679,6 +2684,10 @@ fn push_entity_with(
                         height_basis: TextHeightBasis::from_mode(
                             styled.as_ref().and_then(|style| style.height_mode),
                         ),
+                        width_permille: styled
+                            .as_ref()
+                            .and_then(|style| style.width_permille)
+                            .filter(|width| *width > 0),
                     },
                 ));
             }
@@ -3150,6 +3159,9 @@ fn symbol_text_shape(
         height_basis: TextHeightBasis::from_mode(
             lettering.and_then(|lettering| lettering.height_mode),
         ),
+        width_permille: lettering
+            .and_then(|lettering| lettering.width_permille)
+            .filter(|width| *width > 0),
         right_pad: false,
         spans: lettering.map_or_else(Vec::new, |lettering| {
             lettering
@@ -3613,6 +3625,7 @@ mod tests {
             style_id: id,
             height_m,
             height_mode: None,
+            width_permille: None,
             colour: None,
             alignment: None,
             line_spacing: None,
@@ -3701,6 +3714,7 @@ mod tests {
                     style_id: 3,
                     height_m: 0.0035,
                     height_mode: None,
+                    width_permille: None,
                     colour: None,
                     alignment: None,
                     line_spacing,
@@ -3858,6 +3872,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Middle,
             height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille: None,
             right_pad: false,
             spans: Vec::new(),
         };
@@ -3902,6 +3917,7 @@ mod tests {
                 anchor: TextAnchor::Center,
                 line: TextLine::Middle,
                 height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
                 right_pad: false,
                 spans: Vec::new(),
             },
@@ -4042,6 +4058,7 @@ mod tests {
                     style_id: 3,
                     height_m: 0.0037,
                     height_mode: None,
+                    width_permille: None,
                     colour: None,
                     alignment: Some(TextAlignment::Right),
                     line_spacing: None,
@@ -4101,6 +4118,7 @@ mod tests {
                 style_id: 47,
                 height_m: 0.003_175,
                 height_mode: None,
+                width_permille: None,
                 colour: None,
                 alignment: Some(alignment),
                 line_spacing: Some(1.0),
@@ -4559,6 +4577,7 @@ mod tests {
             letter_height_m: 0.0,
             height_m: Some(0.003),
             height_mode: None,
+            width_permille: None,
             rgb: None,
             alignment: Some(TextAlignment::Right),
             line_spacing: None,
@@ -4609,6 +4628,7 @@ mod tests {
             letter_height_m: 0.0025,
             height_m: None,
             height_mode: None,
+            width_permille: None,
             rgb: None,
             alignment: Some(TextAlignment::Left),
             line_spacing: None,

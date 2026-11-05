@@ -352,6 +352,7 @@ mod tests {
                 anchor: crate::model::TextAnchor::Left,
                 line: crate::model::TextLine::Middle,
                 height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
                 right_pad: false,
                 spans: Vec::new(),
                 rotation: 0.0,

@@ -612,6 +612,19 @@ pub const TEXT_HEIGHT_MODE_ASCENT: u8 = 0x0C;
 /// height — the code every drawing-sheet label carries.
 pub const TEXT_HEIGHT_MODE_CAP: u8 = 0x0D;
 
+/// Offset of the character width, in thousandths of the face's own, within a
+/// `JStyleTextChar` payload (`u16`).
+///
+/// Level: **native-reader**. The version-3 reader (`sub_10030A20`) reads a
+/// two-byte word it discards at `+50`, then this word into object `+376`;
+/// the setter (`IJStyleTextCharImp` slot 7) stores it unchecked and the
+/// getter (slot 23) returns it unchanged. The one place it is used,
+/// `sub_10031760`, hands the face manager `word / 1000.0` beside the height,
+/// and — unlike the height — does not scale it by the placement: it is a
+/// ratio, not a length. Every border template's `SimSun` style states `800`;
+/// most other styles state `0` or `1000`.
+pub const TEXT_CHAR_WIDTH_OFFSET: usize = 52;
+
 /// Offset of the character colour, a Win32 `COLORREF` (`0x00BBGGRR`), within
 /// a `JStyleTextChar` payload.
 ///
@@ -1163,6 +1176,9 @@ pub struct StyleRecord {
     /// this is a `JStyleTextChar` — the raw byte at
     /// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`].
     pub char_height_mode: Option<u8>,
+    /// Character width in thousandths of the face's own, when this is a
+    /// `JStyleTextChar` — the raw word at [`TEXT_CHAR_WIDTH_OFFSET`].
+    pub char_width_permille: Option<u16>,
     /// `JStyleTextChar` this record names, when it is a `JStyleTextPara`.
     pub text_char_reference: Option<u32>,
     /// Horizontal alignment, when this is a `JStyleTextPara` stating one the
@@ -1328,6 +1344,9 @@ pub struct ResolvedTextHeight {
     /// Which of the face's heights [`Self::height_m`] measures, read at
     /// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`].
     pub height_mode: Option<u8>,
+    /// Character width in thousandths of the face's own, read at
+    /// [`TEXT_CHAR_WIDTH_OFFSET`].
+    pub width_permille: Option<u16>,
     /// Character colour as a raw Win32 `COLORREF` (`0x00BBGGRR`), read at
     /// [`TEXT_CHAR_COLOUR_OFFSET`]. `None` when the word does not read as one
     /// — a caller keeps its own default then, the same way an unstated fill
@@ -1498,6 +1517,7 @@ impl DocumentStyleTable {
                     ),
                     char_height_m: read_char_height(type_code, payload),
                     char_height_mode: read_char_height_mode(type_code, payload),
+                    char_width_permille: read_char_width(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
                     text_alignment: read_text_alignment(type_code, payload),
                     line_spacing: read_line_spacing(type_code, payload),
@@ -1858,6 +1878,7 @@ impl DocumentStyleTable {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
             height_mode: char_style.char_height_mode,
+            width_permille: char_style.char_width_permille,
             colour: char_style.text_colour,
             alignment: para.text_alignment,
             line_spacing: para.line_spacing,
@@ -1883,6 +1904,7 @@ impl DocumentStyleTable {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
             height_mode: char_style.char_height_mode,
+            width_permille: char_style.char_width_permille,
             colour: char_style.text_colour,
             alignment: None,
             line_spacing: None,
@@ -1973,6 +1995,13 @@ fn read_char_height_mode(type_code: u16, payload: &[u8]) -> Option<u8> {
         return None;
     }
     payload.get(TEXT_CHAR_HEIGHT_MODE_OFFSET).copied()
+}
+
+fn read_char_width(type_code: u16, payload: &[u8]) -> Option<u16> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+        return None;
+    }
+    u16_at(payload, TEXT_CHAR_WIDTH_OFFSET)
 }
 
 fn read_text_char_reference(type_code: u16, payload: &[u8]) -> Option<u32> {

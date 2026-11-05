@@ -823,6 +823,23 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
             "D06: {expected:?} did not reach the page"
         );
     }
+
+    // The revision cells' `A$C40D91A4B.sym` lettering states a width of
+    // `1000` (`JStyleTextChar +52`) where every other template style states
+    // `800`, and the A2 reference plot letters it at the full em: `修改`
+    // 10.50 mm at 3.5354 mm, `修改号` 15.75. At the plate's 0.78 it was 8.19.
+    for (label, width_mm) in [("修改", 10.50), ("修改号", 15.75)] {
+        let ours = ink
+            .spans
+            .iter()
+            .find(|span| span.text.trim() == label)
+            .unwrap_or_else(|| panic!("D06: {label:?} did not reach the page"));
+        assert!(
+            (ours.advance_mm - width_mm).abs() <= 0.05,
+            "D06: {label:?} letters {:.2} mm wide; the A2 reference has {width_mm:.2}",
+            ours.advance_mm
+        );
+    }
 }
 
 #[test]

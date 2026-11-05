@@ -638,6 +638,7 @@ fn push_layer(
             anchor,
             line,
             height_basis,
+            width_permille,
             right_pad,
             spans,
         } = &primitive.shape
@@ -654,6 +655,7 @@ fn push_layer(
                     anchor: *anchor,
                     line: *line,
                     height_basis: *height_basis,
+                    width_permille: *width_permille,
                     right_pad: *right_pad,
                     spans,
                     furniture: primitive.furniture,
@@ -909,6 +911,8 @@ struct ShownText<'a> {
     anchor: TextAnchor,
     line: TextLine,
     height_basis: TextHeightBasis,
+    /// The style's character width in thousandths, `JStyleTextChar +52`.
+    width_permille: Option<u16>,
     /// Shift the trimmed run forward by the width of `value`'s trailing pad.
     right_pad: bool,
     spans: &'a [PaperTextSpan],
@@ -1049,16 +1053,36 @@ const MIN_CONDENSE: f64 = 0.5;
 /// A PDF library that reports one `size` per run multiplies the two scales
 /// together and lands 1.29 against this crate's 1.47, which is where the
 /// "furniture lettering is 12 % larger" reading came from — the run is
-/// condensed, not shrunk. Nothing in the `.igr` states the ratio: its
-/// `igTextBox` records carry no box width (all 34 are `0.0`), the
-/// `JStyleTextChar` payload is accounted for byte for byte (height at `+42`,
-/// colour at `+34`, name from `+68`), and `JStyleTextPara`'s other spacing
-/// doubles are `0.0`. So it stays a measured constant, like
-/// [`plotted_size_pt`]'s table.
+/// condensed, not shrunk. The template's styles do state a width —
+/// `JStyleTextChar +52` is `800` on every one of them, thousandths of the
+/// face's advance (`style.dll` divides it by `1000.0` and never scales it by
+/// the placement) — but the reference realises that as 0.765..0.791, not 0.8,
+/// so the constant stays the measured figure, like [`plotted_size_pt`]'s
+/// table. [`furniture_advance`] reads the stated width and keeps this for
+/// `800`.
 ///
 /// See
 /// `docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`.
 const PLATE_TEXT_ADVANCE: f64 = 0.78;
+
+/// Advance a border template's run is drawn at, from its style's character
+/// width (`JStyleTextChar +52`, thousandths of the face's own).
+///
+/// Every template `SimSun` style in `CPE-SQ-A0/A1` and `CPECCHB-SQ-A2`
+/// states `800`, and the reference letters those at the measured
+/// [`PLATE_TEXT_ADVANCE`] — the plotter's own realisation of 0.8, which this
+/// crate cannot reproduce from the record. The A2 sign-off column's
+/// `A$C40D91A4B.sym` states `1000` and the reference letters it at exactly
+/// one em (修改, 审核, 日期, 页次 … all 10.50 mm against our 8.19 at 0.78). Any
+/// other stated width is taken at its face value; an unstated one keeps the
+/// measured constant, which is what every template letter drew before the
+/// width was read.
+fn furniture_advance(width_permille: Option<u16>) -> f64 {
+    match width_permille {
+        Some(800) | None => PLATE_TEXT_ADVANCE,
+        Some(width) => f64::from(width) / 1000.0,
+    }
+}
 
 /// Advance of one glyph, as a fraction of the em, when the named face can
 /// draw none of a 2.5 mm label and the whole string is handed to another face.
@@ -1130,7 +1154,7 @@ fn show_text(
         1.0
     };
     let plate = if text.furniture {
-        PLATE_TEXT_ADVANCE
+        furniture_advance(text.width_permille)
     } else {
         1.0
     } * han_pitch;
@@ -1760,6 +1784,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -1800,6 +1825,7 @@ mod tests {
                         anchor: TextAnchor::Left,
                         line: TextLine::Bottom,
                         height_basis: crate::model::TextHeightBasis::Cap,
+                        width_permille: None,
                         right_pad: false,
                         spans: Vec::new(),
                     },
@@ -2052,6 +2078,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2107,6 +2134,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille: None,
             right_pad,
             spans: Vec::new(),
         };
@@ -2192,6 +2220,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille: None,
             right_pad: false,
             spans: Vec::new(),
         };
@@ -2244,6 +2273,73 @@ mod tests {
         );
     }
 
+    /// A template label whose style states its own width letters at that
+    /// width: `1000` is the face's own advance, `800` stays at the measured
+    /// plate advance, and a sheet label ignores the field.
+    #[test]
+    fn a_template_label_letters_at_the_width_its_style_states() {
+        let shape = |y: f64, width_permille: Option<u16>| PaperShape::Text {
+            origin_mm: [20.0, y],
+            height_mm: Some(3.0),
+            rotation: 0.0,
+            value: "ABCD".to_string(),
+            font: None,
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille,
+            right_pad: false,
+            spans: Vec::new(),
+        };
+        let mut model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([841.0, 594.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                primitive("decoded", shape(40.0, None)),
+                primitive("decoded", shape(50.0, Some(1000))),
+                primitive("decoded", shape(60.0, Some(800))),
+                primitive("decoded", shape(70.0, Some(900))),
+                primitive("decoded", shape(80.0, Some(1000))),
+            ],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        for primitive in &mut model.primitives[1..4] {
+            primitive.furniture = true;
+        }
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let advance = |y: f64| {
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
+                .unwrap_or_else(|| panic!("no run at y = {y}: {:?}", ink.spans))
+                .advance_mm
+        };
+        let sheet = advance(40.0);
+        for (y, expected) in [(50.0, 1.0), (60.0, 0.78), (70.0, 0.9), (80.0, 1.0)] {
+            let ratio = advance(y) / sheet;
+            assert!(
+                (ratio - expected).abs() < 0.01,
+                "the run at y = {y} letters at {ratio:.3} of the sheet's advance, not {expected}"
+            );
+        }
+    }
+
     /// A symbol label that letters one character at another size is cut where
     /// the size changes, and the pieces continue along one baseline: `Tj`
     /// advances by the glyph width at the size in force, so the second piece
@@ -2267,6 +2363,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: vec![PaperTextSpan {
                         start: 0,
@@ -2343,6 +2440,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille: None,
             right_pad: false,
             spans: &spans,
             furniture: false,
@@ -2388,6 +2486,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: vec![
                         PaperTextSpan {
@@ -2445,6 +2544,7 @@ mod tests {
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2494,6 +2594,7 @@ mod tests {
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2559,6 +2660,7 @@ mod tests {
                     anchor,
                     line,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2658,6 +2760,7 @@ mod tests {
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2742,6 +2845,7 @@ mod tests {
                     anchor,
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
                     right_pad: false,
                     spans: Vec::new(),
                 },

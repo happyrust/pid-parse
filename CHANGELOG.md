@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### 模板文字按样式写的字宽排（`JStyleTextChar +52`）（2026-11-07）
+
+`+52` 的 u16 是字宽千分比，`style.dll` 除以 `1000.0` 使用，不乘放置缩放。模板 SimSun 样式都写 `800`，
+继续按实测的 0.78 em 排；A2 会签栏修改记录格（`A$C40D91A4B.sym`）写 `1000`，参考图按整 1 em 排。
+`修改`、`审核`、`日期`、`页次`、`次数` 从 8.19 mm 变为 10.50 mm，与参考一致；`修改号` 从 12.28 变为 15.75。
+A0/A1 的模板文字不变，十一张参考图的 coverage / extra / 文字配对 / pen 不变。新增
+`probe_which_width_a_template_label_letters_at`；见
+`docs/analysis/2026-11-07-the-template-lettering-width-is-in-the-style.md`。
 ### 字高按 `JStyleTextChar +41` 说的那个字体高度来落基线（2026-11-07）
 
 `+41` 一字节说明 `+42` 的字高量的是字体的哪个高：`0x0D`（图纸文字及多数符号）是大写字高，
