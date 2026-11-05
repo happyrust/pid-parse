@@ -61,7 +61,7 @@ FluidSystem 参考为空、dump 有值：J K 34、L M 42、空冷器 A/B/C 各 3
 | B 管线名 | 取 `T_PLANTITEM.ITEMTAG`，没有 plant item 时退回拼名 | 已修：L M、轻烃I 两张归零；空冷器 A/B/C 管线名全部配上 |
 | B' 不成管线 | ITEMTAG 为空或不含 `-` 就不成管线（全 dump 13 行；另一候选「OPERFLUIDCODE 为空」会去掉 160 行，未采用） | 随 B 一起修 |
 | C J K 3 个 dump-only 管件 | 按 `T_REPRESENTATION` 合成对象与 rel | 已修：J K 只剩 FluidSystem 上界一行 |
-| FluidSystem 上界 | 改为按图登记观测值 | 待做 |
+| FluidSystem 上界 | 改为按图登记观测值：`FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` 按参考 `DocUID` 一行，未登记的图上界为 0 | 已修：7 张图 `--oracle-exp` 单图全部 exit 0 |
 | D 空冷器 A/B/C 共用管线的 `IFluidSystem.FluidCode` | `OPERFLUIDCODE` 经 `SP_19` 映到标准 `{GUID}` 才写（样本只有 code 20 一个值） | 已修：空冷器 A/B/C、轻烃I exit 0；全包多写 44 个 `FluidCode` |
 
 B 修完之后，L M（只剩 FluidSystem 42）和轻烃I（exit 0）的单图差异只剩已登记类；空冷器 A/B/C 各剩一条

@@ -24,7 +24,7 @@
   },
   "not_enumerated_here": [
     "Attribute classes the gate excuses wholesale live in src/publish/diff_exclusions.rs (EXCLUDED_ATTRIBUTE_CLASSES) and are printed as `excused ...` lines. This baseline does not restate them.",
-    "The whole-package FluidSystem allowance lives in src/publish/diff.rs as FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE. whole_package.registered_exceptions points at it rather than restating a second bound.",
+    "The FluidSystem allowances live in src/publish/diff.rs as FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES, one bound per reference DocUID. whole_package.registered_exceptions points at it rather than restating a second bound.",
     "`reference-only:` and `excused ...` lines are accounting, not differences, and are not listed here."
   ],
   "figures": {
@@ -330,7 +330,7 @@
         "kind": "values_not_in_reference",
         "class_name": "FluidSystem",
         "observed": 23,
-        "bound_source": "src/publish/diff.rs :: FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE",
+        "bound_source": "src/publish/diff.rs :: FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES",
         "note": "The bound is not restated here. The gate compares the observed count against the constant and reports `fluid_system_allowance_exceeded` when it grows. The informational pairing line names the same 23 and is accounting, not a difference."
       }
     ]

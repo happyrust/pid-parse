@@ -462,8 +462,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(diff.piping_connectors_paired_by_name, 106);
     assert_eq!(diff.fluid_system_reference_empty, 23);
     assert_eq!(
-        diff.fluid_system_reference_empty,
-        pid_parse::publish::diff::FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE,
+        diff.fluid_system_reference_empty, diff.fluid_system_allowance,
         "the corpus census is the registered allowance's independent basis"
     );
     assert_eq!(drawing.pipeline_synthesis.fluid_code_missing, 0);

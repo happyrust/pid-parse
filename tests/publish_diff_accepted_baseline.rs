@@ -646,9 +646,9 @@ fn the_package_entry_records_the_registered_allowance() {
     assert_eq!(exception["observed"].as_u64(), Some(23));
     assert!(
         exception.get("bound").is_none(),
-        "the bound must stay in FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE, not be restated here"
+        "the bound must stay in FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES, not be restated here"
     );
     let source = exception["bound_source"].as_str().unwrap_or_default();
     assert!(source.contains("src/publish/diff.rs"));
-    assert!(source.contains("FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE"));
+    assert!(source.contains("FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES"));
 }
