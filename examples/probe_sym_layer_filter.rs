@@ -170,11 +170,7 @@ fn main() -> ExitCode {
         let on_sheet = selected.contains(&styled.sheet_ref);
         let name_hidden = styled.sheet_layer_name.as_deref().is_some_and(hidden);
         let answer = view_of(styled.sheet_ref)
-            .and_then(|view| {
-                u16::try_from(styled.sheet_layer_number)
-                    .ok()
-                    .map(|n| (view, n))
-            })
+            .zip(u16::try_from(styled.sheet_layer_number).ok())
             .map(|(view, n)| bit_is_set(&view.display, n));
         let shown = on_sheet && answer.unwrap_or(true) && !name_hidden;
         if shown {

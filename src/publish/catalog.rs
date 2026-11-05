@@ -91,7 +91,7 @@ pub(crate) struct PublishItemRow {
     /// Alternate names that share this row's chain and writer
     /// (`Instrument` ↔ `InstrFunction`, `Note` ↔ `ItemNote`).
     pub aliases: &'static [&'static str],
-    /// SQLite subtable merge chain (`subtables_for_item_type`), later
+    /// `SQLite` subtable merge chain (`subtables_for_item_type`), later
     /// rows overwrite earlier on column collision. `None` when the DB
     /// line never sees this item type.
     pub db_subtables: Option<&'static [&'static str]>,

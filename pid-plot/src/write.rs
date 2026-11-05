@@ -730,6 +730,9 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
     runs
 }
 
+/// Byte runs of one label, each with the face that encodes it.
+type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>)>;
+
 /// Split `value` into runs that share one face, preferring the face
 /// `typeface_key` names. A character the named face cannot encode moves to
 /// the first face that can — only that character moves, so `120℃` keeps its
@@ -747,7 +750,7 @@ fn encode_runs<'a>(
     faces: &'a [ReadyFace<'a>],
     key: &str,
     value: &str,
-) -> Result<(Vec<(&'a ReadyFace<'a>, Vec<u8>)>, bool), PlotWriteError> {
+) -> Result<(FaceRuns<'a>, bool), PlotWriteError> {
     let char_encodes = |face: &ReadyFace<'_>, ch: char| {
         let mut buf = [0u8; 4];
         face.metrics.encode(ch.encode_utf8(&mut buf)).is_some()

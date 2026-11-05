@@ -434,7 +434,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 worst_t = t;
             }
         }
-        let where_ = if worst_t < 0.02 || worst_t > 0.98 {
+        let where_ = if !(0.02..=0.98).contains(&worst_t) {
             "vertex"
         } else {
             "mid-chord"
