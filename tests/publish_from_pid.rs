@@ -968,9 +968,12 @@ fn backup_directory_publishes_the_whole_package() {
     );
     assert_eq!(index["failed"], 0);
     assert_eq!(index["shells"], 2);
-    assert_eq!(index["objects"], 80_085);
-    assert_eq!(index["values"], 87_419);
-    assert_eq!(index["relationships"], 106_705);
+    // Pipelines are named by `T_PLANTITEM.ITEMTAG`; the 13 connectors whose
+    // item tag has no `-` join no pipeline
+    // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
+    assert_eq!(index["objects"], 80_059);
+    assert_eq!(index["values"], 87_393);
+    assert_eq!(index["relationships"], 106_692);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
     // aggregate + excluded == Σ drawings[] — and the declaration names
@@ -1017,8 +1020,8 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["opc_branch_points"], 476);
     assert_eq!(index["equipment_composition_rels"], 372);
     assert_eq!(index["item_note_rels"], 114);
-    assert_eq!(index["pipelines"], 2_395);
-    assert_eq!(index["piping_connectors"], 3_128);
+    assert_eq!(index["pipelines"], 2_369);
+    assert_eq!(index["piping_connectors"], 3_115);
     assert_eq!(index["pipeline_uids"], "synthesized");
     assert!(
         elapsed.as_secs() < 215,

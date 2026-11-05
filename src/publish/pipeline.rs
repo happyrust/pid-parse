@@ -4,6 +4,14 @@
 //! N9-2. `T_PIPELINE` is empty. A published `PIDPipingConnector` whose
 //! `TAGSEQUENCENO` is not empty becomes a member of the pipeline named
 //!
+//! `T_PLANTITEM.ITEMTAG` of the plant item that shares the run's `SP_ID`.
+//! An item tag with no `-` (`02532`) or an empty one is not a pipeline
+//! name and the connector joins no pipeline; across the seven reference
+//! drawings that rule keeps 629 of 629 named runs and drops the 2 the
+//! reference leaves out
+//! (`docs/analysis/2026-11-05-seven-reference-publish-diff.md`). A run
+//! with no plant item falls back to the spelled name
+//!
 //! `{nominal}-{fluid}-{sequence}-{class}[-{insulation}]`
 //!
 //! Nominal diameter below 5000 is `{n} mm`. At or above 5000,
@@ -67,7 +75,10 @@ pub fn attach_pipelines(
         if missing {
             synthesis.fluid_code_missing += 1;
         }
-        let name = pipeline_name(run, fluid.as_deref());
+        let Some(name) = run_pipeline_name(run, fluid.as_deref()) else {
+            synthesis.item_tag_not_a_name += 1;
+            continue;
+        };
         if let Some(entry) = grouped.get_mut(&name) {
             entry.connector_uids.push(item.uid.clone());
             continue;
@@ -97,7 +108,19 @@ pub fn attach_pipelines(
     Ok(())
 }
 
-/// The pipeline name for one run.
+/// The pipeline a run joins: its item tag when it has a plant item, the
+/// spelled [`pipeline_name`] when it has none. `None` when the item tag is
+/// empty or has no `-`.
+#[must_use]
+pub fn run_pipeline_name(run: &PipeRunRow, fluid: Option<&str>) -> Option<String> {
+    match &run.item_tag {
+        Some(tag) if tag.contains('-') => Some(tag.clone()),
+        Some(_) => None,
+        None => Some(pipeline_name(run, fluid)),
+    }
+}
+
+/// The spelled pipeline name for one run.
 ///
 /// `fluid` is `None` when the code is not in the codelist: that slot is
 /// omitted. `Some("")` keeps the empty slot.
@@ -194,6 +217,7 @@ mod tests {
             tag_sequence: sequence.to_string(),
             fluid_system: None,
             insulation_spec: insulation.to_string(),
+            item_tag: None,
         }
     }
 
@@ -226,6 +250,39 @@ mod tests {
         assert_eq!(
             pipeline_name(&run(Some(25), "1901201", "B9", ""), None),
             "25 mm-1901201-B9"
+        );
+    }
+
+    #[test]
+    fn the_item_tag_names_the_pipeline_when_the_plant_item_has_one() {
+        let mut row = run(Some(100), "1301126", "D8", "P40");
+        row.item_tag = Some("40 mm-PG-1301126-D8-P40".to_string());
+        assert_eq!(
+            run_pipeline_name(&row, Some("PG")).as_deref(),
+            Some("40 mm-PG-1301126-D8-P40")
+        );
+        row.item_tag = Some("-PC-1127".to_string());
+        assert_eq!(
+            run_pipeline_name(&row, Some("PC")).as_deref(),
+            Some("-PC-1127")
+        );
+    }
+
+    #[test]
+    fn an_item_tag_without_a_dash_is_not_a_pipeline() {
+        let mut row = run(None, "532", "", "");
+        row.item_tag = Some("02532".to_string());
+        assert_eq!(run_pipeline_name(&row, Some("")), None);
+        row.item_tag = Some(String::new());
+        assert_eq!(run_pipeline_name(&row, Some("")), None);
+    }
+
+    #[test]
+    fn a_run_with_no_plant_item_keeps_the_spelled_name() {
+        let row = run(Some(25), "1901201", "B9", "");
+        assert_eq!(
+            run_pipeline_name(&row, Some("CI")).as_deref(),
+            Some("25 mm-CI-1901201-B9")
         );
     }
 

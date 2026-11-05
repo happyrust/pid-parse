@@ -763,6 +763,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "fluid_code_missing": drawing.pipeline_synthesis.fluid_code_missing,
             "fluid_system_unmapped": drawing.pipeline_synthesis.fluid_system_unmapped,
             "without_sequence": drawing.pipeline_synthesis.without_sequence,
+            "item_tag_not_a_name": drawing.pipeline_synthesis.item_tag_not_a_name,
         });
     }
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();

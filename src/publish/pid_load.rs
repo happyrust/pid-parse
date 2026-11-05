@@ -283,7 +283,8 @@ pub struct PidPort {
 pub struct PidPipeline {
     /// UUID v5 of the plant and [`Self::name`], 32 uppercase hex digits.
     pub uid: String,
-    /// `{diameter}-{fluid}-{sequence}-{class}[-{insulation}]`.
+    /// `T_PLANTITEM.ITEMTAG`, or `{diameter}-{fluid}-{sequence}-{class}[-{insulation}]`
+    /// when the run has no plant item.
     pub name: String,
     /// `@{GUID}` from the data map. Absent when the run has no code,
     /// the map was not given, or the code is not in the map.
@@ -303,6 +304,8 @@ pub struct PipelineSynthesis {
     pub fluid_system_unmapped: usize,
     /// Published connectors with no `T_PIPERUN` row.
     pub not_in_piperun: usize,
+    /// Connectors whose run's item tag is empty or has no `-`.
+    pub item_tag_not_a_name: usize,
 }
 
 /// The Oracle `exp` an export was read from.

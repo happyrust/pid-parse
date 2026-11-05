@@ -136,6 +136,7 @@ pub struct ExpTables {
     note: Table,
     itemnote: Table,
     modelitem: Table,
+    plantitem: Table,
     codelists: Table,
     drawing: Table,
 }
@@ -163,6 +164,7 @@ impl ExpTables {
             note: read_table_tolerant(dump, "T_NOTE")?,
             itemnote: read_table_tolerant(dump, "T_ITEMNOTE")?,
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
+            plantitem: read_optional_table(dump, "T_PLANTITEM")?,
             codelists: read_table(dump, "CODELISTS")?,
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
         })
@@ -209,7 +211,8 @@ impl ExpTables {
         project_drawings(&self.drawing)
     }
 
-    /// `T_PIPERUN` rows that can become a pipeline name.
+    /// `T_PIPERUN` rows that can become a pipeline name, each with the
+    /// `T_PLANTITEM.ITEMTAG` of the plant item that shares its `SP_ID`.
     ///
     /// # Errors
     ///
@@ -223,14 +226,17 @@ impl ExpTables {
         column_index(&self.piperun, "NOMINALDIAMETER")?;
         column_index(&self.piperun, "OPERFLUIDCODE")?;
         column_index(&self.piperun, "FLUIDSYSTEM")?;
+        let item_tags = self.item_tags();
         let mut runs = Vec::with_capacity(self.piperun.rows.len());
         for (index, row) in self.piperun.rows.iter().enumerate() {
             let id_text = cell_text(row, id);
             if id_text.is_empty() {
                 continue;
             }
+            let id_key = norm_uid(&id_text);
             runs.push(PipeRunRow {
-                id_key: norm_uid(&id_text),
+                item_tag: item_tags.get(&id_key).cloned(),
+                id_key,
                 id: id_text,
                 nominal_diameter: optional_int(
                     "T_PIPERUN",
@@ -247,6 +253,23 @@ impl ExpTables {
             });
         }
         Ok(runs)
+    }
+
+    /// `T_PLANTITEM.ITEMTAG` keyed by the folded `SP_ID`. Empty when the
+    /// dump carries no `T_PLANTITEM` or the table lacks either column.
+    fn item_tags(&self) -> HashMap<String, String> {
+        let (Some(id), Some(tag)) = (
+            optional_column_index(&self.plantitem, "SP_ID"),
+            optional_column_index(&self.plantitem, "ITEMTAG"),
+        ) else {
+            return HashMap::new();
+        };
+        self.plantitem
+            .rows
+            .iter()
+            .map(|row| (norm_uid(&cell_text(row, id)), cell_text(row, tag)))
+            .filter(|(id, _)| !id.is_empty())
+            .collect()
     }
 
     /// `CODELIST_SHORT_TEXT` for one list number, keyed by `CODELIST_INDEX`.
@@ -314,6 +337,7 @@ impl ExpTables {
             note: Table::blank(),
             itemnote: Table::blank(),
             modelitem: Table::blank(),
+            plantitem: Table::blank(),
             codelists: Table::blank(),
             drawing: Table::blank(),
         }
@@ -382,6 +406,9 @@ pub struct PipeRunRow {
     pub fluid_system: Option<i64>,
     /// `INSULATIONSPEC`.
     pub insulation_spec: String,
+    /// `T_PLANTITEM.ITEMTAG` of the plant item with this `SP_ID`. `None`
+    /// when no such row is in the dump; a NULL tag reads as `Some("")`.
+    pub item_tag: Option<String>,
 }
 
 /// One `T_DRAWING` row a backup package hangs a `.pid` on.
@@ -1654,6 +1681,16 @@ fn lesser_id(model: &str, paired: &str) -> String {
     } else {
         model.to_string()
     }
+}
+
+/// [`read_table_tolerant`], or an empty table when the dump has no insert
+/// for `name`. A present table that is not the pinned format still fails.
+fn read_optional_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
+    let marker = format!("INSERT INTO \"{name}\"");
+    if find_slice(dump, marker.as_bytes()).is_none() {
+        return Ok(Table::blank());
+    }
+    read_table_tolerant(dump, name)
 }
 
 fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
