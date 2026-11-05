@@ -1169,13 +1169,22 @@ struct OffsetBucket {
 /// left of it by half that difference with no placement rule wrong at all.
 /// Without the two numbers side by side the I drawing's leading-space padding
 /// read as a 0.05-body centring error for two rounds.
+///
+/// `reference` and `ours` are the paired chains, first run first: a label
+/// one side split into runs is as wide as all of its runs together, so the
+/// advance is measured from the first run's origin to the last run's end on
+/// each side. Taking only the first run's advance read every fused grid
+/// reference such as `B2B5` as a run 1.2 bodies narrower than ours.
 fn record_offset(
     buckets: &mut HashMap<String, OffsetBucket>,
-    reference: &TextSpan,
-    ours: &TextSpan,
+    reference_chain: &[&TextSpan],
+    ours_chain: &[&TextSpan],
     fit: &Fit,
     sources: &[TextSource],
 ) {
+    let (Some(&reference), Some(&ours)) = (reference_chain.first(), ours_chain.first()) else {
+        return;
+    };
     let height = reference.height_mm;
     if !height.is_finite() || height <= 0.1 {
         return;
@@ -1193,8 +1202,24 @@ fn record_offset(
     bucket.count += 1;
     bucket.along += along / height;
     bucket.down += down / height;
-    bucket.advance += (ours.advance_mm - reference.advance_mm) / height;
+    bucket.advance += (chain_advance(ours_chain) - chain_advance(reference_chain)) / height;
     bucket.max_mm = bucket.max_mm.max(along.hypot(down));
+}
+
+/// How far a chain of runs reaches along its first run's writing direction,
+/// from the first run's origin to the farthest run end.
+fn chain_advance(chain: &[&TextSpan]) -> f64 {
+    let Some(first) = chain.first() else {
+        return 0.0;
+    };
+    chain
+        .iter()
+        .map(|span| {
+            let end = end_of(span);
+            (end[0] - first.origin_mm[0]) * first.direction[0]
+                + (end[1] - first.origin_mm[1]) * first.direction[1]
+        })
+        .fold(first.advance_mm, f64::max)
 }
 
 /// Which lettering rule produced our run, as a stable label.
@@ -1286,7 +1311,13 @@ fn match_text(
             used[slot] = true;
             hit[index] = true;
             matched += 1;
-            record_offset(&mut buckets, &reference[index], &ours[slot], fit, sources);
+            record_offset(
+                &mut buckets,
+                &[&reference[index]],
+                &[&ours[slot]],
+                fit,
+                sources,
+            );
         }
     }
     // Second pass: a label one side split into runs and the other did not.
@@ -1297,13 +1328,8 @@ fn match_text(
         let origin = reference[index].origin_mm;
         let wanted = normalize(&reference[index].text);
         if let Some(taken) = join_ours(&wanted, ours, &used, &blocked, origin, fit) {
-            record_offset(
-                &mut buckets,
-                &reference[index],
-                &ours[taken[0]],
-                fit,
-                sources,
-            );
+            let joined: Vec<&TextSpan> = taken.iter().map(|slot| &ours[*slot]).collect();
+            record_offset(&mut buckets, &[&reference[index]], &joined, fit, sources);
             for slot in taken {
                 used[slot] = true;
             }
@@ -1323,7 +1349,12 @@ fn match_text(
             let Some((slot, _)) = found else {
                 continue;
             };
-            record_offset(&mut buckets, &reference[index], &ours[slot], fit, sources);
+            let joined: Vec<&TextSpan> = chain
+                .iter()
+                .take(cuts)
+                .map(|member| &reference[*member])
+                .collect();
+            record_offset(&mut buckets, &joined, &[&ours[slot]], fit, sources);
             used[slot] = true;
             for member in chain.iter().take(cuts) {
                 hit[*member] = true;
@@ -2534,6 +2565,26 @@ mod tests {
         assert_eq!(report.text_matched, 1);
         assert!(report.unmatched_reference_text.is_empty());
         assert!(report.unmatched_our_text.is_empty());
+    }
+
+    #[test]
+    fn a_label_fused_into_one_run_reports_the_whole_split_width() {
+        // The reference prints the grid pair `B2B5` as one run; we draw two
+        // labels side by side. The pair is as wide on both sides, so the class
+        // must not read our first label alone as a run half the width.
+        let reference = ink(vec![], vec![run("B2B5", [100.0, 50.0], 8.0)]);
+        let ours = ink(
+            vec![],
+            vec![run("B2", [100.0, 50.0], 3.6), run("B5", [104.4, 50.0], 3.6)],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_matched, 1);
+        let class = report.text_offsets.first().expect("one class");
+        assert!(
+            class.mean_advance_heights.abs() < 1e-9,
+            "width {}",
+            class.mean_advance_heights
+        );
     }
 
     #[test]

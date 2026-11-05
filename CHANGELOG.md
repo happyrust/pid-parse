@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 比对报告按整串量拼接配对的宽度（2026-11-07）
+
+`compare::record_offset` 原先只量配对链里第一串的 advance。格网号 `B2B5` 在参考图里是一串，我们画成
+两串，这一对就读成窄了 1.2 字高。I / JK 的 Center/Bottom 因此是 −0.279 / −0.197（清单 #9），现在是
++0.030 / +0.028。`reference_plots_acceptance` 新增类宽度门禁 |mean_advance| ≤ 0.10 字高（目前最宽
+−0.092）。只改了报告，出图没有变化。见 `docs/analysis/2026-11-07-a-joined-pair-is-as-wide-as-all-its-runs.md`。
 ### A2 管线号与 `ESD Interlock` 的 `I` 按参考 Tf 出图（2026-11-07）
 
 `measured_tf` 补两行参考图实测：Arial 8 pt → 11.16、14.4 pt → 20.19。A2 `轻烃分离器I` 的

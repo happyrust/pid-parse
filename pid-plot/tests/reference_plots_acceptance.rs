@@ -107,6 +107,14 @@ const CLASS_MIN_COUNT: usize = 10;
 /// have caught it.
 const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 
+/// Largest mean width difference a lettering class may show, in body heights.
+///
+/// Every class of ten or more labels on the eleven pages reads within
+/// ±0.092 (the widest is a `Left/Ascender` class on a 烃水露点 page). The A2
+/// `Left/Ascender` class read −0.320 while its 8 pt Arial line labels were
+/// lettered at the style size rather than the reference's `Tf 11.16`.
+const CLASS_ADVANCE_HEIGHTS: f64 = 0.10;
+
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 
 const PINS: [Pin; 11] = [
@@ -430,6 +438,13 @@ fn eleven_reference_plots_hold_their_readings() {
                 "{name} {} down {:+.3} body heights over {} labels",
                 class.class,
                 class.mean_down_heights,
+                class.count
+            );
+            assert!(
+                class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
+                "{name} {} advance {:+.3} body heights over {} labels",
+                class.class,
+                class.mean_advance_heights,
                 class.count
             );
         }
