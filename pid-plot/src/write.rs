@@ -1152,6 +1152,10 @@ fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
 /// labels were sending into the residual list.
 const ASCENDER_HEIGHTS: f64 = 1.32;
 
+/// How far above the insertion point a descender-anchored baseline runs, in
+/// body sizes: Arial's descent (0.212 em) over the stored cap body (0.688 em).
+const DESCENDER_HEIGHTS: f64 = 0.31;
+
 /// Left end of the baseline, from the insertion point.
 ///
 /// Centre and right step back **along** the run by half the word or the whole
@@ -1176,6 +1180,7 @@ fn baseline_origin(
         TextLine::Middle => 0.5,
         TextLine::Top => 1.0,
         TextLine::Ascender => ASCENDER_HEIGHTS,
+        TextLine::Descender => -DESCENDER_HEIGHTS,
     };
     let back = if width_mm.is_finite() && width_mm > 0.0 {
         width_mm * along

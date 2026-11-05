@@ -32,11 +32,13 @@
 //!   0.9379 / 1132.334 mm. The surveyed A2 masks are what closed that gap, and
 //!   what is left is one instrument cluster drawn ~16.9 mm high and ~1.9 mm
 //!   right of where the reference prints it — `TICA` and `H=-15℃` are both
-//!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm. Twelve reference
-//!   labels still miss: nine are that cluster. The other three are the symbol
-//!   `D`, 1.005 mm off, and two pipeline strings whose text is the `.pid`'s
-//!   own. The two `动火点` labels now pair, so the text pin is 213 of 225
-//!   (`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`).
+//!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm. Eleven reference
+//!   labels still miss: nine are that cluster, and two are pipeline strings
+//!   whose text is the `.pid`'s own. The two `动火点` labels pair, and so does
+//!   the mirrored valve's `D` now that a symbol top hangs from the ascender
+//!   line, so the text pin is 214 of 225
+//!   (`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`,
+//!   `docs/analysis/2026-11-05-a-symbol-top-is-the-ascender-line.md`).
 //!   The 79.143 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
 //!   beside the reference leader, not frame ink
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`).
@@ -215,12 +217,13 @@ const PINS: [Pin; 11] = [
     Pin {
         // The two `动火点` labels are the only whole-string font fallback on
         // these sheets, both 2.5 mm and centred. Pitching that run at 1.524 mm
-        // a glyph brings both inside 1 mm. The other twelve stay out.
+        // a glyph brings both inside 1 mm. The mirrored valve's `D` pairs
+        // once it letters from the descender line. The other eleven stay out.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
         min_coverage: 0.9818,
         max_extra_mm: 210.712 + EXTRA_SLACK_MM,
-        min_text_matched: 213,
+        min_text_matched: 214,
         text_reference: 225,
         min_pen_agreed: 2632,
         max_pen_differed: 0,

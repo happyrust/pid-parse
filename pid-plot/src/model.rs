@@ -632,6 +632,16 @@ pub enum TextLine {
     /// cap height (0.688 em): 0.905 / 0.688 = 1.32. See
     /// [`TextLine::from_anchor_code`].
     Ascender,
+    /// The insertion point is the font's descender line: the baseline runs
+    /// 0.31 body sizes **above** the point.
+    ///
+    /// Only a vertically mirrored symbol label reaches it. The body's own
+    /// label hangs from the ascender line; the mirror turns the box over, so
+    /// the edge left at the insertion is the box's bottom. Arial's descent
+    /// (0.212 em) over the stored cap body (0.688 em) is 0.31. `SSV Sample
+    /// Valve Type 2.sym`'s `D` on the A2 and flash-drum A sheets letters
+    /// 0.88 / 0.91 mm above its insertion at a 3.17 mm body, against 0.98.
+    Descender,
 }
 
 impl TextLine {
@@ -695,9 +705,15 @@ impl TextLine {
     /// valve and motor labels about a millimetre high until this reading
     /// landed; see
     /// `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`.
+    ///
+    /// The top class hangs from the ascender line, as a sheet top does. Across
+    /// the eleven acceptance sheets every one of its labels (the converters'
+    /// `I` / `P`, `ESD Interlock`, the flowmeter's `M`) sat 0.19–0.22
+    /// reference letter heights high at a one-body step: the reference
+    /// baseline is the font's ascent below the point, not its cap height.
     fn from_symbol_anchor_code(code: u8) -> Self {
         match (code & 0x0F) % 3 {
-            1 => Self::Top,
+            1 => Self::Ascender,
             _ => Self::Middle,
         }
     }
@@ -705,14 +721,15 @@ impl TextLine {
     /// Flip top and bottom when a mirrored placement absorbs a vertical flip.
     ///
     /// Only symbol lettering reaches this: a mirrored placement flips a
-    /// `.sym` body's own label, never a sheet paragraph. An ascender-anchored
-    /// line is kept total anyway and folds to the baseline.
+    /// `.sym` body's own label, never a sheet paragraph. The ascender and
+    /// descender lines are the two edges of the same box, so they trade.
     fn flip_vertical(self) -> Self {
         match self {
             Self::Bottom => Self::Top,
             Self::Middle => Self::Middle,
             Self::Top => Self::Bottom,
-            Self::Ascender => Self::Bottom,
+            Self::Ascender => Self::Descender,
+            Self::Descender => Self::Ascender,
         }
     }
 }
@@ -4191,7 +4208,7 @@ mod tests {
             lines,
             vec![
                 TextLine::Middle,
-                TextLine::Top,
+                TextLine::Ascender,
                 TextLine::Middle,
                 TextLine::Middle,
                 TextLine::Middle,
@@ -4566,8 +4583,8 @@ mod tests {
         mirrored_neg_half.rotation = -std::f64::consts::FRAC_PI_2;
         mirrored_neg_half.scale = [1.0, -1.0];
         // A symbol body states no baseline class, so the flip is exercised
-        // from the top: `0x11` letters from the body's top and a vertical
-        // mirror puts it on the baseline.
+        // from the top: `0x11` hangs from the ascender line and a vertical
+        // mirror puts the insertion on the descender line.
         let mut top_lettering = lettering.clone();
         top_lettering.anchor_code = 0x11;
         let d_shape = SymbolPrimitive::Text {
@@ -4589,7 +4606,7 @@ mod tests {
             panic!("{:?}", out_vert[0].shape);
         };
         assert!((*rotation + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
-        assert_eq!(*line, TextLine::Bottom);
+        assert_eq!(*line, TextLine::Descender);
     }
 
     #[test]
