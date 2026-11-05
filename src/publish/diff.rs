@@ -2164,7 +2164,7 @@ fn check_meta_wiring(document: &MetaDocument, diff: &mut MetaDiff) {
 /// root element is absent, unreadable or carries no such attribute. A
 /// malformed document surfaces `None` too — the `_Data.xml` gate already
 /// refuses ill-formed input before this reader runs.
-fn publish_container_doc_uid(xml: &str) -> Option<String> {
+pub fn publish_container_doc_uid(xml: &str) -> Option<String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     loop {

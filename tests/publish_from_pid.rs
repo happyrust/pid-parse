@@ -922,6 +922,40 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     let stdout = String::from_utf8_lossy(&dirty.stdout);
     assert_eq!(dirty.status.code(), Some(1), "{stdout}");
     assert!(stdout.contains("D06: dirty"), "{stdout}");
+
+    // A reference that states another `<Container DocUID>` is another
+    // revision of the same name, not a document full of differences: the
+    // gate says so once, prints no finding, and still exits 1.
+    let other = unique_out_dir("mini-gate-revision");
+    std::fs::create_dir_all(&other).expect("other-revision reference dir");
+    let own_uid = reference
+        .split_once("DocUID=\"")
+        .map(|(_, rest)| rest.split('"').next().unwrap_or_default().to_string())
+        .expect("the generated document states a DocUID");
+    let foreign_uid = "0".repeat(own_uid.len());
+    let foreign = reference.replacen(
+        &format!("DocUID=\"{own_uid}\""),
+        &format!("DocUID=\"{foreign_uid}\""),
+        1,
+    );
+    assert_ne!(foreign, reference);
+    std::fs::write(other.join("D06_Data.xml"), &foreign).expect("other-revision reference");
+    let mismatch = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(unique_out_dir("mini-gate-mismatch"))
+        .arg("--diff-against")
+        .arg(&other)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn other-revision mini backup");
+    let stdout = String::from_utf8_lossy(&mismatch.stdout);
+    assert_eq!(mismatch.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("D06: revision mismatch"), "{stdout}");
+    assert!(stdout.contains(&own_uid), "{stdout}");
+    assert!(stdout.contains(&foreign_uid), "{stdout}");
+    assert!(!stdout.contains("D06: dirty"), "{stdout}");
+    assert!(!stdout.contains("D06: clean"), "{stdout}");
 }
 
 #[test]

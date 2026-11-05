@@ -154,6 +154,28 @@ P3：整包重发到 `D:\work\cad\pid-test-data\publish-v3\`（160 件），`_By
 
 轻烃分离器I 与空冷器A 的现有基线不动：`DocUID` 在 dump 里，配对正确。
 
+### 整包门禁的同类误配
+
+同一批图在整包（`--diff-against 验收数据`）里也配错，而且错得更隐蔽：包内 `.pid` 的 `DocUID`
+是第三个值，和参考、和单图语料都不同。
+
+| 图 | 包内 `.pid` | 参考 `_Data.xml` |
+|---|---|---|
+| 凝析油A | `5398F8EB4A3245D0819454B071848E64` | `D710241072D54ECCB8F5961357166E5D` |
+| 凝析油B | `16EB202B1A7C4BC99DEE69E27EAD853C` | `AAFCDC31FA3C4177BECB02EBBB6F776F` |
+| 换热器CD | `C95259F234BB4BE5B241D8DBC0A87FC8` | `5A552026D9144FF9BA325D9C8160064C` |
+| 低温分离器A | `603757A3493A470B8974E8B60CB68CCC` | `DABA92D1739740EAB431DAC6DF5F6419` |
+
+以前门禁按图名找 `<图名>_Data.xml`，找到就逐条比对，于是这 4 张各报 1539 / 1539 / 4394 / 2186
+条 finding —— 全是版本差，把「配对错了」这一个事实埋掉。现在 `PackageGate::score` 先比两侧
+`<Container DocUID>`（`diff::publish_container_doc_uid` 已公开），不同就记
+`revision mismatch` 并只打一行，不再逐条比对；`PackageGateReport::revision_mismatch` 计入
+`not_clean()`，退出码仍是 1。汇总行从 `… {} with findings, {} without a reference` 变成
+`… {} with findings, {} of another revision, {} without a reference`。
+
+实测整包（53 张）：7 clean、0 with findings、4 of another revision、42 without a reference，
+exit 1；有参考的 11 张里 7 张的 `DocUID` 两侧一致，与上面的表互为对照。
+
 ### 未受影响
 
 - 整包模式（`--out-dir` 指向备份目录）按 `T_DRAWING` 找 `.pid`，天然一致，本改动不经过它。

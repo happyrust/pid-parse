@@ -125,8 +125,9 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          row publishes through the database path (backup-mdf feature;\n\
          without it the input still exits 2). --diff-against DIR compares\n\
          every written drawing against <DIR>/<Name>_Data.xml and prints one\n\
-         clean / dirty / unpaired verdict per drawing; a drawing that is\n\
-         dirty or has no reference there exits 1. One drawing that fails\n\
+         clean / dirty / unpaired / revision-mismatch verdict per drawing; a\n\
+         drawing that is dirty, of another revision than its reference, or has\n\
+         no reference there exits 1. One drawing that fails\n\
          is recorded; the rest are still written; the process then exits 1.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
@@ -572,19 +573,23 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
                 if gate.clean + gate.dirty == 0 {
                     eprintln!(
                         "Package gate against {}: none of the {} written drawings has a \
-                         reference there; nothing was compared; exit {}.",
+                         comparable reference there ({} of another revision, {} without a \
+                         reference); nothing was compared; exit {}.",
                         reference.display(),
+                        gate.unpaired + gate.revision_mismatch,
+                        gate.revision_mismatch,
                         gate.unpaired,
                         exit,
                     );
                 } else {
                     eprintln!(
                         "Package gate against {}: {} drawings, {} clean, {} with findings, \
-                         {} without a reference; exit {}.",
+                         {} of another revision, {} without a reference; exit {}.",
                         reference.display(),
-                        gate.clean + gate.dirty + gate.unpaired,
+                        gate.clean + gate.dirty + gate.unpaired + gate.revision_mismatch,
                         gate.clean,
                         gate.dirty,
+                        gate.revision_mismatch,
                         gate.unpaired,
                         exit,
                     );

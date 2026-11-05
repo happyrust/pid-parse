@@ -22,6 +22,10 @@ exit 0 且和参考图对得上（参考图也是这 4 张图自己的、`.pid` 
   实测：6 张验收图 + I井场 的 `--oracle-exp` 运行里这类豁免行 0 条，规则不会误伤。
 - 基线新增 `revision_mismatch_figures` 段（4 张图，记 `DocUID` 与期望 exit 2），
   `tests/publish_diff_accepted_baseline.rs` 增加 `a_drawing_absent_from_the_dump_is_refused_not_silently_published`。
+- 整包门禁同类修正：同一批图在整包里的 `.pid` 又是第三个 `DocUID`（如凝析油A 的
+  `5398F8EB…` 对参考 `D7102410…`），以前按 dirty 报 1539–4394 条版本差 finding。现在两侧
+  `<Container DocUID>` 不同即记 `revision mismatch`，只打一行并仍 exit 1；汇总行多出
+  `N of another revision`。`PackageGateReport::revision_mismatch` 计入 `not_clean()`。
 - 上一轮「重建基线」的建议更正为：这 4 张图的 `DocUID` 不在本 dump 里，无法用 `--oracle-exp`
   建基线，只能记成「配对错误」；它们的 `.pid` 单发行为不动。见
   `docs/analysis/2026-11-05-seven-reference-publish-diff.md`。

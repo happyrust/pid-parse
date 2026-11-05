@@ -84,12 +84,18 @@ pub struct PackageGateReport {
     pub dirty: usize,
     /// 参考目录里没有 `<图名>_Data.xml` 的图数。
     pub unpaired: usize,
+    /// 参考文件在，但两侧 `<Container DocUID>` 不同的图数。
+    ///
+    /// 这种配对不是「有发现」而是「配错版本」：参考是同一张图名的另一版图纸，
+    /// 逐条比对只会得到上千条与版本差有关的 finding。它仍然不算 clean ——
+    /// 门禁没有验证过这张图，退出码照样是 1。
+    pub revision_mismatch: usize,
 }
 
 impl PackageGateReport {
-    /// 门禁没能判 clean 的图数：dirty 加 unpaired。
+    /// 门禁没能判 clean 的图数：`dirty` 加 `unpaired` 加 `revision_mismatch`。
     pub fn not_clean(&self) -> usize {
-        self.dirty + self.unpaired
+        self.dirty + self.unpaired + self.revision_mismatch
     }
 }
 
@@ -661,7 +667,9 @@ impl PackageGate {
 
     /// 给一张刚写出的图打分；结论行进 `report`。
     ///
-    /// 参考文件不存在时记 unpaired（**不是** clean、也不是跳过）。
+    /// 参考文件不存在时记 unpaired（**不是** clean、也不是跳过）。参考文件在、
+    /// 但两侧 `<Container DocUID>` 不同时记 `revision_mismatch`：那是同一张图名的
+    /// 另一版图纸，逐条比对只会产出与版本差有关的 finding，门禁不再列出它们。
     fn score(&mut self, name: &str, xml: &str) {
         let reference_path = self.reference_dir.join(format!("{name}_Data.xml"));
         if !reference_path.is_file() {
@@ -683,6 +691,11 @@ impl PackageGate {
                 return;
             }
         };
+        if let Some(line) = revision_mismatch_line(name, xml, &reference, &reference_path) {
+            self.report.revision_mismatch += 1;
+            self.report.lines.push(line);
+            return;
+        }
         match super::diff::diff_pid_export(xml, &reference) {
             Ok(diff) if diff.is_clean() => {
                 self.report.clean += 1;
@@ -712,6 +725,33 @@ impl PackageGate {
             }
         }
     }
+}
+
+/// The `revision_mismatch` verdict line, or `None` when the pair is one
+/// revision.
+///
+/// Both documents state their own `<Container DocUID>`. When the two differ,
+/// the reference file is another revision of the same drawing name — the
+/// `.pid` and the reference disagree about the sheet's identity, not about
+/// its content. Scoring them object by object then reports the whole
+/// version gap (thousands of findings) and hides that one fact.
+fn revision_mismatch_line(
+    name: &str,
+    generated: &str,
+    reference: &str,
+    reference_path: &Path,
+) -> Option<String> {
+    let generated_uid = super::diff::publish_container_doc_uid(generated)?;
+    let reference_uid = super::diff::publish_container_doc_uid(reference)?;
+    if backup_uid_key(&generated_uid) == backup_uid_key(&reference_uid) {
+        return None;
+    }
+    Some(format!(
+        "{name}: revision mismatch — the drawing is DocUID {generated_uid} but {} is \
+         DocUID {reference_uid}; the reference is another revision of this name, so the \
+         drawing was not compared",
+        reference_path.display()
+    ))
 }
 
 fn row_by_id<'a>(loaded: &'a LoadedDump, drawing_uid: &str) -> Option<&'a BackupDrawing> {

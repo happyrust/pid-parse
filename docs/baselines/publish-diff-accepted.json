@@ -55,7 +55,8 @@
         "dump_hits": 0
       }
     },
-    "why_not_rebuilt": "These four are not in acceptance_figures and are not in this dump's T_DRAWING at all, so no `.pid`-alone run can be promoted to an `--oracle-exp` baseline: there is no dump content to publish. Their `.pid`-alone runs stay exit 0 and unchanged."
+    "why_not_rebuilt": "These four are not in acceptance_figures and are not in this dump's T_DRAWING at all, so no `.pid`-alone run can be promoted to an `--oracle-exp` baseline: there is no dump content to publish. Their `.pid`-alone runs stay exit 0 and unchanged.",
+    "package_gate": "The same four also show up in the whole-package gate: the package's own `.pid` carries a third DocUID (5398F8EB4A3245D0819454B071848E64 / 16EB202B1A7C4BC99DEE69E27EAD853C / C95259F234BB4BE5B241D8DBC0A87FC8 / 603757A3493A470B8974E8B60CB68CCC), so the reference beside it is another revision of the same drawing name. The gate reports `revision mismatch` once per drawing instead of scoring 1539–4394 findings, and still exits 1."
   },
   "figures": {
     "A01": {
