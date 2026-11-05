@@ -18,6 +18,9 @@ const A01_DIR: &str = "test-file/export-test/publish-data/A01";
 const CORPUS_ENV: &str = "PID_PARSE_SELF_CHECK_DIR";
 const CORPUS_DEFAULT: &str = r"D:\work\cad\PID自研软件验证";
 const PACKAGE_DEFAULT: &str = r"D:\work\cad\pid-test-data";
+const PACKAGE_ENV: &str = "PID_TEST_DATA_DIR";
+const ACCEPTANCE_ENV: &str = "PID_ACCEPTANCE_CORPUS";
+const ACCEPTANCE_DEFAULT: &str = r"D:\work\cad\pid-test-data\验收数据";
 const IJ_STEM: &str = "I井场 注采阀组工艺及自控流程图";
 
 /// The reference object the deleted-object probe removes.
@@ -244,6 +247,79 @@ fn ij_pid() -> PathBuf {
 
 fn ij_reference() -> PathBuf {
     corpus_dir().join(format!("{IJ_STEM}_Data.xml"))
+}
+
+fn package_dir() -> PathBuf {
+    std::env::var_os(PACKAGE_ENV).map_or_else(|| PathBuf::from(PACKAGE_DEFAULT), PathBuf::from)
+}
+
+fn acceptance_dir() -> PathBuf {
+    std::env::var_os(ACCEPTANCE_ENV)
+        .map_or_else(|| PathBuf::from(ACCEPTANCE_DEFAULT), PathBuf::from)
+}
+
+/// Run one `acceptance_figures` entry in both modes and hold every printed
+/// difference line to the mode's registered set.
+fn assert_acceptance_figure(key: &str) {
+    let baseline = baseline();
+    let figure = &baseline["acceptance_figures"]["figures"][key];
+    let stem = figure["stem"]
+        .as_str()
+        .unwrap_or_else(|| panic!("acceptance figure {key} has no stem"));
+    let pid = acceptance_dir().join(format!("{stem}.pid"));
+    let reference = acceptance_dir().join(format!("{stem}_Data.xml"));
+    if !pid.is_file() || !reference.is_file() {
+        eprintln!(
+            "skip: {key} acceptance drawing is absent ({})",
+            pid.display()
+        );
+        return;
+    }
+    let dump = package_dir().join("Export.dmp");
+    let datamap = package_dir().join("RefData~4~804.zip");
+
+    for mode in ["pid-alone", "oracle-exp"] {
+        let recorded = &figure["modes"][mode];
+        let mut args: Vec<OsString> = vec![
+            pid.clone().into_os_string(),
+            "--diff-against".into(),
+            reference.clone().into_os_string(),
+            "--plant".into(),
+            "P01".into(),
+        ];
+        if mode == "oracle-exp" {
+            if !dump.is_file() || !datamap.is_file() {
+                eprintln!("skip: {key} {mode} needs the exp dump and the datamap");
+                continue;
+            }
+            args.extend([
+                "--oracle-exp".into(),
+                dump.clone().into_os_string(),
+                "--datamap".into(),
+                datamap.clone().into_os_string(),
+            ]);
+        }
+        let run = run_cli(args);
+        assert_eq!(
+            run.summary(),
+            recorded["summary"].as_str().unwrap_or_default(),
+            "{key} {mode}: summary"
+        );
+        Classification::of(recorded, &run).assert_complete(&format!("{key} {mode}"));
+        if let Some(line) = recorded["informational_line"].as_str() {
+            assert!(
+                run.stdout.lines().any(|printed| printed == line),
+                "{key} {mode}: the pairing line {line:?} was not printed:\n{}",
+                run.stdout
+            );
+        }
+        assert_eq!(
+            i64::from(run.code),
+            recorded["exit_code"].as_i64().expect("exit_code"),
+            "{key} {mode}: exit code\n{}",
+            run.stdout
+        );
+    }
 }
 
 // -------------------------------------------------------- XML surgery -------
@@ -628,6 +704,59 @@ fn the_ijingchang_alias_stem_reproduces_the_registered_item() {
         only.contains("IObject.Name: \"IB031~1\""),
         "unexpected registered item: {only}"
     );
+}
+
+#[test]
+fn the_jk_well_site_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("J K井场");
+}
+
+#[test]
+fn the_lm_well_site_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("L M井场");
+}
+
+#[test]
+fn the_light_hydrocarbon_separator_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("轻烃分离器I");
+}
+
+#[test]
+fn the_air_cooler_a_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("空冷器A");
+}
+
+#[test]
+fn the_air_cooler_b_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("空冷器B");
+}
+
+#[test]
+fn the_air_cooler_c_prints_exactly_the_registered_differences() {
+    assert_acceptance_figure("空冷器C");
+}
+
+/// The informational line each acceptance figure records names the bound
+/// `FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` registers for its `DocUID`, so
+/// the table and the baseline cannot drift apart.
+#[test]
+fn every_acceptance_figure_records_the_allowance_its_doc_uid_registers() {
+    let baseline = baseline();
+    let figures = baseline["acceptance_figures"]["figures"]
+        .as_object()
+        .expect("acceptance_figures.figures");
+    assert_eq!(figures.len(), 6);
+    for (key, figure) in figures {
+        let doc_uid = figure["doc_uid"].as_str().expect("doc_uid");
+        let bound = pid_parse::publish::diff::fluid_system_reference_empty_allowance(doc_uid);
+        let line = figure["modes"]["oracle-exp"]["informational_line"]
+            .as_str()
+            .expect("informational_line");
+        assert!(
+            line.ends_with(&format!("FluidSystem {bound}（登记上界 {bound}）")),
+            "{key}: {line:?} against the registered bound {bound}"
+        );
+    }
 }
 
 #[test]

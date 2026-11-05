@@ -321,6 +321,139 @@
       ]
     }
   },
+  "acceptance_figures": {
+    "what": "Six of the eleven 验收数据 drawings, each published from its own .pid against its own vendor reference, alone and with the whole-package Export.dmp + RefData~4~804.zip. The .pid and the reference both live under PID_ACCEPTANCE_CORPUS (default D:\\work\\cad\\pid-test-data\\验收数据); the dump and the datamap under PID_TEST_DATA_DIR (default D:\\work\\cad\\pid-test-data). Each mode records its exit code, summary line and every difference it prints; a mode with no differences section prints none.",
+    "figures": {
+      "J K井场": {
+        "stem": "J K井场 注采阀组工艺及自控流程图",
+        "doc_uid": "C80930B9697B4F2190640D8141C56FF7",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 1,
+            "summary": "pid export diff: objects 2605 (extra 0, wrong class 0), values 2296 (different 0, not in reference 0), rels 2955 (not in reference 0)",
+            "reference_only_differences": {
+              "missing_object": {
+                "count": 6,
+                "items": [
+                  {
+                    "line": "missing PIDRepresentation 127F0D7A722B4AF1A20A943F0AB81CBD",
+                    "class_name": "PIDRepresentation",
+                    "uid": "127F0D7A722B4AF1A20A943F0AB81CBD"
+                  },
+                  {
+                    "line": "missing PIDPipingComponent 7A46D893F3F442548BD6D9BAAB679B7E",
+                    "class_name": "PIDPipingComponent",
+                    "uid": "7A46D893F3F442548BD6D9BAAB679B7E"
+                  },
+                  {
+                    "line": "missing PIDPipingComponent 85E621596AFC4304A5AFF522C3B7BEF4",
+                    "class_name": "PIDPipingComponent",
+                    "uid": "85E621596AFC4304A5AFF522C3B7BEF4"
+                  },
+                  {
+                    "line": "missing PIDRepresentation A5C81359FF744CA3B745DEF7F605B17E",
+                    "class_name": "PIDRepresentation",
+                    "uid": "A5C81359FF744CA3B745DEF7F605B17E"
+                  },
+                  {
+                    "line": "missing PIDPipingComponent C5330847F43044C6BAF0978E611B365F",
+                    "class_name": "PIDPipingComponent",
+                    "uid": "C5330847F43044C6BAF0978E611B365F"
+                  },
+                  {
+                    "line": "missing PIDRepresentation EB518880A0474AE98179AFA59B4FF691",
+                    "class_name": "PIDRepresentation",
+                    "uid": "EB518880A0474AE98179AFA59B4FF691"
+                  }
+                ]
+              }
+            },
+            "why": "The three PIDPipingComponent and their PIDRepresentation are placed in the dump's T_REPRESENTATION but not drawn in the .pid. Without the dump nothing names them; with it they are published (oracle_exp::attach_dump_only_components) and the oracle-exp mode is clean."
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 4655 (extra 0, wrong class 0), values 5053 (different 0, not in reference 0), rels 6175 (not in reference 0)",
+            "informational_line": "按名配对 123 个 PIDPipeline，163 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 34（登记上界 34）"
+          }
+        }
+      },
+      "L M井场": {
+        "stem": "L M井场 注采阀组工艺及自控流程图",
+        "doc_uid": "10344A8A26F1490C83214A823BBF1622",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 3068 (extra 0, wrong class 0), values 2720 (different 0, not in reference 0), rels 3474 (not in reference 0)"
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 5493 (extra 0, wrong class 0), values 5996 (different 0, not in reference 0), rels 7274 (not in reference 0)",
+            "informational_line": "按名配对 141 个 PIDPipeline，192 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 42（登记上界 42）"
+          }
+        }
+      },
+      "轻烃分离器I": {
+        "stem": "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+        "doc_uid": "A77BEFB93BFA4DFAB366BAB069D90B1A",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 667 (extra 0, wrong class 0), values 578 (different 0, not in reference 0), rels 789 (not in reference 0)"
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 1219 (extra 0, wrong class 0), values 1292 (different 0, not in reference 0), rels 1685 (not in reference 0)",
+            "informational_line": "按名配对 31 个 PIDPipeline，47 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 0（登记上界 0）"
+          }
+        }
+      },
+      "空冷器A": {
+        "stem": "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
+        "doc_uid": "E8981CB762F848E49AA5F5398E3CB4A9",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 695 (extra 0, wrong class 0), values 613 (different 0, not in reference 0), rels 780 (not in reference 0)"
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 1260 (extra 0, wrong class 0), values 1413 (different 0, not in reference 0), rels 1652 (not in reference 0)",
+            "informational_line": "按名配对 47 个 PIDPipeline，56 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
+          }
+        }
+      },
+      "空冷器B": {
+        "stem": "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
+        "doc_uid": "5625EEEE48A4410E8A5BA083A2585D52",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 699 (extra 0, wrong class 0), values 615 (different 0, not in reference 0), rels 784 (not in reference 0)"
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 1248 (extra 0, wrong class 0), values 1384 (different 0, not in reference 0), rels 1636 (not in reference 0)",
+            "informational_line": "按名配对 30 个 PIDPipeline，33 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
+          }
+        }
+      },
+      "空冷器C": {
+        "stem": "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
+        "doc_uid": "E6822624A4874C8DB03D8E98A1D7F3B6",
+        "modes": {
+          "pid-alone": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 690 (extra 0, wrong class 0), values 607 (different 0, not in reference 0), rels 775 (not in reference 0)"
+          },
+          "oracle-exp": {
+            "exit_code": 0,
+            "summary": "pid export diff: objects 1229 (extra 0, wrong class 0), values 1358 (different 0, not in reference 0), rels 1614 (not in reference 0)",
+            "informational_line": "按名配对 28 个 PIDPipeline，32 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
+          }
+        }
+      }
+    }
+  },
   "whole_package": {
     "what": "The whole-backup-package publish (D:\\work\\cad\\pid-test-data). FluidSystem is empty in the reference and carries values in the dump, so the run emits 23 extra values. Extra values are not an error and are bounded by a named constant, not absorbed here.",
     "registered_exceptions": [
