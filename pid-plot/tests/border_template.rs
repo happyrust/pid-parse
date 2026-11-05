@@ -91,6 +91,15 @@ fn frame_boxes(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
         .collect()
 }
 
+/// Where `D06`'s border frame places its template: `igSmartFrame2d` payload
+/// `+196` / `+204`, (0.388 437, 0.565 657) mm. The template's own coordinates
+/// are read off the `.igr`; on the page they sit this far up and right.
+const D06_FRAME_OFFSET: [f64; 2] = [0.388_437, 0.565_657];
+
+fn shifted(point: [f64; 2], by: [f64; 2]) -> [f64; 2] {
+    [point[0] + by[0], point[1] + by[1]]
+}
+
 fn near(point: [f64; 2], expected: [f64; 2], tolerance: f64) -> bool {
     (point[0] - expected[0]).abs() <= tolerance && (point[1] - expected[1]).abs() <= tolerance
 }
@@ -677,7 +686,8 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
     assert!(
         boxes
             .iter()
-            .any(|(min, max)| near(*min, [0.0, 0.0], 0.5) && near(*max, [593.94, 420.00], 0.5)),
+            .any(|(min, max)| near(*min, D06_FRAME_OFFSET, 0.01)
+                && near(*max, shifted([593.94, 420.00], D06_FRAME_OFFSET), 0.01)),
         "no outer frame: {boxes:?}"
     );
     for (start, end) in [
@@ -686,6 +696,10 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
         ([586.869, 412.929], [35.354, 412.929]),
         ([35.354, 412.929], [35.354, 7.071]),
     ] {
+        let (start, end) = (
+            shifted(start, D06_FRAME_OFFSET),
+            shifted(end, D06_FRAME_OFFSET),
+        );
         assert!(
             has_line(&model, start, end, 0.05),
             "no inner frame edge {start:?} -> {end:?}"
@@ -765,7 +779,11 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
     assert!(
         template.symbols.iter().any(|symbol| {
             symbol.key.to_ascii_lowercase().ends_with("a$c40d91a4b.sym")
-                && near(symbol.insertion_mm, [0.0, 59.040], 0.02)
+                && near(
+                    symbol.insertion_mm,
+                    shifted([0.0, 59.040], D06_FRAME_OFFSET),
+                    0.02,
+                )
         }),
         "no `a$c40d91a4b.sym` at its insertion point: {:?}",
         template.symbols
@@ -778,6 +796,7 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
         .collect();
     assert_eq!(hqz.len(), 2, "{hqz:?}");
     for expected in [[35.354, 412.929], [35.354, 306.869]] {
+        let expected = shifted(expected, D06_FRAME_OFFSET);
         assert!(
             hqz.iter().any(|insertion| near(*insertion, expected, 0.02)),
             "no `hqz.sym` at {expected:?}: {hqz:?}"
@@ -959,8 +978,10 @@ fn the_a01_sheets_embedded_frame_draws_the_a2_template_it_states() {
         "the template places {} instead",
         symbol.key
     );
+    // A01's embedded frame places its content (0.001, 0.001) mm off the
+    // origin (`igSmartFrame2d` `+196` / `+204`), so the wave moves with it.
     assert!(
-        near(symbol.insertion_mm, [505.692, 19.000], 0.001),
+        near(symbol.insertion_mm, [505.693, 19.001], 0.001),
         "{:?}",
         symbol.insertion_mm
     );

@@ -103,9 +103,11 @@ fn main() {
                     .as_deref()
                     .map(|s| s.rsplit(['/', '\\']).next().unwrap_or(s));
                 println!(
-                    "{key} {symbol:?} {text} ours {:.2} ref {:.2} ratio {ratio:.3} along {:+.2}",
+                    "{key} {symbol:?} {text} ours {:.2} ref {:.2} ratio {ratio:.3} tf {:.3}/{:.3} along {:+.2}",
                     our.advance_mm,
                     theirs.advance_mm,
+                    our.height_mm,
+                    theirs.height_mm,
                     (our.origin_mm[0] - theirs.origin_mm[0]) * theirs.direction[0]
                         + (our.origin_mm[1] - theirs.origin_mm[1]) * theirs.direction[1]
                 );

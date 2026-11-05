@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### 模板放在边框框架记录的位置（`igSmartFrame2d +164` 内容变换）（2026-11-07）
+
+`igSmartFrame2d` 载荷 `+164..+219` 是 RAD 二维变换：2×2 矩阵、平移（米）、缩放。解码为
+`SheetIgSmartFrame2dDecoded::content_transform`，`pid-plot` 按其中的平移放置模板。A2 `轻烃分离器I`
+（以及 `D06`）的框架记 (0.388, 0.566) mm：模板横线偏差 −0.566 → 0.000 mm，模板竖线和图纸自身的线一致；
+coverage 0.981905 → 0.982114，extra 210.712 → 210.269 mm，pen 一致 2632 → 2634；会签栏文字沿书写方向
+的剩余偏差从 −0.6…−0.8 mm 降到 −0.24…0.00 mm。参考图所在的 A0/A1 框架平移为 0，读数不变。备份图集另有 6 张非零平移的图纸随之平移；`EF井场` 的平移会把外框推出纸面，保持原点。`BorderTemplate` 新增 `offset_mm`，`export_plant_backup` 按它比对模板位置。新增
+`probe_where_the_template_ink_sits`；见 `docs/analysis/2026-11-07-the-border-frame-places-its-template.md`。
 ### 模板文字按样式写的字宽排（`JStyleTextChar +52`）（2026-11-07）
 
 `+52` 的 u16 是字宽千分比，`style.dll` 除以 `1000.0` 使用，不乘放置缩放。模板 SimSun 样式都写 `800`，

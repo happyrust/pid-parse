@@ -1446,6 +1446,31 @@ pub struct DecodedIgSmartFrame2dRecord {
     pub extent_height_m: f64,
     /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
     pub aspect_ratio: f64,
+    /// Where the framed content is placed (payload `+164..+219`): see
+    /// [`crate::parsers::sheet_records::SmartFrameContentTransform`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_transform: Option<SmartFrameContentTransformRecord>,
+}
+
+/// Model-shaped mirror of
+/// [`crate::parsers::sheet_records::SmartFrameContentTransform`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SmartFrameContentTransformRecord {
+    /// The 2×2 linear part, in stored order.
+    pub linear: [f64; 4],
+    /// Translation in metres.
+    pub translation_m: [f64; 2],
+    /// Uniform scale.
+    pub scale: f64,
+}
+
+impl SmartFrameContentTransformRecord {
+    /// Whether the linear part is the identity, to `1e-9`.
+    #[must_use]
+    pub fn linear_is_identity(&self) -> bool {
+        let [a, b, c, d] = self.linear;
+        (a - 1.0).abs() < 1e-9 && b.abs() < 1e-9 && c.abs() < 1e-9 && (d - 1.0).abs() < 1e-9
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded>
@@ -1473,6 +1498,13 @@ impl From<crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded>
             extent_width_m: d.extent_width_m,
             extent_height_m: d.extent_height_m,
             aspect_ratio: d.aspect_ratio,
+            content_transform: d
+                .content_transform
+                .map(|t| SmartFrameContentTransformRecord {
+                    linear: t.linear,
+                    translation_m: t.translation_m,
+                    scale: t.scale,
+                }),
         }
     }
 }

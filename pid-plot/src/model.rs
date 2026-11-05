@@ -116,6 +116,11 @@ pub struct BorderTemplate {
     /// It equals the sheet, because the template's outer frame runs along the
     /// page edge; that equality is also how the file was picked.
     pub extent_mm: [f64; 2],
+    /// Where the sheet's border frame places the template, paper millimetres:
+    /// every stroke, label and placement it contributed sits this far from
+    /// where the template's own coordinates put it. Zero on a frame that
+    /// states no translation.
+    pub offset_mm: [f64; 2],
     /// How many primitives the template contributed, labels included.
     pub primitives: usize,
     /// Every symbol the template places, with what drew it.
@@ -1125,9 +1130,48 @@ pub fn lay_out_with_symbol_roots(
         for primitive in &mut primitives[before..] {
             primitive.furniture = true;
         }
+        // The frame places its content: a sheet whose frame states a
+        // translation wears the template that far off the page origin. The
+        // A2 `轻烃分离器I` frame states (0.388, 0.566) mm, and the reference
+        // inks the whole sign-off column and title block exactly that far
+        // from where the template's own coordinates put them; the A0/A1
+        // frames state zero.
+        let offset_mm = frame_content_offset_mm(&doc);
+        // Every frame whose translation a reference confirms (the CCHB A2
+        // sheets) states a page that holds the template at that translation;
+        // so do `O`/`P井场` and the 600/1200 td sheets, whose frames are the
+        // template plus one or two offsets. `EF井场`'s frame does not: its
+        // page is exactly the template's 1189 × 841 mm and its (0.51, −0.73)
+        // mm would push the border off the sheet. No reference plot settles
+        // that case, so it keeps the template at the origin.
+        let offset_mm = match page_mm {
+            Some(page)
+                if (0..2).all(|axis| {
+                    offset_mm[axis] >= -TEMPLATE_FIT_SLACK_MM
+                        && offset_mm[axis] + furniture.extent_mm[axis]
+                            <= page[axis] + TEMPLATE_FIT_SLACK_MM
+                }) =>
+            {
+                offset_mm
+            }
+            _ => [0.0, 0.0],
+        };
+        if offset_mm != [0.0, 0.0] {
+            for primitive in &mut primitives[before..] {
+                translate_shape(&mut primitive.shape, offset_mm);
+            }
+            for symbol in &mut furniture_placements.placed {
+                symbol.insertion_mm = add(symbol.insertion_mm, offset_mm);
+                if let Some([min, max]) = &mut symbol.extent_mm {
+                    *min = add(*min, offset_mm);
+                    *max = add(*max, offset_mm);
+                }
+            }
+        }
         template = Some(BorderTemplate {
             path: furniture.path.display().to_string(),
             extent_mm: furniture.extent_mm,
+            offset_mm,
             primitives: primitives.len() - before,
             symbols: furniture_placements.placed,
         });
@@ -1206,6 +1250,79 @@ pub fn lay_out_with_symbol_roots(
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
     })
+}
+
+/// The translation the sheet's border frame places its content at, in paper
+/// millimetres.
+///
+/// `igSmartFrame2d` payload `+164` is RAD's 2D transform (linear part,
+/// translation, scale). Only the translation is applied: every frame in the
+/// corpus states an identity linear part, and the one frame whose scale is
+/// not `1.0` (`DWG-0202`, `0.9991`) has no reference plot to say how it
+/// applies. Frames that disagree, or a linear part that is not the
+/// identity, place nothing — the same rule the page size follows.
+/// How far a translated template may overhang its frame's page and still
+/// count as held by it: the metre-to-millimetre round trip, with room for the
+/// 0.4 µm the A2 frames' extents carry past template plus translation.
+const TEMPLATE_FIT_SLACK_MM: f64 = 0.01;
+
+fn frame_content_offset_mm(doc: &PidDocument) -> [f64; 2] {
+    let mut offsets: Vec<[f64; 2]> = Vec::new();
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+        for frame in &geometry.decoded_igsmartframes {
+            if frame.page_extent_m().is_none() {
+                continue;
+            }
+            let Some(transform) = frame.content_transform else {
+                continue;
+            };
+            if !transform.linear_is_identity() {
+                return [0.0, 0.0];
+            }
+            let offset = [
+                transform.translation_m[0] * MM_PER_METRE,
+                transform.translation_m[1] * MM_PER_METRE,
+            ];
+            if !offsets.contains(&offset) {
+                offsets.push(offset);
+            }
+        }
+    }
+    match offsets.as_slice() {
+        [only] if only.iter().all(|v| v.is_finite() && v.abs() < 10.0) => *only,
+        _ => [0.0, 0.0],
+    }
+}
+
+fn add(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] + b[0], a[1] + b[1]]
+}
+
+/// Move a shape by `offset_mm`.
+fn translate_shape(shape: &mut PaperShape, offset_mm: [f64; 2]) {
+    match shape {
+        PaperShape::Line { start_mm, end_mm } => {
+            *start_mm = add(*start_mm, offset_mm);
+            *end_mm = add(*end_mm, offset_mm);
+        }
+        PaperShape::Arc { center_mm, .. } | PaperShape::Circle { center_mm, .. } => {
+            *center_mm = add(*center_mm, offset_mm);
+        }
+        PaperShape::Fill { chain_mm, .. } => {
+            for point in chain_mm {
+                *point = add(*point, offset_mm);
+            }
+        }
+        PaperShape::Polyline { points_mm, .. } => {
+            for point in points_mm {
+                *point = add(*point, offset_mm);
+            }
+        }
+        PaperShape::Text { origin_mm, .. } => *origin_mm = add(*origin_mm, offset_mm),
+    }
 }
 
 /// What a page learns from the placements it expanded: which symbol files it
@@ -4795,6 +4912,7 @@ mod tests {
             template: Some(BorderTemplate {
                 path: "CPE-SQ-A0.igr".to_string(),
                 extent_mm: [1189.0, 841.0],
+                offset_mm: [0.0, 0.0],
                 primitives: 0,
                 symbols: vec![TemplateSymbol {
                     key: "Temp\\BLFH.sym".to_string(),

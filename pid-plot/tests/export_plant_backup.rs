@@ -1053,6 +1053,7 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut placements = 0usize;
     let mut gap_named = 0usize;
     let mut templated_from_archive = 0usize;
+    let mut offset_sheets = 0usize;
     // What each template placed, as the first sheet wearing it drew it, and how
     // many sheets wore it. Keyed by the template's own file name, because a
     // placement is the template's and not the sheet's.
@@ -1105,21 +1106,31 @@ fn every_backup_drawing_exports_a_readable_page() {
             "{name}: {} contributed {} strokes",
             template.path, template.primitives
         );
-        // The template states its own box; the page has to carry it from the
-        // page's origin, because a template is authored in page millimetres and
-        // laid out at 1:1. Measuring the strokes — not reusing `extent_mm` — is
-        // what makes a translation visible: move the ink 2 mm and the box moves
-        // with it while `extent_mm` does not budge.
+        // The template states its own box; the page has to carry it from
+        // where the sheet's border frame places it, because a template is
+        // authored in page millimetres and laid out at 1:1. Measuring the
+        // strokes — not reusing `extent_mm` — is what makes a stray
+        // translation visible: move the ink 2 mm and the box moves with it
+        // while `extent_mm` does not budge. Everything below is compared in
+        // the template's own coordinates, so the per-template pins hold
+        // whichever frame offset a sheet states.
+        let offset = template.offset_mm;
+        if offset.iter().any(|v| v.abs() > 0.001) {
+            offset_sheets += 1;
+        }
         let Some([ink_min, ink_max]) = furniture_extent_mm(model) else {
             panic!(
                 "{name}: {} is on the page but not one stroke of it landed",
                 template.path
             );
         };
+        let ink_min = [ink_min[0] - offset[0], ink_min[1] - offset[1]];
+        let ink_max = [ink_max[0] - offset[0], ink_max[1] - offset[1]];
         for axis in 0..2 {
             assert!(
                 ink_min[axis].abs() < TEMPLATE_EXTENT_SLACK_MM,
-                "{name}: {}'s furniture starts at {ink_min:?} mm instead of the page origin",
+                "{name}: {}'s furniture starts at {ink_min:?} mm from where the frame \
+                 places it ({offset:?} mm)",
                 template.path
             );
             assert!(
@@ -1132,7 +1143,12 @@ fn every_backup_drawing_exports_a_readable_page() {
         // The template's own lettering, cell by cell. `template.primitives`
         // counts these strokes but says nothing about which characters they
         // carry or where the writer put them; this is the pin that does.
-        let drawn_labels = furniture_labels(model);
+        let drawn_labels: Vec<Label> = furniture_labels(model)
+            .into_iter()
+            .map(|(text, point, height)| {
+                (text, [point[0] - offset[0], point[1] - offset[1]], height)
+            })
+            .collect();
         let pinned_labels: Vec<Label> = wanted_labels
             .iter()
             .map(|(text, point, height)| ((*text).to_string(), *point, *height))
@@ -1180,7 +1196,13 @@ fn every_backup_drawing_exports_a_readable_page() {
             if symbol.name_gap.is_some() {
                 gap_named += 1;
             }
-            drawn.push((leaf_name(&symbol.key), symbol.insertion_mm));
+            drawn.push((
+                leaf_name(&symbol.key),
+                [
+                    symbol.insertion_mm[0] - offset[0],
+                    symbol.insertion_mm[1] - offset[1],
+                ],
+            ));
         }
         // Stable, so the two `HQZ.sym` placements a sign-off column makes keep
         // the template's own order rather than an arbitrary one.
@@ -1236,6 +1258,7 @@ fn every_backup_drawing_exports_a_readable_page() {
             format_placements(measured)
         );
     }
+    eprintln!("  {offset_sheets} of {templated} templated sheets wear a frame offset");
     assert!(
         templated >= TEMPLATED_SHEETS,
         "{templated} sheets drew furniture; {TEMPLATED_SHEETS} did when this ratchet was set"

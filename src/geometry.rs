@@ -4600,6 +4600,7 @@ mod tests {
             extent_width_m: width_m,
             extent_height_m: height_m,
             aspect_ratio: height_m / width_m,
+            content_transform: None,
         }
     }
 

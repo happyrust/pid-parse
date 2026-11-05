@@ -234,13 +234,15 @@ const PINS: [Pin; 11] = [
         // these sheets, both 2.5 mm and centred. Pitching that run at 1.524 mm
         // a glyph brings both inside 1 mm. The mirrored valve's `D` pairs
         // once it letters from the descender line. The other eleven stay out.
+        // The template sits where the border frame places it, (0.388, 0.566)
+        // mm off the origin, which pairs two more of its strokes.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
-        min_coverage: 0.9818,
-        max_extra_mm: 210.712 + EXTRA_SLACK_MM,
+        min_coverage: 0.9821,
+        max_extra_mm: 210.269 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
-        min_pen_agreed: 2632,
+        min_pen_agreed: 2634,
         max_pen_differed: 0,
         missing_symbols: &[],
     },

@@ -381,6 +381,7 @@ mod tests {
         crate::model::BorderTemplate {
             path: path.to_string(),
             extent_mm: [841.0, 594.0],
+            offset_mm: [0.0, 0.0],
             primitives: 0,
             symbols: Vec::new(),
         }

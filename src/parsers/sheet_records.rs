@@ -6069,6 +6069,11 @@ const IGSMARTFRAME_HEIGHT_AT: usize = 84;
 const IGSMARTFRAME_ASPECT_AT: usize = 148;
 /// Shortest payload that reaches every field above.
 const IGSMARTFRAME_MIN_PAYLOAD: usize = IGSMARTFRAME_ASPECT_AT + 8;
+/// Payload offset of the framed content's placement: seven `f64` — a 2×2
+/// linear part, a translation in metres, and a uniform scale — laid out as
+/// RAD's 2D transform (`imagdex.dex` / `radsrvitem.dll` `sub_5644FD00`,
+/// `sub_5649DE50`, composed by `sub_5644E580`).
+const IGSMARTFRAME_CONTENT_TRANSFORM_AT: usize = 164;
 
 /// `record + 20` bit: the frame holds something.
 const IGSMARTFRAME_HAS_CONTENT: u32 = 0x8000;
@@ -6125,6 +6130,32 @@ pub struct SheetIgSmartFrame2dDecoded {
     pub extent_height_m: f64,
     /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
     pub aspect_ratio: f64,
+    /// Where the framed content is placed in the frame (payload `+164`),
+    /// when the record is long enough to carry it.
+    pub content_transform: Option<SmartFrameContentTransform>,
+}
+
+/// The placement an `igSmartFrame2d` puts its framed content at: RAD's 2D
+/// transform, whose scale is kept apart from the linear part and multiplied
+/// on its own when two transforms compose (`sub_5644E580`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmartFrameContentTransform {
+    /// The 2×2 linear part, payload `+164..+195`, in stored order. The
+    /// identity on every frame in the corpus.
+    pub linear: [f64; 4],
+    /// Translation in metres, payload `+196` / `+204`.
+    pub translation_m: [f64; 2],
+    /// Uniform scale, payload `+212`.
+    pub scale: f64,
+}
+
+impl SmartFrameContentTransform {
+    /// Whether the linear part is the identity, to `1e-9`.
+    #[must_use]
+    pub fn linear_is_identity(&self) -> bool {
+        let [a, b, c, d] = self.linear;
+        (a - 1.0).abs() < 1e-9 && b.abs() < 1e-9 && c.abs() < 1e-9 && (d - 1.0).abs() < 1e-9
+    }
 }
 
 impl SheetIgSmartFrame2dDecoded {
@@ -6216,6 +6247,21 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             return None;
         }
 
+        let content_transform = (|| {
+            let at = IGSMARTFRAME_CONTENT_TRANSFORM_AT;
+            let values: Vec<f64> = (0..7)
+                .map(|index| f64_at(at + 8 * index))
+                .collect::<Option<_>>()?;
+            values
+                .iter()
+                .all(|v| v.is_finite())
+                .then(|| SmartFrameContentTransform {
+                    linear: [values[0], values[1], values[2], values[3]],
+                    translation_m: [values[4], values[5]],
+                    scale: values[6],
+                })
+        })();
+
         let state = if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
             SheetSmartFrame2dState::Empty
         } else if link_flags & IGSMARTFRAME_LINKED == 0
@@ -6242,6 +6288,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             extent_width_m,
             extent_height_m,
             aspect_ratio,
+            content_transform,
         })
     }
 
@@ -9505,6 +9552,47 @@ mod jdim_family_tests {
 mod tests {
     use super::*;
     use crate::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
+
+    /// A linked `igSmartFrame2d` whose payload carries the content placement
+    /// RAD's 2D transform stores at `+164`: the A2 `D06` / `轻烃分离器I` values.
+    #[test]
+    fn a_smart_frame_reads_where_it_places_its_content() {
+        let mut payload = vec![0u8; 238];
+        payload[0..4].copy_from_slice(&22_u32.to_le_bytes());
+        payload[14..18].copy_from_slice(&0x8000_u32.to_le_bytes());
+        payload[26..30].copy_from_slice(&0x40_u32.to_le_bytes());
+        let put = |payload: &mut Vec<u8>, at: usize, value: f64| {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        };
+        put(&mut payload, 76, 0.594_327_890);
+        put(&mut payload, 84, 0.420_565_694);
+        put(&mut payload, 148, 0.707_632_438);
+        for (index, value) in [1.0, 0.0, 0.0, 1.0, 0.000_388_407, 0.000_565_648, 1.0]
+            .into_iter()
+            .enumerate()
+        {
+            put(&mut payload, 164 + 8 * index, value);
+        }
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+
+        let frame = decode_smartframe_at(&record, 0).expect("frame");
+        assert_eq!(frame.state, SheetSmartFrame2dState::Linked);
+        let transform = frame.content_transform.expect("transform");
+        assert!(transform.linear_is_identity());
+        assert_eq!(transform.translation_m, [0.000_388_407, 0.000_565_648]);
+        assert_eq!(transform.scale, 1.0);
+
+        // A record cut off before the transform still decodes its page.
+        let short = IGSMARTFRAME_MIN_PAYLOAD;
+        let mut cut = record[..PSM_ENVELOPE_LEN + short].to_vec();
+        cut[2..6].copy_from_slice(&(short as u32).to_le_bytes());
+        let frame = decode_smartframe_at(&cut, 0).expect("short frame");
+        assert!(frame.content_transform.is_none());
+        assert!(frame.page_extent_m().is_some());
+    }
 
     #[test]
     fn inventory_collects_marker_field_text_and_coordinate_evidence() {
