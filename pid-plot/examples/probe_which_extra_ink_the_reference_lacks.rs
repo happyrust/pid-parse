@@ -9,16 +9,17 @@
 //! primitive nearest to it with its symbol.
 //!
 //! Repeating the rule is the point: sampling against the reference's strokes as
-//! laid instead reports 7401 mm on the I drawing where the gate reads 0.305,
-//! because every dash landing in a reference dash gap looks like ink with no
-//! reference ink to cover it.
+//! laid instead reports about 7401 mm on the I drawing, because every dash
+//! landing in a reference dash gap looks like ink with no reference ink to
+//! cover it. A dash gap is not missing ink.
 //!
-//! The cover radius is an argument (`COVER_MM=0.55`), which is how the I
-//! drawing's 0.305 mm answers itself: at 0.55 the same page reads 0 segments
-//! and 0.000 mm, so the whole figure is the radius's own 0.05 mm shell rather
-//! than ink the reference has no room for. The gate keeps reading 0.305 either
-//! way — `compare.rs` holds its radius at 0.5, and this probe measures what
-//! that radius charges.
+//! I, J K and L M now read 0.000 mm of extra. The old 0.305 mm on I was a valve
+//! stem 0.33 mm beside its pipe: the fit joined it at 0.40 mm and the merged
+//! chord then missed the stem. The extra sampler joins at 0.20 mm, so that
+//! stem stays its own stroke. That reading is not a reason to move the cover
+//! radius from 0.5 to 0.55. `compare.rs` holds the radius at 0.5; this probe
+//! measures what that radius charges. See
+//! `docs/analysis/2026-11-04-the-extra-join-was-swallowing-the-stem.md`.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_which_extra_ink_the_reference_lacks -- ["<drawing>"]
@@ -532,9 +533,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
     let fit = report.fit;
-    // The cover radius is a threshold, so the probe takes it as an argument:
-    // running the same page at 0.50 / 0.55 / 0.60 says whether a run is
-    // geometry or the radius's own edge.
+    // The cover radius is a probe argument. It does not change the gate, which
+    // stays at 0.5 in `compare.rs`.
     let cover_mm: f64 = std::env::var("COVER_MM")
         .ok()
         .and_then(|value| value.parse().ok())
