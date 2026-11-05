@@ -711,9 +711,16 @@ impl TextLine {
     /// `I` / `P`, `ESD Interlock`, the flowmeter's `M`) sat 0.19–0.22
     /// reference letter heights high at a one-body step: the reference
     /// baseline is the font's ascent below the point, not its cap height.
+    ///
+    /// The valves' `M` that the middle reading was measured on carry `0x13`,
+    /// not `0x10`. The only exact `0` low nibble in the corpus is the sign-off
+    /// column's `SimSun` lettering (`hqz.sym`, `A$C40D91A4B.sym`, 21 labels),
+    /// and the A2 reference letters it on the baseline: −0.04 body against the
+    /// +0.29 the middle line leaves.
     fn from_symbol_anchor_code(code: u8) -> Self {
-        match (code & 0x0F) % 3 {
-            1 => Self::Ascender,
+        match code & 0x0F {
+            0 => Self::Bottom,
+            low if low % 3 == 1 => Self::Ascender,
             _ => Self::Middle,
         }
     }
@@ -4195,20 +4202,22 @@ mod tests {
         assert_eq!(TextLine::from_anchor_code(0x11), TextLine::Ascender);
     }
 
-    /// A symbol body's own labels keep the other reading: `0x10` is the
-    /// middle line, not the baseline — the ten `M` labels inside the corpus's
-    /// valves were the only class the sheet's flag pair got wrong.
+    /// A symbol body's own labels keep the other reading: `0x13` — the `M`
+    /// inside the corpus's valves — is the middle line, not the baseline. Only
+    /// a low nibble of exactly `0` (the sign-off column's `SimSun` labels)
+    /// letters on the baseline, as a sheet record does.
     #[test]
     fn a_symbol_label_nibble_hangs_from_the_middle() {
-        let lines: Vec<TextLine> = [0x10_u8, 0x11, 0x12, 0x15, 0x18]
+        let lines: Vec<TextLine> = [0x10_u8, 0x11, 0x12, 0x13, 0x15, 0x18]
             .into_iter()
             .map(TextLine::from_symbol_anchor_code)
             .collect();
         assert_eq!(
             lines,
             vec![
-                TextLine::Middle,
+                TextLine::Bottom,
                 TextLine::Ascender,
+                TextLine::Middle,
                 TextLine::Middle,
                 TextLine::Middle,
                 TextLine::Middle,
@@ -4490,7 +4499,7 @@ mod tests {
     fn symbol_lettering_supplies_height_font_rotation_and_anchor() {
         let mut out = Vec::new();
         let lettering = SymbolLettering {
-            anchor_code: 0x10,
+            anchor_code: 0x13,
             rotation_rad: 0.25,
             letter_height_m: 0.0,
             height_m: Some(0.003),
@@ -4532,7 +4541,7 @@ mod tests {
         assert!((*rotation - 0.25).abs() < 1e-9);
         assert_eq!(font.as_deref(), Some("Arial Narrow"));
         assert_eq!(*anchor, TextAnchor::Center);
-        // `0x10` is the middle line on a symbol body, not the baseline.
+        // `0x13` is the middle line on a symbol body, not the baseline.
         assert_eq!(*line, TextLine::Middle);
     }
 

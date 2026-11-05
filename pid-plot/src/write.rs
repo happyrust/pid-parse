@@ -1397,6 +1397,10 @@ fn measured_tf(typeface: &str, hundredths: i64) -> Option<f64> {
         ("SimSun", 850, 12.48),
         ("SimSun", 907, 13.44),
         ("SimSun", 992, 14.40),
+        // The A2 sign-off column: 2.5 / 3.0 mm symbol lettering at a 1.414
+        // placement scale, which the reference letters at 5.25 / 6.27 mm.
+        ("SimSun", 1002, 14.88),
+        ("SimSun", 1203, 17.76),
         ("SimSun", 1134, 16.80),
         ("SimSun", 1276, 18.72),
     ];
