@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### publish 对照面扩到七张参考图（2026-11-05）
+
+验收数据里另外 6 张有原厂 `_Data.xml` 的图（J K / L M井场、轻烃分离器I、空冷器 A/B/C），
+在 `--oracle-exp` 模式下和 I井场一样 exit 0。修了四处根因：
+
+- 管线名取 `T_PLANTITEM.ITEMTAG`。ITEMTAG 为空或不含 `-` 的 run 不成管线。（`33c81e3`）
+- `OPERFLUIDCODE` 经 `SP_19` 映射到标准 `{GUID}` 时，写 `IFluidSystem.FluidCode`。正例只有 code 20 一个值。（`8fb861a`）
+- dump 的 `T_REPRESENTATION` 放了、但 `.pid` 没画的管件，连同端口和 representation 一起发布。J K 有 3 个，与参考一致。C井场有 27 个，没有参考，属于外推。（`6ac2f25`）
+- FluidSystem 的「参考为空」上界改为按参考 `DocUID` 登记（`FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES`），未登记的图上界为 0。（`9d4418d`）
+
+6 张图登记进 `docs/baselines/publish-diff-accepted.json`，每张图一条测试（`3fcdb86`）。
+整包重发到 `D:\work\cad\pid-test-data\publish-v3\`。与 `publish-v2` 相比，`_Meta.xml` 53 件不变，`_Data.xml` 变了 43 件，每件都有归因（见其中的 `_ByteCompare.json`）。合计：对象 80 179、值 87 598、关系 106 812、管线 2 369、`PipingConnectors` 3 115。见
+`docs/analysis/2026-11-05-seven-reference-publish-diff.md`。
+
 ### 命名字体一个字都画不了时，整条标签留在同一款字体上（2026-11-04）
 
 十一张图合用一套子集时，仿宋里只有「点」，宋体里有「动火点」。编码器把「点」交给

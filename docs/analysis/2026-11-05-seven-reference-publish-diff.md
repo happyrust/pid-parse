@@ -85,3 +85,15 @@ B 修完之后，L M（只剩 FluidSystem 42）和轻烃I（exit 0）的单图�
 7 张参考图里命中这条规则的 representation 只有 J K 的 3 行，3 行都在参考里（3/3，没有反例）。另外 6 张图没有命中。全包里还有 C井场命中 27 行（同样是 `INSTOCKPILE=1`、`SP_ISTYPICAL=1` 的阀门、过滤器、异径管），所以 C井场多了 108 个对象、108 条 rel、140 个值。C井场没有参考图，这部分是外推，没有验证过。
 
 参考图里 `IPipingComponent.PipingComponentType*`、`PipModelCode` 和 `IPBSItem` 这类接口值，本仓库的 `.pid` 路径对已画出的管件也不写（对比时按 vendor composed 豁免）。合成出来的管件同样不写，只写 `NominalDiameter`。
+
+## P2 登记与 P3 重发
+
+P2：`docs/baselines/publish-diff-accepted.json` 的 `acceptance_figures` 登记 6 张图，每张分 `.pid` 单发与 `--oracle-exp` 两种模式，记下退出码、摘要行和打印出来的每一条差异。12 次运行里 11 次 exit 0。另一次是 J K 的 `.pid` 单发：没有 dump 就没有那 3 个管件，所以登记了 6 条 `missing`（3 个 `PIDPipingComponent` 和 3 个 `PIDRepresentation`）。`tests/publish_diff_accepted_baseline.rs` 每张图一条测试。图纸和参考从 `PID_ACCEPTANCE_CORPUS` 读，dump 从 `PID_TEST_DATA_DIR` 读，缺了就 soft-skip。
+
+P3：整包重发到 `D:\work\cad\pid-test-data\publish-v3\`（160 件），`_ByteCompare.json` 逐件对 `publish-v2`：
+
+- `_Meta.xml` 53 件逐字节不变。
+- `_Data.xml` 43 件变化，10 件不变。每一件都能归到上面的根因：管线块 142 个改名（B，其中 44 个同时写了 `FluidCode`，D），26 个不再成管线（B'），新增 30 个 `PIDPipingComponent`（C，C井场 27 个、J K 3 个），每个带 2 个端口和 1 个 representation。
+- `_Coverage.json` 51 件变化：每张图的 `pipeline_synthesis` 多了 `item_tag_not_a_name` 计数，管线有变化的图同时更新了计数。
+- `_Index.json` 合计：对象 80 085 → 80 179，值 87 419 → 87 598，关系 106 705 → 106 812，管线 2 395 → 2 369，`PipingConnectors` 3 128 → 3 115，管道端口 9 557 → 9 617。
+- 同一命令再跑一次，160/160 逐字节相同。
