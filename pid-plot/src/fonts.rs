@@ -100,7 +100,7 @@ pub fn prepare_fonts(
             let PaperShape::Text { value, font, .. } = &primitive.shape else {
                 continue;
             };
-            if value.is_empty() {
+            if value.trim().is_empty() {
                 continue;
             }
             wanted
@@ -142,7 +142,7 @@ pub fn prepare_fonts(
             let PaperShape::Text { value, spans, .. } = &primitive.shape else {
                 continue;
             };
-            if value.is_empty() {
+            if value.trim().is_empty() {
                 continue;
             }
             for span in spans.iter() {
@@ -537,6 +537,33 @@ mod tests {
         assert!(
             faces.is_empty(),
             "a record the page never draws asked for {faces:?}",
+            faces = faces
+                .iter()
+                .map(|face| face.key.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A label of spaces draws no glyph (`show_text` trims before writing), so
+    /// it must not ask for a face: a page whose only lettering is blank would
+    /// otherwise embed a typeface it never inks, or refuse to export on a
+    /// machine without one.
+    #[test]
+    fn a_label_of_spaces_asks_for_no_face() {
+        let dir = scratch_dir("spaces-only", &[]);
+        let mut model = labelled(vec![PaperTextSpan {
+            start: 0,
+            len: 1,
+            height_mm: Some(2.5),
+            font: Some("宋体".into()),
+        }]);
+        if let PaperShape::Text { value, .. } = &mut model.primitives[0].shape {
+            *value = "   ".into();
+        }
+        let faces = prepare_fonts(&[&model], &[dir]).expect("nothing was asked for");
+        assert!(
+            faces.is_empty(),
+            "a blank label asked for {faces:?}",
             faces = faces
                 .iter()
                 .map(|face| face.key.as_str())
