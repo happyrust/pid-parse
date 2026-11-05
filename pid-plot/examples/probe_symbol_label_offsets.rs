@@ -24,7 +24,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use pid_plot::model::{PaperShape, TextLine, lay_out_drawing};
+use pid_plot::model::{PaperShape, TextAnchor, TextLine, lay_out_drawing};
 use pid_plot::read::read_plot;
 
 struct Row {
@@ -128,7 +128,15 @@ fn main() -> ExitCode {
         // mismatch is judged in: `along` follows its glyphs, `down` is its
         // right-hand normal (`(d.y, -d.x)` with paper y up).
         let ref_dir = span.direction;
-        let along = delta[0] * ref_dir[0] + delta[1] * ref_dir[1];
+        // Our origin is the anchor's hot point; the span's is its left end.
+        // Shift by the reference's own advance so a right- or centre-anchored
+        // label is not read as off by its whole (or half) width.
+        let hot = match anchor {
+            TextAnchor::Left => 0.0,
+            TextAnchor::Center => 0.5,
+            TextAnchor::Right => 1.0,
+        };
+        let along = delta[0] * ref_dir[0] + delta[1] * ref_dir[1] - hot * span.advance_mm;
         let down = delta[0] * ref_dir[1] - delta[1] * ref_dir[0];
         let ratio = if span.height_mm > 0.2 {
             down / span.height_mm
