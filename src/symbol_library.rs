@@ -413,6 +413,10 @@ pub struct SymbolLettering {
     /// `None` where the index names no character style or there is no table
     /// to ask — `letter_height_m` or a consumer's own fallback answers then.
     pub height_m: Option<f64>,
+    /// Which of the face's heights `height_m` measures — the style's
+    /// [`crate::style_link::TEXT_CHAR_HEIGHT_MODE_OFFSET`] byte.
+    #[serde(default)]
+    pub height_mode: Option<u8>,
     /// Character colour as `[r, g, b]` when the resolved style states one.
     pub rgb: Option<[u8; 3]>,
     /// The paragraph's stated horizontal justification — the default
@@ -503,6 +507,7 @@ impl SymbolLettering {
             rotation_rad: record.rotation_rad,
             letter_height_m: record.letter_height_m,
             height_m: effective.as_ref().map(|style| style.height_m),
+            height_mode: effective.as_ref().and_then(|style| style.height_mode),
             rgb: effective
                 .as_ref()
                 .and_then(crate::style_link::ResolvedTextHeight::rgb),
@@ -1337,6 +1342,7 @@ fn lettering_of(
         rotation_rad: sin.atan2(cos),
         letter_height_m,
         height_m: effective.as_ref().map(|style| style.height_m),
+        height_mode: effective.as_ref().and_then(|style| style.height_mode),
         rgb: effective
             .as_ref()
             .and_then(crate::style_link::ResolvedTextHeight::rgb),

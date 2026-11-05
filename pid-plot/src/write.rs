@@ -41,7 +41,7 @@ use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
 use crate::model::PaperTextSpan;
-use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextLine};
+use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextHeightBasis, TextLine};
 use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -286,6 +286,7 @@ pub fn write_plot_audited(
             key: font.key,
             resource,
             metrics: Metrics::from_dict(&doc, &font_dict),
+            heights: FaceHeights::of(font.bytes),
         });
     }
     let fonts = ready;
@@ -492,6 +493,102 @@ struct ReadyFace<'a> {
     key: &'a str,
     resource: String,
     metrics: Metrics,
+    heights: FaceHeights,
+}
+
+/// The three heights of a face a label's insertion line can name, as
+/// fractions of its em.
+///
+/// `ascent` and `descent` are the Windows metrics (`OS/2`
+/// `usWinAscent` / `usWinDescent`) — GDI's `tmAscent` / `tmDescent`, which
+/// is what the vendor's renderer fills its font cache from — and `cap` is
+/// `OS/2` `sCapHeight`, or the top of `H` where the table is too old to state
+/// one (`ARIALN.TTF` is version 1). Arial reads 0.905 / 0.212 / 0.716.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FaceHeights {
+    ascent: f64,
+    descent: f64,
+    cap: f64,
+}
+
+impl FaceHeights {
+    /// Arial's, for a face whose tables cannot be read.
+    const ARIAL: Self = Self {
+        ascent: 1854.0 / 2048.0,
+        descent: 434.0 / 2048.0,
+        cap: 1467.0 / 2048.0,
+    };
+
+    fn of(bytes: &[u8]) -> Self {
+        Self::read(bytes).unwrap_or(Self::ARIAL)
+    }
+
+    fn read(bytes: &[u8]) -> Option<Self> {
+        use fontcull_read_fonts::{FontRef, TableProvider};
+        use fontcull_skrifa::MetadataProvider;
+        use fontcull_skrifa::instance::{LocationRef, Size};
+
+        let font = FontRef::new(bytes).ok()?;
+        let em = f64::from(font.head().ok()?.units_per_em());
+        if em <= 0.0 {
+            return None;
+        }
+        let os2 = font.os2().ok();
+        let (ascent, descent) = match &os2 {
+            Some(os2) if os2.us_win_ascent() > 0 => (
+                f64::from(os2.us_win_ascent()),
+                f64::from(os2.us_win_descent()),
+            ),
+            _ => {
+                let hhea = font.hhea().ok()?;
+                (
+                    f64::from(hhea.ascender().to_i16()),
+                    -f64::from(hhea.descender().to_i16()),
+                )
+            }
+        };
+        let cap = os2
+            .as_ref()
+            .and_then(|os2| os2.s_cap_height())
+            .filter(|cap| *cap > 0)
+            .map(f64::from)
+            .or_else(|| {
+                let glyph = font.charmap().map('H')?;
+                let bounds = font
+                    .glyph_metrics(Size::unscaled(), LocationRef::default())
+                    .bounds(glyph)?;
+                Some(f64::from(bounds.y_max)).filter(|top| *top > 0.0)
+            })?;
+        let heights = Self {
+            ascent: ascent / em,
+            descent: descent / em,
+            cap: cap / em,
+        };
+        (heights.ascent > 0.0 && heights.cap > 0.0 && heights.descent >= 0.0).then_some(heights)
+    }
+
+    /// How far below the insertion point the baseline runs, as a multiple of
+    /// a style height that measures `basis`.
+    ///
+    /// A cap-height style's middle and top are half and one style height
+    /// down by definition; its ascender line is the face's ascent over its cap
+    /// (Arial 1.264, Arial Narrow 1.288). An ascent style's ascender is one
+    /// style height; its middle and top are the face's cap over its ascent,
+    /// halved for the middle (Arial 0.396).
+    fn drop(self, line: TextLine, basis: TextHeightBasis) -> f64 {
+        let reference = match basis {
+            TextHeightBasis::Cap => self.cap,
+            TextHeightBasis::Ascent => self.ascent,
+        };
+        let line_height = match line {
+            TextLine::Bottom => 0.0,
+            TextLine::Middle => self.cap / 2.0,
+            TextLine::Top => self.cap,
+            TextLine::Ascender => self.ascent,
+            TextLine::Descender => -self.descent,
+        };
+        line_height / reference
+    }
 }
 
 fn push_layer(
@@ -540,6 +637,7 @@ fn push_layer(
             font,
             anchor,
             line,
+            height_basis,
             right_pad,
             spans,
         } = &primitive.shape
@@ -555,6 +653,7 @@ fn push_layer(
                     value,
                     anchor: *anchor,
                     line: *line,
+                    height_basis: *height_basis,
                     right_pad: *right_pad,
                     spans,
                     furniture: primitive.furniture,
@@ -809,6 +908,7 @@ struct ShownText<'a> {
     value: &'a str,
     anchor: TextAnchor,
     line: TextLine,
+    height_basis: TextHeightBasis,
     /// Shift the trimmed run forward by the width of `value`'s trailing pad.
     right_pad: bool,
     spans: &'a [PaperTextSpan],
@@ -1059,6 +1159,15 @@ fn show_text(
         text.origin_mm[0] + cos * pad_mm,
         text.origin_mm[1] + sin * pad_mm,
     ];
+    // The insertion line is a line of the face the label names, so its depth
+    // is read off that face; a label whose named face draws none of it takes
+    // the face that does.
+    let heights = faces
+        .iter()
+        .find(|face| face.key == text.typeface)
+        .or_else(|| emitted.first().map(|(_, face, _)| *face))
+        .map_or(FaceHeights::ARIAL, |face| face.heights);
+    let below_mm = height_mm * heights.drop(text.line, text.height_basis);
     // A run the page still cannot hold loses its tail to the page box, so it
     // is condensed along its own direction until it fits: the template states
     // the label and the page states its edge, and keeping every glyph on the
@@ -1068,14 +1177,7 @@ fn show_text(
     // em and lost its last two characters to the sheet edge.
     let mut condense = 1.0;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
-        let start = baseline_origin(
-            origin_mm,
-            text.rotation,
-            laid_out_mm,
-            height_mm,
-            text.anchor,
-            text.line,
-        );
+        let start = baseline_origin(origin_mm, text.rotation, laid_out_mm, below_mm, text.anchor);
         let reach = page_reach_mm(start, [cos, sin], page);
         if reach > 0.0 && laid_out_mm > reach {
             condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
@@ -1099,9 +1201,8 @@ fn show_text(
         origin_mm,
         text.rotation,
         width_mm * scale,
-        height_mm,
+        below_mm,
         text.anchor,
-        text.line,
     );
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
@@ -1142,56 +1243,30 @@ fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
     units * size_pt / PT_PER_MM
 }
 
-/// How far below a sheet `igTextBox`'s top the baseline runs, in body sizes.
-///
-/// The stored body size is the cap height, and the reference top is the
-/// font's ascender line: Arial's ascent is 0.905 em against a 0.688 em cap,
-/// so 0.905 / 0.688 = 1.32. The I drawing's 58 top-anchored labels measure
-/// 1.25–1.38 bodies (`examples/probe_text_anchor_modes.rs`); at 2.47 mm a
-/// body of one would leave them 0.79 mm high, which is what the `L=200mm`
-/// labels were sending into the residual list.
-const ASCENDER_HEIGHTS: f64 = 1.32;
-
-/// How far above the insertion point a descender-anchored baseline runs, in
-/// body sizes: Arial's descent (0.212 em) over the stored cap body (0.688 em).
-const DESCENDER_HEIGHTS: f64 = 0.31;
-
 /// Left end of the baseline, from the insertion point.
 ///
 /// Centre and right step back **along** the run by half the word or the whole
-/// word; middle, top and the ascender line step **down across** it by half the
-/// body size, one body size or 1.32 body sizes. The insertion point itself
+/// word; the insertion line steps **down across** it by `below_mm`
+/// ([`FaceHeights::drop`] of the style height). The insertion point itself
 /// never moves.
 fn baseline_origin(
     origin_mm: [f64; 2],
     rotation: f64,
     width_mm: f64,
-    height_mm: f64,
+    below_mm: f64,
     anchor: TextAnchor,
-    line: TextLine,
 ) -> [f64; 2] {
     let along = match anchor {
         TextAnchor::Left => 0.0,
         TextAnchor::Center => 0.5,
         TextAnchor::Right => 1.0,
     };
-    let down = match line {
-        TextLine::Bottom => 0.0,
-        TextLine::Middle => 0.5,
-        TextLine::Top => 1.0,
-        TextLine::Ascender => ASCENDER_HEIGHTS,
-        TextLine::Descender => -DESCENDER_HEIGHTS,
-    };
     let back = if width_mm.is_finite() && width_mm > 0.0 {
         width_mm * along
     } else {
         0.0
     };
-    let below = if height_mm.is_finite() && height_mm > 0.0 {
-        height_mm * down
-    } else {
-        0.0
-    };
+    let below = if below_mm.is_finite() { below_mm } else { 0.0 };
     if back == 0.0 && below == 0.0 {
         return origin_mm;
     }
@@ -1684,6 +1759,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -1723,6 +1799,7 @@ mod tests {
                         font: None,
                         anchor: TextAnchor::Left,
                         line: TextLine::Bottom,
+                        height_basis: crate::model::TextHeightBasis::Cap,
                         right_pad: false,
                         spans: Vec::new(),
                     },
@@ -1821,9 +1898,11 @@ mod tests {
     /// The reference plots put the baseline 0.00 mm / 1.25 mm / 3.26 mm below
     /// a 2.5 mm body's insertion point, one mode per class, so the step is
     /// measured against the body size and not against the pen. A sheet top
-    /// stops on the ascender line, a third of a body below a symbol's top.
+    /// stops on the face's ascender line: its ascent over its cap height of
+    /// a cap-height body.
     #[test]
     fn middle_and_top_step_down_across_the_baseline() {
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
         let bottom = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Bottom);
         let middle = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Middle);
         let top = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Top);
@@ -1838,7 +1917,7 @@ mod tests {
         assert!((middle[1] - 17.5).abs() < 0.05, "middle {}", middle[1]);
         assert!((top[1] - 15.0).abs() < 0.05, "top {}", top[1]);
         assert!(
-            (ascender[1] - (20.0 - 5.0 * 1.32)).abs() < 0.05,
+            (ascender[1] - (20.0 - 5.0 * inter.ascent / inter.cap)).abs() < 0.05,
             "ascender {}",
             ascender[1]
         );
@@ -1872,6 +1951,46 @@ mod tests {
             "turned {dropped:?}"
         );
         assert!((dropped[1] - upright[1]).abs() < 0.1, "turned {dropped:?}");
+    }
+
+    /// The insertion line's depth is a height of the face, measured in the
+    /// height the style states.
+    ///
+    /// A cap-height style (`0x0D`, every drawing-sheet label) hangs its middle
+    /// and top half and one style height down by definition, and its ascender
+    /// line at Arial's 0.905 / 0.716 = 1.264 — the 1.267 the A0/A1 sheets'
+    /// 192 Arial ascender labels measure. An ascent style (`0x0C`, the valve
+    /// and motor `M`) is one style height to its ascender line, and its
+    /// middle is Arial's cap over twice its ascent, 0.396 — the reference's
+    /// `M` baselines sit 0.37–0.45 style heights below their insertion.
+    #[test]
+    fn the_line_depth_is_a_height_of_the_face() {
+        use crate::model::TextHeightBasis::{Ascent, Cap};
+        let arial = super::FaceHeights::ARIAL;
+        let close = |got: f64, want: f64| (got - want).abs() < 2e-3;
+        assert!(close(arial.drop(TextLine::Bottom, Cap), 0.0));
+        assert!(close(arial.drop(TextLine::Middle, Cap), 0.5));
+        assert!(close(arial.drop(TextLine::Top, Cap), 1.0));
+        assert!(close(arial.drop(TextLine::Ascender, Cap), 1.264));
+        assert!(close(arial.drop(TextLine::Descender, Cap), -0.296));
+        assert!(close(arial.drop(TextLine::Middle, Ascent), 0.396));
+        assert!(close(arial.drop(TextLine::Top, Ascent), 0.791));
+        assert!(close(arial.drop(TextLine::Ascender, Ascent), 1.0));
+    }
+
+    /// The heights come off the face's own tables, with the top of `H`
+    /// standing in for a cap height an old `OS/2` does not state.
+    #[test]
+    fn face_heights_read_the_face_tables() {
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        assert_ne!(inter, super::FaceHeights::ARIAL);
+        assert!(inter.cap > 0.6 && inter.cap < inter.ascent, "{inter:?}");
+        assert!(inter.descent > 0.0, "{inter:?}");
+        // Bytes that are no font fall back to Arial's.
+        assert_eq!(
+            super::FaceHeights::of(b"not a font"),
+            super::FaceHeights::ARIAL
+        );
     }
 
     /// A padded label anchors on its visible glyphs alone, on either side.
@@ -1932,6 +2051,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -1986,6 +2106,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
+            height_basis: crate::model::TextHeightBasis::Cap,
             right_pad,
             spans: Vec::new(),
         };
@@ -2070,6 +2191,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
+            height_basis: crate::model::TextHeightBasis::Cap,
             right_pad: false,
             spans: Vec::new(),
         };
@@ -2144,6 +2266,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: vec![PaperTextSpan {
                         start: 0,
@@ -2219,6 +2342,7 @@ mod tests {
             value: "NULL*NUL",
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
+            height_basis: crate::model::TextHeightBasis::Cap,
             right_pad: false,
             spans: &spans,
             furniture: false,
@@ -2263,6 +2387,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: vec![
                         PaperTextSpan {
@@ -2319,6 +2444,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2367,6 +2493,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2431,6 +2558,7 @@ mod tests {
                     font: None,
                     anchor,
                     line,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2529,6 +2657,7 @@ mod tests {
                     font: Some(font.to_string()),
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },
@@ -2612,6 +2741,7 @@ mod tests {
                     font: Some(font.to_string()),
                     anchor,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans: Vec::new(),
                 },

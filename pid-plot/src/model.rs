@@ -507,14 +507,20 @@ pub enum PaperShape {
         anchor: TextAnchor,
         /// Which line of `origin_mm` the paragraph letters from.
         ///
-        /// The stored point stays the insertion point. The middle moves the
-        /// PDF baseline down across the run by half the body size, the top by
-        /// one body size, and the ascender line by 1.32 body sizes, the same
-        /// way the horizontal half moves it back along the run. Symbol
+        /// The stored point stays the insertion point. The writer moves the
+        /// PDF baseline down across the run by that line's height in the face,
+        /// measured in `height_basis` — for a cap-height style, half a body,
+        /// one body, or the face's ascent over its cap — the same way the
+        /// horizontal half moves it back along the run. Symbol
         /// lettering is [`TextLine::Middle`]: its record carries no body box,
         /// and the reference puts the templates' own lettering on the middle
         /// line.
         line: TextLine,
+        /// Which of the face's heights `height_mm` measures. The writer
+        /// turns it into the em the face is set in before it steps the
+        /// baseline down to `line`.
+        #[serde(default, skip_serializing_if = "TextHeightBasis::is_cap")]
+        height_basis: TextHeightBasis,
         /// Draw the trimmed glyphs one trailing-pad width along the baseline.
         ///
         /// A left anchor keeps the insertion at the left of the stored run.
@@ -558,6 +564,43 @@ pub struct PaperTextSpan {
     /// Typeface the run is set in; `None` takes the shape's own `font`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font: Option<String>,
+}
+
+/// Which of a face's heights a style's character height measures.
+///
+/// `JStyleTextChar` stores a height and, one byte before it, a code naming
+/// which height of the face it is
+/// ([`pid_parse::style_link::TEXT_CHAR_HEIGHT_MODE_OFFSET`]). Against the
+/// reference plots a drawing sheet's code `0x0D` height is the face's cap
+/// height and a symbol body's code `0x0C` height is its ascent — the valve
+/// and motor `M` of a 2.54 mm Arial style letter at a 2.81 mm em, not a
+/// 3.55 mm one, and their middle line sits `cap / (2 × ascent)` = 0.40 of
+/// the style height below the insertion, not 0.50. See
+/// `docs/analysis/2026-11-07-the-text-height-names-which-height-it-is.md`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextHeightBasis {
+    /// The height is the face's cap height: code `0x0D`, and every height
+    /// whose code is absent or is one the corpus has not been measured on.
+    #[default]
+    Cap,
+    /// The height is the face's ascent: code `0x0C`.
+    Ascent,
+}
+
+impl TextHeightBasis {
+    /// The basis a `JStyleTextChar` height-mode code names.
+    #[must_use]
+    pub fn from_mode(code: Option<u8>) -> Self {
+        match code {
+            Some(pid_parse::style_link::TEXT_HEIGHT_MODE_ASCENT) => Self::Ascent,
+            _ => Self::Cap,
+        }
+    }
+
+    fn is_cap(&self) -> bool {
+        *self == Self::Cap
+    }
 }
 
 /// Which side of its insertion point a paragraph letters from.
@@ -623,22 +666,22 @@ pub enum TextLine {
     /// sheet's `2` label: both measure one body, where the sheet's `1`
     /// measures a third more.
     Top,
-    /// The insertion point is the font's ascender line: the baseline runs 1.32
-    /// body sizes below the point.
+    /// The insertion point is the font's ascender line: the baseline runs the
+    /// face's ascent below the point.
     ///
     /// A sheet `igTextBox` top does not stop at the cap line. Its labels sit
-    /// a third of a body below a one-body step, which is Arial's ascent
+    /// a quarter of a body below a one-body step, which is Arial's ascent
     /// (0.905 em) measured against the body size the style table stores as the
-    /// cap height (0.688 em): 0.905 / 0.688 = 1.32. See
-    /// [`TextLine::from_anchor_code`].
+    /// cap height (0.716 em): 1.264, against the 1.267 the A0/A1 sheets' 192
+    /// Arial ascender labels measure. See [`TextLine::from_anchor_code`].
     Ascender,
-    /// The insertion point is the font's descender line: the baseline runs
-    /// 0.31 body sizes **above** the point.
+    /// The insertion point is the font's descender line: the baseline runs the
+    /// face's descent **above** the point.
     ///
     /// Only a vertically mirrored symbol label reaches it. The body's own
     /// label hangs from the ascender line; the mirror turns the box over, so
     /// the edge left at the insertion is the box's bottom. Arial's descent
-    /// (0.212 em) over the stored cap body (0.688 em) is 0.31. `SSV Sample
+    /// (0.212 em) over the stored cap body (0.716 em) is 0.30. `SSV Sample
     /// Valve Type 2.sym`'s `D` on the A2 and flash-drum A sheets letters
     /// 0.88 / 0.91 mm above its insertion at a 3.17 mm body, against 0.98.
     Descender,
@@ -2633,6 +2676,9 @@ fn push_entity_with(
                         // is the horizontal hot point the insertion sits at.
                         anchor,
                         line: TextLine::from_anchor_code(*anchor_code),
+                        height_basis: TextHeightBasis::from_mode(
+                            styled.as_ref().and_then(|style| style.height_mode),
+                        ),
                     },
                 ));
             }
@@ -3101,6 +3147,9 @@ fn symbol_text_shape(
         font: lettering.and_then(|lettering| lettering.font_name.clone()),
         anchor,
         line,
+        height_basis: TextHeightBasis::from_mode(
+            lettering.and_then(|lettering| lettering.height_mode),
+        ),
         right_pad: false,
         spans: lettering.map_or_else(Vec::new, |lettering| {
             lettering
@@ -3563,6 +3612,7 @@ mod tests {
         let char_style = |id: u32, height_m: f64, font: &str| ResolvedTextHeight {
             style_id: id,
             height_m,
+            height_mode: None,
             colour: None,
             alignment: None,
             line_spacing: None,
@@ -3650,6 +3700,7 @@ mod tests {
                 paragraph: Some(ResolvedTextHeight {
                     style_id: 3,
                     height_m: 0.0035,
+                    height_mode: None,
                     colour: None,
                     alignment: None,
                     line_spacing,
@@ -3806,6 +3857,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Middle,
+            height_basis: crate::model::TextHeightBasis::Cap,
             right_pad: false,
             spans: Vec::new(),
         };
@@ -3849,6 +3901,7 @@ mod tests {
                 font: None,
                 anchor: TextAnchor::Center,
                 line: TextLine::Middle,
+                height_basis: crate::model::TextHeightBasis::Cap,
                 right_pad: false,
                 spans: Vec::new(),
             },
@@ -3988,6 +4041,7 @@ mod tests {
                 paragraph: Some(ResolvedTextHeight {
                     style_id: 3,
                     height_m: 0.0037,
+                    height_mode: None,
                     colour: None,
                     alignment: Some(TextAlignment::Right),
                     line_spacing: None,
@@ -4046,6 +4100,7 @@ mod tests {
             let lettering = ResolvedTextHeight {
                 style_id: 47,
                 height_m: 0.003_175,
+                height_mode: None,
                 colour: None,
                 alignment: Some(alignment),
                 line_spacing: Some(1.0),
@@ -4503,6 +4558,7 @@ mod tests {
             rotation_rad: 0.25,
             letter_height_m: 0.0,
             height_m: Some(0.003),
+            height_mode: None,
             rgb: None,
             alignment: Some(TextAlignment::Right),
             line_spacing: None,
@@ -4552,6 +4608,7 @@ mod tests {
             rotation_rad: 0.0,
             letter_height_m: 0.0025,
             height_m: None,
+            height_mode: None,
             rgb: None,
             alignment: Some(TextAlignment::Left),
             line_spacing: None,

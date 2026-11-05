@@ -446,6 +446,7 @@ mod tests {
                     font: Some("Arial".into()),
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
                     right_pad: false,
                     spans,
                 },

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### 字高按 `JStyleTextChar +41` 说的那个字体高度来落基线（2026-11-07）
+
+`+41` 一字节说明 `+42` 的字高量的是字体的哪个高：`0x0D`（图纸文字及多数符号）是大写字高，
+`0x0C`（阀门、电机的 `M`，`Turn off` 的 `S`）是升部。插入线下落改为按嵌入字体自己的
+`usWinAscent` / `usWinDescent` / `sCapHeight` 算，删掉固定的 1.32 / 0.31 倍。十一张参考图上
+`symbol/Middle` 的平均下偏从 +0.03 … +0.10 落到 ±0.017，Arial `Left/Ascender` 从 +0.018 … +0.039
+落到 ±0.015；coverage / extra / 文字配对 / pen 不变。新增 `probe_which_height_a_text_char_names`；
+见 `docs/analysis/2026-11-07-the-text-height-names-which-height-it-is.md`。
+
 ### 解码 `0x0063 igEllipse2d`：空冷器风机椭圆上页（2026-11-06）
 
 `Air Cooler Type 1.sym` 与三张 A1 `.pid` 的缓存体各有 2 条 `0x0063`（59 字节）记录，此前没有解码器，

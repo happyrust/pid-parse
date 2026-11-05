@@ -75,9 +75,10 @@ struct Baseline {
 const CLASS_RATCHET_MIN_COUNT: usize = 10;
 /// Largest mean down-slope a class may show, in body heights.
 ///
-/// 0.10 of a 2.5 mm body is 0.25 mm — inside the pairing window by design,
-/// and the point of the gate. The measured classes sit at 0.03–0.06.
-const CLASS_RATCHET_HEIGHTS: f64 = 0.10;
+/// 0.05 of a 2.5 mm body is 0.125 mm — inside the pairing window by design,
+/// and the point of the gate. The measured classes sit within 0.03 once a
+/// line's depth is read off the face in the height its style measures.
+const CLASS_RATCHET_HEIGHTS: f64 = 0.05;
 /// Largest mean along-run shift a class may show, in body heights.
 ///
 /// Tighter than the down gate because the along reading has a clean zero to

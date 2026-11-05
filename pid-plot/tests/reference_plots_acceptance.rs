@@ -95,6 +95,18 @@ struct Pin {
 /// does not.
 const EXTRA_SLACK_MM: f64 = 0.5;
 
+/// Smallest lettering class whose mean down-shift is gated, in labels.
+const CLASS_MIN_COUNT: usize = 10;
+
+/// Largest mean down-shift a lettering class may show, in body heights.
+///
+/// Every class of ten or more labels on the eleven pages reads within
+/// ±0.026. The valve and motor `M` (`symbol/Middle`, 14–29 labels on each A0
+/// wellsite) read +0.094…+0.098 while a symbol body's ascent-measured height
+/// was stepped down as if it were a cap height; this is the gate that would
+/// have caught it.
+const CLASS_DOWN_HEIGHTS: f64 = 0.04;
+
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 
 const PINS: [Pin; 11] = [
@@ -407,6 +419,18 @@ fn eleven_reference_plots_hold_their_readings() {
             pen.differed,
             pin.max_pen_differed
         );
+        for class in &report.text_offsets {
+            if class.count < CLASS_MIN_COUNT || class.class == "unknown" {
+                continue;
+            }
+            assert!(
+                class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
+                "{name} {} down {:+.3} body heights over {} labels",
+                class.class,
+                class.mean_down_heights,
+                class.count
+            );
+        }
         let missing_now: Vec<&str> = model.missing_symbols.iter().map(String::as_str).collect();
         assert_eq!(
             missing_now, pin.missing_symbols,

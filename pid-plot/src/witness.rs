@@ -351,6 +351,7 @@ mod tests {
                 font: Some(face.to_string()),
                 anchor: crate::model::TextAnchor::Left,
                 line: crate::model::TextLine::Middle,
+                height_basis: crate::model::TextHeightBasis::Cap,
                 right_pad: false,
                 spans: Vec::new(),
                 rotation: 0.0,

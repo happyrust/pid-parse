@@ -583,6 +583,35 @@ pub const TEXT_PARA_LINE_SPACING_OFFSET: usize = 66;
 /// `JStyleTextChar` payload. Level: native-reader.
 pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
 
+/// Offset of the byte that says which of the face's heights
+/// [`TEXT_CHAR_HEIGHT_OFFSET`] measures, within a `JStyleTextChar` payload.
+///
+/// Level: **native-reader** for the field, corpus for its two values.
+/// `style.dll`'s version-3 reader (`sub_10030A20`) reads this one byte into
+/// object `+360` immediately before the height at `+368`, and the height's
+/// setter (`IJStyleTextCharImp` slot 6, `sub_10031530`) writes the two
+/// together and refuses any code outside `10..=14`; the getter converts the
+/// stored height between codes through a three-way lookup (`11` / `12` /
+/// `13`). So the height is not a size on its own: it is one of the face's
+/// heights, and this byte names which.
+///
+/// The corpus carries three codes: `0x0D` on 5273 of 5566 records (every
+/// drawing-sheet label), `0x0C` on 675 (the valve, motor and signal symbols'
+/// own `M` / `S`), `0x0B` on 118 (symbol bodies only). Against the
+/// reference plots a `0x0D` height is the face's cap height — the plotted em
+/// is 1.38–1.51 of it — and a `0x0C` height is its ascent: the em is
+/// 1.09–1.15 of it, against Arial's `1 / 0.905`.
+/// See [`TEXT_HEIGHT_MODE_ASCENT`] and [`TEXT_HEIGHT_MODE_CAP`].
+pub const TEXT_CHAR_HEIGHT_MODE_OFFSET: usize = 41;
+
+/// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`] code for a height that is the face's
+/// ascent.
+pub const TEXT_HEIGHT_MODE_ASCENT: u8 = 0x0C;
+
+/// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`] code for a height that is the face's cap
+/// height — the code every drawing-sheet label carries.
+pub const TEXT_HEIGHT_MODE_CAP: u8 = 0x0D;
+
 /// Offset of the character colour, a Win32 `COLORREF` (`0x00BBGGRR`), within
 /// a `JStyleTextChar` payload.
 ///
@@ -1130,6 +1159,10 @@ pub struct StyleRecord {
     /// Character height in metres, when this is a `JStyleTextChar` whose
     /// height reads plausibly.
     pub char_height_m: Option<f64>,
+    /// Which of the face's heights [`Self::char_height_m`] measures, when
+    /// this is a `JStyleTextChar` — the raw byte at
+    /// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`].
+    pub char_height_mode: Option<u8>,
     /// `JStyleTextChar` this record names, when it is a `JStyleTextPara`.
     pub text_char_reference: Option<u32>,
     /// Horizontal alignment, when this is a `JStyleTextPara` stating one the
@@ -1292,6 +1325,9 @@ pub struct ResolvedTextHeight {
     pub style_id: u32,
     /// Character height in metres, as stored at [`TEXT_CHAR_HEIGHT_OFFSET`].
     pub height_m: f64,
+    /// Which of the face's heights [`Self::height_m`] measures, read at
+    /// [`TEXT_CHAR_HEIGHT_MODE_OFFSET`].
+    pub height_mode: Option<u8>,
     /// Character colour as a raw Win32 `COLORREF` (`0x00BBGGRR`), read at
     /// [`TEXT_CHAR_COLOUR_OFFSET`]. `None` when the word does not read as one
     /// — a caller keeps its own default then, the same way an unstated fill
@@ -1461,6 +1497,7 @@ impl DocumentStyleTable {
                         OVERRIDE_DASH_REFERENCE_OFFSET,
                     ),
                     char_height_m: read_char_height(type_code, payload),
+                    char_height_mode: read_char_height_mode(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
                     text_alignment: read_text_alignment(type_code, payload),
                     line_spacing: read_line_spacing(type_code, payload),
@@ -1820,6 +1857,7 @@ impl DocumentStyleTable {
         Some(ResolvedTextHeight {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
+            height_mode: char_style.char_height_mode,
             colour: char_style.text_colour,
             alignment: para.text_alignment,
             line_spacing: para.line_spacing,
@@ -1844,6 +1882,7 @@ impl DocumentStyleTable {
         Some(ResolvedTextHeight {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
+            height_mode: char_style.char_height_mode,
             colour: char_style.text_colour,
             alignment: None,
             line_spacing: None,
@@ -1927,6 +1966,13 @@ fn read_char_height(type_code: u16, payload: &[u8]) -> Option<f64> {
         return None;
     }
     Some(height_m)
+}
+
+fn read_char_height_mode(type_code: u16, payload: &[u8]) -> Option<u8> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+        return None;
+    }
+    payload.get(TEXT_CHAR_HEIGHT_MODE_OFFSET).copied()
 }
 
 fn read_text_char_reference(type_code: u16, payload: &[u8]) -> Option<u32> {
