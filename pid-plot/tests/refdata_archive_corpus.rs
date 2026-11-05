@@ -30,25 +30,22 @@
 //! - a symbol body resolves with **no** directory root at all, so the archive
 //!   is the source of the strokes and not a fallback beside one.
 //!
-//! # The template that is named and still refused
+//! # The template that is named in full and worn
 //!
 //! `test-file/DWG-0201GP06-01.pid` links `XIONGANA2.igr`, and that member is in
-//! the archive. The page still wears nothing, because `XIONGANA2.igr` carries
-//! no frame to match it against: the file reads as 6 entities — 2 `Other`,
-//! 1 `Symbol`, 3 `Text` (核准 / 校对 / 储运工艺, the sign-off column) — with a
-//! 653-byte `Sheet6` that declares a sheet and holds no geometry. Its own
-//! summary says what it is: `SmartSketch Application`, `TransAcad.igr` for a
-//! template, `ACAD_GLOBALS.FileName = C:\Users\sp3d\Desktop\xionganA2.dwg`,
-//! `File Version: SmartSketch(R) 6.*/RAD 4.2.` — a `.dwg` carried through
-//! SmartSketch rather than a SmartPlant P&ID border. It is a title-block
-//! fragment, 93.5 × 36 mm, so the name window refuses it. That refusal is now
-//! the end of the pick: a named page does not fall back to `A2-W - New.igr`
-//! (whose ink is 0.31 mm from the stated 594.31 × 420.31) or to any other
-//! family's A2, because the title block is the page's signature and the size
-//! only says how large the paper is. The pairing the checklist recorded
-//! ("`XIONGANA2.igr` is what `DWG-0201GP06-01` needs") is therefore answered —
-//! the file is here — and still unsatisfied, for a reason that is in the file
-//! rather than missing from the corpus; `missing_templates` reports the stem.
+//! the archive. It carries no frame to match against: the file reads as 6
+//! entities — 2 `Other`, 1 `Symbol`, 3 `Text` (核准 / 校对 / 储运工艺, the
+//! sign-off column) — with a 653-byte `Sheet6` that declares a sheet and holds
+//! no geometry. Its own summary says what it is: `SmartSketch Application`,
+//! `TransAcad.igr` for a template, `ACAD_GLOBALS.FileName =
+//! C:\Users\sp3d\Desktop\xionganA2.dwg` — a `.dwg` carried through SmartSketch
+//! rather than a SmartPlant P&ID border, a 93.5 × 36 mm title-block fragment
+//! authored in page coordinates (its placement sits on the A2 corner,
+//! `(594.0, 0.0)` mm). No extent rule can accept it, and none has to: the link
+//! spells the file's whole stem, so the page has already said which file it
+//! wears, and it goes on 1:1. A page whose link is only an 8.3 prefix still
+//! answers to the extent window, and a named page never falls back to another
+//! family's A2.
 //!
 //! Soft-skips when the fixture backup is absent, which is the case on CI.
 
@@ -173,28 +170,26 @@ fn a_backup_archive_draws_the_furniture_its_drawings_name() {
 }
 
 #[test]
-fn a_template_the_sheet_names_but_the_file_cannot_supply_is_refused() {
+fn a_fragment_the_sheet_spells_in_full_is_worn_at_one_to_one() {
     let Some(backup) = backup_dir() else {
         eprintln!("skipping the archive corpus; no fixture backup is present");
         return;
     };
     // This drawing links `XIONGANA2.igr`, which the archive holds and which
-    // reads as a 93.5 x 36 mm title-block fragment. The name still decides: no
-    // stranger's A2 fits the page on its behalf, and the page says which name
-    // went unanswered.
+    // reads as a 93.5 x 36 mm title-block fragment with no stroke. The link
+    // spells the whole file stem, so it is the page's own statement of which
+    // file it wears: the fragment goes on 1:1, with no size check.
     let drawing = fixture_dir().join("DWG-0201GP06-01.pid");
     let model = layout(&drawing, &backup);
+    assert_eq!(template_file(&model, "DWG-0201GP06-01"), "XIONGANA2.igr");
+    let template = model.template.as_ref().expect("furniture");
+    assert!(from_an_archive(&template.path), "{}", template.path);
     assert!(
-        model.template.is_none(),
-        "the page wore {} rather than nothing",
-        model
-            .template
-            .as_ref()
-            .map_or("-", |template| template.path.as_str())
+        model.missing_templates.is_empty(),
+        "{:?}",
+        model.missing_templates
     );
-    assert_eq!(model.missing_templates, vec!["XIONGANA2".to_string()]);
 }
-
 #[test]
 fn without_the_archive_the_same_drawings_draw_no_furniture() {
     let Some(backup) = backup_dir() else {

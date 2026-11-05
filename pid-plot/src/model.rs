@@ -1785,6 +1785,35 @@ fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
         .any(|prefix| stem.starts_with(prefix.as_str()))
 }
 
+/// Every whole file stem the drawing's link records spell, upper-cased.
+///
+/// An 8.3 short name (`CPE-SQ~2.IGR`) is not a whole stem — Windows cut it —
+/// so only names without a `~` count; `\XIONGANA2.igr` spells all of it.
+fn linked_template_stems(links: &[String]) -> Vec<String> {
+    let mut stems: Vec<String> = Vec::new();
+    for link in links {
+        let file_name = link.rsplit(['\\', '/']).next().unwrap_or(link);
+        let Some((stem, extension)) = file_name.rsplit_once('.') else {
+            continue;
+        };
+        if !extension.eq_ignore_ascii_case("igr") || stem.is_empty() || stem.contains('~') {
+            continue;
+        }
+        let stem = stem.to_ascii_uppercase();
+        if !stems.contains(&stem) {
+            stems.push(stem);
+        }
+    }
+    stems
+}
+
+/// Whether `path`'s whole file stem is one of `stems`.
+fn template_spelled_by(path: &Path, stems: &[String]) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stems.contains(&stem.to_ascii_uppercase()))
+}
+
 /// The backup package a drawing belongs to, when it is filed beside one.
 ///
 /// A backup package directory is named after the drawing it holds, with a `_p`
@@ -1866,8 +1895,50 @@ fn load_border_template(
     links: &[String],
 ) -> Option<BorderTemplateDocument> {
     let prefixes = linked_template_prefixes(links);
+    let exact = linked_template_stems(links);
+    if let Some(found) = pick_border_template(
+        border_template_sources(corpus, package),
+        page_mm,
+        &prefixes,
+        &exact,
+    ) {
+        return Some(found);
+    }
+    if prefixes.is_empty() {
+        return None;
+    }
+    // A named page whose own corpus and package cannot answer the name may
+    // still find the file in another drawing's package: `DWG-0201GP06-01`
+    // links `XIONGANA2.igr`, and the only copy is in `DWG-0202GP06-01_p`.
+    // Only a named page searches that far, so an unnamed page's candidates —
+    // where size is the only evidence — never grow.
+    pick_border_template(
+        foreign_package_sources(corpus, package),
+        page_mm,
+        &prefixes,
+        &exact,
+    )
+}
+
+/// The best template among `sources` for a page of `page_mm` that names
+/// `prefixes` (and spells `exact` in full).
+///
+/// A template whose whole file stem is one the link record spells is the
+/// page's own statement of which file it wears, so it is taken at 1:1 with no
+/// size check and outranks every candidate that only shares a prefix.
+/// `XIONGANA2.igr` is why: it is a 93.5 × 36 mm title-block fragment with
+/// three labels and one placement and no stroke at all, authored in the
+/// page's own coordinates (its placement sits on the A2 page's corner,
+/// `(594.0, 0.0)` mm), so no extent rule could ever accept it.
+fn pick_border_template(
+    sources: Vec<TemplateSource>,
+    page_mm: [f64; 2],
+    prefixes: &[String],
+    exact: &[String],
+) -> Option<BorderTemplateDocument> {
     let mut best: Option<((f64, String), BorderTemplateDocument)> = None;
-    for source in border_template_sources(corpus, package) {
+    let mut best_exact: Option<((f64, String), BorderTemplateDocument)> = None;
+    for source in sources {
         let (path, doc) = match source {
             TemplateSource::File(path) => {
                 let Ok(doc) = PidParser::new().parse_file(&path) else {
@@ -1885,7 +1956,7 @@ fn load_border_template(
                 (file.label(), doc)
             }
         };
-        let named = template_named_by(&path, &prefixes);
+        let named = template_named_by(&path, prefixes);
         if !prefixes.is_empty() && !named {
             // The page named a template, so the furniture on it is the only
             // furniture it may wear. Another family's of the same size would
@@ -1893,21 +1964,30 @@ fn load_border_template(
             // honest answer instead.
             continue;
         }
+        let spelled = template_spelled_by(&path, exact);
         let geometry = build_normalized_geometry(&doc);
-        let Some(extent_mm) = ink_extent_mm(&geometry) else {
-            continue;
-        };
-        let error = (extent_mm[0] - page_mm[0])
-            .abs()
-            .max((extent_mm[1] - page_mm[1]).abs());
-        let tolerance = if named {
-            TEMPLATE_NAMED_TOLERANCE_MM
-        } else {
-            TEMPLATE_EXTENT_TOLERANCE_MM
-        };
-        if error > tolerance {
-            continue;
+        let stroked = ink_extent_mm(&geometry);
+        let error = stroked.map_or(0.0, |extent_mm| {
+            (extent_mm[0] - page_mm[0])
+                .abs()
+                .max((extent_mm[1] - page_mm[1]).abs())
+        });
+        if !spelled {
+            if stroked.is_none() {
+                continue;
+            }
+            let tolerance = if named {
+                TEMPLATE_NAMED_TOLERANCE_MM
+            } else {
+                TEMPLATE_EXTENT_TOLERANCE_MM
+            };
+            if error > tolerance {
+                continue;
+            }
         }
+        let Some(extent_mm) = stroked.or_else(|| anchor_extent_mm(&geometry)) else {
+            continue;
+        };
         let document = BorderTemplateDocument {
             path,
             extent_mm,
@@ -1915,15 +1995,83 @@ fn load_border_template(
             geometry,
         };
         let rank = template_rank(&document.path, error);
-        if best
+        let slot = if spelled { &mut best_exact } else { &mut best };
+        if slot
             .as_ref()
             .is_some_and(|(best_rank, _)| *best_rank <= rank)
         {
             continue;
         }
-        best = Some((rank, document));
+        *slot = Some((rank, document));
     }
-    best.map(|(_, template)| template)
+    best_exact.or(best).map(|(_, template)| template)
+}
+
+/// The `.igr` members of every other backup package's `RefData~*.zip` under
+/// the corpus, in path order: `<corpus>/*_p` and `<corpus>/*/*_p`, the two
+/// depths [`drawing_package_dir`] looks for a drawing's own package at.
+fn foreign_package_sources(corpus: &Path, own: Option<&Path>) -> Vec<TemplateSource> {
+    let mut packages: Vec<PathBuf> = Vec::new();
+    let mut visit = |dir: &Path| {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut children: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        children.sort();
+        for child in &children {
+            let is_package = child
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_p"));
+            if is_package && own != Some(child.as_path()) && !packages.contains(child) {
+                packages.push(child.clone());
+            }
+        }
+        children
+    };
+    for child in visit(corpus) {
+        visit(&child);
+    }
+    packages.sort();
+    let mut sources: Vec<TemplateSource> = Vec::new();
+    for package in packages {
+        for archive in refdata_archives(&package) {
+            let Ok(members) = archive_members(&archive, "igr") else {
+                continue;
+            };
+            sources.extend(members.into_iter().map(TemplateSource::Member));
+        }
+    }
+    sources
+}
+
+/// The box the labels and placements of a stroke-free template span, paper
+/// millimetres — what [`BorderTemplate::extent_mm`] reports for a fragment
+/// [`ink_extent_mm`] cannot measure. It never decides a pick.
+fn anchor_extent_mm(geometry: &NormalizedPidGeometry) -> Option<[f64; 2]> {
+    let mut min = [f64::MAX; 2];
+    let mut max = [f64::MIN; 2];
+    let mut seen = false;
+    for entity in &geometry.entities {
+        let point = match &entity.kind {
+            PidGraphicKind::Text { insertion, .. }
+            | PidGraphicKind::SymbolInstance { insertion, .. } => insertion,
+            _ => continue,
+        };
+        if point.x.is_finite() && point.y.is_finite() {
+            min = [min[0].min(point.x), min[1].min(point.y)];
+            max = [max[0].max(point.x), max[1].max(point.y)];
+            seen = true;
+        }
+    }
+    seen.then_some([
+        (max[0] - min[0]) * MM_PER_METRE,
+        (max[1] - min[1]) * MM_PER_METRE,
+    ])
 }
 
 fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
@@ -4825,9 +4973,9 @@ mod tests {
     /// the extent rule would dress this 熊安 drawing in 华北分公司's title
     /// block. `DWG-0202GP06-01` is the same story one size down: its
     /// `CPECCHBA2.igr` lives in its own package archive rather than beside the
-    /// fixture, and `CPECCHB-SQ-A2.igr` sits 0.37 mm from its page. Both pages
-    /// now draw no furniture; a page that names nothing still answers to the
-    /// extent.
+    /// fixture, and `CPECCHB-SQ-A2.igr` sits 0.37 mm from its page. The first
+    /// draws no furniture; the second finds its own name in another package or
+    /// none; a page that names nothing still answers to the extent.
     #[test]
     fn a_named_sheet_wears_no_template_it_does_not_name() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
@@ -4846,10 +4994,16 @@ mod tests {
         );
 
         let cchb = vec![r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPECCHBA2.igr".to_string()];
-        assert!(
-            super::load_border_template(&corpus, None, [593.75, 419.63], &cchb).is_none(),
-            "a named A2 page wore another family's furniture"
-        );
+        // The name's only copy is in another drawing's package
+        // (`backup-test/DWG-0202GP06-01_p`), which a named page may search;
+        // `CPECCHB-SQ-A2.igr`, 0.37 mm from this size, is never a candidate.
+        if let Some(named) = super::load_border_template(&corpus, None, [593.75, 419.63], &cchb) {
+            assert!(
+                named.path.ends_with("CPECCHBA2.igr"),
+                "a named A2 page wore another family's furniture: {}",
+                named.path.display()
+            );
+        }
         // Two A2 families now sit in the fixture tree and both are 0.37 mm
         // from this size — `CPECCHB-SQ-A2` is 593.94 × 420.00 and `CPE-SQ-A2`
         // 594.00 × 420.00 — so their ranks tie at the extent quantum and the
@@ -4896,6 +5050,66 @@ mod tests {
             "{:?}",
             model.missing_templates
         );
+    }
+
+    /// A page whose link spells a template's whole file name wears it 1:1
+    /// even when the file has no stroke to measure, and finds it in another
+    /// drawing's package when its own corpus cannot answer.
+    ///
+    /// `DWG-0201GP06-01.pid` links `XIONGANA2.igr`: three sign-off labels and
+    /// one placement, no line at all, kept only in
+    /// `backup-test/DWG-0202GP06-01_p/RefData~4~682.zip`.
+    #[test]
+    fn a_fully_spelled_fragment_is_worn_from_another_package() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        if !corpus.join("backup-test/DWG-0202GP06-01_p").is_dir() {
+            eprintln!("skipping; the fixture backup is absent");
+            return;
+        }
+        let model = super::lay_out_drawing(&corpus.join("DWG-0201GP06-01.pid"), &corpus)
+            .expect("the DWG-0201 fixture lays out");
+        let template = model.template.as_ref().expect("XIONGANA2 is worn");
+        assert!(
+            template.path.ends_with("XIONGANA2.igr") && template.path.contains("DWG-0202GP06-01_p"),
+            "{}",
+            template.path
+        );
+        assert!(
+            model.missing_templates.is_empty(),
+            "{:?}",
+            model.missing_templates
+        );
+        let labels: Vec<&str> = model
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.furniture)
+            .filter_map(|primitive| match &primitive.shape {
+                PaperShape::Text { value, .. } => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
+        for label in ["核准", "校对", "储运工艺"] {
+            assert!(labels.contains(&label), "{label} missing from {labels:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_whole_long_name_spells_a_stem() {
+        let links = vec![
+            r"C:\PID_SQ~1\Ref\TEMPLA~1\CPE-SQ~2.IGR".to_string(),
+            r"Ref\Template Files\XIONGANA2.igr".to_string(),
+            r"\CPE-SQ~2.PID".to_string(),
+        ];
+        assert_eq!(super::linked_template_stems(&links), vec!["XIONGANA2"]);
+        let stems = super::linked_template_stems(&links);
+        assert!(super::template_spelled_by(
+            std::path::Path::new("a/xiongana2.igr"),
+            &stems
+        ));
+        assert!(!super::template_spelled_by(
+            std::path::Path::new("a/XIONGANA2-W.igr"),
+            &stems
+        ));
     }
 
     /// A bare page says which name went unanswered, so a missing template is a
