@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### A2 管线号与 `ESD Interlock` 的 `I` 按参考 Tf 出图（2026-11-07）
+
+`measured_tf` 补两行参考图实测：Arial 8 pt → 11.16、14.4 pt → 20.19。A2 `轻烃分离器I` 的
+`65-AI-010901-I2` / `200-LFL-0109201-B2` 原先按 8 pt 写，比参考窄 1.40 倍，Left/Ascender 类 advance
+−0.320 → −0.004 字高（清单 #8）。六张图上 `ESD Interlock` 的 `I` 让 symbol/Middle 的 max_shift 从
+0.28–0.35 mm 降到 0.17–0.22 mm。coverage、extra、文字、pen 读数不变。见
+`docs/analysis/2026-11-07-the-a2-8pt-arial-was-missing-its-tf.md`。
 ### 模板放在边框框架记录的位置（`igSmartFrame2d +164` 内容变换）（2026-11-07）
 
 `igSmartFrame2d` 载荷 `+164..+219` 是 RAD 二维变换：2×2 矩阵、平移（米）、缩放。解码为

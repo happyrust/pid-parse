@@ -4615,10 +4615,14 @@ mod tests {
             "three runs on the page: {:?}",
             ink.spans
         );
+        // Each run letters at its own face's plotted size — 8 pt Arial at the
+        // reference's measured 11.16 pt, 9 pt SimSun at its style size — so
+        // the middle run differs from both neighbours, which a label drawn as
+        // one run would not.
         let heights: Vec<f64> = ink.spans.iter().map(|span| span.height_mm).collect();
         assert!(
-            heights[1] > heights[0] + 0.2 && heights[1] > heights[2] + 0.2,
-            "the middle run letters larger: {heights:?}"
+            (heights[1] - heights[0]).abs() > 0.2 && (heights[1] - heights[2]).abs() > 0.2,
+            "the middle run letters at its own size: {heights:?}"
         );
         for pair in ink.spans.windows(2) {
             let expected = pair[0].origin_mm[0] + pair[0].advance_mm;

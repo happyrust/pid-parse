@@ -1487,6 +1487,11 @@ fn measured_tf(typeface: &str, hundredths: i64) -> Option<f64> {
         ("Arial Narrow", 700, 10.17),
         ("Arial Narrow", 1000, 14.40),
         ("Arial", 900, 12.45),
+        // The A2 `轻烃分离器I` line labels `65-AI-010901-I2` /
+        // `200-LFL-0109201-B2` (8 pt) and the `ESD Interlock` `I`
+        // (14.4 pt).
+        ("Arial", 800, 11.16),
+        ("Arial", 1440, 20.19),
         ("FangSong", 700, 10.56),
         ("FangSong", 720, 10.56),
         ("FangSong", 900, 13.44),
@@ -1554,6 +1559,8 @@ mod tests {
         assert_eq!(plotted_size_pt("Arial Narrow", mm(7.0)), 10.17);
         assert_eq!(plotted_size_pt("Arial Narrow", mm(10.0)), 14.40);
         assert_eq!(plotted_size_pt("Arial", mm(9.0)), 12.45);
+        assert_eq!(plotted_size_pt("Arial", 2.822224), 11.16);
+        assert_eq!(plotted_size_pt("Arial", 5.08), 20.19);
         assert_eq!(plotted_size_pt("FangSong", mm(7.0)), 10.56);
         assert_eq!(plotted_size_pt("FangSong", mm(7.2)), 10.56);
         assert_eq!(plotted_size_pt("SimSun", 2.4638), 10.08);
@@ -2456,9 +2463,12 @@ mod tests {
             "the partition is cut where size or face changes, and each run's \
              face resolves to the one this writer embeds"
         );
+        // Different, not larger: each stretch takes its own face's plotted
+        // size, and 8 pt Arial has a measured `Tf` (11.16) where 9 pt SimSun
+        // has none.
         assert!(
-            segments[1].size_pt > segments[0].size_pt,
-            "the middle stretch letters larger: {} vs {}",
+            (segments[1].size_pt - segments[0].size_pt).abs() > 0.5,
+            "the middle stretch letters at its own size: {} vs {}",
             segments[1].size_pt,
             segments[0].size_pt
         );
