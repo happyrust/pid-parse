@@ -1004,6 +1004,12 @@ pub struct JSiteNestedGeometry {
     /// `2026-09-30-a-cached-body-draws-its-elliptical-arcs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub elliptical_arcs: Vec<DecodedIgEllipticalArc2dRecord>,
+    /// `0x0063` `igEllipse2d` records, in on-disk order: closed ellipses,
+    /// drawn as the full-turn rational B-spline
+    /// [`crate::bspline::elliptical_arc`] makes of each -- the fan ovals of
+    /// `Air Cooler Type 1.sym`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ellipses: Vec<DecodedIgEllipse2dRecord>,
     /// `0x0013` `igBoundary2d` records, in on-disk order: the regions a
     /// cached body fills over members that are also strokes of it — the
     /// flange dots `SmartPlant` prints solid. See
@@ -1046,6 +1052,7 @@ impl JSiteNestedGeometry {
             + self.rectangles.len()
             + self.bsplines.len()
             + self.elliptical_arcs.len()
+            + self.ellipses.len()
             + self.dimensions.len()
     }
 
@@ -1252,6 +1259,58 @@ impl From<crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded>
             index: record.index,
             sweep_start: record.sweep_start,
             sweep_end: record.sweep_end,
+            center_x: record.center.0,
+            center_y: record.center.1,
+            major_x: record.major_axis.0,
+            major_y: record.major_axis.1,
+            ratio: record.ratio,
+            flag: record.flag,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgEllipse2dDecoded`] -- PSM type
+/// `0x0063` `igEllipse2d` (`imagdex.dex`), a closed ellipse
+/// `P(t) = C + cos t · major + sin t · minor` with
+/// `minor = ratio · (−major_y, major_x)`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgEllipse2dRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the ellipse.
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair, verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the ellipse sits on.
+    pub sheet_layer_ref: u32,
+    /// Style reference at payload `+14`, resolved like a line's.
+    pub index: u32,
+    /// Centre X, in the storage's own coordinates.
+    pub center_x: f64,
+    /// Centre Y, in the storage's own coordinates.
+    pub center_y: f64,
+    /// Major semi-axis vector X, same units.
+    pub major_x: f64,
+    /// Major semi-axis vector Y, same units.
+    pub major_y: f64,
+    /// Minor / major semi-axis ratio, in `(0, 1]`.
+    pub ratio: f64,
+    /// The record's trailing byte, `payload +58`; meaning unknown.
+    pub flag: u8,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgEllipse2dDecoded> for DecodedIgEllipse2dRecord {
+    fn from(record: crate::parsers::sheet_records::SheetIgEllipse2dDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            sheet_layer_ref: record.sheet_layer_ref,
+            index: record.index,
             center_x: record.center.0,
             center_y: record.center.1,
             major_x: record.major_axis.0,

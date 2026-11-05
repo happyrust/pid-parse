@@ -75,6 +75,7 @@ const TYPE_POLYLINE: u16 = 0x0084;
 const TYPE_TEXT: u16 = 0x004D;
 const TYPE_BSPLINE: u16 = 0x005D;
 const TYPE_BOUNDARY: u16 = 0x0013;
+const TYPE_ELLIPSE: u16 = crate::parsers::sheet_records::PSM_TYPE_CODE_IGELLIPSE2D;
 
 /// Bytes of placement and style following a text record's body: the
 /// insertion point (two `f64`s), the text direction pair, and a 4-byte
@@ -1109,6 +1110,25 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             Some(SymbolPrimitive::Polyline {
                 vertices,
                 is_closed: payload[22] == 2,
+            })
+        }
+        TYPE_ELLIPSE => {
+            // A closed ellipse is a conic, so the full turn is the exact
+            // rational B-spline the elliptical arcs of a cached body already
+            // draw as; the vocabulary has no elliptical primitive.
+            let (center, major, ratio) = crate::parsers::sheet_records::ellipse_geometry(payload)?;
+            if [center.0, center.1, major.0, major.1]
+                .iter()
+                .any(|v| v.abs() > COORDINATE_LIMIT)
+            {
+                return None;
+            }
+            let (poles, weights, knots) =
+                crate::bspline::elliptical_arc(center, major, ratio, std::f64::consts::TAU, 0.0)?;
+            Some(SymbolPrimitive::BSpline {
+                poles,
+                weights,
+                knots,
             })
         }
         TYPE_TEXT => decode_text(payload),

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### 解码 `0x0063 igEllipse2d`：空冷器风机椭圆上页（2026-11-06）
+
+`Air Cooler Type 1.sym` 与三张 A1 `.pid` 的缓存体各有 2 条 `0x0063`（59 字节）记录，此前没有解码器，
+§7 把参考页上那圈「波形管束」误判成参考侧版本差。新增 `decode_igellipses` / `decode_igellipse_at`
+（`+18/+26` 圆心、`+34/+42` 长半轴向量、`+50` 短/长比、`+58` 标志），`.sym` 读取与缓存体
+（`JSiteNestedGeometry::ellipses`）都画成整圈有理 B 样条。三张空冷器 `uncovered` 23.031 → 5.757 mm，
+coverage 0.99865 → 0.99966，pen 一致 +42；其余 8 张读数不变。证据：`probe_sym_ellipse_records`。
+
 ### `.pid` 与 dump 不是同一版本时 `--oracle-exp` 不再静默 exit 0（2026-11-05）
 
 `--oracle-exp` 以前不检查 `.pid` 的 `DocUID` 在 dump 的 `T_DRAWING` 里有没有行。验收数据里

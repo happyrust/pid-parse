@@ -76,8 +76,9 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
 fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
     use crate::parsers::sheet_records::{
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
-        decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at, decode_igrectangle_at,
-        decode_igsym_boundary_at, decode_igtextbox_at, jsheet_oids, sheet_record_starts,
+        decode_igellipse_at, decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at,
+        decode_igrectangle_at, decode_igsym_boundary_at, decode_igtextbox_at, jsheet_oids,
+        sheet_record_starts,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
@@ -90,6 +91,8 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
             out.arcs.push(arc.into());
         } else if let Some(arc) = decode_igellipticalarc_at(data, at) {
             out.elliptical_arcs.push(arc.into());
+        } else if let Some(ellipse) = decode_igellipse_at(data, at) {
+            out.ellipses.push(ellipse.into());
         } else if let Some(line) = decode_igline_at(data, at) {
             out.lines.push(line.into());
         } else if let Some(polyline) = decode_iglinestring_at(data, at) {
@@ -128,6 +131,7 @@ fn resolve_stroke_styles(
         .map(|record| record.index)
         .chain(nested.arcs.iter().map(|record| record.index))
         .chain(nested.elliptical_arcs.iter().map(|record| record.index))
+        .chain(nested.ellipses.iter().map(|record| record.index))
         .chain(nested.lines.iter().map(|record| record.index))
         .chain(nested.polylines.iter().map(|record| record.index))
         .chain(nested.bsplines.iter().map(|record| record.index))

@@ -1074,10 +1074,14 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             0 => String::new(),
             count => format!("{count} elliptical arcs, "),
         };
+        let ellipses = match nested.ellipses.len() {
+            0 => String::new(),
+            count => format!("{count} ellipses, "),
+        };
         warnings.push(format!(
             "{records} record(s) ({circles} circles, {arcs} arcs, {lines} lines, {polylines} \
              line strings, {texts} texts, {rectangles} rectangles, {bsplines} B-splines, \
-             {elliptical_arcs}{dimensions} dimensions) decoded in {path}/PSMcluster0 are symbol \
+             {elliptical_arcs}{ellipses}{dimensions} dimensions) decoded in {path}/PSMcluster0 are symbol \
              bodies in symbol-local coordinates, grouped into {bodies} definition(s) reachable \
              through the placements that name them; they are not page content",
             records = nested.len(),
@@ -1689,6 +1693,32 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         },
                         arc.sheet_layer_ref,
                         Some(arc.index),
+                        None,
+                    );
+                }
+            }
+            // Closed ellipses after the elliptical arcs, as the same exact
+            // rational B-spline over a full turn.
+            for ellipse in nested
+                .ellipses
+                .iter()
+                .filter(|e| on_body(e.sheet_layer_ref))
+            {
+                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc(
+                    (ellipse.center_x, ellipse.center_y),
+                    (ellipse.major_x, ellipse.major_y),
+                    ellipse.ratio,
+                    std::f64::consts::TAU,
+                    0.0,
+                ) {
+                    push(
+                        SymbolPrimitive::BSpline {
+                            poles,
+                            weights,
+                            knots,
+                        },
+                        ellipse.sheet_layer_ref,
+                        Some(ellipse.index),
                         None,
                     );
                 }

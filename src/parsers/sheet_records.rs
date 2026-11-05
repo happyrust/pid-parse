@@ -7779,6 +7779,151 @@ impl PsmRecordDecoder for IgEllipticalArc2dDecoder {
 }
 
 // ---------------------------------------------------------------------------
+// 2026-11-06: igEllipse2d (closed ellipse)
+// ---------------------------------------------------------------------------
+//
+// `0x0063` is `igEllipse2d` ("Ellipse Object", `imagdex.dex`, CLSID
+// `A3494010-D3E1-11CD-8AEA-08003601B44A`). It shares `igArc2d`'s 59-byte
+// payload length, so the type code alone tells them apart. The layout was
+// read off `Air Cooler Type 1.sym`'s two fan ovals and checked against the
+// reference plot of the three A1 air-cooler sheets, which print both:
+//
+// | payload | field |
+// |---|---|
+// | `+18`, `+26` | centre x, y |
+// | `+34`, `+42` | major semi-axis vector x, y |
+// | `+50` | minor / major ratio |
+// | `+58` | flag byte |
+//
+// The ellipse is `P(t) = C + cos t · major + sin t · minor`, `minor` the
+// major semi-axis turned +90° and scaled by the ratio, as for
+// `igEllipticalArc2d`; a closed ellipse has no sweep to read.
+
+/// PSM type code for `igEllipse2d` ("Ellipse Object", `imagdex.dex`; IGDS
+/// class tag `0x63 = 99`).
+pub const PSM_TYPE_CODE_IGELLIPSE2D: u16 = 0x0063;
+
+/// Payload of one `igEllipse2d`: the 18-byte sub-header, then `center.x`,
+/// `center.y`, `major_axis.x`, `major_axis.y`, `ratio` (5×f64) and one flag
+/// byte -- the same length as an `igArc2d` payload.
+pub const IGELLIPSE2D_PAYLOAD_LEN: usize = 59;
+
+/// One decoded `0x0063` `igEllipse2d` record: a closed ellipse
+/// `P(t) = center + cos t · major_axis + sin t · minor`, with
+/// `minor = ratio · (−major_axis.y, major_axis.x)`. Lengths are in the
+/// storage's own units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgEllipse2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this ellipse sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`).
+    pub index: u32,
+    /// Centre, in the storage's own coordinates (payload `+18`, `+26`).
+    pub center: (f64, f64),
+    /// Major semi-axis vector, same units (payload `+34`, `+42`); never
+    /// zero.
+    pub major_axis: (f64, f64),
+    /// Minor / major semi-axis ratio (payload `+50`), in `(0, 1]`.
+    pub ratio: f64,
+    /// The trailing byte (payload `+58`); meaning unknown, carried for
+    /// audit.
+    pub flag: u8,
+}
+
+/// Decode every `igEllipse2d` record in a record-chain stream.
+///
+/// Chain-gated like [`decode_igarcs`], then: type code
+/// [`PSM_TYPE_CODE_IGELLIPSE2D`]; `bytes_to_follow == 59`; five finite
+/// in-domain doubles; a non-zero major semi-axis; `0 < ratio <= 1`.
+pub fn decode_igellipses(data: &[u8]) -> Vec<SheetIgEllipse2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgEllipse2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igEllipse2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igellipse_at(data: &[u8], offset: usize) -> Option<SheetIgEllipse2dDecoded> {
+    IgEllipse2dDecoder.decode_at(data, offset)
+}
+
+/// Centre, major semi-axis vector and minor/major ratio of a closed ellipse.
+pub(crate) type EllipseGeometry = ((f64, f64), (f64, f64), f64);
+
+/// The centre, major semi-axis and ratio of an `igEllipse2d` payload, held
+/// to the same rules [`decode_igellipses`] applies. Shared with the `.sym`
+/// reader, whose payloads are the same bytes.
+pub(crate) fn ellipse_geometry(payload: &[u8]) -> Option<EllipseGeometry> {
+    if payload.len() < IGELLIPSE2D_PAYLOAD_LEN {
+        return None;
+    }
+    let [center_x, center_y, major_x, major_y, ratio] = curve_doubles::<5>(payload)?;
+    if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 || ratio > 1.0 {
+        return None;
+    }
+    Some(((center_x, center_y), (major_x, major_y), ratio))
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0063` `igEllipse2d`.
+pub struct IgEllipse2dDecoder;
+
+impl PsmRecordDecoder for IgEllipse2dDecoder {
+    type Record = SheetIgEllipse2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGELLIPSE2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGELLIPSE2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgEllipse2dDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGELLIPSE2D
+            || header.bytes_to_follow as usize != IGELLIPSE2D_PAYLOAD_LEN
+        {
+            return None;
+        }
+        let end = header.body_start.checked_add(IGELLIPSE2D_PAYLOAD_LEN)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let (center, major_axis, ratio) = ellipse_geometry(payload)?;
+        Some(SheetIgEllipse2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            center,
+            major_axis,
+            ratio,
+            flag: *payload.get(IGELLIPSE2D_PAYLOAD_LEN - 1)?,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgEllipse2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2026-09-07: igRectangle2d and igBspCurve2d
 // ---------------------------------------------------------------------------
 //
@@ -8571,6 +8716,100 @@ mod nested_curve_family_tests {
             assert!(
                 decode_igellipticalarc_at(&stream, SHEET_STREAM_HEADER_LEN).is_none(),
                 "{what}"
+            );
+        }
+    }
+
+    /// `Air Cooler Type 1.sym`'s left fan oval (`Sheet6` oid 726): centre,
+    /// major semi-axis, ratio.
+    const FAN_OVAL: [f64; 5] = [0.066_225, 0.013_97, 0.002_354_6, 1.44e-19, 0.448_13];
+
+    #[test]
+    fn an_ellipse_reads_its_centre_axis_and_ratio() {
+        let stream = chain(&[curve_record(PSM_TYPE_CODE_IGELLIPSE2D, 5, &FAN_OVAL, 0)]);
+        let decoded = decode_igellipses(&stream);
+        assert_eq!(decoded.len(), 1);
+        let ellipse = &decoded[0];
+        assert_eq!(
+            ellipse.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + 6 + IGELLIPSE2D_PAYLOAD_LEN
+        );
+        assert_eq!(ellipse.oid, 4321);
+        assert_eq!(ellipse.parent_ref, 77);
+        assert_eq!(ellipse.sheet_layer_ref, 5);
+        assert_eq!(ellipse.sub_type_word, 0x0010);
+        assert_eq!(ellipse.index, 9);
+        assert_eq!(ellipse.center, (FAN_OVAL[0], FAN_OVAL[1]));
+        assert_eq!(ellipse.major_axis, (FAN_OVAL[2], FAN_OVAL[3]));
+        assert_eq!(ellipse.ratio, FAN_OVAL[4]);
+        assert_eq!(ellipse.flag, 0);
+        assert_eq!(
+            decode_igellipse_at(&stream, SHEET_STREAM_HEADER_LEN).as_ref(),
+            Some(ellipse)
+        );
+        // Same payload length as an arc: the type code is what separates them.
+        assert!(decode_igarcs(&stream).is_empty());
+        let arc = chain(&[curve_record(PSM_TYPE_CODE_IGARC2D, 5, &FAN_OVAL, 0)]);
+        assert!(decode_igellipses(&arc).is_empty());
+        assert_eq!(decode_igarcs(&arc).len(), 1);
+    }
+
+    #[test]
+    fn an_ellipse_off_the_gate_is_refused() {
+        let with = |slot: usize, value: f64| {
+            let mut doubles = FAN_OVAL;
+            doubles[slot] = value;
+            curve_record(PSM_TYPE_CODE_IGELLIPSE2D, 5, &doubles, 0)
+        };
+        let base = || curve_record(PSM_TYPE_CODE_IGELLIPSE2D, 5, &FAN_OVAL, 0);
+        let mut skipped = base();
+        skipped[1] |= 0x80;
+        let refused = [
+            ("btf 58", with_payload_len(base(), 58)),
+            ("btf 60", with_payload_len(base(), 60)),
+            ("ratio 0", with(4, 0.0)),
+            ("ratio 1.5", with(4, 1.5)),
+            ("zero major axis", {
+                let mut doubles = FAN_OVAL;
+                doubles[2] = 0.0;
+                doubles[3] = 0.0;
+                curve_record(PSM_TYPE_CODE_IGELLIPSE2D, 5, &doubles, 0)
+            }),
+            ("NaN centre", with(0, f64::NAN)),
+            ("infinite axis", with(2, f64::INFINITY)),
+            ("skip bit", skipped),
+        ];
+        for (what, record) in refused {
+            let stream = chain(&[record]);
+            assert!(
+                !sheet_record_starts(&stream).is_empty(),
+                "{what}: the chain itself must still walk"
+            );
+            assert!(decode_igellipses(&stream).is_empty(), "{what}");
+            assert!(
+                decode_igellipse_at(&stream, SHEET_STREAM_HEADER_LEN).is_none(),
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ellipse_survives_truncation_at_every_length() {
+        let circle = curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[0.1, 0.2, 0.05], 1);
+        let at = SHEET_STREAM_HEADER_LEN + circle.len();
+        let stream = chain(&[
+            circle,
+            curve_record(PSM_TYPE_CODE_IGELLIPSE2D, 5, &FAN_OVAL, 0),
+        ]);
+        let end = at + PSM_ENVELOPE_LEN + IGELLIPSE2D_PAYLOAD_LEN;
+        assert_eq!(decode_igellipses(&stream).len(), 1);
+        for cut in 0..=stream.len() {
+            let _ = decode_igellipses(&stream[..cut]);
+            let _ = decode_igellipse_at(&stream[..cut], cut.saturating_sub(1));
+            assert_eq!(
+                decode_igellipse_at(&stream[..cut], at).is_some(),
+                cut >= end,
+                "cut {cut}"
             );
         }
     }

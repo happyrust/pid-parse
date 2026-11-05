@@ -10,7 +10,9 @@
 //!
 //! What the readings say, 2026-11-02:
 //!
-//! * Ten of the eleven sit at coverage 0.9986–0.9997. The extra ink on the
+//! * Ten of the eleven sit at coverage 0.9990–0.9997; the three A1 air
+//!   coolers rose from 0.9986 once `0x0063 igEllipse2d`, the fan ovals of
+//!   `Air Cooler Type 1.sym`, was decoded (`docs/plans/2026-11-02-the-a1-stem.md` §7). The extra ink on the
 //!   three A0 wellsites was a join: a valve stem 0.33 mm beside its pipe is
 //!   inside the fit's 0.4 mm sideways tolerance, and the merged chord then
 //!   misses the stem both pages draw. The extra sampler joins at 0.20 mm, so
@@ -176,41 +178,42 @@ const PINS: [Pin; 11] = [
     Pin {
         // The riser's stamped glyph centres itself now, so this sheet keeps
         // no extra ink at all: see `docs/plans/2026-11-02-the-a1-stem.md`.
-        // The 23.031 mm still uncovered is the reference's air-cooler fan
-        // wave; neither the `.sym` nor the `.pid` cached body carries it (§7).
+        // The air cooler's two fan ovals are `0x0063 igEllipse2d` records in
+        // both the `.sym` and the cached body; drawing them took uncovered
+        // from 23.031 to 5.757 mm (plan §7).
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9984,
+        min_coverage: 0.9996,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3199,
+        min_pen_agreed: 3241,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
         // Same glyph, same fix as the A sheet: no extra ink left. The
-        // 23.031 mm still uncovered is the same reference-side fan wave (§7).
+        // fan ovals draw as on the A sheet (plan §7).
         name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9985,
+        min_coverage: 0.9996,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3206,
+        min_pen_agreed: 3248,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
         // Same glyph, same fix as the A sheet: no extra ink left. The
-        // 23.031 mm still uncovered is the same reference-side fan wave (§7).
+        // fan ovals draw as on the A sheet (plan §7).
         name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9984,
+        min_coverage: 0.9996,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3078,
+        min_pen_agreed: 3120,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
