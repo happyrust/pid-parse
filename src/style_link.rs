@@ -275,6 +275,26 @@ pub const SIMPLE_LINE_DASH_REFERENCE_OFFSET: usize = 54;
 /// exactly `50 + 8N` bytes.
 pub const DASH_SEGMENT_COUNT_OFFSET: usize = 48;
 
+/// Offset of the `u16` flag word of a `JStyleSimpleDashType` payload.
+///
+/// Level: native-reader for the field, corpus for the offset. `style.dll`'s
+/// dash layout (`sub_1001A470`) takes `flags & 0xF` as the fit mode and, in
+/// mode 2, stretches the pattern to every straight piece it lays out
+/// (`sub_10017A50`); see [`DashPattern::fit_mode`]. The corpus writes
+/// `0x0022` on the `1.905/1.270` signal-line pattern the reference plots
+/// stretch, and `0` on the `3.5/1.75` and chain patterns they lay out at
+/// their stated length.
+pub const DASH_FIT_FLAGS_OFFSET: usize = 26;
+
+/// Offset of the `f64` fit ratio of a `JStyleSimpleDashType` payload — the
+/// `r` that [`DashPattern::fit_ratio`] names.
+///
+/// Level: native-reader for how the value is used, corpus for the offset: the
+/// stretched pattern stores `7/6` here (as an `f32` widened to `f64`), and
+/// that value in `sub_10017A50`'s formula reproduces the dash count and
+/// pitch the reference plots print on every straight piece.
+pub const DASH_FIT_RATIO_OFFSET: usize = 34;
+
 /// Most dash segments a pattern may declare before the record is refused.
 ///
 /// The widest in the corpus is six. Sixteen leaves generous headroom while
@@ -780,6 +800,8 @@ impl LineSymbology {
 pub struct DashPattern {
     segments: [f64; MAX_DASH_SEGMENTS],
     len: u8,
+    fit_mode: u8,
+    fit_ratio: f64,
 }
 
 impl DashPattern {
@@ -804,7 +826,39 @@ impl DashPattern {
         Some(Self {
             segments,
             len: u8::try_from(segments_m.len()).ok()?,
+            fit_mode: 0,
+            fit_ratio: 0.5,
         })
+    }
+
+    /// The same pattern with a stated fit mode and ratio, as a record at
+    /// [`DASH_FIT_FLAGS_OFFSET`] / [`DASH_FIT_RATIO_OFFSET`] would carry
+    /// them. A made pattern otherwise lays out unfitted (mode 0).
+    #[must_use]
+    pub fn with_fit(mut self, mode: u8, ratio: f64) -> Self {
+        self.fit_mode = mode & 0x0F;
+        self.fit_ratio = ratio;
+        self
+    }
+
+    /// How the layout fits the pattern to a line: the low four bits of the
+    /// record's flag word. `2` stretches the pattern so a whole number of
+    /// repeats fills every straight piece (`style.dll` `sub_10017A50`); `0`
+    /// lays it out at its stated length. `style.dll` also knows a mode `1`
+    /// (stretch the gaps only) and a mode `8` (2 or 0 by a line-level
+    /// switch); neither occurs in the corpus.
+    #[must_use]
+    pub fn fit_mode(&self) -> u8 {
+        self.fit_mode
+    }
+
+    /// The fit ratio `r` the mode-2 layout weighs the first segment by: with
+    /// `f` the first segment's magnitude and `S` one repeat, the repeat
+    /// count is `trunc((f·(1−2r) + L + S/4) / S)` and the stretch is
+    /// `L / (n·S − f + 2·f·r)`.
+    #[must_use]
+    pub fn fit_ratio(&self) -> f64 {
+        self.fit_ratio
     }
 
     /// Segment lengths in metres, exactly as stored.
@@ -2044,9 +2098,13 @@ fn read_dash_pattern(type_code: u16, payload: &[u8]) -> Option<DashPattern> {
         // A zero-length segment is a dot, not a decode failure.
         *slot = value;
     }
+    let flags = u16_at(payload, DASH_FIT_FLAGS_OFFSET)?;
+    let fit_ratio = f64_at(payload, DASH_FIT_RATIO_OFFSET).filter(|ratio| ratio.is_finite())?;
     Some(DashPattern {
         segments,
         len: u8::try_from(count).ok()?,
+        fit_mode: u8::try_from(flags & 0x0F).ok()?,
+        fit_ratio,
     })
 }
 
@@ -3103,6 +3161,9 @@ mod tests {
             let at = DASH_SEGMENT_COUNT_OFFSET + 2 + 8 * i;
             payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
         }
+        // The corpus's unfitted patterns all carry 0.5 here.
+        payload[DASH_FIT_RATIO_OFFSET..DASH_FIT_RATIO_OFFSET + 8]
+            .copy_from_slice(&0.5_f64.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE, payload)
     }
 
@@ -3500,6 +3561,39 @@ mod tests {
         assert!((dash.period_m() - 0.017_85).abs() < 1e-9);
     }
 
+    /// The signal-line pattern's record: flag word `0x0022` (fit mode 2) and
+    /// ratio `7/6` stored as an `f32` widened to `f64`, as every corpus
+    /// `1.905/1.270` record writes them.
+    #[test]
+    fn a_dash_type_reads_its_fit_mode_and_ratio() {
+        let (type_code, mut payload) = dash_type(17, &[-0.001_905, -0.001_27]);
+        payload[DASH_FIT_FLAGS_OFFSET..DASH_FIT_FLAGS_OFFSET + 2]
+            .copy_from_slice(&0x0022_u16.to_le_bytes());
+        let ratio = f64::from(7.0_f32 / 6.0);
+        payload[DASH_FIT_RATIO_OFFSET..DASH_FIT_RATIO_OFFSET + 8]
+            .copy_from_slice(&ratio.to_le_bytes());
+        let data = stream(&[(type_code, payload), simple_line_dashed(30, 17)]);
+        let dash = DocumentStyleTable::from_stylecluster_bytes(&data)
+            .resolve_line_style(30)
+            .expect("id 30 is defined")
+            .dash
+            .expect("it names a dash type");
+        assert_eq!(dash.fit_mode(), 2, "the low four bits of 0x0022");
+        assert!((dash.fit_ratio() - 1.166_666_626_930_236_8).abs() < 1e-12);
+
+        let plain = stream(&[
+            dash_type(17, &[-0.0035, -0.001_75]),
+            simple_line_dashed(30, 17),
+        ]);
+        let plain = DocumentStyleTable::from_stylecluster_bytes(&plain)
+            .resolve_line_style(30)
+            .expect("id 30 is defined")
+            .dash
+            .expect("it names a dash type");
+        assert_eq!(plain.fit_mode(), 0);
+        assert!((plain.fit_ratio() - 0.5).abs() < 1e-12);
+    }
+
     /// A pattern a consumer states itself is the pattern a record would have
     /// been read as -- same segments, same sign, same limits -- so a test
     /// standing up a dashed line style and a reader decoding one speak the
@@ -3517,6 +3611,11 @@ mod tests {
             .expect("it names a dash type");
         let stated = DashPattern::from_segments_m(&[-0.0035, -0.001_75]).expect("two segments");
         assert_eq!(stated, read);
+        assert_eq!(
+            stated.with_fit(0x22, 0.5).fit_mode(),
+            2,
+            "only the low four bits name the mode"
+        );
         assert_eq!(stated.segments_mm(), vec![-3.5, -1.75]);
 
         assert!(

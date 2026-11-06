@@ -23,9 +23,11 @@
 //!   stroke 1 mm away. The three A1 sheets' shared 8.210 mm residue
 //!   was a lone complex-dash glyph at the run's midpoint, and they now read
 //!   extra 0.000 mm (`docs/plans/2026-11-02-the-a1-stem.md`).
-//!   The uncovered remainder on I, both flash drums, the cold separator and
-//!   the CD exchanger is the tip of a dash we already draw
-//!   (`docs/analysis/2026-11-04-the-five-uncovered-remainders-are-dash-tips.md`).
+//!   Those ten now read coverage 1.000000 and uncovered 0.000 mm: what was
+//!   left on them was the tip of a signal-line dash, and it closed once that
+//!   pattern (`JStyleSimpleDashType` fit mode 2) is restarted on every vertex
+//!   and stretched to each straight piece the way `style.dll` lays it out
+//!   (`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`).
 //! * The A2 sheet reads 0.9819 / 210.712 mm because it is the first A2 page
 //!   this crate has ever had a reference for, and its furniture is a third
 //!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
@@ -79,6 +81,10 @@ struct Pin {
     page_mm: [f64; 2],
     min_coverage: f64,
     max_extra_mm: f64,
+    /// Reference ink, millimetres, that no ink of ours covers. Ten pages read
+    /// 0.000 once the signal-line dash is fitted to every straight piece; the
+    /// A2 remainder is the instrument cluster the `.pid` stores elsewhere.
+    max_uncovered_mm: f64,
     min_text_matched: usize,
     /// Reference labels the page counts, so a page that stops counting its
     /// reference's labels cannot pass by matching fewer of them.
@@ -121,77 +127,84 @@ const PINS: [Pin; 11] = [
     Pin {
         name: "I井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
-        min_coverage: 0.9994,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 546,
         text_reference: 546,
-        min_pen_agreed: 8665,
+        min_pen_agreed: 8685,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
     Pin {
         name: "J K井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
-        min_coverage: 0.9993,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 775,
         text_reference: 775,
-        min_pen_agreed: 13598,
+        min_pen_agreed: 13630,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
     Pin {
         name: "L M井场 注采阀组工艺及自控流程图",
         page_mm: [1189.0, 841.0],
-        min_coverage: 0.9992,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 921,
         text_reference: 921,
-        min_pen_agreed: 16428,
+        min_pen_agreed: 16481,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
     },
     Pin {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9996,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 151,
         text_reference: 151,
-        min_pen_agreed: 1221,
+        min_pen_agreed: 1229,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9995,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 123,
         text_reference: 123,
-        min_pen_agreed: 1354,
+        min_pen_agreed: 1362,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9995,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 167,
         text_reference: 167,
-        min_pen_agreed: 1642,
+        min_pen_agreed: 1646,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
     Pin {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9989,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 249,
         text_reference: 249,
-        min_pen_agreed: 2957,
+        min_pen_agreed: 2976,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -203,11 +216,12 @@ const PINS: [Pin; 11] = [
         // from 23.031 to 5.757 mm (plan §7).
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9996,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3241,
+        min_pen_agreed: 3253,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -216,11 +230,12 @@ const PINS: [Pin; 11] = [
         // fan ovals draw as on the A sheet (plan §7).
         name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9996,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3248,
+        min_pen_agreed: 3260,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -229,11 +244,12 @@ const PINS: [Pin; 11] = [
         // fan ovals draw as on the A sheet (plan §7).
         name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
         page_mm: [841.0, 594.0],
-        min_coverage: 0.9996,
+        min_coverage: 0.9999,
         max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3120,
+        min_pen_agreed: 3132,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -246,11 +262,12 @@ const PINS: [Pin; 11] = [
         // mm off the origin, which pairs two more of its strokes.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
-        min_coverage: 0.9821,
-        max_extra_mm: 210.269 + EXTRA_SLACK_MM,
+        min_coverage: 0.9830,
+        max_extra_mm: 210.048 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 206.935 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
-        min_pen_agreed: 2634,
+        min_pen_agreed: 2648,
         max_pen_differed: 0,
         missing_symbols: &[],
     },
@@ -397,6 +414,12 @@ fn eleven_reference_plots_hold_their_readings() {
             "{name} extra {:.3} mm > {:.3} mm",
             report.extra_length_mm,
             pin.max_extra_mm
+        );
+        let uncovered_mm = report.reference_length_mm - report.covered_length_mm;
+        assert!(
+            uncovered_mm <= pin.max_uncovered_mm,
+            "{name} uncovered {uncovered_mm:.3} mm > {:.3} mm",
+            pin.max_uncovered_mm
         );
         assert_eq!(
             report.text_reference, pin.text_reference,

@@ -91,7 +91,17 @@ fn five_drawings_keep_text_sources() {
                 report.text_matched,
                 report.text_reference
             );
-            assert!(!report.uncovered_reference.is_empty(), "uncovered groups");
+            // Every reference stroke on this sheet is covered once the signal
+            // dash is fitted to each piece, so any group here is a regression.
+            assert!(
+                report.uncovered_reference.is_empty(),
+                "uncovered groups {:?}",
+                report
+                    .uncovered_reference
+                    .iter()
+                    .map(|group| (&group.label, group.length_mm))
+                    .collect::<Vec<_>>()
+            );
             let leaked = report.unmatched_reference_text.iter().any(|run| {
                 run.origin_mm[0] < 40.0
                     && (run.text.contains("日期")

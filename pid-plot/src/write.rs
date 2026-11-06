@@ -41,7 +41,9 @@ use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
 use crate::model::PaperTextSpan;
-use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextHeightBasis, TextLine};
+use crate::model::{
+    DashFit, PaperModel, PaperShape, PaperStroke, TextAnchor, TextHeightBasis, TextLine,
+};
 use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -712,6 +714,7 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         rgb: [0, 0, 0],
         width_mm: STROKE_MM,
         dash_mm: Vec::new(),
+        dash_fit: None,
     });
     if !pen.width_mm.is_finite() || pen.width_mm <= 0.0 {
         return;
@@ -730,6 +733,11 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         "w",
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
+    if let Some(fit) = fitted_dash(&pen, &primitive.shape) {
+        paint_fitted_pieces(ops, fit, &primitive.shape, page, primitive.furniture);
+        ops.push(Op::new("Q", Vec::new()));
+        return;
+    }
     if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
@@ -757,6 +765,41 @@ fn dash_array(pen: &PaperStroke) -> Option<Vec<Object>> {
         return None;
     }
     Some(steps.into_iter().map(Object::Real).collect())
+}
+
+/// The fit a pen lays its dash out with on `shape`, or `None` for a pattern
+/// that flows unfitted along the whole run.
+///
+/// Only straight pieces are fitted: an arc reaches the page as chords, and a
+/// chord is not a piece `style.dll` would lay a pattern out on.
+fn fitted_dash<'a>(pen: &'a PaperStroke, shape: &PaperShape) -> Option<&'a DashFit> {
+    let fit = pen.dash_fit.as_ref()?;
+    dash_array(pen)?;
+    matches!(shape, PaperShape::Line { .. } | PaperShape::Polyline { .. }).then_some(fit)
+}
+
+/// Each straight piece as its own subpath and its own dash state, so the
+/// pattern starts on every vertex and is stretched to that piece's length.
+fn paint_fitted_pieces(
+    ops: &mut Vec<Op>,
+    fit: &DashFit,
+    shape: &PaperShape,
+    page: [f64; 2],
+    keep_sheet_edge: bool,
+) {
+    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
+        for pair in run.windows(2) {
+            let steps: Vec<Object> = fit
+                .pattern_mm(hypot(pair[0], pair[1]))
+                .into_iter()
+                .map(|step| Object::Real(step * PT_PER_MM))
+                .collect();
+            ops.push(Op::new("d", vec![Object::Array(steps), Object::Real(0.0)]));
+            ops.push(Op::new("m", vec![pt(pair[0][0]), pt(pair[0][1])]));
+            ops.push(Op::new("l", vec![pt(pair[1][0]), pt(pair[1][1])]));
+            ops.push(Op::new("S", Vec::new()));
+        }
+    }
 }
 
 fn paint_shape(
@@ -1452,6 +1495,19 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
                 }
                 continue;
             }
+            if let Some(fit) = primitive
+                .stroke
+                .as_ref()
+                .and_then(|pen| fitted_dash(pen, &primitive.shape))
+            {
+                for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
+                    for pair in run.windows(2) {
+                        let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
+                        out.extend(walk.split(pair[0], pair[1]));
+                    }
+                }
+                continue;
+            }
             let dash: Vec<f64> = primitive
                 .stroke
                 .as_ref()
@@ -1716,6 +1772,7 @@ mod tests {
             rgb: [128, 128, 0],
             width_mm: 0.13,
             dash_mm: Vec::new(),
+            dash_fit: None,
         });
         let mut thick = primitive(
             "decoded",
@@ -1728,6 +1785,7 @@ mod tests {
             rgb: [0, 128, 0],
             width_mm: 0.70,
             dash_mm: Vec::new(),
+            dash_fit: None,
         });
         let model = PaperModel {
             library: Vec::new(),
@@ -1762,6 +1820,58 @@ mod tests {
         assert_eq!(widths, vec![0.17, 0.68], "the pens are not snapped");
     }
 
+    /// A fitted dash starts on every vertex and is stretched per piece, and
+    /// the reader sees exactly the pieces `stroked_segments` predicts.
+    #[test]
+    fn a_fitted_dash_restarts_on_every_vertex() {
+        let mut line = primitive(
+            "decoded",
+            PaperShape::Polyline {
+                points_mm: vec![[10.0, 20.0], [17.298, 20.0], [17.298, 60.0]],
+                closed: false,
+            },
+        );
+        line.stroke = Some(super::PaperStroke {
+            rgb: [0, 0, 0],
+            width_mm: 0.18,
+            dash_mm: vec![1.905, 1.27],
+            dash_fit: Some(crate::model::DashFit {
+                ratio: f64::from(7.0_f32 / 6.0),
+                signed_mm: vec![-1.905, -1.27],
+            }),
+        });
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![line],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let expected = super::stroked_segments(&model);
+        let pdf = write_plot(&model, &[]).expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.segments.len(), expected.len());
+        // The vertical piece's first dash starts on the vertex, not partway
+        // through the horizontal piece's pattern.
+        let vertical: Vec<_> = expected
+            .iter()
+            .filter(|(start, end)| {
+                (start[0] - 17.298).abs() < 1e-6 && (end[0] - 17.298).abs() < 1e-6
+            })
+            .collect();
+        assert!((vertical[0].0[1] - 20.0).abs() < 1e-6, "{:?}", vertical[0]);
+        // The 7.298 mm piece holds two stretched dashes, the second ending
+        // half a gap short of the vertex.
+        let horizontal = expected.len() - vertical.len();
+        assert_eq!(horizontal, 2);
+    }
+
     /// A style can state a dash whose only segment is zero — the plant
     /// backup's `D04` does. A PDF dash array may not be all zero, and a
     /// zero-period pattern inks solid, so the page has to carry no dash state
@@ -1781,6 +1891,7 @@ mod tests {
                 rgb: [0, 0, 0],
                 width_mm: 0.35,
                 dash_mm,
+                dash_fit: None,
             });
             PaperModel {
                 library: Vec::new(),

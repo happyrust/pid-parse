@@ -319,6 +319,7 @@ mod tests {
             rgb: [0, 0, 0],
             width_mm,
             dash_mm,
+            dash_fit: None,
         })
     }
 

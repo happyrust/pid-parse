@@ -217,6 +217,12 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // reference never had and not a phase
 // (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
 //
+// The dash ends closed on 2026-11-08: the signal-line pattern is a
+// `JStyleSimpleDashType` in fit mode 2, which `style.dll` restarts on every
+// vertex and stretches to each straight piece. Laid out that way all five
+// read coverage 1.000000, so the floors are 0.9999
+// (`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`).
+//
 // What is left is `I`'s 0.31 mm: sixteen fragments of our arc chain on
 // `Wellhead Christmas Tree 02`, 0.011–0.093 mm each, every one of them
 // 0.501–0.550 mm from the reference's nearest ink — threshold crossings, not
@@ -226,7 +232,7 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.9993,
+        min_coverage: 0.9999,
         max_extra_mm: 1.0,
         min_text_matched: 546,
         min_pen_agreed: 8390,
@@ -234,7 +240,7 @@ const BASELINES: [Baseline; 5] = [
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-        min_coverage: 0.9995,
+        min_coverage: 0.9999,
         max_extra_mm: 0.5,
         min_text_matched: 151,
         min_pen_agreed: 1196,
@@ -242,7 +248,7 @@ const BASELINES: [Baseline; 5] = [
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9995,
+        min_coverage: 0.9999,
         max_extra_mm: 0.5,
         min_text_matched: 123,
         min_pen_agreed: 1335,
@@ -250,7 +256,7 @@ const BASELINES: [Baseline; 5] = [
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9995,
+        min_coverage: 0.9999,
         max_extra_mm: 0.5,
         min_text_matched: 167,
         min_pen_agreed: 1619,
@@ -258,7 +264,7 @@ const BASELINES: [Baseline; 5] = [
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9989,
+        min_coverage: 0.9999,
         max_extra_mm: 0.5,
         min_text_matched: 249,
         min_pen_agreed: 2869,

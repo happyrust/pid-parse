@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 信号线虚线按每段直线拟合（`JStyleSimpleDashType` 模式 2）（2026-11-08）
+
+`DashPattern` 新增读取 `+26` 的拟合模式和 `+34` 的拟合比例 r。`1.905/1.270` 信号线图案是模式 2，r = 7/6。`pid-plot` 对这种图案按 `style.dll` `sub_10017A50` 的规则出图：每个折线顶点重新起相位，每段直线把图案拉伸到恰好容纳整数个周期，段太短时按原长铺开。前 10 张参考图的 coverage 从 0.9990–0.9997 升到 1.000000，uncovered 从 3.217–42.020 mm 降到 0。A2 的 coverage 从 0.982114 升到 0.983085，uncovered 从 218.823 降到 206.935 mm，extra 从 210.269 降到 210.048 mm。各图 pen 一致数上升，不符仍为 0；文字配对数不变。`reference_plots_acceptance` 新增 `max_uncovered_mm` 门禁，coverage 下限收紧到 0.9999；`plot_compare` 也收紧到 0.9999。见 `docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`。
 ### 出图字号改由规则算出：字高换成整像素的字体单元格（2026-11-07）
 
 `write::plotted_size_pt` 不再查 `measured_tf` 实测表（已删除）。新规则是：样式字高 ÷ 字体的大写高（或 ascent）得到 em，单元格高（`usWinAscent + usWinDescent`）在 150 dpi 下取整像素，`Tf` 取这个单元格对应的 em，落到 1/2400 in 网格上。这条规则逐值复现参考图上全部 21 种 SimSun / FangSong / Arial / Arial Narrow 的 `Tf`。其中 4 种原先不在表里：符号体 Arial ascent 7.2 pt → 8.16、7.76 → 8.58、11.58 → 12.90，Arial Narrow 14.4 → 15.69。`ARIALN.TTF` 没有 `sCapHeight`，按 `UNSTATED_CAP_EM = 0.7` 处理（区间 0.685…0.702 内的取值，厂商来源待 IDA 核对）。图纸自身的文字也改为按样式字宽千分比（`+52`）排字。参考的 `M` 是 `Tf 8.16` × 0.809。I / JK / LM 的 `symbol/Middle` advance 从 +0.017…+0.039 降到 −0.006…−0.005，max_shift 从 0.24 mm 降到 0.14–0.16 mm；coverage、extra、文字配对数、pen 读数不变。见 `docs/analysis/2026-11-07-the-plot-size-is-a-whole-pixel-cell.md`。

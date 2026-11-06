@@ -430,6 +430,99 @@ pub struct PaperStroke {
     /// pen-up. Empty draws solid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dash_mm: Vec<f64>,
+    /// How the dash is fitted to the line, when the style's dash type asks
+    /// for it (fit mode 2); `None` lays `dash_mm` out at its stated length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash_fit: Option<DashFit>,
+}
+
+/// A dash pattern `style.dll` stretches to every straight piece it lays out
+/// (`JStyleSimpleDashType` fit mode 2, `sub_10017A50`).
+///
+/// Each piece starts the pattern afresh and stretches it so a whole number of
+/// repeats fills it, ending half a gap short of the far vertex; a piece too
+/// short to hold one stretched repeat keeps the stated pattern. That is what
+/// the reference plots print on the signal-line pattern `1.905/1.270`: the
+/// first dash starts on the vertex and the pitch follows the piece's length.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DashFit {
+    /// The record's fit ratio `r` ([`pid_parse::style_link::DashPattern::fit_ratio`]).
+    pub ratio: f64,
+    /// The pattern in the record's own order and sign, millimetres. The sign
+    /// decides which segments stretch: a negative one is scaled by the fit, a
+    /// positive one keeps its length.
+    pub signed_mm: Vec<f64>,
+}
+
+impl DashFit {
+    /// The fit a resolved dash pattern states, or `None` when it is laid out
+    /// unfitted.
+    #[must_use]
+    pub fn of(dash: &pid_parse::style_link::DashPattern) -> Option<Self> {
+        (dash.fit_mode() == 2).then(|| Self {
+            ratio: dash.fit_ratio(),
+            signed_mm: dash.segments_mm(),
+        })
+    }
+
+    /// The scale `sub_10017A50` gives the negative segments on a piece
+    /// `length_mm` long; `1.0` when the piece holds no stretched repeat.
+    #[must_use]
+    pub fn scale(&self, length_mm: f64) -> f64 {
+        let Some(&first) = self.signed_mm.first() else {
+            return 1.0;
+        };
+        let mut negative: f64 = self
+            .signed_mm
+            .iter()
+            .filter(|s| **s < 0.0)
+            .map(|s| -s)
+            .sum();
+        let mut positive: f64 = self.signed_mm.iter().filter(|s| **s > 0.0).sum();
+        if self.signed_mm.len() % 2 == 1 {
+            negative *= 2.0;
+            positive *= 2.0;
+        }
+        let f = first.abs();
+        let fr = f * self.ratio;
+        let repeats = negative + positive;
+        if repeats.is_nan()
+            || repeats <= 0.0
+            || negative.abs() <= f64::EPSILON
+            || !length_mm.is_finite()
+        {
+            return 1.0;
+        }
+        // `(int)` in the vendor's code: truncation toward zero.
+        let n = ((f - 2.0 * fr + length_mm + 0.25 * negative) / repeats).trunc();
+        if n <= 0.0 {
+            return 1.0;
+        }
+        let scale = if first >= 0.0 {
+            (length_mm - (n - 1.0) * positive - (positive - f) - 2.0 * fr) / (n * negative)
+        } else {
+            let denom = (n * negative - f + 2.0 * fr) / negative;
+            if denom.abs() <= f64::EPSILON {
+                return 1.0;
+            }
+            (length_mm - n * positive) / denom / negative
+        };
+        if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        }
+    }
+
+    /// The dash magnitudes a piece `length_mm` long is laid out with.
+    #[must_use]
+    pub fn pattern_mm(&self, length_mm: f64) -> Vec<f64> {
+        let scale = self.scale(length_mm);
+        self.signed_mm
+            .iter()
+            .map(|s| if *s < 0.0 { -s * scale } else { *s })
+            .collect()
+    }
 }
 
 /// A shape in paper millimetres.
@@ -2360,6 +2453,7 @@ fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
                     .collect()
             })
             .unwrap_or_default(),
+        dash_fit: style.dash.as_ref().and_then(DashFit::of),
     }
 }
 
@@ -2416,6 +2510,11 @@ fn body_stroke(
                 body_style.map(|style| style.dash_mm.iter().map(|segment| segment.abs()).collect())
             })
             .unwrap_or_default(),
+        // A body's own dash carries no fit mode, so only the placement's can
+        // state one.
+        dash_fit: stated_pen
+            .and_then(|style| style.dash.as_ref())
+            .and_then(DashFit::of),
     })
 }
 
@@ -3423,7 +3522,7 @@ mod tests {
     };
 
     use super::{
-        BorderTemplate, PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, Placement,
+        BorderTemplate, DashFit, PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, Placement,
         SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape, body_stroke,
         canonical_rect_chain, complex_dash_cells, complex_dash_glyph_span_mm,
         complex_dash_positions, place_metres, push_entity, push_symbol_primitive, shape_points,
@@ -3441,6 +3540,38 @@ mod tests {
             stroke((-0.0019, -0.0013), (0.0006, 0.0013)),
             stroke((-0.0006, -0.0013), (0.0019, 0.0013)),
         ]
+    }
+
+    /// `style.dll`'s mode-2 fit on the signal-line pattern `-1.905/-1.270`,
+    /// ratio `7/6`, against the pitch the I wellsite's reference plot prints
+    /// on pieces of these lengths.
+    #[test]
+    fn the_signal_dash_stretches_to_each_piece_the_reference_prints() {
+        let fit = DashFit {
+            ratio: f64::from(7.0_f32 / 6.0),
+            signed_mm: vec![-1.905, -1.27],
+        };
+        let pitch = |length: f64| fit.pattern_mm(length).iter().sum::<f64>();
+        // Too short for one stretched repeat: the stated pattern stands.
+        assert!((fit.scale(4.517) - 1.0).abs() < 1e-12);
+        assert!((pitch(4.517) - 3.175).abs() < 1e-9);
+        // The reference reads 2.86–2.88, 4.05–4.08 and 3.168 mm.
+        for (length, low, high) in [
+            (5.145, 2.85, 2.88),
+            (7.298, 4.05, 4.08),
+            (395.511, 3.165, 3.172),
+        ] {
+            let at = pitch(length);
+            assert!(low <= at && at <= high, "{length} mm piece: pitch {at}");
+        }
+        // Both segments stretch together: the pattern keeps its proportions.
+        let stretched = fit.pattern_mm(7.298);
+        assert!((stretched[0] / stretched[1] - 1.905 / 1.27).abs() < 1e-9);
+        // An unfitted record carries no fit at all.
+        let plain = pid_parse::style_link::DashPattern::from_segments_m(&[-0.0035, -0.001_75])
+            .expect("two segments");
+        assert!(DashFit::of(&plain).is_none());
+        assert!(DashFit::of(&plain.with_fit(0x22, 0.5)).is_some());
     }
 
     #[test]
