@@ -516,6 +516,11 @@ struct FaceHeights {
     descent: f64,
     cap: f64,
     stated_cap: Option<f64>,
+    /// `OS/2` `xAvgCharWidth`, as a fraction of the em — GDI's `ntmAvgWidth`.
+    /// Zero where the table has none (`0` is also what an absent table
+    /// reads, so [`permille_scale`]'s `wf` rule treats both alike). See
+    /// [`REFERENCE_CAP_PX`].
+    avg_em: f64,
 }
 
 impl FaceHeights {
@@ -525,6 +530,7 @@ impl FaceHeights {
         descent: 434.0 / 2048.0,
         cap: 1467.0 / 2048.0,
         stated_cap: Some(1467.0 / 2048.0),
+        avg_em: 904.0 / 2048.0,
     };
 
     fn of(bytes: &[u8]) -> Self {
@@ -567,11 +573,17 @@ impl FaceHeights {
                 .bounds(glyph)?;
             Some(f64::from(bounds.y_max)).filter(|top| *top > 0.0)
         })?;
+        let avg_em = os2
+            .as_ref()
+            .map(|os2| f64::from(os2.x_avg_char_width()))
+            .filter(|avg| *avg > 0.0)
+            .map_or(0.0, |avg| avg / em);
         let heights = Self {
             ascent: ascent / em,
             descent: descent / em,
             cap: cap / em,
             stated_cap: stated_cap.map(|cap| cap / em),
+            avg_em,
         };
         (heights.ascent > 0.0 && heights.cap > 0.0 && heights.descent >= 0.0).then_some(heights)
     }
@@ -882,7 +894,11 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
 }
 
 /// Byte runs of one label, each with the face that encodes it.
-type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>)>;
+/// Each run's face, its encoded bytes, and the original text those bytes
+/// encode — [`run_advance`] needs the text back to read the Latin 72-pixel
+/// tables by codepoint, since the bytes carry this writer's own assigned
+/// CID instead.
+type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>, String)>;
 
 /// Split `value` into runs that share one face, preferring the face
 /// `typeface_key` names. A character the named face cannot encode moves to
@@ -913,7 +929,7 @@ fn encode_runs<'a>(
             .iter()
             .find_map(|face| face.metrics.encode(value).map(|bytes| (face, bytes)))
     {
-        return Ok((vec![(face, bytes)], true));
+        return Ok((vec![(face, bytes, value.to_string())], true));
     }
     let face_for_char = |ch: char| -> Option<&'a ReadyFace<'a>> {
         let mut buf = [0u8; 4];
@@ -945,7 +961,7 @@ fn encode_runs<'a>(
         .map(|(face, text)| {
             face.metrics
                 .encode(&text)
-                .map(|bytes| (face, bytes))
+                .map(|bytes| (face, bytes, text.clone()))
                 .ok_or_else(|| missing_glyph(&face.metrics, &text))
         })
         .collect::<Result<Vec<_>, _>>()
@@ -997,9 +1013,23 @@ fn text_segments<'a>(
     height_mm: f64,
 ) -> Vec<TextSegment<'a>> {
     let size_in = |typeface: &str, height_mm: f64| {
+        // The named face is sized by its own tables; a named face the
+        // embedded set does not carry sizes off whichever face
+        // [`encode_runs`] actually draws it with (the first face able to
+        // encode the string), because `Tf`'s size and the reference-font
+        // model in `run_advance` both read `height_basis` off *a* face's
+        // own `FaceHeights`, and the two have to be the same face or the
+        // size and the glyph widths stop agreeing. Only a face list with
+        // nothing able to draw the string at all falls back to
+        // [`FaceHeights::ARIAL`].
         let heights = faces
             .iter()
             .find(|face| face.key == typeface)
+            .or_else(|| {
+                faces
+                    .iter()
+                    .find(|face| face.metrics.encode(text.value).is_some())
+            })
             .map_or(FaceHeights::ARIAL, |face| face.heights);
         plotted_size_pt(heights, text.height_basis, height_mm)
     };
@@ -1096,54 +1126,81 @@ fn page_reach_mm(start: [f64; 2], direction: [f64; 2], page: [f64; 2]) -> f64 {
 /// and loses its tail the way it always did.
 const MIN_CONDENSE: f64 = 0.5;
 
-/// Advance a border template's lettering is drawn at, as a fraction of the em
-/// its run is set in.
+/// Advance a run with a stated character width (`JStyleTextChar +52`,
+/// thousandths of the face's own) is drawn at, as a horizontal scale on the
+/// em its run is set in.
 ///
-/// A sheet's linked `.igr` border letters its labels in the full em the
-/// drawing uses (宋体 at 1000 units per glyph), but the reference plot draws
-/// them one 0.78 em apart: measured on the two corpus sheets that carry
-/// furniture, every template label's per-character advance lands in
-/// 0.765..0.791 of its em — `审  定` 0.785, `设计证书号` 0.791, `A111001641`
-/// 0.784, `CPENC-DD11008` 0.774, `中国石油…华北分公司` 0.775, `华北油田苏桥储气库群`
-/// 0.765, `1 版` 0.770, `会 签 专 业` 0.770 — and every label of a given
-/// letter height shares it, on both sheets, while the drawing's own labels are
-/// drawn at 1.0.
+/// `None` and `1000` both leave the device font's proportional widths
+/// alone — `render.dll` only builds a replacement `lfWidth` when the
+/// stated width is some other value
+/// (`docs/findings/2026-11-07-text-geometry-writer.md` §2: "`wf` 为 1 或未写
+/// 时，两者都是 0"). Otherwise the plotter derives a *pixel* target width
+/// from the face's own average-advance-over-cell ratio (`OS/2
+/// xAvgCharWidth`, [`FaceHeights::avg_em`]) the same way it derives
+/// `lfHeight` ([`whole_pixel_cell`]), and the horizontal scale this run is
+/// set at is that pixel target divided by what the glyphs would measure at
+/// their own proportional widths:
 ///
-/// **This is not a font size.** The two sides' glyph *heights* already agree
-/// exactly (4.74 / 5.08 / 5.93 / 6.60 mm for the template's 3.2 / 3.5 / 4.0 /
-/// 4.5 mm styles on both sheets); what differs is only the horizontal advance.
-/// A PDF library that reports one `size` per run multiplies the two scales
-/// together and lands 1.29 against this crate's 1.47, which is where the
-/// "furniture lettering is 12 % larger" reading came from — the run is
-/// condensed, not shrunk. The template's styles do state a width —
-/// `JStyleTextChar +52` is `800` on every one of them, thousandths of the
-/// face's advance (`style.dll` divides it by `1000.0` and never scales it by
-/// the placement) — but the reference realises that as 0.765..0.791, not 0.8,
-/// so the constant stays the measured figure, like [`plotted_size_pt`]'s
-/// table. [`furniture_advance`] reads the stated width and keeps this for
-/// `800`.
+/// ```text
+/// lw_ref = trunc(72 × avg/cell × w/1000)
+/// lfW    = round(lw_ref × a8)
+/// sx     = lfW / (lfH × avg/cell)
+/// ```
 ///
-/// See
-/// `docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`.
-const PLATE_TEXT_ADVANCE: f64 = 0.78;
-
-/// Advance a border template's run is drawn at, from its style's character
-/// width (`JStyleTextChar +52`, thousandths of the face's own).
-///
-/// Every template `SimSun` style in `CPE-SQ-A0/A1` and `CPECCHB-SQ-A2`
-/// states `800`, and the reference letters those at the measured
-/// [`PLATE_TEXT_ADVANCE`] — the plotter's own realisation of 0.8, which this
-/// crate cannot reproduce from the record. The A2 sign-off column's
-/// `A$C40D91A4B.sym` states `1000` and the reference letters it at exactly
-/// one em (修改, 审核, 日期, 页次 … all 10.50 mm against our 8.19 at 0.78). Any
-/// other stated width is taken at its face value; an unstated one keeps the
-/// measured constant, which is what every template letter drew before the
-/// width was read.
-fn furniture_advance(width_permille: Option<u16>) -> f64 {
-    match width_permille {
-        Some(800) | None => PLATE_TEXT_ADVANCE,
-        Some(width) => f64::from(width) / 1000.0,
+/// This is why a template's `SimSun` furniture (every stated width here is
+/// `800`) does not letter at a clean 0.8: the truncation and the two
+/// roundings land at 0.742..0.797 across its nine style heights
+/// (3.0..7.778 mm), matching the reference plot glyph for glyph, where a
+/// flat 0.8 over- or under-shoots by up to a pixel over a long label. A
+/// style with no readable `avg_em` (an unembeddable font whose `OS/2` table
+/// could not be read) falls back to the stated fraction at its face value,
+/// the same as `1000`.
+fn permille_scale(
+    key: &str,
+    heights: FaceHeights,
+    basis: TextHeightBasis,
+    height_mm: f64,
+    width_permille: Option<u16>,
+) -> f64 {
+    let Some(width) = width_permille.filter(|w| *w != 1000) else {
+        return 1.0;
+    };
+    let cell = heights.ascent + heights.descent;
+    let avg_over_cell = heights.avg_em / cell;
+    let Some(cell_px) = whole_pixel_cell(heights, basis, height_mm) else {
+        return f64::from(width) / 1000.0;
+    };
+    if !(avg_over_cell > 0.0 && cell_px > 0.0) {
+        return f64::from(width) / 1000.0;
     }
+    let a8 = reference_scale(key, heights, basis, height_mm);
+    let lw_ref = (72.0 * avg_over_cell * f64::from(width) / 1000.0).trunc();
+    let lf_w = (lw_ref * a8).round();
+    let target = cell_px * avg_over_cell;
+    if target > 0.0 { lf_w / target } else { 1.0 }
+}
+
+/// The 72-unit reference font's own narrowing, `lw_ref / (72 × avg/cell)`,
+/// for a style whose character width ([`permille_scale`]) is not `1000`.
+///
+/// This is a different ratio from [`permille_scale`]'s `sx` — `lw_ref`
+/// rather than the device font's rounded `lfW`, `72` rather than the device
+/// font's own rounded `lfH` — because the reference font `render.dll`
+/// measures a string's advances against is a second, smaller device font
+/// request of its own ([`reference_advance_px`]), not the one the glyphs
+/// are finally drawn with.
+fn wf_reference_scale(heights: FaceHeights, width_permille: Option<u16>) -> f64 {
+    let Some(width) = width_permille.filter(|w| *w != 1000) else {
+        return 1.0;
+    };
+    let cell = heights.ascent + heights.descent;
+    let avg_over_cell = heights.avg_em / cell;
+    if avg_over_cell <= 0.0 {
+        return 1.0;
+    }
+    let lw_ref = (72.0 * avg_over_cell * f64::from(width) / 1000.0).trunc();
+    let denom = 72.0 * avg_over_cell;
+    if denom > 0.0 { lw_ref / denom } else { 1.0 }
 }
 
 /// Advance of one glyph, as a fraction of the em, when the named face can
@@ -1188,25 +1245,26 @@ fn show_text(
         return Ok(());
     }
     // A label that letters in more than one style is cut into the stretches
-    // that share a size and a face; a plain label is one stretch.
+    // that share a size and a face; a plain label is one stretch. `encode_runs`
+    // itself runs first, ahead of sizing, because the width scale below
+    // ([`BORROWED_HAN_ADVANCE`]) needs its `borrowed` reading.
     let segments = text_segments(faces, &text, inked, height_mm);
-    let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>)> = Vec::new();
-    let mut width_mm = 0.0;
+    let mut runs: Vec<(f64, &ReadyFace<'_>, Vec<u8>, String)> = Vec::new();
     let mut borrowed_whole = !segments.is_empty();
     for segment in &segments {
-        let (runs, borrowed) = encode_runs(faces, segment.typeface, &segment.text)?;
+        let (segment_runs, borrowed) = encode_runs(faces, segment.typeface, &segment.text)?;
         borrowed_whole &= borrowed;
-        for (face, bytes) in runs {
-            width_mm += run_width_mm(&face.metrics, segment.size_pt, &bytes);
-            emitted.push((segment.size_pt, face, bytes));
+        for (face, bytes, run_text) in segment_runs {
+            runs.push((segment.size_pt, face, bytes, run_text));
         }
     }
     let (sin, cos) = text.rotation.sin_cos();
     // The reference plot letters a border template's text one glyph narrower
     // than the em it sets it in, and letters the sheet's own text at the full
     // em. Height is *not* touched by this: the two sides' glyph boxes are the
-    // same 4.74 / 5.08 / 5.93 / 6.60 mm for the 3.2 / 3.5 / 4.0 / 4.5 mm
-    // template styles on both sheets. See [`PLATE_TEXT_ADVANCE`].
+    // same 4.74 / 5.08 / 5.93 / 6.60 mm for the template's 3.2 / 3.5 / 4.0 /
+    // 4.5 mm styles on both sheets; what differs is only the horizontal
+    // advance [`permille_scale`] computes.
     //
     // A 2.5 mm string whose named face draws nothing is the A2 `动火点`
     // class: the reference pitches it at 1.524 mm a glyph and centres on
@@ -1225,14 +1283,84 @@ fn show_text(
         1.0
     };
     // The drawing's own lettering takes its style's stated width as it
-    // stands: the symbol bodies' 7.2 pt ascent `M` states `800` and the
-    // reference letters it at `Tf 8.16` under a 0.809 horizontal scale.
-    let plate = if text.furniture {
-        furniture_advance(text.width_permille)
-    } else {
-        text.width_permille
-            .map_or(1.0, |width| f64::from(width) / 1000.0)
-    } * han_pitch;
+    // stands, and the template's furniture reads the same field: the symbol
+    // bodies' 7.2 pt ascent `M` states `800` and the reference letters it at
+    // `Tf 8.16` under a 0.809 horizontal scale, the template's own styles
+    // state the same `800` and letter at 0.742..0.797 across their nine
+    // heights. See [`permille_scale`].
+    let scale_heights = faces
+        .iter()
+        .find(|face| face.key == text.typeface)
+        .or_else(|| runs.first().map(|(_, face, ..)| *face))
+        .map_or(FaceHeights::ARIAL, |face| face.heights);
+    let permille = permille_scale(
+        text.typeface,
+        scale_heights,
+        text.height_basis,
+        height_mm,
+        text.width_permille,
+    );
+    let plate = permille * han_pitch;
+    // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
+    // device font's natural width for a one- or two-glyph run, or the
+    // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`
+    // otherwise ([`run_advance`]) — at `plate`, the scale this whole label's
+    // `Tm` carries: the same scale narrows every glyph's outline and its
+    // advance together, which is why it belongs in `Tm` rather than folded
+    // into the width this loop sums.
+    //
+    // `run_advance` is handed `plate`, not `plate * condense`: `condense`
+    // ([`PaperModel::lay_out`] below) is solved from this loop's own
+    // `width_mm`, so it cannot exist yet when `Tc` is. The gap this leaves
+    // — the emitted `Tc` is exact for `Tm`'s horizontal scale `plate`, a
+    // hair off for `plate * condense` — only shows on a run the page
+    // cannot hold at its stated width, already the rarest path through
+    // this function.
+    let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>, f64)> = Vec::with_capacity(runs.len());
+    let mut width_mm = 0.0;
+    for (size_pt, face, bytes, run_text) in runs {
+        // `face.key`/`face.heights`, not `text.typeface`/`scale_heights`:
+        // the 72-unit reference tables are calibrated per *embedded* font
+        // identity, and `size_pt` was sized off this same face's own
+        // heights once a named face with nothing to draw the run falls
+        // back to the first face that can ([`text_segments`],
+        // [`encode_runs`] — the two resolve the same fallback face, so the
+        // heights agree either way).
+        let advance = run_advance(
+            face.key,
+            &face.metrics,
+            &bytes,
+            &run_text,
+            face.heights,
+            text.height_basis,
+            height_mm,
+            size_pt,
+            text.width_permille,
+            plate,
+            han_pitch == 1.0,
+        );
+        width_mm += advance.width_mm;
+        // `Tc` is a graphics-state parameter: once set it adds to *every*
+        // glyph's own displacement, including the run's last one. The
+        // reference's `Tc` is only the correction for the `n - 1` gaps
+        // *between* glyphs ([`run_advance`]), so a run that needed one is
+        // split here — the head under `Tc`, the last glyph alone under
+        // `Tc = 0` — rather than let the PDF apply a correction meant for
+        // `n - 1` transitions to `n` of them.
+        if advance.tc_pt != 0.0
+            && let Some(split) = last_glyph_byte_offset(&face.metrics, &bytes)
+            && split > 0
+            && split < bytes.len()
+        {
+            let tail = bytes[split..].to_vec();
+            let mut head = bytes;
+            head.truncate(split);
+            emitted.push((size_pt, face, head, advance.tc_pt));
+            emitted.push((size_pt, face, tail, 0.0));
+        } else {
+            emitted.push((size_pt, face, bytes, advance.tc_pt));
+        }
+    }
     let laid_out_mm = width_mm * plate;
     // A left anchor is the left of the stored run, padding included. A
     // right-aligned paragraph letters the trimmed glyphs at the right of
@@ -1245,7 +1373,7 @@ fn show_text(
         let pad = &text.value[kept.len()..];
         emitted
             .last()
-            .and_then(|(size_pt, face, _)| {
+            .and_then(|(size_pt, face, ..)| {
                 face.metrics
                     .encode(pad)
                     .map(|bytes| run_width_mm(&face.metrics, *size_pt, &bytes) * plate)
@@ -1260,20 +1388,17 @@ fn show_text(
     ];
     // The insertion line is a line of the face the label names, so its depth
     // is read off that face; a label whose named face draws none of it takes
-    // the face that does.
-    let heights = faces
-        .iter()
-        .find(|face| face.key == text.typeface)
-        .or_else(|| emitted.first().map(|(_, face, _)| *face))
-        .map_or(FaceHeights::ARIAL, |face| face.heights);
-    let below_mm = height_mm * heights.drop(text.line, text.height_basis);
+    // the face that does — the same face [`permille_scale`] already sized
+    // the run's width from.
+    let below_mm = height_mm * scale_heights.drop(text.line, text.height_basis);
     // A run the page still cannot hold loses its tail to the page box, so it
     // is condensed along its own direction until it fits: the template states
     // the label and the page states its edge, and keeping every glyph on the
     // sheet beats inventing a smaller size for the letters. Furniture reaches
-    // this rule only if it overflows even at [`PLATE_TEXT_ADVANCE`] — the I
-    // drawing's 21-glyph company name did, back when it was drawn at the full
-    // em and lost its last two characters to the sheet edge.
+    // this rule only if it overflows even at its own stated character width
+    // ([`permille_scale`]) — the I drawing's 21-glyph company name did, back
+    // when it was drawn at the full em and lost its last two characters to
+    // the sheet edge.
     let mut condense = 1.0;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
         let start = baseline_origin(origin_mm, text.rotation, laid_out_mm, below_mm, text.anchor);
@@ -1318,7 +1443,11 @@ fn show_text(
     // `Tj` advances the text position itself, so consecutive runs continue
     // along the same baseline — across a change of face, and across a change
     // of size, since the advance is the glyph width at the size in force.
-    for (size, face, bytes) in &emitted {
+    // `Tc` is a per-run correction ([`run_advance`]), so every run sets its
+    // own — including back to zero for a one- or two-glyph run that follows
+    // one that needed it.
+    for (size, face, bytes, tc_pt) in &emitted {
+        ops.push(Op::new("Tc", vec![Object::Real(*tc_pt)]));
         ops.push(Op::new(
             "Tf",
             vec![Object::name(&face.resource), Object::Real(*size)],
@@ -1568,20 +1697,32 @@ fn push_chain(out: &mut Vec<([f64; 2], [f64; 2])>, points: &[[f64; 2]], page: [f
 /// See `docs/analysis/2026-11-07-the-plot-size-is-a-whole-pixel-cell.md`.
 fn plotted_size_pt(heights: FaceHeights, basis: TextHeightBasis, height_mm: f64) -> f64 {
     let style_pt = height_mm * PT_PER_MM;
+    let cell = heights.ascent + heights.descent;
+    let Some(cell_px) = whole_pixel_cell(heights, basis, height_mm) else {
+        return style_pt;
+    };
+    let em_pt = cell_px * 72.0 / PLOT_DPI / cell;
+    (em_pt * PLOT_UNITS_PER_INCH / 72.0).round() * 72.0 / PLOT_UNITS_PER_INCH
+}
+
+/// The style height's cell, rounded to a whole 150 dpi pixel — the plotter's
+/// own `lfHeight` request to GDI, `render.dll`'s `round(72 × a8)` worked
+/// back from `basis` rather than [`reference_scale`]'s GDI-measured `a8`
+/// (the two agree for every face this corpus carries; see
+/// [`REFERENCE_CAP_PX`]'s doc comment). `None` where the style height, the
+/// named height basis or the face's own cell cannot size a font at all.
+fn whole_pixel_cell(heights: FaceHeights, basis: TextHeightBasis, height_mm: f64) -> Option<f64> {
+    let style_pt = height_mm * PT_PER_MM;
     let measures = match basis {
         TextHeightBasis::Cap => heights.stated_cap.unwrap_or(UNSTATED_CAP_EM),
         TextHeightBasis::Ascent => heights.ascent,
     };
     let cell = heights.ascent + heights.descent;
     if !(style_pt.is_finite() && style_pt > 0.0 && measures > 0.0 && cell > 0.0) {
-        return style_pt;
+        return None;
     }
     let cell_px = (style_pt / measures * cell * PLOT_DPI / 72.0).round();
-    if cell_px < 1.0 {
-        return style_pt;
-    }
-    let em_pt = cell_px * 72.0 / PLOT_DPI / cell;
-    (em_pt * PLOT_UNITS_PER_INCH / 72.0).round() * 72.0 / PLOT_UNITS_PER_INCH
+    (cell_px >= 1.0).then_some(cell_px)
 }
 
 /// The resolution the reference plotter sizes fonts at, dots per inch.
@@ -1591,15 +1732,272 @@ const PLOT_DPI: f64 = 150.0;
 /// reference plots carry is a multiple of 0.03 pt, 1/2400 in.
 const PLOT_UNITS_PER_INCH: f64 = 2400.0;
 
+/// GDI's own measured cap and ascent heights, in pixels, for a face asked
+/// for at `lfHeight = 72`.
+///
+/// `render.dll`'s text path (`sub_1007EF20` in `RADInstallA~\render.dll`)
+/// builds a "72-unit reference font" to measure the string it is about to
+/// letter, and derives every other figure — the device font's own
+/// `lfHeight`/`lfWidth`, and each glyph's `lpDx` advance — from the ratio of
+/// the style height to *this table's* reading, not from the face's raw
+/// `unitsPerEm` tables. For a hinted TrueType face (Arial, Arial Narrow) the
+/// two differ by GDI's own pixel-grid-fitting at 72 px; for the CJK faces
+/// here (256 units per em, no hinting at this scale) they agree to the
+/// first decimal. Measured on this machine's GDI, matching
+/// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
+const REFERENCE_CAP_PX: [(&str, f64, f64); 4] = [
+    // (face key, cap72 — code 0x0D, asc72 — code 0x0C)
+    ("SimSun", 49.2, 62.0),
+    ("FangSong", 48.2, 62.0),
+    ("Arial", 46.0, 58.0),
+    ("Arial Narrow", 44.0, 58.0),
+];
+
+/// GDI's measured advance, in pixels, of `0x20..=0x7E` at `lfHeight = 72`,
+/// `lfWidth = 0`, for a hinted Latin TrueType face.
+///
+/// Arial and Arial Narrow are the two faces this corpus letters in Latin
+/// text where GDI's 72-pixel hinting moves an advance off the face's raw
+/// `hmtx` table (27 and 72 of 95 printable ASCII glyphs respectively); every
+/// other face here computes its 72-pixel advance straight from `hmtx`
+/// ([`reference_advance_px`]), which reproduces GDI exactly because a 256
+/// unit-per-em bitmap-style CJK face has no hinting to apply at that size.
+/// Index `code - 0x20`. See
+/// `docs/findings/2026-11-07-text-geometry-writer.md` appendix.
+#[rustfmt::skip]
+const ARIAL_72PX: [u16; 95] = [
+    18, 20, 23, 36, 36, 57, 43, 12, 21, 21, 25, 37, 18, 21, 18, 18,
+    36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 18, 18, 37, 37, 37, 36,
+    65, 43, 43, 46, 46, 43, 39, 50, 46, 18, 32, 43, 36, 53, 46, 50,
+    43, 50, 46, 43, 40, 46, 43, 64, 41, 42, 39, 18, 18, 18, 27, 36,
+    21, 36, 36, 32, 36, 36, 18, 36, 36, 14, 15, 33, 14, 55, 36, 36,
+    36, 36, 21, 32, 18, 36, 33, 47, 31, 31, 31, 21, 17, 21, 37,
+];
+
+/// `ARIALN.TTF`'s own reading of the same 72-pixel table as
+/// [`ARIAL_72PX`].
+#[rustfmt::skip]
+const ARIAL_NARROW_72PX: [u16; 95] = [
+    14, 14, 18, 29, 28, 46, 33, 10, 17, 17, 19, 29, 14, 17, 14, 14,
+    28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 14, 14, 29, 29, 29, 28,
+    51, 33, 33, 36, 36, 33, 31, 39, 36, 14, 25, 33, 28, 42, 36, 39,
+    33, 39, 36, 33, 31, 36, 33, 47, 33, 33, 31, 14, 14, 14, 23, 28,
+    17, 28, 28, 25, 28, 28, 14, 28, 28, 11, 11, 25, 11, 42, 28, 28,
+    28, 28, 17, 25, 14, 28, 25, 36, 25, 25, 25, 17, 13, 17, 29,
+];
+
+/// The GDI reference pixel the plotter measures `basis` against for `key`,
+/// where [`REFERENCE_CAP_PX`] carries one.
+fn reference_cap_px(key: &str, basis: TextHeightBasis) -> Option<f64> {
+    REFERENCE_CAP_PX
+        .iter()
+        .find(|(face, ..)| *face == key)
+        .map(|(_, cap72, asc72)| match basis {
+            TextHeightBasis::Cap => *cap72,
+            TextHeightBasis::Ascent => *asc72,
+        })
+}
+
+/// `render.dll`'s `a8`: the continuous scale from the 72-unit reference font
+/// to the device font a style height asks for.
+///
+/// `a8 = h_px / M`, `h_px` the style height in 150 dpi pixels and `M` the
+/// face's own [`REFERENCE_CAP_PX`] reading of `basis`. A face with no row
+/// there (every face but the four Latin/CJK families the corpus letters in)
+/// falls back to the same cell-to-em ratio [`plotted_size_pt`] rounds from,
+/// which is what a GDI reading and a raw `unitsPerEm` reading agree on for
+/// an unhinted face.
+fn reference_scale(key: &str, heights: FaceHeights, basis: TextHeightBasis, height_mm: f64) -> f64 {
+    let h_px = height_mm * PT_PER_MM * PLOT_DPI / 72.0;
+    let measures = match basis {
+        TextHeightBasis::Cap => heights.stated_cap.unwrap_or(UNSTATED_CAP_EM),
+        TextHeightBasis::Ascent => heights.ascent,
+    };
+    let cell = heights.ascent + heights.descent;
+    let m = reference_cap_px(key, basis).unwrap_or_else(|| 72.0 * measures / cell.max(1e-9));
+    if m > 0.0 { h_px / m } else { 0.0 }
+}
+
+/// A glyph's advance in the 72-unit reference font, in pixels.
+///
+/// Arial and Arial Narrow read [`ARIAL_72PX`] / [`ARIAL_NARROW_72PX`] for
+/// `0x20..=0x7E` — GDI's own hinted measurement at `lfWidth = 0`, so a
+/// stated character width never touches it. Every other code, and every
+/// other face, computes the advance from its own `hmtx` table: `round(W ×
+/// 72/cell)`, `W` the glyph's advance as a fraction of the em
+/// ([`pdfcraft_fonts::pdf::Metrics::width`] already reads it that way) and
+/// `cell` the face's ascent-plus-descent fraction — the conversion that
+/// puts a glyph's natural advance on the same 72-pixel cell the reference
+/// font is built at — then scaled by `wf_scale`, `lw_ref/(72 × avg/cell)`
+/// when the style states a character width other than `1000` (`1.0`
+/// otherwise): the reference font itself is narrower or wider than its
+/// natural proportions whenever `JStyleTextChar +52` is. See
+/// [`REFERENCE_CAP_PX`].
+fn reference_advance_px(key: &str, code: u32, width_em: f64, cell: f64, wf_scale: f64) -> f64 {
+    let table = match key {
+        "Arial" => Some(&ARIAL_72PX),
+        "Arial Narrow" => Some(&ARIAL_NARROW_72PX),
+        _ => None,
+    };
+    if let Some(table) = table
+        && let Ok(index) = usize::try_from(code.wrapping_sub(0x20))
+        && let Some(px) = table.get(index)
+    {
+        return f64::from(*px);
+    }
+    if cell <= 0.0 {
+        return 0.0;
+    }
+    (width_em * 72.0 / cell).round() * wf_scale
+}
+
+/// One run's letter-spacing and glyph advances, `render.dll`'s way.
+///
+/// `n < 3` is the `ExtTextOutW(lpDx = NULL)` path: every glyph keeps its
+/// device font's own natural advance and `Tc` is `0`. `n >= 3` instead
+/// drives each glyph's advance from the 72-unit reference font
+/// ([`reference_advance_px`], narrowed by [`wf_reference_scale`] when the
+/// style states a character width) scaled by `a8` ([`reference_scale`]),
+/// rounded with the running error carried into the next glyph so the
+/// cumulative pixel position never drifts by more than one; `Tc` is the
+/// per-glyph correction (excluding the last glyph, which carries none) that
+/// makes a PDF reader's own glyph-width arithmetic land on the same `lpDx`
+/// the vendor wrote. Both `width_mm` and `tc_pt` are figured at `sx = 1` —
+/// the one `Tm` horizontal scale the caller's whole label carries,
+/// `permille` and the borrowed-Han pitch alike, is what turns either into
+/// what actually lands on the page, the same way it turns every glyph's
+/// own outline narrower together with its advance (the reason `render.dll`
+/// drew a condensed run with a condensed device font rather than a kerning
+/// table). `sx` is only this function's divisor for `tc_pt`, so a `Tm` of
+/// `1` reproduces it exactly; the caller never multiplies `tc_pt` again.
+///
+/// `reference_font_applies` is `false` for a label stepping to the
+/// borrowed-Han pitch ([`BORROWED_HAN_ADVANCE`]): `render.dll` never built
+/// that pitch, it is this crate's own stand-in for a face that cannot draw
+/// the string at all, so there is no 72-unit reference font for it either
+/// — treating it as `n < 3` keeps the run's own even spacing rather than
+/// feeding an invented ratio through a formula calibrated on real `lfWidth`
+/// values. See `docs/findings/2026-11-07-text-geometry-writer.md` §2.
+struct RunAdvance {
+    /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
+    /// (`0` for `n < 3`); the caller's own `Tm` carries `sx` from here on.
+    tc_pt: f64,
+    /// This run's total advance to the end of its last glyph, in
+    /// millimetres, at `Tm`'s horizontal scale `1`; the caller's own `Tm`
+    /// carries `sx`. The leading `n - 1` glyphs advance by `tc_pt`-corrected
+    /// `lpDx`; the last glyph (drawn under its own `Tc = 0`, see
+    /// [`last_glyph_byte_offset`]) advances by its own embedded-font natural
+    /// width — not the reference font's `lpDx` reading of it, which this
+    /// field never folds in for `n ≥ 3`.
+    width_mm: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_advance(
+    key: &str,
+    metrics: &Metrics,
+    bytes: &[u8],
+    text: &str,
+    heights: FaceHeights,
+    basis: TextHeightBasis,
+    height_mm: f64,
+    size_pt: f64,
+    width_permille: Option<u16>,
+    sx: f64,
+    reference_font_applies: bool,
+) -> RunAdvance {
+    let codes = metrics.codes(bytes);
+    let n = codes.len();
+    if n < 3 || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
+        return RunAdvance {
+            tc_pt: 0.0,
+            width_mm: run_width_mm(metrics, size_pt, bytes),
+        };
+    }
+    let cell = heights.ascent + heights.descent;
+    let Some(cell_px) = whole_pixel_cell(heights, basis, height_mm) else {
+        return RunAdvance {
+            tc_pt: 0.0,
+            width_mm: run_width_mm(metrics, size_pt, bytes),
+        };
+    };
+    let a8 = reference_scale(key, heights, basis, height_mm);
+    let wf_scale = wf_reference_scale(heights, width_permille);
+    let em_px = cell_px / cell;
+    // `reference_advance_px` keys the hinted Arial/Arial Narrow tables on
+    // the glyph's own *Unicode* codepoint — the table is GDI's reading of
+    // `0x20..=0x7E` — but `codes` are this run's *embedded* encoding
+    // (`Metrics::codes`), a CID `pdfcraft_fonts::embedding` assigns in the
+    // order its own font subset first meets each character, unrelated to
+    // the character itself. `text`'s own `char`s, one per code in the
+    // same order ([`encode_runs`] builds both from the same
+    // one-`char`-at-a-time walk), are the codepoint the table actually
+    // wants.
+    let mut chars = text.chars();
+    let mut float_acc = 0.0;
+    let mut int_acc: i64 = 0;
+    let mut lp_dx = Vec::with_capacity(n);
+    let mut widths_em = Vec::with_capacity(n);
+    for (code, _) in &codes {
+        let width_em = metrics.width(*code);
+        widths_em.push(width_em);
+        let unicode = chars.next().map_or(*code, u32::from);
+        float_acc += reference_advance_px(key, unicode, width_em, cell, wf_scale) * a8;
+        let target = float_acc.round();
+        #[allow(clippy::cast_possible_truncation)]
+        let target_i = target as i64;
+        lp_dx.push(target_i - int_acc);
+        int_acc = target_i;
+    }
+    let leading: i64 = lp_dx[..n - 1].iter().sum();
+    #[allow(clippy::cast_precision_loss)]
+    let leading_px = leading as f64;
+    let embedded_px: f64 = widths_em[..n - 1].iter().sum::<f64>() * em_px * sx;
+    #[allow(clippy::cast_precision_loss)]
+    let tc_pt = (leading_px - embedded_px) / (n - 1) as f64 * (72.0 / PLOT_DPI) / sx;
+    // The page renders the first `n - 1` glyphs at `leading_px` (that is
+    // what `tc_pt` was solved to make them do) and the last glyph at its
+    // own embedded-font natural width, under `Tc = 0`
+    // ([`last_glyph_byte_offset`]'s split) — not at the reference font's
+    // own `lp_dx` reading of it, which `widths_em[n - 1]` never enters.
+    // Summing all `n` entries of `lp_dx` instead double-counts the
+    // reference font's own rounding on the glyph that is never drawn
+    // under its correction.
+    let width_mm = leading_px * 25.4 / PLOT_DPI / sx + widths_em[n - 1] * size_pt / PT_PER_MM;
+    RunAdvance { tc_pt, width_mm }
+}
+
+/// The byte offset where `bytes`' last glyph starts, or `None` for a run of
+/// one glyph (there is no "head" to split off) or an empty run.
+///
+/// [`run_advance`]'s `Tc` corrects only the gaps *between* glyphs — `n - 1`
+/// of them for `n` glyphs — but a PDF's `Tc` graphics-state parameter adds
+/// to every glyph's own displacement once set, the trailing one included.
+/// Splitting the run here, so the trailing glyph can go out under its own
+/// `Tj` with `Tc` reset to `0`, is what keeps that one extra correction off
+/// the page.
+fn last_glyph_byte_offset(metrics: &Metrics, bytes: &[u8]) -> Option<usize> {
+    let codes = metrics.codes(bytes);
+    if codes.len() < 2 {
+        return None;
+    }
+    let last_len = codes.last()?.1;
+    bytes.len().checked_sub(last_len)
+}
+
 /// The cap height, in em, the plotter assumes for a face whose `OS/2` table
 /// states none.
 ///
 /// Only `ARIALN.TTF` (`OS/2` version 1) is such a face here. Its `H` stands
 /// 1466/2048 = 0.716 em tall, and sizing from that puts every cap-height
 /// Arial Narrow style one pixel short of the reference: 7 pt → 9.75 against
-/// 10.17, 10 pt → 13.98 against 14.40. The reference's own cells (24 px and
-/// 34 px) bound the ratio to 0.685..0.702 em; 0.7 is inside it.
-const UNSTATED_CAP_EM: f64 = 0.7;
+/// 10.17, 10 pt → 13.98 against 14.40. This is not a free-standing fudge: it
+/// is `render.dll`'s own cap reading for the face, recovered from its GDI
+/// 72-pixel cap height — `REFERENCE_CAP_PX`'s Arial Narrow row, 44.0 — run
+/// back through the cell-to-em conversion [`plotted_size_pt`] otherwise uses
+/// (`44.0 / (72 × 2048/2319)`). The reference's own cells (24 px and 34 px)
+/// bound the ratio to 0.685..0.702 em; 0.6923 is inside it.
+const UNSTATED_CAP_EM: f64 = 44.0 / (72.0 * 2048.0 / 2319.0);
 fn pt(mm: f64) -> Object {
     Object::Real(mm * PT_PER_MM)
 }
@@ -1617,15 +2015,57 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, STROKE_MM, ShownText, pen_width_mm, plotted_size_pt,
-        text_segments, write_plot,
+        Dict, Document, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, STROKE_MM, ShownText, embed,
+        embedding, pen_width_mm, plotted_size_pt, text_segments, write_plot,
     };
     use crate::model::{
         PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
     };
     use crate::read::read_plot;
+    use pdfcraft_fonts::pdf::Metrics;
 
     use super::PlotFont;
+
+    /// `JStyleTextChar +52`'s `800` narrows a SimSun furniture label by a
+    /// ratio that changes at every `Tf` tier the style height rounds to —
+    /// four of this corpus's own tiers, each `lfW / (lfH × avg/cell)` with
+    /// `lfW = round(lw_ref × a8)` and `a8` read off SimSun's GDI-measured
+    /// 49.2 px cap ([`REFERENCE_CAP_PX`]), not the old per-mille-of-cell
+    /// rule that was a whole device pixel off `lfW` at each of these four.
+    #[test]
+    fn furniture_w800_matches_simsun_four_height_tiers() {
+        let simsun = super::FaceHeights {
+            ascent: 220.0 / 256.0,
+            descent: 36.0 / 256.0,
+            cap: 175.0 / 256.0,
+            stated_cap: Some(175.0 / 256.0),
+            avg_em: 0.5,
+        };
+        let cases = [
+            (4.0, 16.8, 26.0 / 35.0),
+            (4.243_916_666_666_666, 17.76, 28.0 / 37.0),
+            (4.5, 18.72, 10.0 / 13.0),
+            (7.778, 32.16, 52.0 / 67.0),
+        ];
+        for (height_mm, expected_tf, expected_sx) in cases {
+            let tf = super::plotted_size_pt(simsun, crate::model::TextHeightBasis::Cap, height_mm);
+            assert!(
+                (tf - expected_tf).abs() < 1e-9,
+                "h={height_mm}: Tf {tf} != {expected_tf}"
+            );
+            let sx = super::permille_scale(
+                "SimSun",
+                simsun,
+                crate::model::TextHeightBasis::Cap,
+                height_mm,
+                Some(800),
+            );
+            assert!(
+                (sx - expected_sx).abs() < 1e-9,
+                "h={height_mm}: sx {sx} != {expected_sx}"
+            );
+        }
+    }
 
     fn primitive(confidence: &'static str, shape: PaperShape) -> PaperPrimitive {
         PaperPrimitive {
@@ -1639,6 +2079,110 @@ mod tests {
         }
     }
 
+    /// Embeds `bytes` the same way [`write_plot`] does, and hands back the
+    /// font's own [`Metrics`] and the glyph bytes `value` encodes to — the
+    /// same pair [`super::run_advance`] takes, built outside any
+    /// [`ShownText`] so the error-diffusion rule can be pinned on its own.
+    fn metrics_and_bytes(bytes: &'static [u8], value: &str) -> (Metrics, Vec<u8>) {
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let (family, _) = embedding::names(bytes).expect("font name");
+        let resource = embed(&mut doc, &mut font_resources, bytes, &family).expect("embed");
+        let font_ref = font_resources
+            .get(resource.as_bytes())
+            .cloned()
+            .expect("resource");
+        let font_dict = doc.dict(&font_ref).expect("font dict");
+        let metrics = Metrics::from_dict(&doc, &font_dict);
+        let encoded = metrics.encode(value).expect("value encodes");
+        (metrics, encoded)
+    }
+
+    /// `ExtTextOutW(lpDx = NULL)` — `render.dll`'s path for a run under
+    /// three glyphs ([`super::run_advance`]) — keeps the device font's own
+    /// natural advance and sets no letter-spacing at all, so a two-glyph
+    /// run's `Tc` is exactly `0` and its width is exactly
+    /// [`super::run_width_mm`]'s, not an `lpDx`-rounded approximation of it.
+    #[test]
+    fn a_run_under_three_glyphs_keeps_its_natural_advance_with_no_letter_spacing() {
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let size_pt = super::plotted_size_pt(inter, crate::model::TextHeightBasis::Cap, 4.0);
+        let advance = super::run_advance(
+            "",
+            &metrics,
+            &bytes,
+            "AB",
+            inter,
+            crate::model::TextHeightBasis::Cap,
+            4.0,
+            size_pt,
+            None,
+            1.0,
+            true,
+        );
+        assert_eq!(
+            advance.tc_pt, 0.0,
+            "a two-glyph run states no letter-spacing"
+        );
+        assert_eq!(
+            advance.width_mm,
+            super::run_width_mm(&metrics, size_pt, &bytes),
+            "a two-glyph run keeps every glyph's own natural advance"
+        );
+    }
+
+    /// `n >= 3` instead rounds each glyph's *cumulative* reference-font
+    /// advance to a whole 150 dpi pixel and carries the leftover into the
+    /// next glyph ([`super::run_advance`]'s `float_acc`/`int_acc`), the
+    /// same error-diffusion `render.dll` itself performs building an
+    /// `lpDx` array — so the run's total advance is always a whole number
+    /// of device pixels even though no individual glyph's own advance is,
+    /// and `Tc` differs from `0` once a stated character width or the
+    /// reference font's own rounding has moved a gap off the glyphs'
+    /// natural spacing.
+    #[test]
+    fn a_run_of_three_or_more_glyphs_diffuses_its_rounding_error() {
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "ABA");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let size_pt = super::plotted_size_pt(inter, crate::model::TextHeightBasis::Cap, 4.0);
+        let advance = super::run_advance(
+            "",
+            &metrics,
+            &bytes,
+            "ABA",
+            inter,
+            crate::model::TextHeightBasis::Cap,
+            4.0,
+            size_pt,
+            None,
+            1.0,
+            true,
+        );
+        assert_ne!(
+            advance.tc_pt, 0.0,
+            "three glyphs letter-space once the reference font's own rounding moves a gap"
+        );
+        let natural_mm = super::run_width_mm(&metrics, size_pt, &bytes);
+        assert_ne!(
+            advance.width_mm, natural_mm,
+            "the lpDx-rounded width is not the glyphs' own natural advance"
+        );
+        // The page draws the leading `n - 1` glyphs under `Tc` and the
+        // trailing one alone under `Tc = 0` ([`super::last_glyph_byte_offset`]),
+        // so only the leading portion sits on the diffused `lpDx` grid —
+        // the trailing glyph keeps its own embedded-font natural width,
+        // which is not generally a whole 150 dpi pixel.
+        let codes = metrics.codes(&bytes);
+        let last_code = codes.last().expect("three codes").0;
+        let last_natural_mm = metrics.width(last_code) * size_pt / super::PT_PER_MM;
+        let leading_px = (advance.width_mm - last_natural_mm) * 150.0 / 25.4;
+        assert!(
+            (leading_px - leading_px.round()).abs() < 1e-6,
+            "the diffused leading portion lands on a whole 150 dpi pixel: {leading_px}"
+        );
+    }
+
     /// One rule sizes every face: the style height's em, its cell rounded to
     /// whole 150 dpi pixels, written on the plot's 1/2400 in grid. Each row is
     /// a `Tf` read off the eleven reference plots.
@@ -1650,6 +2194,7 @@ mod tests {
             descent: descent / upm,
             cap: cap.unwrap_or(1466.0) / upm,
             stated_cap: cap.map(|cap| cap / upm),
+            avg_em: 0.0,
         };
         let arial = face(2048.0, 1854.0, 434.0, Some(1467.0));
         let narrow = face(2048.0, 1888.0, 431.0, None);
@@ -2381,16 +2926,25 @@ mod tests {
     }
 
     /// A template's lettering is drawn one narrower glyph than the sheet's
-    /// own, at the same height.
+    /// own, at the same height, when its style states a character width.
     ///
-    /// The reference plots the two the same way: its `.igr` labels advance
-    /// 0.78 of their em while the drawing's labels advance the full em, and
-    /// neither moves the body size. The two runs here are the same character
-    /// at the same height, so only the horizontal scale can separate them.
+    /// Every `.igr` furniture style in this corpus states `800`
+    /// (`JStyleTextChar +52`), which [`super::permille_scale`] turns into a
+    /// horizontal scale below one; a sheet run with no stated width keeps
+    /// the full em. Neither moves the body size. The two runs here are the
+    /// same character at the same height, so only the horizontal scale can
+    /// separate them, and the expected ratio is [`super::permille_scale`]'s
+    /// own reading of this test's face at `800` — the same function
+    /// [`write_plot`] itself calls, so this is a round trip through the PDF
+    /// rather than a second copy of the formula.
     #[test]
     fn furniture_lettering_is_condensed_horizontally_and_keeps_its_height() {
-        let value = "ABCD";
-        let shape = |y: f64| PaperShape::Text {
+        // Two glyphs keep the device font's own natural advance
+        // (`n < 3`, [`super::run_advance`]), so the realised ratio matches
+        // [`super::permille_scale`] exactly rather than an `lpDx`-rounded
+        // approximation of it.
+        let value = "AB";
+        let shape = |y: f64, width_permille: Option<u16>| PaperShape::Text {
             origin_mm: [20.0, y],
             height_mm: Some(3.0),
             rotation: 0.0,
@@ -2399,7 +2953,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
-            width_permille: None,
+            width_permille,
             right_pad: false,
             spans: Vec::new(),
         };
@@ -2410,8 +2964,8 @@ mod tests {
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
             primitives: vec![
-                primitive("decoded", shape(40.0)),
-                primitive("decoded", shape(50.0)),
+                primitive("decoded", shape(40.0, None)),
+                primitive("decoded", shape(50.0, Some(800))),
             ],
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -2440,9 +2994,16 @@ mod tests {
         let sheet = at(40.0);
         let plate = at(50.0);
         let ratio = plate.advance_mm / sheet.advance_mm;
+        let expected = super::permille_scale(
+            "",
+            super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR),
+            crate::model::TextHeightBasis::Cap,
+            3.0,
+            Some(800),
+        );
         assert!(
-            (ratio - 0.78).abs() < 0.01,
-            "furniture letters at {ratio:.3} of the sheet's advance"
+            (ratio - expected).abs() < 0.005,
+            "furniture letters at {ratio:.3} of the sheet's advance, not {expected:.3}"
         );
         assert!(
             (plate.height_mm - sheet.height_mm).abs() < 0.01,
@@ -2452,16 +3013,20 @@ mod tests {
         );
     }
 
-    /// A template label whose style states its own width letters at that
-    /// width: `1000` is the face's own advance, `800` stays at the measured
-    /// plate advance, and a sheet label ignores the field.
+    /// A label whose style states its own character width letters at that
+    /// width, furniture and sheet alike: `1000` and no stated width both
+    /// leave the face's own advance alone, and any other value narrows it
+    /// by [`super::permille_scale`] — the same rule a sheet label (`900`
+    /// here) and a template label (`800`) both go through. Two glyphs stay
+    /// on the `n < 3` natural-advance path, so the realised ratio matches
+    /// `permille_scale` exactly rather than an `lpDx`-rounded approximation.
     #[test]
     fn a_template_label_letters_at_the_width_its_style_states() {
         let shape = |y: f64, width_permille: Option<u16>| PaperShape::Text {
             origin_mm: [20.0, y],
             height_mm: Some(3.0),
             rotation: 0.0,
-            value: "ABCD".to_string(),
+            value: "AB".to_string(),
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
@@ -2510,11 +3075,19 @@ mod tests {
                 .advance_mm
         };
         let sheet = advance(40.0);
-        for (y, expected) in [(50.0, 1.0), (60.0, 0.78), (70.0, 0.9), (80.0, 1.0)] {
+        let heights = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let basis = crate::model::TextHeightBasis::Cap;
+        for (y, width_permille) in [
+            (50.0, Some(1000)),
+            (60.0, Some(800)),
+            (70.0, Some(900)),
+            (80.0, Some(1000)),
+        ] {
             let ratio = advance(y) / sheet;
+            let expected = super::permille_scale("", heights, basis, 3.0, width_permille);
             assert!(
-                (ratio - expected).abs() < 0.01,
-                "the run at y = {y} letters at {ratio:.3} of the sheet's advance, not {expected}"
+                (ratio - expected).abs() < 0.005,
+                "the run at y = {y} letters at {ratio:.3} of the sheet's advance, not {expected:.3}"
             );
         }
     }
