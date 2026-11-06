@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 出图字号改由规则算出：字高换成整像素的字体单元格（2026-11-07）
+
+`write::plotted_size_pt` 不再查 `measured_tf` 实测表（已删除）。新规则是：样式字高 ÷ 字体的大写高（或 ascent）得到 em，单元格高（`usWinAscent + usWinDescent`）在 150 dpi 下取整像素，`Tf` 取这个单元格对应的 em，落到 1/2400 in 网格上。这条规则逐值复现参考图上全部 21 种 SimSun / FangSong / Arial / Arial Narrow 的 `Tf`。其中 4 种原先不在表里：符号体 Arial ascent 7.2 pt → 8.16、7.76 → 8.58、11.58 → 12.90，Arial Narrow 14.4 → 15.69。`ARIALN.TTF` 没有 `sCapHeight`，按 `UNSTATED_CAP_EM = 0.7` 处理（区间 0.685…0.702 内的取值，厂商来源待 IDA 核对）。图纸自身的文字也改为按样式字宽千分比（`+52`）排字。参考的 `M` 是 `Tf 8.16` × 0.809。I / JK / LM 的 `symbol/Middle` advance 从 +0.017…+0.039 降到 −0.006…−0.005，max_shift 从 0.24 mm 降到 0.14–0.16 mm；coverage、extra、文字配对数、pen 读数不变。见 `docs/analysis/2026-11-07-the-plot-size-is-a-whole-pixel-cell.md`。
 ### 比对报告按整串量拼接配对的宽度（2026-11-07）
 
 `compare::record_offset` 原先只量配对链里第一串的 advance。格网号 `B2B5` 在参考图里是一串，我们画成

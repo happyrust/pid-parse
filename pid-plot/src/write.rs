@@ -25,9 +25,9 @@
 //! split because an earlier face happens to carry its last character. At a
 //! 2.5 mm body that borrowed run is pitched at 1.524 mm a glyph, the spacing
 //! the reference uses for that one label; every other height stays one em.
-//! A style height that was measured on the
-//! reference plots is written at that plot's `Tf`; every other height stays
-//! the style height in points. Every face must be a static TrueType or
+//! A style height is written at the `Tf` the reference plotter would size it
+//! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
+//! `plotted_size_pt`). Every face must be a static TrueType or
 //! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
 //! a variable font.
 
@@ -504,11 +504,16 @@ struct ReadyFace<'a> {
 /// is what the vendor's renderer fills its font cache from — and `cap` is
 /// `OS/2` `sCapHeight`, or the top of `H` where the table is too old to state
 /// one (`ARIALN.TTF` is version 1). Arial reads 0.905 / 0.212 / 0.716.
+///
+/// `stated_cap` is `sCapHeight` alone, with no glyph standing in for it: the
+/// plotter sizes a cap-height style from the stated figure, and a face that
+/// states none takes [`UNSTATED_CAP_EM`] (see [`plotted_size_pt`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FaceHeights {
     ascent: f64,
     descent: f64,
     cap: f64,
+    stated_cap: Option<f64>,
 }
 
 impl FaceHeights {
@@ -517,6 +522,7 @@ impl FaceHeights {
         ascent: 1854.0 / 2048.0,
         descent: 434.0 / 2048.0,
         cap: 1467.0 / 2048.0,
+        stated_cap: Some(1467.0 / 2048.0),
     };
 
     fn of(bytes: &[u8]) -> Self {
@@ -547,22 +553,23 @@ impl FaceHeights {
                 )
             }
         };
-        let cap = os2
+        let stated_cap = os2
             .as_ref()
             .and_then(|os2| os2.s_cap_height())
             .filter(|cap| *cap > 0)
-            .map(f64::from)
-            .or_else(|| {
-                let glyph = font.charmap().map('H')?;
-                let bounds = font
-                    .glyph_metrics(Size::unscaled(), LocationRef::default())
-                    .bounds(glyph)?;
-                Some(f64::from(bounds.y_max)).filter(|top| *top > 0.0)
-            })?;
+            .map(f64::from);
+        let cap = stated_cap.or_else(|| {
+            let glyph = font.charmap().map('H')?;
+            let bounds = font
+                .glyph_metrics(Size::unscaled(), LocationRef::default())
+                .bounds(glyph)?;
+            Some(f64::from(bounds.y_max)).filter(|top| *top > 0.0)
+        })?;
         let heights = Self {
             ascent: ascent / em,
             descent: descent / em,
             cap: cap / em,
+            stated_cap: stated_cap.map(|cap| cap / em),
         };
         (heights.ascent > 0.0 && heights.cap > 0.0 && heights.descent >= 0.0).then_some(heights)
     }
@@ -940,8 +947,20 @@ struct TextSegment<'a> {
 /// The leading and trailing padding `show_text` trims is skipped first, so a
 /// span's character offsets — which count from the record's own first
 /// character — land on the right glyphs.
-fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<TextSegment<'a>> {
-    let base_size = plotted_size_pt(text.typeface, height_mm);
+fn text_segments<'a>(
+    faces: &[ReadyFace<'_>],
+    text: &ShownText<'a>,
+    inked: &str,
+    height_mm: f64,
+) -> Vec<TextSegment<'a>> {
+    let size_in = |typeface: &str, height_mm: f64| {
+        let heights = faces
+            .iter()
+            .find(|face| face.key == typeface)
+            .map_or(FaceHeights::ARIAL, |face| face.heights);
+        plotted_size_pt(heights, text.height_basis, height_mm)
+    };
+    let base_size = size_in(text.typeface, height_mm);
     let plain = || {
         vec![TextSegment {
             text: inked.to_string(),
@@ -972,7 +991,7 @@ fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<T
             Some(named) => typeface_key(Some(named), text.value),
             None => text.typeface,
         };
-        let size_pt = plotted_size_pt(typeface, span.height_mm.unwrap_or(height_mm));
+        let size_pt = size_in(typeface, span.height_mm.unwrap_or(height_mm));
         for index in start..stop {
             if index < lead || index >= end {
                 continue;
@@ -1090,7 +1109,9 @@ fn furniture_advance(width_permille: Option<u16>) -> f64 {
 /// The only such labels on the eleven acceptance sheets are the two
 /// `动火点` runs. The reference pitches them at 4.32 pt (1.524 mm) in a
 /// 9.6 pt NSimSun, and centres on that pitch. `1.524 / 2.5` is that pitch
-/// over the style height. A different body size is not multiplied: nothing
+/// over the style height, and [`show_text`] applies it to the em the run is
+/// set in, so the pitch stays 1.524 mm whatever `Tf` the run carries. A
+/// different body size is not multiplied: nothing
 /// else on those sheets takes this path, so there is no second height to
 /// measure. `120℃` is not this path either — its named face still draws the
 /// digits. See
@@ -1125,7 +1146,7 @@ fn show_text(
     }
     // A label that letters in more than one style is cut into the stretches
     // that share a size and a face; a plain label is one stretch.
-    let segments = text_segments(&text, inked, height_mm);
+    let segments = text_segments(faces, &text, inked, height_mm);
     let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>)> = Vec::new();
     let mut width_mm = 0.0;
     let mut borrowed_whole = !segments.is_empty();
@@ -1149,14 +1170,25 @@ fn show_text(
     // that width. Any other body, or a string the named face still partly
     // draws (`120℃`), stays one em. See [`BORROWED_HAN_ADVANCE`].
     let han_pitch = if !text.furniture && borrowed_whole && (height_mm - 2.5).abs() < 1e-3 {
-        BORROWED_HAN_ADVANCE
+        // The pitch is a length on the page, so it is taken against the em
+        // the run is actually set in, not the style height.
+        let set_pt = segments.first().map_or(0.0, |segment| segment.size_pt);
+        if set_pt > 0.0 {
+            BORROWED_HAN_ADVANCE * height_mm * PT_PER_MM / set_pt
+        } else {
+            BORROWED_HAN_ADVANCE
+        }
     } else {
         1.0
     };
+    // The drawing's own lettering takes its style's stated width as it
+    // stands: the symbol bodies' 7.2 pt ascent `M` states `800` and the
+    // reference letters it at `Tf 8.16` under a 0.809 horizontal scale.
     let plate = if text.furniture {
         furniture_advance(text.width_permille)
     } else {
-        1.0
+        text.width_permille
+            .map_or(1.0, |width| f64::from(width) / 1000.0)
     } * han_pitch;
     let laid_out_mm = width_mm * plate;
     // A left anchor is the left of the stored run, padding included. A
@@ -1460,60 +1492,58 @@ fn push_chain(out: &mut Vec<([f64; 2], [f64; 2])>, points: &[[f64; 2]], page: [f
     }
 }
 
-/// `Tf` for one run.
+/// `Tf` for one run: the size the reference plotter letters a style height at.
 ///
-/// The five reference plots do not scale a style height by one factor.
-/// Heights measured there are written at the `Tf` those plots used. A
-/// height that was not measured stays the style height in points.
-fn plotted_size_pt(typeface: &str, height_mm: f64) -> f64 {
+/// The plotter sizes a font the way GDI does at the plot's 150 dpi. The style
+/// height is a height of the face — its cap height for a cap-height style,
+/// its Windows ascent for an ascent style ([`TextHeightBasis`]) — so the em
+/// it implies is that height over the face's own ratio. The font is then
+/// requested by its **cell** height (`usWinAscent + usWinDescent`), and that
+/// is a whole number of 1/150 in pixels; the `Tf` written is the em of that
+/// rounded cell, rounded to the 1/2400 in the plot's coordinates use.
+///
+/// That one rule reproduces every `Tf` the eleven reference plots carry for
+/// SimSun, FangSong and Arial — 21 distinct sizes, cap and ascent styles,
+/// drawing and furniture lettering alike (Arial 9 pt → 12.45, 8 pt → 11.16,
+/// 14.4 pt → 20.19; SimSun 8.50 pt → 12.48, 10.02 pt → 14.88; Arial ascent
+/// 7.2 pt → 8.16, Arial Narrow ascent 14.4 pt → 15.69). `ARIALN.TTF` is an
+/// `OS/2` version 1 face with no `sCapHeight`; see [`UNSTATED_CAP_EM`].
+///
+/// See `docs/analysis/2026-11-07-the-plot-size-is-a-whole-pixel-cell.md`.
+fn plotted_size_pt(heights: FaceHeights, basis: TextHeightBasis, height_mm: f64) -> f64 {
     let style_pt = height_mm * PT_PER_MM;
-    let hundredths = (style_pt * 100.0).round() as i64;
-    measured_tf(typeface, hundredths).unwrap_or(style_pt)
+    let measures = match basis {
+        TextHeightBasis::Cap => heights.stated_cap.unwrap_or(UNSTATED_CAP_EM),
+        TextHeightBasis::Ascent => heights.ascent,
+    };
+    let cell = heights.ascent + heights.descent;
+    if !(style_pt.is_finite() && style_pt > 0.0 && measures > 0.0 && cell > 0.0) {
+        return style_pt;
+    }
+    let cell_px = (style_pt / measures * cell * PLOT_DPI / 72.0).round();
+    if cell_px < 1.0 {
+        return style_pt;
+    }
+    let em_pt = cell_px * 72.0 / PLOT_DPI / cell;
+    (em_pt * PLOT_UNITS_PER_INCH / 72.0).round() * 72.0 / PLOT_UNITS_PER_INCH
 }
 
-/// Reference `Tf` for a typeface and a style height in hundredths of a point.
+/// The resolution the reference plotter sizes fonts at, dots per inch.
+const PLOT_DPI: f64 = 150.0;
+
+/// The plot's coordinate grid: every `Tf`, `Tm` and path coordinate the
+/// reference plots carry is a multiple of 0.03 pt, 1/2400 in.
+const PLOT_UNITS_PER_INCH: f64 = 2400.0;
+
+/// The cap height, in em, the plotter assumes for a face whose `OS/2` table
+/// states none.
 ///
-/// A symbol body's own label is the one place this table deliberately does
-/// *not* follow the reference. Those labels are 7.2 pt style heights, and
-/// the plots write them at 8.25 pt — 14.6% larger. But the face this crate
-/// can actually load for `Arial` inks 14.6% wider per character than the
-/// plots' does, so at 8.25 pt our runs come out 0.11 body heights wider than
-/// the reference's and the whole `symbol/Middle` class drifts 0.075 along
-/// (measured on the I drawing: the ratchet's along gate is 0.05). At the
-/// 7.2 pt style height the printed extent matches and the class holds at
-/// 0.035, which is why no row is measured in here for it.
-fn measured_tf(typeface: &str, hundredths: i64) -> Option<f64> {
-    const PAIRS: &[(&str, i64, f64)] = &[
-        ("Arial Narrow", 700, 10.17),
-        ("Arial Narrow", 1000, 14.40),
-        ("Arial", 900, 12.45),
-        // The A2 `轻烃分离器I` line labels `65-AI-010901-I2` /
-        // `200-LFL-0109201-B2` (8 pt) and the `ESD Interlock` `I`
-        // (14.4 pt).
-        ("Arial", 800, 11.16),
-        ("Arial", 1440, 20.19),
-        ("FangSong", 700, 10.56),
-        ("FangSong", 720, 10.56),
-        ("FangSong", 900, 13.44),
-        ("SimSun", 698, 10.08),
-        ("SimSun", 709, 10.56),
-        ("SimSun", 720, 10.56),
-        ("SimSun", 850, 12.48),
-        ("SimSun", 907, 13.44),
-        ("SimSun", 992, 14.40),
-        // The A2 sign-off column: 2.5 / 3.0 mm symbol lettering at a 1.414
-        // placement scale, which the reference letters at 5.25 / 6.27 mm.
-        ("SimSun", 1002, 14.88),
-        ("SimSun", 1203, 17.76),
-        ("SimSun", 1134, 16.80),
-        ("SimSun", 1276, 18.72),
-    ];
-    PAIRS
-        .iter()
-        .find(|row| row.0 == typeface && row.1 == hundredths)
-        .map(|row| row.2)
-}
-
+/// Only `ARIALN.TTF` (`OS/2` version 1) is such a face here. Its `H` stands
+/// 1466/2048 = 0.716 em tall, and sizing from that puts every cap-height
+/// Arial Narrow style one pixel short of the reference: 7 pt → 9.75 against
+/// 10.17, 10 pt → 13.98 against 14.40. The reference's own cells (24 px and
+/// 34 px) bound the ratio to 0.685..0.702 em; 0.7 is inside it.
+const UNSTATED_CAP_EM: f64 = 0.7;
 fn pt(mm: f64) -> Object {
     Object::Real(mm * PT_PER_MM)
 }
@@ -1553,23 +1583,54 @@ mod tests {
         }
     }
 
+    /// One rule sizes every face: the style height's em, its cell rounded to
+    /// whole 150 dpi pixels, written on the plot's 1/2400 in grid. Each row is
+    /// a `Tf` read off the eleven reference plots.
     #[test]
     fn measured_style_heights_use_the_reference_tf() {
+        use crate::model::TextHeightBasis::{Ascent, Cap};
+        let face = |upm: f64, ascent: f64, descent: f64, cap: Option<f64>| super::FaceHeights {
+            ascent: ascent / upm,
+            descent: descent / upm,
+            cap: cap.unwrap_or(1466.0) / upm,
+            stated_cap: cap.map(|cap| cap / upm),
+        };
+        let arial = face(2048.0, 1854.0, 434.0, Some(1467.0));
+        let narrow = face(2048.0, 1888.0, 431.0, None);
+        let simsun = face(256.0, 220.0, 36.0, Some(175.0));
+        let fangsong = face(256.0, 220.0, 36.0, Some(171.0));
         let mm = |pt: f64| pt * 25.4 / 72.0;
-        assert_eq!(plotted_size_pt("Arial Narrow", mm(7.0)), 10.17);
-        assert_eq!(plotted_size_pt("Arial Narrow", mm(10.0)), 14.40);
-        assert_eq!(plotted_size_pt("Arial", mm(9.0)), 12.45);
-        assert_eq!(plotted_size_pt("Arial", 2.822224), 11.16);
-        assert_eq!(plotted_size_pt("Arial", 5.08), 20.19);
-        assert_eq!(plotted_size_pt("FangSong", mm(7.0)), 10.56);
-        assert_eq!(plotted_size_pt("FangSong", mm(7.2)), 10.56);
-        assert_eq!(plotted_size_pt("SimSun", 2.4638), 10.08);
-        assert_eq!(plotted_size_pt("SimSun", 2.5), 10.56);
-        assert_eq!(plotted_size_pt("SimSun", 3.0), 12.48);
-        let plain = 5.0 * 72.0 / 25.4;
-        assert!((plotted_size_pt("Arial Narrow", 5.0) - plain).abs() < 1e-9);
+        let rows = [
+            (narrow, Cap, 7.0, 10.17),
+            (narrow, Cap, 10.0, 14.40),
+            (narrow, Ascent, 14.4, 15.69),
+            (arial, Cap, 9.0, 12.45),
+            (arial, Cap, 8.0, 11.16),
+            (arial, Cap, 14.4, 20.19),
+            (arial, Ascent, 7.2, 8.16),
+            (arial, Ascent, 7.76, 8.58),
+            (arial, Ascent, 11.58, 12.90),
+            (fangsong, Cap, 7.0, 10.56),
+            (fangsong, Cap, 7.2, 10.56),
+            (fangsong, Cap, 9.0, 13.44),
+            (simsun, Cap, 6.98, 10.08),
+            (simsun, Cap, 7.09, 10.56),
+            (simsun, Cap, 8.50, 12.48),
+            (simsun, Cap, 9.07, 13.44),
+            (simsun, Cap, 9.92, 14.40),
+            (simsun, Cap, 10.02, 14.88),
+            (simsun, Cap, 11.34, 16.80),
+            (simsun, Cap, 12.03, 17.76),
+            (simsun, Cap, 12.76, 18.72),
+        ];
+        for (heights, basis, style_pt, reference) in rows {
+            let got = plotted_size_pt(heights, basis, mm(style_pt));
+            assert!(
+                (got - reference).abs() < 1e-9,
+                "{style_pt} pt {basis:?} {heights:?}: {got} against the reference's {reference}"
+            );
+        }
     }
-
     #[test]
     fn declared_widths_snap_onto_the_four_plot_pens() {
         use super::{PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm};
@@ -2067,7 +2128,7 @@ mod tests {
     #[test]
     fn a_run_wider_than_the_page_is_condensed_until_it_fits() {
         let page = [100.0, 40.0];
-        let value = "A".repeat(60);
+        let value = "A".repeat(45);
         let model = PaperModel {
             library: Vec::new(),
             template: None,
@@ -2452,7 +2513,7 @@ mod tests {
             spans: &spans,
             furniture: false,
         };
-        let segments = text_segments(&text, "NULL*NUL", 2.822);
+        let segments = text_segments(&[], &text, "NULL*NUL", 2.822);
         let shape: Vec<(&str, &str)> = segments
             .iter()
             .map(|segment| (segment.text.as_str(), segment.typeface))
@@ -2464,8 +2525,7 @@ mod tests {
              face resolves to the one this writer embeds"
         );
         // Different, not larger: each stretch takes its own face's plotted
-        // size, and 8 pt Arial has a measured `Tf` (11.16) where 9 pt SimSun
-        // has none.
+        // size.
         assert!(
             (segments[1].size_pt - segments[0].size_pt).abs() > 0.5,
             "the middle stretch letters at its own size: {} vs {}",
