@@ -1455,6 +1455,10 @@ pub struct DecodedIgSmartFrame2dRecord {
     pub link_flags: u32,
     /// State the reader's rules put the frame in.
     pub state: SmartFrame2dState,
+    /// Origin of the framed range in metres (payload `+36` / `+44`): see
+    /// [`crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded::range_origin_m`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_origin_m: Option<[f64; 2]>,
     /// Framed extent width in metres (payload `+76`).
     pub extent_width_m: f64,
     /// Framed extent height in metres (payload `+84`).
@@ -1510,6 +1514,7 @@ impl From<crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded>
                 S::Linked => SmartFrame2dState::Linked,
                 S::LocallyLinked => SmartFrame2dState::LocallyLinked,
             },
+            range_origin_m: d.range_origin_m,
             extent_width_m: d.extent_width_m,
             extent_height_m: d.extent_height_m,
             aspect_ratio: d.aspect_ratio,

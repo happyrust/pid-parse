@@ -11,7 +11,7 @@
 //!   family shows up as a page of the wrong size, or none);
 //! - no stroke is refused for not fitting the sheet (`off_sheet_primitives`);
 //! - exactly one primitive reaches past its page — a sideways run in `N井场`
-//!   whose origin sits 1.546 mm under the bottom edge, so its first glyph is
+//!   whose origin sits 0.208 mm under the bottom edge, so its first glyph is
 //!   clipped there; the writer clips an overhang the way a printer does, and
 //!   the count is what keeps the reading from drifting to two or to none (the
 //!   rule is [`PaperModel::primitives_past_the_edge`]; why a text is not judged
@@ -190,9 +190,12 @@ const PAGE_CEILING: usize = 2 * 1024 * 1024;
 /// How far past a page a primitive's ink may reach before this gate counts it,
 /// millimetres.
 ///
-/// Ink that sits exactly on the edge is not past it, and no reading this gate
-/// makes is finer than half a millimetre.
-const EDGE_SLACK_MM: f64 = 0.5;
+/// Ink that sits exactly on the edge is not past it. The reading is finer than
+/// a millimetre because the one overhang left is: once a frame's content is
+/// placed from its own range origin, `N井场`'s sideways run hangs 0.208 mm under
+/// the bottom edge rather than 1.546 mm, and half a millimetre of slack would
+/// stop seeing it.
+const EDGE_SLACK_MM: f64 = 0.1;
 
 /// Sheets whose `.pid` states no page at all.
 ///
@@ -1421,7 +1424,7 @@ fn every_backup_drawing_exports_a_readable_page() {
         "{derived} sheets stated no page and were measured; {DERIVED_PAGES} did when this ratchet was set"
     );
     // One primitive reaches past its page, and it is the sideways run in
-    // `N井场`: origin 1.546 mm under the bottom edge, nineteen of its twenty
+    // `N井场`: origin 0.208 mm under the bottom edge, nineteen of its twenty
     // glyphs on the sheet. An equality because both directions matter — a new
     // overhang is a reading to explain, and losing this one means the run was
     // dropped or moved.

@@ -120,7 +120,13 @@ pub struct BorderTemplate {
     /// every stroke, label and placement it contributed sits this far from
     /// where the template's own coordinates put it. Zero on a frame that
     /// states no translation.
+    ///
+    /// It is the frame's translation less its range origin, applied after
+    /// [`Self::scale`].
     pub offset_mm: [f64; 2],
+    /// The uniform scale the frame applies to the template before moving it
+    /// by [`Self::offset_mm`]; `1.0` on every frame a reference plot covers.
+    pub scale: f64,
     /// How many primitives the template contributed, labels included.
     pub primitives: usize,
     /// Every symbol the template places, with what drew it.
@@ -289,7 +295,7 @@ impl PaperModel {
     ///
     /// This reports; it does not refuse. [`beyond_the_sheet`] drops a stroke
     /// that cannot ink the sheet at all, and a label is exempt there on purpose
-    /// (see its note): `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm
+    /// (see its note): `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 0.208 mm
     /// under the bottom edge and letters nineteen of its twenty glyphs onto the
     /// page. Counting the overhang keeps that fact visible without losing the
     /// run or moving it.
@@ -1141,6 +1147,7 @@ pub fn lay_out_with_symbol_roots(
     // it is, with its own styles, and laid out at 1:1 because a template is
     // authored in page millimetres from the page's own origin — the corpus A1
     // template runs `(0, 0)` to `(841, 594)`, exactly the sheet B states.
+    let frame = frame_placement(&doc);
     let mut template: Option<BorderTemplate> = None;
     let mut missing_templates: Vec<String> = Vec::new();
     // What the sheet's own frames point at, kept for the pick: a record's path
@@ -1223,41 +1230,24 @@ pub fn lay_out_with_symbol_roots(
         for primitive in &mut primitives[before..] {
             primitive.furniture = true;
         }
-        // The frame places its content: a sheet whose frame states a
-        // translation wears the template that far off the page origin. The
-        // A2 `轻烃分离器I` frame states (0.388, 0.566) mm, and the reference
+        // The frame places its content: the template lands at
+        // `s·p + t − lo` ([`FramePlacement`]). The A2 `轻烃分离器I` frame
+        // states `t` = (0.388, 0.566) mm with `lo` = 0, and the reference
         // inks the whole sign-off column and title block exactly that far
         // from where the template's own coordinates put them; the A0/A1
-        // frames state zero.
-        let offset_mm = frame_content_offset_mm(&doc);
-        // Every frame whose translation a reference confirms (the CCHB A2
-        // sheets) states a page that holds the template at that translation;
-        // so do `O`/`P井场` and the 600/1200 td sheets, whose frames are the
-        // template plus one or two offsets. `EF井场`'s frame does not: its
-        // page is exactly the template's 1189 × 841 mm and its (0.51, −0.73)
-        // mm would push the border off the sheet. No reference plot settles
-        // that case, so it keeps the template at the origin.
-        let offset_mm = match page_mm {
-            Some(page)
-                if (0..2).all(|axis| {
-                    offset_mm[axis] >= -TEMPLATE_FIT_SLACK_MM
-                        && offset_mm[axis] + furniture.extent_mm[axis]
-                            <= page[axis] + TEMPLATE_FIT_SLACK_MM
-                }) =>
-            {
-                offset_mm
-            }
-            _ => [0.0, 0.0],
-        };
-        if offset_mm != [0.0, 0.0] {
+        // frames state zero for both.
+        let scale = frame.scale;
+        let offset_mm = frame.template_offset_mm();
+        if scale != 1.0 || offset_mm != [0.0, 0.0] {
             for primitive in &mut primitives[before..] {
-                translate_shape(&mut primitive.shape, offset_mm);
+                place_shape(&mut primitive.shape, scale, offset_mm);
             }
+            let at = |point: [f64; 2]| add([point[0] * scale, point[1] * scale], offset_mm);
             for symbol in &mut furniture_placements.placed {
-                symbol.insertion_mm = add(symbol.insertion_mm, offset_mm);
+                symbol.insertion_mm = at(symbol.insertion_mm);
                 if let Some([min, max]) = &mut symbol.extent_mm {
-                    *min = add(*min, offset_mm);
-                    *max = add(*max, offset_mm);
+                    *min = at(*min);
+                    *max = at(*max);
                 }
             }
         }
@@ -1265,10 +1255,13 @@ pub fn lay_out_with_symbol_roots(
             path: furniture.path.display().to_string(),
             extent_mm: furniture.extent_mm,
             offset_mm,
+            scale,
             primitives: primitives.len() - before,
             symbols: furniture_placements.placed,
         });
     }
+    let drawing_start = primitives.len();
+    let drawing_boxes_start = placements.missing_boxes.len();
 
     let mut skipped_endpoint_pairs = 0usize;
     for entity in &geometry.entities {
@@ -1312,6 +1305,19 @@ pub fn lay_out_with_symbol_roots(
         }
     }
 
+    // The drawing's own ink is drawn from the sheet's origin, and the plotted
+    // sheet is the frame's rectangle, whose corner is the frame's `lo`.
+    let drawing_offset_mm = frame.drawing_offset_mm();
+    if drawing_offset_mm != [0.0, 0.0] {
+        for primitive in &mut primitives[drawing_start..] {
+            place_shape(&mut primitive.shape, 1.0, drawing_offset_mm);
+        }
+        for missing in &mut placements.missing_boxes[drawing_boxes_start..] {
+            missing.min_mm = add(missing.min_mm, drawing_offset_mm);
+            missing.max_mm = add(missing.max_mm, drawing_offset_mm);
+        }
+    }
+
     // A stroke that cannot reach the sheet is not paper ink. The inferred
     // `EndpointPair` lines are where this bites: DWG-0202 promotes three of
     // them from pairs the record never meant as coordinates, and their
@@ -1345,22 +1351,60 @@ pub fn lay_out_with_symbol_roots(
     })
 }
 
-/// The translation the sheet's border frame places its content at, in paper
-/// millimetres.
+/// Where the sheet's border frame puts its content and its own drawing on
+/// the paper.
 ///
-/// `igSmartFrame2d` payload `+164` is RAD's 2D transform (linear part,
-/// translation, scale). Only the translation is applied: every frame in the
-/// corpus states an identity linear part, and the one frame whose scale is
-/// not `1.0` (`DWG-0202`, `0.9991`) has no reference plot to say how it
-/// applies. Frames that disagree, or a linear part that is not the
-/// identity, place nothing — the same rule the page size follows.
-/// How far a translated template may overhang its frame's page and still
-/// count as held by it: the metre-to-millimetre round trip, with room for the
-/// 0.4 µm the A2 frames' extents carry past template plus translation.
-const TEMPLATE_FIT_SLACK_MM: f64 = 0.01;
+/// `igSmartFrame2d` states a range origin `lo` (payload `+36` / `+44`), a
+/// translation `t` and a uniform scale `s` (RAD's 2D transform at `+164`).
+/// The printed sheet is the frame's own rectangle, so its corner is `lo`: the
+/// drawing's ink lands at `p − lo`, and the template — authored from its own
+/// corner and scaled by the frame — at `s·p + t − lo`, scaled before it is
+/// moved. On every frame a reference plot covers `lo` is zero and `s` is one,
+/// so the template sits at `t` and the drawing does not move; `EF井场` and
+/// `工艺管道及仪表流程-1` state `lo = t`, so their templates stay on the page
+/// corner and their own ink shifts by `−lo` instead. That the plotted sheet is
+/// the frame rectangle rather than the drawing's origin is read off the
+/// frames themselves (with `lo` as the corner every corpus frame holds its
+/// template with a non-negative margin; with `0` or `lo + t` some overhang),
+/// not off a reference plot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FramePlacement {
+    /// The frame range's origin, paper millimetres.
+    origin_mm: [f64; 2],
+    /// The content translation, paper millimetres.
+    translation_mm: [f64; 2],
+    /// The content's uniform scale.
+    scale: f64,
+}
 
-fn frame_content_offset_mm(doc: &PidDocument) -> [f64; 2] {
-    let mut offsets: Vec<[f64; 2]> = Vec::new();
+impl FramePlacement {
+    const NONE: Self = Self {
+        origin_mm: [0.0, 0.0],
+        translation_mm: [0.0, 0.0],
+        scale: 1.0,
+    };
+
+    /// How far the drawing's own ink moves.
+    fn drawing_offset_mm(&self) -> [f64; 2] {
+        [-self.origin_mm[0], -self.origin_mm[1]]
+    }
+
+    /// How far the template moves once scaled.
+    fn template_offset_mm(&self) -> [f64; 2] {
+        [
+            self.translation_mm[0] - self.origin_mm[0],
+            self.translation_mm[1] - self.origin_mm[1],
+        ]
+    }
+}
+
+/// The frame placement every page frame of the sheet agrees on.
+///
+/// A linear part that is not the identity, frames that disagree, or a value
+/// that is not a plausible paper offset place nothing — the same rule the
+/// page size follows.
+fn frame_placement(doc: &PidDocument) -> FramePlacement {
+    let mut placements: Vec<FramePlacement> = Vec::new();
     for sheet in &doc.sheet_streams {
         let Some(geometry) = &sheet.geometry else {
             continue;
@@ -1369,24 +1413,39 @@ fn frame_content_offset_mm(doc: &PidDocument) -> [f64; 2] {
             if frame.page_extent_m().is_none() {
                 continue;
             }
-            let Some(transform) = frame.content_transform else {
+            let (Some(transform), Some(origin_m)) = (frame.content_transform, frame.range_origin_m)
+            else {
                 continue;
             };
             if !transform.linear_is_identity() {
-                return [0.0, 0.0];
+                return FramePlacement::NONE;
             }
-            let offset = [
-                transform.translation_m[0] * MM_PER_METRE,
-                transform.translation_m[1] * MM_PER_METRE,
-            ];
-            if !offsets.contains(&offset) {
-                offsets.push(offset);
+            let placement = FramePlacement {
+                origin_mm: [origin_m[0] * MM_PER_METRE, origin_m[1] * MM_PER_METRE],
+                translation_mm: [
+                    transform.translation_m[0] * MM_PER_METRE,
+                    transform.translation_m[1] * MM_PER_METRE,
+                ],
+                scale: transform.scale,
+            };
+            if !placements.contains(&placement) {
+                placements.push(placement);
             }
         }
     }
-    match offsets.as_slice() {
-        [only] if only.iter().all(|v| v.is_finite() && v.abs() < 10.0) => *only,
-        _ => [0.0, 0.0],
+    match placements.as_slice() {
+        [only]
+            if only
+                .origin_mm
+                .iter()
+                .chain(&only.translation_mm)
+                .all(|v| v.is_finite() && v.abs() < 10.0)
+                && only.scale.is_finite()
+                && (only.scale - 1.0).abs() < 0.01 =>
+        {
+            *only
+        }
+        _ => FramePlacement::NONE,
     }
 }
 
@@ -1394,30 +1453,61 @@ fn add(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] + b[0], a[1] + b[1]]
 }
 
-/// Move a shape by `offset_mm`.
-fn translate_shape(shape: &mut PaperShape, offset_mm: [f64; 2]) {
+/// Scale a shape about the paper origin by `scale`, then move it by
+/// `offset_mm`. Lengths that are geometry (radii, text bodies) scale with it;
+/// the pen does not.
+fn place_shape(shape: &mut PaperShape, scale: f64, offset_mm: [f64; 2]) {
+    let at = |point: [f64; 2]| {
+        [
+            point[0] * scale + offset_mm[0],
+            point[1] * scale + offset_mm[1],
+        ]
+    };
     match shape {
         PaperShape::Line { start_mm, end_mm } => {
-            *start_mm = add(*start_mm, offset_mm);
-            *end_mm = add(*end_mm, offset_mm);
+            *start_mm = at(*start_mm);
+            *end_mm = at(*end_mm);
         }
-        PaperShape::Arc { center_mm, .. } | PaperShape::Circle { center_mm, .. } => {
-            *center_mm = add(*center_mm, offset_mm);
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            ..
+        }
+        | PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => {
+            *center_mm = at(*center_mm);
+            *radius_mm *= scale;
         }
         PaperShape::Fill { chain_mm, .. } => {
             for point in chain_mm {
-                *point = add(*point, offset_mm);
+                *point = at(*point);
             }
         }
         PaperShape::Polyline { points_mm, .. } => {
             for point in points_mm {
-                *point = add(*point, offset_mm);
+                *point = at(*point);
             }
         }
-        PaperShape::Text { origin_mm, .. } => *origin_mm = add(*origin_mm, offset_mm),
+        PaperShape::Text {
+            origin_mm,
+            height_mm,
+            spans,
+            ..
+        } => {
+            *origin_mm = at(*origin_mm);
+            if let Some(height) = height_mm {
+                *height *= scale;
+            }
+            for span in spans {
+                if let Some(height) = &mut span.height_mm {
+                    *height *= scale;
+                }
+            }
+        }
     }
 }
-
 /// What a page learns from the placements it expanded: which symbol files it
 /// named, which resolved, which did not, and where a square marks a miss.
 #[derive(Default)]
@@ -1670,7 +1760,7 @@ fn finite(point: [f64; 2]) -> bool {
 ///
 /// A text is the one shape never judged by position, and that is a decision,
 /// not an oversight. Its origin is where the anchor hangs the run from, not
-/// where the ink lands: `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm
+/// where the ink lands: `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 0.208 mm
 /// under the bottom edge and letters nineteen of its twenty glyphs onto the
 /// page. Refusing it by origin would lose all twenty; clamping it inside would
 /// move the run. So the overhang stays, the writer clips it the way a printer
@@ -4144,7 +4234,7 @@ mod tests {
     /// A label whose origin hangs under the edge is still drawn, and the model
     /// reports the overhang instead of dropping the run.
     ///
-    /// `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 1.546 mm under the
+    /// `N井场`'s sideways `15-TD-4101416-B2-EH40` starts 0.208 mm under the
     /// bottom edge: its first glyph loses that much of its foot and the other
     /// nineteen letter onto the page. Refusing the run by origin would lose all
     /// twenty; the count keeps the fact visible.
@@ -5037,6 +5127,91 @@ mod tests {
         );
     }
 
+    /// The frame's own numbers settle where `DWG-0202GP06-01`'s content
+    /// goes: its A2 template, 594 × 420 mm, scaled by the frame's `s` and
+    /// moved by `t − lo`, fills exactly the 593.7458 × 419.6292 mm range the
+    /// frame states.
+    #[test]
+    fn a_scaled_frame_fills_its_range_with_the_template() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let pid = corpus.join("DWG-0202GP06-01.pid");
+        if !pid.is_file() {
+            eprintln!("skipping; {} is absent", pid.display());
+            return;
+        }
+        let doc = pid_parse::PidParser::new()
+            .parse_file(&pid)
+            .expect("parses");
+        let frame = super::frame_placement(&doc);
+        assert!((frame.scale - 0.999_117).abs() < 1e-6, "{frame:?}");
+        let offset = frame.template_offset_mm();
+        assert!((offset[0] - 0.270).abs() < 0.001, "{frame:?}");
+        assert!(offset[1].abs() < 0.001, "{frame:?}");
+        let page = super::lay_out_drawing(&pid, &corpus)
+            .expect("lays out")
+            .page_mm
+            .expect("the frame states its page");
+        for (axis, template) in [594.0, 420.0].into_iter().enumerate() {
+            assert!(
+                (frame.scale * template + offset[axis] - page[axis]).abs() < 0.001,
+                "axis {axis}: {} × {template} + {} ≠ {}",
+                frame.scale,
+                offset[axis],
+                page[axis]
+            );
+        }
+        let drawing = frame.drawing_offset_mm();
+        assert!((drawing[0] - 0.051).abs() < 0.001, "{frame:?}");
+        assert!((drawing[1] + 0.355).abs() < 0.001, "{frame:?}");
+    }
+
+    /// A frame whose range origin equals its translation keeps the template
+    /// on the page corner and moves the drawing by `−lo`; one whose origin is
+    /// zero moves the template by `t` and leaves the drawing where it is.
+    #[test]
+    fn a_frame_places_the_template_at_t_less_lo() {
+        let ef = super::FramePlacement {
+            origin_mm: [0.512, -0.731],
+            translation_mm: [0.512, -0.731],
+            scale: 1.0,
+        };
+        assert_eq!(ef.template_offset_mm(), [0.0, 0.0]);
+        assert_eq!(ef.drawing_offset_mm(), [-0.512, 0.731]);
+        let a2 = super::FramePlacement {
+            origin_mm: [0.0, 0.0],
+            translation_mm: [0.388, 0.566],
+            scale: 1.0,
+        };
+        assert_eq!(a2.template_offset_mm(), [0.388, 0.566]);
+        assert_eq!(a2.drawing_offset_mm(), [-0.0, -0.0]);
+
+        // Scaled first, then moved: a corner at the template's far end lands
+        // `s·p + offset`, and a circle's radius scales with it.
+        let mut line = PaperShape::Line {
+            start_mm: [0.0, 0.0],
+            end_mm: [594.0, 420.0],
+        };
+        super::place_shape(&mut line, 0.5, [1.0, 2.0]);
+        assert_eq!(
+            line,
+            PaperShape::Line {
+                start_mm: [1.0, 2.0],
+                end_mm: [298.0, 212.0],
+            }
+        );
+        let mut circle = PaperShape::Circle {
+            center_mm: [10.0, 10.0],
+            radius_mm: 4.0,
+        };
+        super::place_shape(&mut circle, 0.5, [0.0, 0.0]);
+        assert_eq!(
+            circle,
+            PaperShape::Circle {
+                center_mm: [5.0, 5.0],
+                radius_mm: 2.0,
+            }
+        );
+    }
     #[test]
     fn a_cached_only_placement_owns_the_place_it_drew() {
         // The title block's wave: two arcs of the file's own cache, drawn at
@@ -5048,6 +5223,7 @@ mod tests {
                 path: "CPE-SQ-A0.igr".to_string(),
                 extent_mm: [1189.0, 841.0],
                 offset_mm: [0.0, 0.0],
+                scale: 1.0,
                 primitives: 0,
                 symbols: vec![TemplateSymbol {
                     key: "Temp\\BLFH.sym".to_string(),

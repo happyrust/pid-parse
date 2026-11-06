@@ -4597,6 +4597,7 @@ mod tests {
             content_flags: 0x5c80_8011,
             link_flags: 0x20e9_0040,
             state,
+            range_origin_m: None,
             extent_width_m: width_m,
             extent_height_m: height_m,
             aspect_ratio: height_m / width_m,

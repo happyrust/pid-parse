@@ -6112,6 +6112,9 @@ pub const PSM_TYPE_CODE_IGSMARTFRAME: u16 = 0x003D;
 const IGSMARTFRAME_CONTENT_FLAGS_AT: usize = 14;
 /// Payload offset of the link flag word (record `+32`).
 const IGSMARTFRAME_LINK_FLAGS_AT: usize = 26;
+/// Payload offset of the framed range's origin, two `f64` in metres. The
+/// record stores the same pair again at `+116` / `+124`.
+const IGSMARTFRAME_RANGE_ORIGIN_AT: usize = 36;
 /// Payload offset of the framed extent's width, in metres.
 const IGSMARTFRAME_WIDTH_AT: usize = 76;
 /// Payload offset of the framed extent's height, in metres.
@@ -6175,6 +6178,11 @@ pub struct SheetIgSmartFrame2dDecoded {
     pub link_flags: u32,
     /// State the native reader's rules put the frame in.
     pub state: SheetSmartFrame2dState,
+    /// Origin of the framed range in metres (payload `+36` / `+44`, stored
+    /// again at `+116` / `+124`); `None` when either value is not finite.
+    /// Zero on most frames; where it is not, the content sits at
+    /// `translation − origin` from the frame's corner.
+    pub range_origin_m: Option<[f64; 2]>,
     /// Framed extent width in metres (payload `+76`).
     pub extent_width_m: f64,
     /// Framed extent height in metres (payload `+84`).
@@ -6287,6 +6295,14 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
         let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
         let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
         let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
+        let range_origin_m = [
+            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT)?,
+            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT + 8)?,
+        ];
+        let range_origin_m = range_origin_m
+            .iter()
+            .all(|v| v.is_finite())
+            .then_some(range_origin_m);
         // A frame with a non-finite or negative extent is not a frame this
         // reader understands, whatever the flags say.
         if ![extent_width_m, extent_height_m, aspect_ratio]
@@ -6336,6 +6352,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             content_flags,
             link_flags,
             state,
+            range_origin_m,
             extent_width_m,
             extent_height_m,
             aspect_ratio,
@@ -9615,6 +9632,8 @@ mod tests {
         let put = |payload: &mut Vec<u8>, at: usize, value: f64| {
             payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
         };
+        put(&mut payload, 36, -0.000_051_234);
+        put(&mut payload, 44, 0.000_355_000);
         put(&mut payload, 76, 0.594_327_890);
         put(&mut payload, 84, 0.420_565_694);
         put(&mut payload, 148, 0.707_632_438);
@@ -9635,6 +9654,7 @@ mod tests {
         assert!(transform.linear_is_identity());
         assert_eq!(transform.translation_m, [0.000_388_407, 0.000_565_648]);
         assert_eq!(transform.scale, 1.0);
+        assert_eq!(frame.range_origin_m, Some([-0.000_051_234, 0.000_355_000]));
 
         // A record cut off before the transform still decodes its page.
         let short = IGSMARTFRAME_MIN_PAYLOAD;
