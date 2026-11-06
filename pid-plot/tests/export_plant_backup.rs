@@ -40,6 +40,12 @@
 //!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
 //!   fix each page is 175–846 KiB (an empty sheet is 722 B), before it
 //!   6.6–7.1 MiB;
+//! - `D04`'s own `igSymbol2d` placements reach the page: `test/U01/D04.pid`
+//!   writes its placement matrix tag's third byte `0x27` rather than the
+//!   corpus-wide `0xA7`, and a drawing with 0 decoded `igSymbol2d` and 5
+//!   refused `0x00CE` would still lay out and export (the refusal is
+//!   invisible to every other pin above) — `d04_igsymbol2d_refused_count_is_zero`
+//!   pins the refused count itself rather than any derived page effect.
 //!
 //! Soft-skips when the extracted backup is absent, which is the case on CI.
 //! It does not soft-skip once the backup is there and no face directory is:
@@ -153,13 +159,24 @@ fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
 /// absent from both the corpus `Ref` and the bundled `test-file/symbols-full`,
 /// and from the backup archives themselves. Pinned so a *new* gap fails rather
 /// than quietly drawing less.
-const KNOWN_LIBRARY_GAPS: [&str; 3] = [
+///
+/// `D04`'s four entries joined this list the day its `igSymbol2d` placements
+/// stopped being silently refused (the matrix tag's third byte is `0x27` on
+/// every one of them, not the corpus-wide `0xA7`): the drawing names its own
+/// Windows session's temp-folder path rather than a library-relative one, so
+/// the writer that authored it never round-tripped these four bodies through
+/// a shared library either.
+const KNOWN_LIBRARY_GAPS: [&str; 7] = [
     r"piping\specialty components\misc\pulsation damper.sym",
     // The library carries only the numbered variants of this name, so the
     // report names them rather than picking one: `01` and `02` are different
     // wellheads.
     r"equipment\other equipment\wellhead christmas tree.sym (library carries only Wellhead Christmas Tree 01.sym, Wellhead Christmas Tree 02.sym)",
     r"instrumentation\off-line\without implied components\temperature\clone of tt-temperature transmitter(1).sym",
+    r"c:\users\administrator.win-194qrump2nj\appdata\local\temp\isa 2 way generic body.sym",
+    r"c:\users\administrator.win-194qrump2nj\appdata\local\temp\isa_logic ctrl.sym",
+    r"c:\users\administrator.win-194qrump2nj\appdata\local\temp\concentric size change.sym",
+    r"c:\users\admini~1.win\appdata\local\temp\qiufa.sym",
 ];
 
 /// `PlantData~2~711.zip` holds 53 sheets. A ratchet floor, not an equality:
@@ -1442,5 +1459,43 @@ fn every_backup_drawing_exports_a_readable_page() {
         models.len(),
         derived,
         prepared.len()
+    );
+}
+
+/// `D04` pins `0` refused `igSymbol2d` (`0x00CE`) records directly, not
+/// through any page effect. `every_backup_drawing_exports_a_readable_page`
+/// lays `D04` out along with the other 52 drawings, but a refused
+/// `igSymbol2d` placement does not change the page size, the primitive
+/// count past the edge, the clip/condense counts or the library-gap set —
+/// it is simply absent, the way `decoded_igsymbols.len() == 0` was before
+/// `decode_igsymbols` learned `D04`'s own matrix-tag variant. This test
+/// pins the refusal count where a regression in that acceptance would
+/// actually show up.
+#[test]
+fn d04_igsymbol2d_refused_count_is_zero() {
+    let Some(backup) = backup_dir() else {
+        eprintln!("skipping the D04 refusal pin; no backup-plant-data directory is present");
+        return;
+    };
+    let path = backup.join("test").join("U01").join("D04.pid");
+    if !path.is_file() {
+        eprintln!(
+            "skipping the D04 refusal pin; {} is not present",
+            path.display()
+        );
+        return;
+    }
+    let doc = pid_parse::PidParser::new()
+        .parse_file(&path)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+    let normalized = pid_parse::build_normalized_geometry(&doc);
+    let igsymbol_refusals: Vec<_> = normalized
+        .refused_graphic_records
+        .iter()
+        .filter(|record| record.type_code == 0x00CE)
+        .collect();
+    assert!(
+        igsymbol_refusals.is_empty(),
+        "D04 should refuse 0 igSymbol2d (0x00CE) records, found {igsymbol_refusals:?}"
     );
 }

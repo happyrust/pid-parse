@@ -1175,6 +1175,88 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
     assert_eq!(normalized.probe_only_unknowns, 11);
 }
 
+/// `D04` (`test/U01/D04.pid` inside `PlantData~2~711.zip`, the plant
+/// backup's own "test" area) under one of the roots a backup-corpus test
+/// extracts it to, or `None` if no extraction is present.
+///
+/// `D04` is the only fixture in an 81-file corpus to write its
+/// `igSymbol2d` placements' matrix tag with third byte `0x27` rather than
+/// the corpus-wide `0xA7` (12 411 `0xA7` records across the other 56
+/// fixtures, 0 mixed with `0x27`); before `decode_igsymbols` learned to
+/// accept both, 5 of D04's own placements were silently refused (the
+/// sixth carries the native skip bit and was never counted as a
+/// refusal in the first place -- see the test below).
+fn find_d04_fixture() -> Option<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
+        roots.push(PathBuf::from(dir));
+    }
+    roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
+    roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    roots
+        .into_iter()
+        .map(|root| root.join("backup-plant-data").join("test/U01/D04.pid"))
+        .find(|candidate| candidate.is_file())
+}
+
+#[test]
+fn d04_igsymbol2d_placements_are_no_longer_refused() {
+    let Some(path) = find_d04_fixture() else {
+        eprintln!("skipping: D04.pid fixture not found under any known backup-plant-data root");
+        return;
+    };
+    let doc = PidParser::new()
+        .parse_file(&path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+
+    let sheet = doc
+        .sheet_streams
+        .iter()
+        .find(|s| s.path == "/Sheet6")
+        .expect("D04 should expose /Sheet6");
+    let geometry = sheet.geometry.as_ref().expect("D04 Sheet6 geometry");
+    assert_eq!(
+        geometry.decoded_igsymbols.len(),
+        5,
+        "D04 should decode all 5 live igSymbol2d placements \
+         (ISA 2 WAY GENERIC BODY, ISA_LOGIC CTRL, CONCENTRIC SIZE CHANGE x2, qiufa)"
+    );
+    assert!(
+        geometry
+            .decoded_igsymbols
+            .iter()
+            .all(|r| r.matrix_tag_third_byte == 0x27),
+        "D04's own placements should all carry the 0x27 matrix-tag variant"
+    );
+
+    let normalized = pid_parse::build_normalized_geometry(&doc);
+    let igsymbol_refusals: Vec<_> = normalized
+        .refused_graphic_records
+        .iter()
+        .filter(|r| r.type_code == 0x00CE)
+        .collect();
+    assert!(
+        igsymbol_refusals.is_empty(),
+        "D04 should refuse 0 igSymbol2d (0x00CE) records, found {igsymbol_refusals:?}"
+    );
+
+    // The one 0x80CE the native reader itself retires (an earlier
+    // serialization of the live record at byte 28614 -- identical through
+    // byte 95, then a shorter, diverging tail) stays reported as skipped,
+    // not refused -- it was never silently dropped and this fix must not
+    // change that.
+    let igsymbol_skips: Vec<_> = normalized
+        .skipped_graphic_records
+        .iter()
+        .filter(|r| r.type_code == 0x00CE)
+        .collect();
+    assert_eq!(
+        igsymbol_skips.len(),
+        1,
+        "D04 should keep reporting exactly 1 native-skipped igSymbol2d record"
+    );
+}
+
 #[test]
 fn d06_text_placement_regression_keeps_text_probes_unpromoted() {
     let Some(pkg) = parse_test_package("D06.pid") else {

@@ -2564,7 +2564,45 @@ const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
 /// denormal noise, which is what the first version of this decoder did.
 /// Every record carries this tag exactly once
 /// (`examples/probe_igsymbol2d_matrix.rs`), so it is the anchor.
+///
+/// This is the canonical third byte, `0xA7`; see
+/// [`IGSYMBOL2D_MATRIX_TAG_VARIANTS`] for the one other value a writer
+/// is known to use there.
 const IGSYMBOL2D_MATRIX_TAG: [u8; 4] = [0x02, 0x00, 0xA7, 0x50];
+
+/// The matrix tag's third byte, `0x27`, carried by every `igSymbol2d`
+/// record in the plant backup's `D04` (`test/U01/D04.pid` inside
+/// `PlantData~2~711.zip`) — 6 of 6 records, 5 live plus one the native
+/// reader retires (type flags carry [`PSM_TYPE_FLAG_NATIVE_SKIP`]). The
+/// retired record shares the live record's oid, header, 2×2 matrix,
+/// insertion pair and uniform scale byte-for-byte (bytes 0–95 of the
+/// payload are identical) and its tail still resolves to the same
+/// `(definition_sheet_ref, definition_site_ref)` pair — but the tail is 4
+/// bytes shorter overall and the bytes in between differ, so it is an
+/// earlier serialization of the same placement, not a byte-for-byte
+/// duplicate. Every field at and after the tag otherwise reads exactly the
+/// same shape as the `0xA7` records, which is what makes this a
+/// serializer-session discriminator rather than a different record
+/// layout: D04 is the only fixture in a corpus of 81 `.pid` files (12 411
+/// `0xA7` records across 56 other fixtures, 0 mixed with `0x27`) to carry
+/// this value, and it carries it on every one of its own placements, never
+/// `0xA7`. The binaries that write this stream are not reachable for
+/// disassembly from this workstation, so the exact producer semantics are
+/// not proven; see
+/// `docs/analysis/2026-11-07-igsymbol2d-matrix-tag-third-byte-is-a-session-flag.md`
+/// for the full byte-statistics evidence and that gap.
+const IGSYMBOL2D_MATRIX_TAG_ALT: [u8; 4] = [0x02, 0x00, 0x27, 0x50];
+
+/// Both matrix-tag shapes [`decode_igsymbol_payload`] accepts, searched in
+/// this order. The byte that varies is the tag's third: `0xA7` (`1010
+/// 0111`) vs `0x27` (`0010 0111`) — bit 7 (`0x80`) of that byte, and
+/// nothing else about the record's shape changes with it. No disassembly
+/// of the writer ties that bit to a named flag; the corpus-wide split (one
+/// value per file, never mixed within a file) is what is proven, not what
+/// the bit is called. See [`IGSYMBOL2D_MATRIX_TAG_ALT`]'s doc for the
+/// evidence and its gap.
+const IGSYMBOL2D_MATRIX_TAG_VARIANTS: [[u8; 4]; 2] =
+    [IGSYMBOL2D_MATRIX_TAG, IGSYMBOL2D_MATRIX_TAG_ALT];
 
 /// How far into the payload the matrix tag is searched for. Observed
 /// positions are 33 and 35; bounding the search stops a byte pair inside
@@ -4096,6 +4134,14 @@ pub struct SheetIgSymbol2dDecoded {
     pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
+    /// Third byte of the matrix tag this record actually carries: `0xA7`
+    /// (canonical, [`IGSYMBOL2D_MATRIX_TAG`]) on every corpus fixture but
+    /// one, `0x27` ([`IGSYMBOL2D_MATRIX_TAG_ALT`]) on every `igSymbol2d`
+    /// record in the plant backup's `D04`. The two differ only in this
+    /// byte's `0x80` bit; every other field at and after the tag reads the
+    /// same shape under both, which is why this is carried as data rather
+    /// than used to pick a different layout.
+    pub matrix_tag_third_byte: u8,
     /// Numeric id of the top-level `JSite<id>` storage carrying this
     /// instance's symbol reference, read from the 4 bytes immediately
     /// preceding `IGSYMBOL2D_MATRIX_TAG`. Phase 35-C cross-fixture
@@ -4166,7 +4212,7 @@ pub struct SheetIgSymbol2dDecoded {
 /// Validation:
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [IGSYMBOL2D_MIN_PAYLOAD_LEN, 200]`;
-/// 3. `IGSYMBOL2D_MATRIX_TAG` occurs within the first
+/// 3. one of [`IGSYMBOL2D_MATRIX_TAG_VARIANTS`] occurs within the first
 ///    `IGSYMBOL2D_TAG_SEARCH_END` payload bytes;
 /// 4. the payload holds everything from that tag on
 ///    (`matrix_at + IGSYMBOL2D_MATRIX_AND_TAIL_LEN`);
@@ -4251,10 +4297,14 @@ fn decode_igsymbol_payload(
     ]);
 
     let search_end = IGSYMBOL2D_TAG_SEARCH_END.min(payload.len());
-    let tag_at = payload
-        .get(..search_end)?
-        .windows(IGSYMBOL2D_MATRIX_TAG.len())
-        .position(|w| w == IGSYMBOL2D_MATRIX_TAG)?;
+    let search_window = payload.get(..search_end)?;
+    let (tag_at, matrix_tag_third_byte) =
+        IGSYMBOL2D_MATRIX_TAG_VARIANTS.iter().find_map(|tag| {
+            search_window
+                .windows(tag.len())
+                .position(|w| w == tag)
+                .map(|pos| (pos, tag[2]))
+        })?;
     let matrix_at = tag_at + IGSYMBOL2D_MATRIX_TAG.len();
     // The gate the family's real shapes sit on: the matrix and the tail that
     // names the body have to fit, or the scale would read over the tail.
@@ -4326,6 +4376,7 @@ fn decode_igsymbol_payload(
         parent_ref,
         sheet_layer_ref,
         sub_type_word,
+        matrix_tag_third_byte,
         jsite_ref,
         style_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
@@ -11419,6 +11470,48 @@ mod tests {
         assert_eq!(s.jsite_ref, 399);
         assert_eq!(s.transform, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(s.insertion, (0.3, 0.4));
+        assert_eq!(s.matrix_tag_third_byte, 0xA7);
+    }
+
+    /// `D04` (the plant backup's `test/U01/D04.pid`) writes every one of
+    /// its own `igSymbol2d` records with the matrix tag's third byte
+    /// `0x27` rather than the canonical `0xA7` — 6 of 6 records in that
+    /// one fixture, 0 of 12 411 in the other 56. Every other field keeps
+    /// its documented shape under the `0x27` variant: this is the
+    /// regression a too-narrow tag match produced (5 live placements
+    /// silently dropped — `ISA 2 WAY GENERIC BODY`, `ISA_LOGIC CTRL`,
+    /// `CONCENTRIC SIZE CHANGE` ×2, `qiufa.sym`).
+    #[test]
+    fn igsymbol2d_decodes_the_0x27_matrix_tag_variant_d04_writes() {
+        let mut record = build_synthetic_igsymbol2d_record(
+            0x5C,
+            6,
+            151,
+            [1.0, 0.0, 0.0, -1.0],
+            (0.259_022, 0.153_433),
+        );
+        let tag_at = PSM_ENVELOPE_LEN + 33;
+        record[tag_at..tag_at + IGSYMBOL2D_MATRIX_TAG_ALT.len()]
+            .copy_from_slice(&IGSYMBOL2D_MATRIX_TAG_ALT);
+        let decoded = decode_igsymbols(&record);
+        assert_eq!(decoded.len(), 1);
+        let s = &decoded[0];
+        assert_eq!(s.oid, 0x5C);
+        assert_eq!(s.jsite_ref, 151);
+        assert_eq!(s.transform, [1.0, 0.0, 0.0, -1.0]);
+        assert_eq!(s.insertion, (0.259_022, 0.153_433));
+        assert_eq!(s.matrix_tag_third_byte, 0x27);
+    }
+
+    #[test]
+    fn igsymbol2d_rejects_a_matrix_tag_third_byte_neither_variant_writes() {
+        let mut record =
+            build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
+        let tag_at = PSM_ENVELOPE_LEN + 33;
+        // Third byte neither `0xA7` nor `0x27`: still refused, this is not
+        // a wildcard match.
+        record[tag_at + 2] = 0x37;
+        assert!(decode_igsymbols(&record).is_empty());
     }
 
     #[test]

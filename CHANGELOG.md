@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### `igSymbol2d` 矩阵标签第三字节不再只认 `0xA7`：`D04` 的 5 个符号恢复出图（2026-11-07）
+
+`decode_igsymbols` 原先把矩阵标签 `02 00 A7 50` 当成唯一形状，`D04.pid` 全部 6 条
+`igSymbol2d` 写的是 `02 00 27 50`，第三字节 `0x27` 而非 `0xA7`，因而全数被拒收
+（`refused_graphic_records` 记 `0x00CE` × 5，`ISA 2 WAY GENERIC BODY` / `ISA_LOGIC CTRL`
+/ `CONCENTRIC SIZE CHANGE` × 2 / `qiufa.sym`）。跨语料统计：`0x27` 仅见于 `D04`
+（6/6 条），`0xA7` 见于其余 56 个夹具的 12411 条；两种形状下第三字节以外的全部字段
+（变换矩阵、插入点、`jsite_ref`、`oid`）布局相同，且同一文件内部从不混用——是逐文件
+的会话/序列化标记，不是随机噪声。新增 `IGSYMBOL2D_MATRIX_TAG_ALT` 常量与
+`IGSYMBOL2D_MATRIX_TAG_VARIANTS` 表，`find_map` 在两种标签间选配；不收宽到通配，
+`0x37` 之类的第三字节仍被拒收（新增拒收回归测试）。`DecodedIgSymbol2dRecord` 新增
+审计字段 `matrix_tag_third_byte`。`D04` 出图：`decoded_igsymbols` 0 → 5，line 376 →
+399，circle 27 → 28；`qiufa.sym`（oid 136, scale 1）插入点落在图纸外，不上页，其余
+4 个按 `scale 18` 画出但库里都没有对应 `.sym` 体，画的是记录体本身。全量语料复核另
+见三条拒收（`igBoundary2d` 的圆形成员、`DependencyObject` 的空分组、census walker
+在非 PSM 前导字节上的误读）均为既有行为，未改动。见
+`docs/analysis/2026-11-07-igsymbol2d-matrix-tag-third-byte-is-a-session-flag.md`。
+
 ### 信号线虚线按每段直线拟合（`JStyleSimpleDashType` 模式 2）（2026-11-08）
 
 `DashPattern` 新增读取 `+26` 的拟合模式和 `+34` 的拟合比例 r。`1.905/1.270` 信号线图案是模式 2，r = 7/6。`pid-plot` 对这种图案按 `style.dll` `sub_10017A50` 的规则出图：每个折线顶点重新起相位，每段直线把图案拉伸到恰好容纳整数个周期，段太短时按原长铺开。前 10 张参考图的 coverage 从 0.9990–0.9997 升到 1.000000，uncovered 从 3.217–42.020 mm 降到 0。A2 的 coverage 从 0.982114 升到 0.983085，uncovered 从 218.823 降到 206.935 mm，extra 从 210.269 降到 210.048 mm。各图 pen 一致数上升，不符仍为 0；文字配对数不变。`reference_plots_acceptance` 新增 `max_uncovered_mm` 门禁，coverage 下限收紧到 0.9999；`plot_compare` 也收紧到 0.9999。见 `docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`。

@@ -903,6 +903,13 @@ fn is_default_uniform_scale(scale: &f64) -> bool {
     *scale == 1.0
 }
 
+/// Default for [`DecodedIgSymbol2dRecord::matrix_tag_third_byte`]: the
+/// canonical `0xA7`, which is what 12 411 of the 12 417 corpus records
+/// carry (every one outside `D04`).
+fn default_matrix_tag_third_byte() -> u8 {
+    0xA7
+}
+
 /// Stable model-shaped DTO mirroring
 /// [`crate::parsers::sheet_records::SheetIgSymbol2dDecoded`] —
 /// PSM type `0x00CE` `SmartPlant` symbol instance.
@@ -926,6 +933,13 @@ pub struct DecodedIgSymbol2dRecord {
     pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
+    /// Third byte of the matrix tag this record carries: `0xA7` on every
+    /// corpus fixture but one, `0x27` on every `igSymbol2d` record in the
+    /// plant backup's `D04`. The two differ only in this byte's `0x80`
+    /// bit, and every other field at and after the tag reads the same
+    /// shape under both.
+    #[serde(default = "default_matrix_tag_third_byte")]
+    pub matrix_tag_third_byte: u8,
     /// Numeric id of the top-level `JSite<id>` storage carrying this
     /// instance's symbol reference (Phase 35-C: the u32 immediately
     /// before the placement-matrix tag; 132/132 records across all 6
@@ -985,6 +999,7 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             parent_ref: d.parent_ref,
             sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
+            matrix_tag_third_byte: d.matrix_tag_third_byte,
             jsite_ref: d.jsite_ref,
             style_ref: d.style_ref,
             transform_00: d.transform[0],
