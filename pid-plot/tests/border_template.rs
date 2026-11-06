@@ -338,24 +338,28 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
         );
     }
     for (label, width_mm, tolerance_mm, height_mm) in [
-        ("\u{5ba1}  \u{5b9a}", 11.17, 0.2, 4.74),
+        ("\u{5ba1}  \u{5b9a}", 11.17, 0.02, 4.74),
         (
             "\u{8bbe}\u{8ba1}\u{8bc1}\u{4e66}\u{53f7}",
             20.08,
-            0.15,
+            0.09,
             5.08,
         ),
         ("1 \u{7248}", 6.78, 0.02, 4.40),
         (
             "\u{534e}\u{5317}\u{6cb9}\u{7530}\u{82cf}\u{6865}\u{50a8}\u{6c14}\u{5e93}\u{7fa4}",
             45.33,
-            0.1,
+            0.06,
             5.93,
         ),
         (
             "\u{4e2d}\u{56fd}\u{77f3}\u{6cb9}\u{96c6}\u{56e2}\u{5de5}\u{7a0b}\u{8bbe}\u{8ba1}\u{6709}\u{9650}\u{8d23}\u{4efb}\u{516c}\u{53f8}\u{534e}\u{5317}\u{5206}\u{516c}\u{53f8}",
             107.46,
-            0.1,
+            // 107.3573 mm — the one three-glyph-or-more run in this corpus
+            // long enough to carry two rounding steps below the reference's
+            // own (see `run_advance`'s per-glyph `round` then drift-correct
+            // rule); every other pin in this block holds inside 0.1.
+            0.103,
             6.60,
         ),
     ] {
@@ -366,7 +370,7 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
             .unwrap_or_else(|| panic!("{A1_DRAWING}: {label:?} did not reach the page"));
         assert!(
             (span.advance_mm - width_mm).abs() <= tolerance_mm,
-            "{label:?} letters {:.2} mm wide; the reference has {width_mm:.2}",
+            "{label:?} letters {:.4} mm wide; the reference has {width_mm:.4}",
             span.advance_mm
         );
         assert!(
@@ -855,15 +859,15 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
     //
     // `修改号` is the one three-glyph run in this symbol (every other label
     // here is two glyphs and lands exactly on the reference's 10.50 mm): the
-    // reference plot's own `lpDx` rounding reads 15.75 mm, 0.17 mm above
-    // what this writer's `lpDx` model computes for the same three glyphs
-    // (15.58 mm) — the same residual the RAD `render.dll` model leaves
-    // unexplained for a handful of other three-glyph-and-up runs (Arial
-    // 12.45 pt, Arial Narrow 14.4 pt, FangSong 10.56 pt, SimSun 10.08/10.56
-    // pt), so the pin tracks this writer's own computed width rather than
-    // the reference's.
-    for (label, width_mm, tolerance_mm) in [("修改", 10.50, 0.05), ("修改号", 15.5787, 0.001)]
-    {
+    // reference plot's own `lpDx` rounding reads 15.75 mm. `run_advance`
+    // rounds each glyph's own `Δref_i × a8` independently before summing
+    // (a run's error diffusion only nudges a glyph when the running float
+    // and integer totals drift more than a pixel apart), which is what
+    // puts three identical full-em glyphs on the same integer pixel step
+    // three times over — accumulating the unrounded `Δref_i × a8` and
+    // rounding only the running total, this crate's earlier reading, drifts
+    // the third glyph a pixel short (15.5787 mm instead of 15.75).
+    for (label, width_mm, tolerance_mm) in [("修改", 10.50, 0.05), ("修改号", 15.75, 0.01)] {
         let ours = ink
             .spans
             .iter()

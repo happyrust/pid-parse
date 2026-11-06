@@ -1942,12 +1942,29 @@ fn run_advance(
         let width_em = metrics.width(*code);
         widths_em.push(width_em);
         let unicode = chars.next().map_or(*code, u32::from);
-        float_acc += reference_advance_px(key, unicode, width_em, cell, wf_scale) * a8;
-        let target = float_acc.round();
+        // `lpDx_i = round(Δref_i × a8)`, each glyph's own step rounded on
+        // its own — not the running total rounded once per glyph, which
+        // drifts a full em's worth of identical glyphs a pixel short (a
+        // three-glyph run of the same full-em CJK code once settled a
+        // pixel under the reference's own reading this way: every other
+        // glyph in the corpus happens to vary enough from its neighbours
+        // that the two roundings agree). `float_acc`/`int_acc` track the
+        // running floating-point and already-rounded totals so a step can
+        // still be nudged by one when they drift more than a pixel apart —
+        // the error diffusion [`RunAdvance`]'s own doc comment describes.
+        let step_px = reference_advance_px(key, unicode, width_em, cell, wf_scale) * a8;
+        float_acc += step_px;
         #[allow(clippy::cast_possible_truncation)]
-        let target_i = target as i64;
-        lp_dx.push(target_i - int_acc);
-        int_acc = target_i;
+        let mut step_i = step_px.round() as i64;
+        #[allow(clippy::cast_precision_loss)]
+        let drift = float_acc - (int_acc + step_i) as f64;
+        if drift > 1.0 {
+            step_i += 1;
+        } else if drift < -1.0 {
+            step_i -= 1;
+        }
+        int_acc += step_i;
+        lp_dx.push(step_i);
     }
     let leading: i64 = lp_dx[..n - 1].iter().sum();
     #[allow(clippy::cast_precision_loss)]
