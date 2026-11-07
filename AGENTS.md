@@ -311,6 +311,13 @@ then run the first checkout's code without recompiling. If that has
 already happened, update the modification time of `src/lib.rs` in the
 checkout under test to force a rebuild.
 
+A `cargo` that warns "ignoring the configured target directory … this
+cargo always uses `./target`" (a fork, tagged as such by `--version`)
+keeps every checkout's intermediate artifacts and test executables in
+one directory under `CARGO_HOME\targets` regardless — the sharing above,
+with no variable that opts out. Run the toolchain's own cargo there,
+`rustup run nightly cargo …`, which honours `CARGO_TARGET_DIR`.
+
 ## Pre-commit gates (CI mirrors these)
 
 Run **all five** before `git push`. CI (`.github/workflows/ci.yml`)
