@@ -361,6 +361,9 @@ const PINS: [Pin; 11] = [
         // The near-circles drawn before lent eight chords to the scallop
         // strokes beside them; the short arcs pair four of their own, so
         // the pen tally is four below the rings' 2794.
+        // Read whole, the arcs take the rings' 39.824 mm of extra ink off
+        // the furniture; CPECC pairs at the height its style states and the
+        // company name on the line its paragraph sets.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
         min_coverage: 0.9830,
@@ -372,10 +375,10 @@ const PINS: [Pin; 11] = [
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
-            min_coverage: 0.9881,
-            max_uncovered_mm: 208.646 + EXTRA_SLACK_MM,
-            max_extra_mm: 249.872 + EXTRA_SLACK_MM,
-            min_text_matched: 248,
+            min_coverage: 0.9882,
+            max_uncovered_mm: 206.935 + EXTRA_SLACK_MM,
+            max_extra_mm: 210.048 + EXTRA_SLACK_MM,
+            min_text_matched: 250,
             text_reference: 261,
         },
     },
