@@ -1004,8 +1004,8 @@ struct TextSegment<'a> {
 /// style change indistinguishable from the record's own repetition from
 /// adding runs to the PDF (and to the comparison's text pairing).
 ///
-/// The leading and trailing padding `show_text` trims is skipped first, so a
-/// span's character offsets — which count from the record's own first
+/// Whatever padding `show_text` dropped in front of `inked` is skipped first,
+/// so a span's character offsets — which count from the record's own first
 /// character — land on the right glyphs.
 fn text_segments<'a>(
     faces: &[ReadyFace<'_>],
@@ -1046,7 +1046,8 @@ fn text_segments<'a>(
         return plain();
     }
     let chars: Vec<char> = text.value.chars().collect();
-    let lead = chars.iter().take_while(|c| c.is_whitespace()).count();
+    let leading = |value: &str| value.chars().take_while(|c| c.is_whitespace()).count();
+    let lead = leading(text.value).saturating_sub(leading(inked));
     let inked_len = inked.chars().count();
     let end = lead.saturating_add(inked_len).min(chars.len());
     if end <= lead {
@@ -1234,15 +1235,18 @@ fn show_text(
         return Ok(());
     }
     // A drawing file pads label fields with spaces, on either side
-    // (`L=200mm `, ` 1001102A`). They ink nothing, so the reference plot has
-    // no run for them at all: it measures and letters the visible glyphs.
-    // Keeping the padding costs nothing on the page but pushes a centred or
-    // right-anchored run half a space off — the I drawing's 105
-    // leading-space labels sat 0.4 mm left of the reference for exactly that
-    // reason, and trimming only the tail left them there. So the padding is
-    // dropped before the run is measured or drawn.
-    let inked = text.value.trim();
-    if inked.is_empty() {
+    // (`L=200mm `, ` 1001102A`). The two pads are not the same thing to the
+    // plotter. A leading pad is part of the line: the reference run starts
+    // with the space glyph, the space takes its `lpDx` like any other glyph
+    // (` 1001501B` reads `Tc −0.210`, the nine-glyph model's `−0.2098`;
+    // trimmed to eight glyphs it would be `−0.251`), and the width a centred
+    // or right anchor steps back by includes it. A trailing pad is never
+    // lettered — no reference run ends in a space — so only the tail is
+    // dropped here; what that pad does to the placement is the paragraph's
+    // business (`right_pad`). See
+    // `docs/analysis/2026-11-07-every-label-miss-is-a-reference-font-rule-or-the-pixel-grid.md`.
+    let inked = text.value.trim_end();
+    if inked.trim_start().is_empty() {
         return Ok(());
     }
     // A label that letters in more than one style is cut into the stretches
@@ -2780,23 +2784,35 @@ mod tests {
         );
     }
 
-    /// A padded label anchors on its visible glyphs alone, on either side.
+    /// A trailing pad is dropped before the anchor measures the run; a
+    /// leading one is lettered and measured with it.
     ///
     /// The drawing files pad their fields with spaces — `H=11.8MPa ` with a
-    /// trailing one, ` 1001102A` with a leading one. A pad inks nothing, so
-    /// measuring it in steps a centred run half a space back and a
-    /// right-aligned run a whole one. Trimming only the tail left the I
-    /// drawing's 105 leading-space labels 0.4 mm left of the reference; the
-    /// comparison's width column now reports what a run-width difference can
-    /// explain and what only a placement rule can.
+    /// trailing one, ` 1001102A` with a leading one. No reference run ends in
+    /// a space, while every leading-pad tag's run starts with one, takes its
+    /// letter spacing over all nine glyphs and is centred on that width: a
+    /// centred run steps back half the pad further, a right-aligned one all
+    /// of it.
     #[test]
-    fn padding_at_either_end_is_dropped_before_the_anchor_is_measured() {
-        for anchor in [TextAnchor::Center, TextAnchor::Right] {
-            let padded = placed(" WW ", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
-            let tight = placed("WW", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
+    fn a_leading_pad_is_lettered_and_a_trailing_one_is_not() {
+        for (anchor, step) in [(TextAnchor::Center, 0.5), (TextAnchor::Right, 1.0)] {
+            let tight = placed_span("WW", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
+            let trailing = placed_span("WW ", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
             assert!(
-                (padded[0] - tight[0]).abs() < 0.05,
-                "{anchor:?}: padded {padded:?} tight {tight:?}"
+                (trailing.origin_mm[0] - tight.origin_mm[0]).abs() < 0.05 && trailing.text == "WW",
+                "{anchor:?}: a trailing pad is not lettered: {trailing:?} against {tight:?}"
+            );
+            let leading = placed_span(" WW", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
+            assert_eq!(
+                leading.text, " WW",
+                "{anchor:?}: the leading pad is a glyph"
+            );
+            let pad_mm = leading.advance_mm - tight.advance_mm;
+            assert!(pad_mm > 0.5, "{anchor:?}: the pad has an advance: {pad_mm}");
+            assert!(
+                (leading.origin_mm[0] - (tight.origin_mm[0] - step * pad_mm)).abs() < 0.05,
+                "{anchor:?}: the pad counts in the width the anchor steps back by: \
+                 {leading:?} against {tight:?}"
             );
         }
     }
@@ -3513,6 +3529,17 @@ mod tests {
         anchor: TextAnchor,
         line: TextLine,
     ) -> [f64; 2] {
+        placed_span(value, origin_mm, rotation, anchor, line).origin_mm
+    }
+
+    /// The run one label reads back as, whatever padding it letters.
+    fn placed_span(
+        value: &str,
+        origin_mm: [f64; 2],
+        rotation: f64,
+        anchor: TextAnchor,
+        line: TextLine,
+    ) -> crate::read::TextSpan {
         let model = PaperModel {
             library: Vec::new(),
             template: None,
@@ -3551,12 +3578,11 @@ mod tests {
         )
         .expect("write");
         let ink = read_plot(&pdf).expect("read");
-        let span = ink
-            .spans
+        ink.spans
             .iter()
-            .find(|span| span.text == value.trim())
-            .unwrap_or_else(|| panic!("{value:?} missing in {:?}", ink.spans));
-        span.origin_mm
+            .find(|span| span.text.trim() == value.trim())
+            .cloned()
+            .unwrap_or_else(|| panic!("{value:?} missing in {:?}", ink.spans))
     }
 
     fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
