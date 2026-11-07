@@ -5512,14 +5512,18 @@ impl SheetIgBoundary2dDecoded {
 /// Validation rules (all must hold, otherwise the offset is skipped):
 ///
 /// 1. `type_code == 0x0013`; type flags are zero;
-/// 2. `sub_type_word == 0x0010` (payload offset 12);
+/// 2. `sub_type_word == 0x0010` (payload offset 12), or `0x0000` — the
+///    linked-template grammar first, then this one;
 /// 3. sub-header `u32` at payload offset 18 equals `1`;
 /// 4. `segment_count` (payload offset 22) is in
 ///    `1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT`;
-/// 5. `bytes_to_follow == 49 + 41 × segment_count` exactly;
-/// 6. every segment group starts with the `0x67` tag byte;
-/// 7. all segment and anchor coordinates are finite and within the
-///    `[-1e9, 1e9]` domain;
+/// 5. every member group starts with the `0x67` line tag (33 bytes) or
+///    the `0x73` circle tag ([`IGBOUNDARY2D_CIRCLE_MEMBER_LEN`] bytes);
+/// 6. the anchor, flag, member count and member references close the
+///    payload exactly — `bytes_to_follow == 49 + 41 × segment_count`
+///    when every member is a line;
+/// 7. all member and anchor coordinates are finite and within the
+///    `[-1e9, 1e9]` domain, and a circle's radius is positive;
 /// 8. trailer `member_count == segment_count`;
 /// 9. not all segment vertices are identical (non-degenerate).
 ///
@@ -5615,8 +5619,12 @@ fn decode_igboundary_payload(
     let parent_ref = read_u32(4)?;
     let sheet_layer_ref = read_u32(8)?;
     let sub_type_word = u16::from_le_bytes([*payload.get(12)?, *payload.get(13)?]);
+    // A linked template writes sub-type `0x0000` with its own trailer. So
+    // does a drawing's boundary over a circle -- `EF井场`'s solid dot oid
+    // 52844 -- whose trailer is this grammar's anchor and member
+    // references, so a refusal from the template grammar falls through.
     if sub_type_word == 0x0000 {
-        return decode_igboundary_template_payload(
+        if let Some(record) = decode_igboundary_template_payload(
             data,
             offset,
             header,
@@ -5624,9 +5632,10 @@ fn decode_igboundary_payload(
             oid,
             parent_ref,
             sheet_layer_ref,
-        );
-    }
-    if sub_type_word != 0x0010 {
+        ) {
+            return Some(record);
+        }
+    } else if sub_type_word != 0x0010 {
         return None;
     }
     let index = read_u32(14)?;
@@ -5638,43 +5647,67 @@ fn decode_igboundary_payload(
         return None;
     }
     let n = segment_count as usize;
-    let expected_len =
-        IGBOUNDARY2D_FIXED_PAYLOAD_LEN.checked_add(IGBOUNDARY2D_PER_SEGMENT_LEN.checked_mul(n)?)?;
-    if btf != expected_len {
-        return None;
-    }
     let sub_header_tail = [*payload.get(26)?, *payload.get(27)?];
 
-    // Segment groups: `0x67 tag + 4×f64` each, starting at +28.
+    // Member groups from +28: a `0x67` line is `tag + 4×f64`; a `0x73`
+    // circle is `tag + (centre_x, centre_y, radius, 0, 1) + u8`, the
+    // layout of the template grammar's `0x74` arc without the two angles,
+    // and is flattened to the chords a fill ring needs.
     let mut segments = Vec::with_capacity(n);
     let mut pos = 28usize;
     let mut all_same = true;
     let mut first_vertex: Option<(f64, f64)> = None;
+    let in_domain = |v: f64| v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
     for _ in 0..n {
-        if *payload.get(pos)? != IGBOUNDARY2D_SEGMENT_TAG {
-            return None;
-        }
-        let sx = read_f64(pos + 1)?;
-        let sy = read_f64(pos + 9)?;
-        let ex = read_f64(pos + 17)?;
-        let ey = read_f64(pos + 25)?;
-        for v in [sx, sy, ex, ey] {
-            if !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
-                return None;
+        let mut chords: Vec<((f64, f64), (f64, f64))> = Vec::new();
+        let member_len = match *payload.get(pos)? {
+            IGBOUNDARY2D_SEGMENT_TAG => {
+                let sx = read_f64(pos + 1)?;
+                let sy = read_f64(pos + 9)?;
+                let ex = read_f64(pos + 17)?;
+                let ey = read_f64(pos + 25)?;
+                if ![sx, sy, ex, ey].into_iter().all(in_domain) {
+                    return None;
+                }
+                chords.push(((sx, sy), (ex, ey)));
+                33
             }
-        }
-        let reference = *first_vertex.get_or_insert((sx, sy));
-        for vertex in [(sx, sy), (ex, ey)] {
-            if vertex != reference {
+            IGSYMBOUNDARY_CIRCLE_TAG => {
+                let cx = read_f64(pos + 1)?;
+                let cy = read_f64(pos + 9)?;
+                let radius = read_f64(pos + 17)?;
+                if ![cx, cy, radius].into_iter().all(in_domain) || radius <= 0.0 {
+                    return None;
+                }
+                // A whole turn, in the direction the closing byte names --
+                // `0` clockwise, as for an arc member.
+                let sweep = if *payload.get(pos + IGBOUNDARY2D_CIRCLE_MEMBER_LEN - 1)? == 0 {
+                    -std::f64::consts::TAU
+                } else {
+                    std::f64::consts::TAU
+                };
+                let steps = (std::f64::consts::TAU / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize;
+                let at = |step: usize| {
+                    let angle = sweep * step as f64 / steps as f64;
+                    (cx + radius * angle.cos(), cy + radius * angle.sin())
+                };
+                chords.extend((0..steps).map(|step| (at(step), at(step + 1))));
+                IGBOUNDARY2D_CIRCLE_MEMBER_LEN
+            }
+            _ => return None,
+        };
+        for (start, end) in chords {
+            let reference = *first_vertex.get_or_insert(start);
+            if start != reference || end != reference {
                 all_same = false;
             }
+            segments.push(SheetIgBoundary2dSegment {
+                tag_offset: pos,
+                start,
+                end,
+            });
         }
-        segments.push(SheetIgBoundary2dSegment {
-            tag_offset: pos,
-            start: (sx, sy),
-            end: (ex, ey),
-        });
-        pos += 33;
+        pos += member_len;
     }
     if all_same {
         return None;
@@ -5694,9 +5727,12 @@ fn decode_igboundary_payload(
         return None;
     }
 
-    // Trailer member references.
+    // Trailer member references, which close the payload exactly.
     let mut member_refs = Vec::with_capacity(n);
     let member_base = pos + 21;
+    if member_base.checked_add(n.checked_mul(8)?)? != btf {
+        return None;
+    }
     for i in 0..n {
         let base = member_base + i * 8;
         let member_oid = read_u32(base)?;
@@ -5928,6 +5964,13 @@ fn decode_igboundary_template_payload(
 /// layout): the group's four words are `centre_x, centre_y, radius,
 /// unused`.
 pub const IGSYMBOUNDARY_CIRCLE_TAG: u8 = 0x73;
+
+/// Bytes one `0x73` circle member takes in a drawing's `igBoundary2d`:
+/// the tag, `(centre_x, centre_y, radius, 0, 1)` and a closing direction
+/// byte — the template grammar's 58-byte `0x74` arc without its two
+/// angles. `EF井场`'s oid 52844 is one: a single circle member filling
+/// the `igCircle2d` its member reference names.
+pub const IGBOUNDARY2D_CIRCLE_MEMBER_LEN: usize = 1 + 5 * 8 + 1;
 
 /// One member shape of an `igBoundary2d` record, keyed by the segment
 /// group's tag byte rather than resolved through the member-reference
@@ -12736,6 +12779,111 @@ mod tests {
         let mut record = canonical_igboundary_triangle();
         record[6 + 22..6 + 26].copy_from_slice(&0u32.to_le_bytes());
         assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    /// `EF井场 注采阀组工艺及自控流程图.pid` `/Sheet6 +730028`, oid 52844,
+    /// all 99 payload bytes as they sit on disk: sub-type `0x0000`, one
+    /// `0x73` circle member, then the drawing-side anchor (the circle's
+    /// centre), flag, member count and the reference to the `igCircle2d`
+    /// it fills (oid 52772, class word `0x00D1`) -- the plant backup's one
+    /// sheet boundary the template grammar refuses.
+    #[rustfmt::skip]
+    const EF_CIRCLE_BOUNDARY_PAYLOAD: [u8; 99] = [
+        // +0    oid 52844     parent 6      layer 8       sub 0     index 113
+        0x6C, 0xCE, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x71, 0x00,
+        // +16         u32 1         count 1       04 01     0x73 + centre_x
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x01, 0x73, 0x3D, 0x3D, 0x0D,
+        0xEF, 0x96, 0x42, 0xEB, 0x3F, 0x34, 0x88, 0x64, 0x41, 0x80, 0xB0, 0xC0, 0x3F, 0x00, 0x78, 0x11,
+        // +48   radius 0.463 mm, then 0 and 1, and the direction byte at +69
+        0x4B, 0xFC, 0x59, 0x3E, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xF0, 0x3F, 0x01, 0x3D, 0x3D, 0x0D, 0xEF, 0x96, 0x42, 0xEB, 0x3F, 0x34, 0x88,
+        // +80   anchor ends at +86, flag 1, count 1, member 52772 / 0x00D1 / 5
+        0x64, 0x41, 0x80, 0xB0, 0xC0, 0x3F, 0x01, 0x01, 0x00, 0x00, 0x00, 0x24, 0xCE, 0x00, 0x00, 0xD1,
+        0x00, 0x05, 0x00,
+    ];
+
+    fn ef_circle_boundary_record() -> Vec<u8> {
+        let mut record = PSM_TYPE_CODE_IGBOUNDARY2D.to_le_bytes().to_vec();
+        record.extend_from_slice(&(EF_CIRCLE_BOUNDARY_PAYLOAD.len() as u32).to_le_bytes());
+        record.extend_from_slice(&EF_CIRCLE_BOUNDARY_PAYLOAD);
+        record
+    }
+
+    /// The circle member closes a ring of chords on the circle itself, so
+    /// the emitter's ring is the dot the record fills, and every trailer
+    /// field is read where the drawing-side grammar puts it.
+    #[test]
+    fn igboundary2d_decodes_a_drawing_boundary_over_a_circle() {
+        let record = ef_circle_boundary_record();
+        let decoded = decode_igboundaries(&record);
+        assert_eq!(decoded.len(), 1);
+        let b = &decoded[0];
+        assert_eq!(b.oid, 52844);
+        assert_eq!(b.sheet_layer_ref, 8);
+        assert_eq!(b.sub_type_word, 0x0000);
+        assert_eq!(b.index, 113);
+        assert_eq!(b.segment_count, 1);
+        assert_eq!(b.sub_header_tail, [4, 1]);
+        let centre = (
+            f64::from_le_bytes(EF_CIRCLE_BOUNDARY_PAYLOAD[29..37].try_into().unwrap()),
+            f64::from_le_bytes(EF_CIRCLE_BOUNDARY_PAYLOAD[37..45].try_into().unwrap()),
+        );
+        let radius = f64::from_le_bytes(EF_CIRCLE_BOUNDARY_PAYLOAD[45..53].try_into().unwrap());
+        assert!((radius - 0.000_463).abs() < 1e-6, "{radius}");
+        assert_eq!(b.anchor, centre);
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs,
+            vec![SheetIgBoundary2dMemberRef {
+                member_oid: 52772,
+                class_word: 0x00D1,
+                sub_word: 5,
+            }]
+        );
+        assert_eq!(b.segments.len(), 26, "a whole turn in 0.25 rad chords");
+        assert!(b.is_closed_loop(1e-12));
+        for segment in &b.segments {
+            assert_eq!(segment.tag_offset, 28);
+            let off = (segment.start.0 - centre.0).hypot(segment.start.1 - centre.1);
+            assert!(
+                (off - radius).abs() < 1e-12,
+                "a vertex {off} off the circle"
+            );
+        }
+    }
+
+    /// The template grammar still refuses this record -- its member walk
+    /// knows no `0x73` and its 21-byte trailer is not this one -- so the
+    /// fall-through is what decodes it, and it does not loosen anything
+    /// else: a circle with no radius, or one that leaves a byte unread, is
+    /// refused.
+    #[test]
+    fn igboundary2d_circle_member_must_close_the_payload() {
+        let record = ef_circle_boundary_record();
+        let header = parse_psm_header(&record, 0).unwrap();
+        assert!(
+            decode_igboundary_template_payload(&record, 0, &header, record.len(), 52844, 6, 8)
+                .is_none()
+        );
+
+        let mut flat = ef_circle_boundary_record();
+        flat[6 + 45..6 + 53].copy_from_slice(&0f64.to_le_bytes());
+        assert!(decode_igboundaries(&flat).is_empty(), "zero radius");
+
+        let mut longer = ef_circle_boundary_record();
+        longer.push(0);
+        longer[2..6].copy_from_slice(&100u32.to_le_bytes());
+        assert!(
+            decode_igboundaries(&longer).is_empty(),
+            "a byte past the refs"
+        );
+
+        let mut other_sub = ef_circle_boundary_record();
+        other_sub[6 + 12] = 0x11;
+        assert!(
+            decode_igboundaries(&other_sub).is_empty(),
+            "sub-type 0x0011"
+        );
     }
 
     #[test]
