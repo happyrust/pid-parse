@@ -43,10 +43,10 @@
 //!   line, so the text pin is 214 of 225
 //!   (`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`,
 //!   `docs/analysis/2026-11-05-a-symbol-top-is-the-ascender-line.md`).
-//!   The 79.143 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
+//!   The 55.980 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
 //!   beside the reference leader, not frame ink
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`).
-//!   The 120.511 mm of uncovered `/Sheet6` is the same leader's reference copy,
+//!   The 109.285 mm of uncovered `/Sheet6` is the same leader's reference copy,
 //!   the TT balloon at `(498.70, 220.37)`, and dash tips
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-uncovered-is-the-reference-leader.md`).
 //!   The cluster is the same body at
@@ -71,11 +71,12 @@
 //! plotter snapped to its 1/150 in grid, pairs along the reference's chain,
 //! so what is left is ink the reference lacks or lays differently: the
 //! `CPE-SQ-A1.igr` border on `一级闪蒸分离器A` / `低温分离器A` (286 strokes,
-//! exactly their whole-page extra ink), the A2 instrument cluster, and on
-//! every other page the signal line's dash
-//! tail — `DashWalk` stops walking a dash after eight periods and reads the
-//! rest of a long fitted piece as one solid stroke, which is our plot misread,
-//! not misdrawn. No unpaired stroke lies in a missing-symbol box.
+//! exactly their whole-page extra ink) and the A2 instrument cluster with its
+//! leader. Every other page used to leave the signal line's dash tail as
+//! well, which was our plot misread, not misdrawn: `DashWalk` gave up on a
+//! dash after eight periods and read the rest of a long fitted piece as one
+//! solid stroke, and now walks it to the end. No unpaired stroke lies in a
+//! missing-symbol box.
 //!
 //! Each page is also compared with no template mask at all, so the sign-off
 //! column and the title block are charged like any other ink (the `whole`
@@ -88,9 +89,9 @@
 //! `一级闪蒸分离器A` and `低温分离器A` carry 3478.9 / 3478.7 mm of extra
 //! ink: their reference plots print no border at all, while ours draws the
 //! `CPE-SQ-A1.igr` both link — the same link `一级闪蒸分离器B` wears on its
-//! plot. The A2 page reads 0.9882, 208.646 mm uncovered and 249.872 mm extra,
-//! with 248 of 261 labels paired: its company name and `CPECC` letter off the
-//! reference's places.
+//! plot. The A2 page reads 0.9881, 208.840 mm uncovered and 187.091 mm extra,
+//! with 250 of 261 labels paired: every furniture label pairs, and the eleven
+//! that miss are the ones the masked view misses.
 
 use std::path::PathBuf;
 
@@ -193,12 +194,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 546,
         text_reference: 546,
-        min_pen_agreed: 9201,
+        min_pen_agreed: 9370,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 7,
+            partly: 0,
             beside: 0,
         },
         missing_symbols: &[PULSATION_DAMPER],
@@ -218,13 +219,13 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 775,
         text_reference: 775,
-        min_pen_agreed: 14556,
+        min_pen_agreed: 14709,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 12,
-            beside: 1,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
@@ -243,13 +244,13 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 921,
         text_reference: 921,
-        min_pen_agreed: 17677,
+        min_pen_agreed: 17866,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 15,
-            beside: 1,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
@@ -268,12 +269,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 151,
         text_reference: 151,
-        min_pen_agreed: 1254,
+        min_pen_agreed: 1278,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 286,
             bare: 0,
-            partly: 2,
+            partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
@@ -293,12 +294,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 123,
         text_reference: 123,
-        min_pen_agreed: 1401,
+        min_pen_agreed: 1425,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 2,
+            partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
@@ -318,12 +319,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 167,
         text_reference: 167,
-        min_pen_agreed: 1687,
+        min_pen_agreed: 1695,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 286,
             bare: 0,
-            partly: 2,
+            partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
@@ -343,12 +344,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 249,
         text_reference: 249,
-        min_pen_agreed: 3098,
+        min_pen_agreed: 3196,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 4,
+            partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
@@ -373,13 +374,13 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3354,
+        min_pen_agreed: 3404,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 3,
-            beside: 1,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[],
         whole: WholePage {
@@ -400,13 +401,13 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3361,
+        min_pen_agreed: 3411,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 3,
-            beside: 1,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[],
         whole: WholePage {
@@ -427,13 +428,13 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3228,
+        min_pen_agreed: 3278,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
             bare: 0,
-            partly: 3,
-            beside: 1,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[],
         whole: WholePage {
@@ -460,24 +461,24 @@ const PINS: [Pin; 11] = [
         // company name on the line its paragraph sets.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
-        min_coverage: 0.9830,
-        max_extra_mm: 210.048 + EXTRA_SLACK_MM,
-        max_uncovered_mm: 206.766 + EXTRA_SLACK_MM,
+        min_coverage: 0.9829,
+        max_extra_mm: 187.091 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 208.671 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
-        min_pen_agreed: 2790,
+        min_pen_agreed: 2806,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
-            bare: 54,
-            partly: 28,
+            bare: 70,
+            partly: 26,
             beside: 6,
         },
         missing_symbols: &[],
         whole: WholePage {
-            min_coverage: 0.9882,
-            max_uncovered_mm: 206.935 + EXTRA_SLACK_MM,
-            max_extra_mm: 210.048 + EXTRA_SLACK_MM,
+            min_coverage: 0.9881,
+            max_uncovered_mm: 208.840 + EXTRA_SLACK_MM,
+            max_extra_mm: 187.091 + EXTRA_SLACK_MM,
             min_text_matched: 250,
             text_reference: 261,
         },

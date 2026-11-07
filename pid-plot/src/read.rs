@@ -442,11 +442,15 @@ impl DashWalk {
         let mut left = (walked + self.entries[index] - self.at).max(0.0);
         let mut out = Vec::new();
         let mut along = 0.0;
-        let mut guard = 0;
+        // Entries crossed since the walk last advanced: a pattern whose
+        // entries are all too fine to advance it is drawn solid rather than
+        // walked forever. Every advance starts the count again, so a long run
+        // keeps its pattern to the end.
+        let mut idle = 0;
         while along < length - 1e-12 {
             if left <= 1e-12 {
-                guard += 1;
-                if guard > count * 8 {
+                idle += 1;
+                if idle > count * 8 {
                     out.push((point_at(along), point_at(length)));
                     break;
                 }
@@ -454,6 +458,7 @@ impl DashWalk {
                 left = self.entries[index];
                 continue;
             }
+            idle = 0;
             let step = left.min(length - along);
             if index % 2 == 0 {
                 out.push((point_at(along), point_at(along + step)));
@@ -718,6 +723,35 @@ mod tests {
         let pieces = dash.split([6.0, 0.0], [8.0, 0.0]);
         assert_eq!(pieces.len(), 1, "{pieces:?}");
         assert!((pieces[0].1[0] - 8.0).abs() < 1e-9, "{pieces:?}");
+    }
+
+    #[test]
+    fn a_long_dashed_run_keeps_its_pattern_past_the_eighth_period() {
+        // I井场's signal line at x 551.78: one 395.5 mm piece of the
+        // 1.905/1.270 pattern, 124 periods. The walk used to stop after eight
+        // and read the remaining 368 mm as one solid stroke.
+        let mut dash = DashWalk::new(&[1.905, 1.27], 0.0);
+        let pieces = dash.split([0.0, 0.0], [0.0, 395.5]);
+        assert_eq!(pieces.len(), 125, "{}", pieces.len());
+        let longest = pieces
+            .iter()
+            .map(|(start, end)| end[1] - start[1])
+            .fold(0.0_f64, f64::max);
+        assert!((longest - 1.905).abs() < 1e-9, "{longest}");
+        assert!(
+            (pieces[124].0[1] - 124.0 * 3.175).abs() < 1e-9,
+            "{:?}",
+            pieces[124]
+        );
+    }
+
+    #[test]
+    fn a_pattern_too_fine_to_advance_still_ends() {
+        // Entries under the walk's own epsilon never advance it; the run is
+        // drawn solid rather than walked forever.
+        let mut dash = DashWalk::new(&[1e-13, 1e-13], 0.0);
+        let pieces = dash.split([0.0, 0.0], [5.0, 0.0]);
+        assert_eq!(pieces, vec![([0.0, 0.0], [5.0, 0.0])]);
     }
 
     #[test]
