@@ -32,12 +32,17 @@
 //! promotion without fixtures is forbidden (format guide §8.3). The first
 //! real drawing that trips one of these warnings delivers that fixture.
 //!
-//! The record walk is the chain-validated greedy walk proven by
+//! The record walk is the stream's own chain from its 8-byte header when
+//! that chain walks the stream exactly — the same membership test the
+//! family decoders gate on. Only a stream whose chain does not walk falls
+//! back to the chain-validated greedy walk proven by
 //! `examples/probe_psm_type_code_histogram`: a candidate 6-byte PSM header
 //! (`u16` type word + `u32 bytes_to_follow`) is accepted only when the
 //! position it advances to is end-of-stream or itself a valid header. That
 //! keeps one coincidental header inside another record's payload from
-//! swallowing the rest of the stream.
+//! swallowing the rest of the stream; on a stream that walks it was the
+//! source of every phantom type code the census ever reported
+//! (`census_record_starts`).
 
 use core::ops::Range;
 
@@ -313,35 +318,63 @@ fn unclaimed_counts(
     keep: impl Fn(u16, bool) -> bool,
 ) -> std::collections::BTreeMap<u16, usize> {
     let mut counts: std::collections::BTreeMap<u16, usize> = std::collections::BTreeMap::new();
+    for off in census_record_starts(data) {
+        let type_word = u16::from_le_bytes([data[off], data[off + 1]]);
+        let type_code = type_word & 0x3FFF;
+        let native_skipped = (type_word >> 14) & PSM_TYPE_FLAG_NATIVE_SKIP != 0;
+        // A claim shadows this record only when it *is* this record: the
+        // claimed range starts where the record starts. The old test was
+        // containment, and containment let a scan-based family's over-claim
+        // — a range running past its own record — cover a later record's
+        // start and silence that record's refusal. Chain records never
+        // overlap (one record's end is the next one's start), so a range
+        // covering `off` without starting at it can only be an over-claim,
+        // never a decode of this record. On the corpus the containment test
+        // silenced 32 refusals; measured in
+        // `docs/analysis/2026-08-11-what-refuses-the-remaining-53.md` §5.
+        let claimed_here = claimed.iter().any(|range| range.start == off);
+        if !claimed_here && keep(type_code, native_skipped) {
+            *counts.entry(type_code).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// Where the census finds a record: the stream's own chain from its 8-byte
+/// header when that chain walks the stream exactly
+/// ([`crate::parsers::sheet_records::sheet_record_starts`]), and the
+/// chain-validated greedy walk only when it does not.
+///
+/// The greedy walk starts at byte 0 and slides a byte at a time, so on a
+/// stream that does walk it can only see records the chain does not have.
+/// Thirteen of the plant backup's 57 sheet streams showed it: at `+2` the
+/// header's own magic (`44 F5 90 6C`) reads as type word `0x6C90` with the
+/// record count for its length, at `+7` the count's top byte and the first
+/// record's type byte read as `0x3D00` / `0xCE00`, and once out of step the
+/// walk took coincidental headers inside real records (`0x0004`, `0x0071`,
+/// `0x0100`, `0x050A`, `0x1000`, `0x3A00`, `0x3A3F`, and a `0x0020`
+/// "refusal") until it fell back in. Every one sits off the chain, and the
+/// bytes they claimed hid 23 records the native reader skips from the
+/// skipped census
+/// (`docs/analysis/2026-11-07-every-undrawn-record-of-the-plant-backup-is-inkless.md`).
+fn census_record_starts(data: &[u8]) -> Vec<usize> {
+    let chain = crate::parsers::sheet_records::sheet_record_starts(data);
+    if !chain.is_empty() {
+        return chain;
+    }
+    let mut starts = Vec::new();
     let mut off = 0usize;
     while off + 6 <= data.len() {
         if let Some(end) = psm_record_end(data, off) {
             if end == data.len() || psm_record_end(data, end).is_some() {
-                let type_word = u16::from_le_bytes([data[off], data[off + 1]]);
-                let type_code = type_word & 0x3FFF;
-                let native_skipped = (type_word >> 14) & PSM_TYPE_FLAG_NATIVE_SKIP != 0;
-                // A claim shadows this record only when it *is* this record:
-                // the claimed range starts where the record starts. The old
-                // test was containment, and containment let a scan-based
-                // family's over-claim — a range running past its own record —
-                // cover a later record's start and silence that record's
-                // refusal. Chain records never overlap (one record's end is
-                // the next one's start), so a range covering `off` without
-                // starting at it can only be an over-claim, never a decode of
-                // this record. On the corpus the containment test silenced 32
-                // refusals; measured in
-                // `docs/analysis/2026-08-11-what-refuses-the-remaining-53.md` §5.
-                let claimed_here = claimed.iter().any(|range| range.start == off);
-                if !claimed_here && keep(type_code, native_skipped) {
-                    *counts.entry(type_code).or_insert(0) += 1;
-                }
+                starts.push(off);
                 off = end;
                 continue;
             }
         }
         off += 1;
     }
-    counts
+    starts
 }
 
 #[cfg(test)]
@@ -539,6 +572,45 @@ mod tests {
                 rad_class_name: Some("Text Object"),
             }],
             "a claim that does not start at a record must not silence it"
+        );
+    }
+
+    /// A stream with its 8-byte header whose chain walks: the census reads
+    /// the chain, so the header's own magic is not a record and the record
+    /// it would have swallowed is counted.
+    ///
+    /// The shape is `C井场`'s: read from byte 2, the magic's upper half
+    /// (`90 6C`) is type word `0x6C90` and the record count is its length,
+    /// which here lands exactly on the second record, as 5676 does there.
+    #[test]
+    fn a_stream_that_walks_is_counted_on_its_own_chain() {
+        let mut data = 0x6C90_F544u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&22u32.to_le_bytes());
+        let mut skipped = record(0x0018, 16);
+        skipped[1] |= 0x80;
+        data.extend(skipped);
+        assert_eq!(data.len(), 30, "the count names the second record's start");
+        data.extend(record(0x0117, 8));
+
+        assert_eq!(
+            undecoded_type_code_census(&data, &[]),
+            vec![UndecodedTypeCodeCount {
+                type_code: 0x0117,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("igBalloon"),
+            }],
+            "no 0x2C90 read out of the stream header"
+        );
+        assert_eq!(
+            native_skipped_record_census(&data, &[]),
+            vec![SkippedRecordCount {
+                type_code: 0x0018,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Line Object"),
+            }],
+            "the record under the phantom is counted"
         );
     }
 
