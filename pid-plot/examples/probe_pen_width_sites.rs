@@ -214,14 +214,14 @@ fn main() {
                 continue;
             }
             let ours_width = centi_mm(segment.width_mm);
-            let mapped = [
-                fit.scale * segment.start_mm[0] + fit.translation_mm[0],
-                fit.scale * segment.start_mm[1] + fit.translation_mm[1],
-            ];
-            let mapped_end = [
-                fit.scale * segment.end_mm[0] + fit.translation_mm[0],
-                fit.scale * segment.end_mm[1] + fit.translation_mm[1],
-            ];
+            let back = |point: [f64; 2]| {
+                [
+                    (point[0] - fit.translation_mm[0]) / fit.scale,
+                    (point[1] - fit.translation_mm[1]) / fit.scale,
+                ]
+            };
+            let mapped = back(segment.start_mm);
+            let mapped_end = back(segment.end_mm);
             let direction = [mapped_end[0] - mapped[0], mapped_end[1] - mapped[1]];
             let plen = direction[0].hypot(direction[1]);
             if plen < 1e-9 {

@@ -159,7 +159,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 546,
         text_reference: 546,
-        min_pen_agreed: 8685,
+        min_pen_agreed: 8707,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
@@ -178,7 +178,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 775,
         text_reference: 775,
-        min_pen_agreed: 13633,
+        min_pen_agreed: 13656,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
@@ -197,7 +197,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 921,
         text_reference: 921,
-        min_pen_agreed: 16481,
+        min_pen_agreed: 16505,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
@@ -216,7 +216,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 151,
         text_reference: 151,
-        min_pen_agreed: 1229,
+        min_pen_agreed: 1232,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -235,7 +235,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 123,
         text_reference: 123,
-        min_pen_agreed: 1362,
+        min_pen_agreed: 1364,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -254,7 +254,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 167,
         text_reference: 167,
-        min_pen_agreed: 1646,
+        min_pen_agreed: 1647,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -273,7 +273,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 249,
         text_reference: 249,
-        min_pen_agreed: 2976,
+        min_pen_agreed: 3004,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -297,7 +297,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 288,
         text_reference: 288,
-        min_pen_agreed: 3253,
+        min_pen_agreed: 3261,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -318,7 +318,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 290,
         text_reference: 290,
-        min_pen_agreed: 3260,
+        min_pen_agreed: 3268,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -339,7 +339,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 283,
         text_reference: 283,
-        min_pen_agreed: 3132,
+        min_pen_agreed: 3141,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
@@ -364,7 +364,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 206.766 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
-        min_pen_agreed: 2648,
+        min_pen_agreed: 2701,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {

@@ -626,14 +626,8 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
             continue;
         }
         let ours_width = centi_mm(segment.width_mm);
-        let mapped = [
-            fit.scale * segment.start_mm[0] + fit.translation_mm[0],
-            fit.scale * segment.start_mm[1] + fit.translation_mm[1],
-        ];
-        let mapped_end = [
-            fit.scale * segment.end_mm[0] + fit.translation_mm[0],
-            fit.scale * segment.end_mm[1] + fit.translation_mm[1],
-        ];
+        let mapped = into_reference(segment.start_mm, fit);
+        let mapped_end = into_reference(segment.end_mm, fit);
         let direction = [mapped_end[0] - mapped[0], mapped_end[1] - mapped[1]];
         let len = direction[0].hypot(direction[1]);
         if len < 1e-9 {
@@ -2473,6 +2467,53 @@ mod tests {
         );
         let report = compare_plots(&reference, &ours, &[]);
         assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn our_stroke_reaches_the_reference_through_the_inverse_of_the_fit() {
+        // Our page is the reference drawn 1.0002 times larger — the A0
+        // wellsites read 1.0001 — so `our = scale * reference`. A 0.4 mm piece
+        // of a 10 mm, 0.34 mm stroke lies on that stroke once it is taken back
+        // through the inverse. Taken forward instead it lands
+        // 2 × 0.0002 × 800 = 0.32 mm off the line, past the same-pen
+        // tolerance, and pairs with nothing.
+        let scale = 1.0002;
+        let mut reference_segments = Vec::new();
+        for y in [100.0, 300.0, 500.0, 700.0] {
+            reference_segments.push(line([100.0, y], [300.0, y]));
+        }
+        for x in [600.0, 900.0, 1100.0] {
+            reference_segments.push(line([x, 100.0], [x, 300.0]));
+        }
+        let fit_lines = reference_segments.len();
+        reference_segments.push(InkSegment {
+            start_mm: [995.0, 800.0],
+            end_mm: [1005.0, 800.0],
+            width_mm: 0.34,
+        });
+        let enlarge = |point: [f64; 2]| [point[0] * scale, point[1] * scale];
+        let mut our_segments: Vec<InkSegment> = reference_segments[..fit_lines]
+            .iter()
+            .map(|segment| InkSegment {
+                start_mm: enlarge(segment.start_mm),
+                end_mm: enlarge(segment.end_mm),
+                width_mm: segment.width_mm,
+            })
+            .collect();
+        our_segments.push(InkSegment {
+            start_mm: enlarge([999.8, 800.0]),
+            end_mm: enlarge([1000.2, 800.0]),
+            width_mm: 0.34,
+        });
+        let report = compare_plots(
+            &ink(reference_segments, vec![]),
+            &ink(our_segments, vec![]),
+            &[],
+        );
+        assert!((report.fit.scale - scale).abs() < 1e-9, "{:?}", report.fit);
+        assert_eq!(report.pen.unpaired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.paired, fit_lines + 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
     }
 
     #[test]
