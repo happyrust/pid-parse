@@ -601,6 +601,13 @@ impl FaceHeights {
     /// [`reference_scale`] does. So Arial's cap-height middle is 22/46 =
     /// 0.478 of the style height, not half, and SimSun's and FangSong's, 62
     /// of whose 72 pixels are ascent, are 0.528 and 0.539.
+    ///
+    /// A style that measures the ascent hangs its middle half the cap down
+    /// instead: all 73 ascent-height Arial labels on the ten standard-sheet
+    /// reference plots land on their reference pixel with the baseline 23/58
+    /// of a style height down, where 22/58 puts 16 of them a pixel high.
+    /// Arial Narrow's cap, 44 of its 58 pixels of ascent, makes the two the
+    /// same.
     fn drop(self, key: &str, line: TextLine, basis: TextHeightBasis) -> f64 {
         let cell = (self.ascent + self.descent).max(1e-9);
         let cap72 = reference_cap_px(key, TextHeightBasis::Cap)
@@ -610,7 +617,10 @@ impl FaceHeights {
         let desc72 = 72.0 - asc72;
         let line72 = match line {
             TextLine::Bottom => 0.0,
-            TextLine::Middle => (asc72 - desc72) / 2.0,
+            TextLine::Middle => match basis {
+                TextHeightBasis::Cap => (asc72 - desc72) / 2.0,
+                TextHeightBasis::Ascent => cap72 / 2.0,
+            },
             TextLine::Top => cap72,
             TextLine::Ascender => asc72,
             TextLine::Descender => -desc72,
@@ -3135,8 +3145,11 @@ mod tests {
     /// the eleven reference plots sit 1.258 style heights down. SimSun and
     /// FangSong are 62 pixels of ascent: their middles are 26/49.2 and
     /// 26/48.2, where the reference letters the 115 SimSun template middles
-    /// (0.525) and the 121 FangSong `0x05` labels (0.538). A face the table
-    /// does not carry puts its own tables on the same 72-pixel cell.
+    /// (0.525) and the 121 FangSong `0x05` labels (0.538). An ascent-height
+    /// style hangs its middle half the cap down: 23/58 for Arial, where the
+    /// 73 ascent-height Arial symbol labels on the standard-sheet plots land
+    /// on their pixels, and 22/58 for Arial Narrow. A face the table does not
+    /// carry puts its own tables on the same 72-pixel cell.
     #[test]
     fn the_line_depth_is_a_height_of_the_face() {
         use crate::model::TextHeightBasis::{Ascent, Cap};
@@ -3158,6 +3171,10 @@ mod tests {
         ));
         assert!(close(
             arial.drop("Arial", TextLine::Middle, Ascent),
+            23.0 / 58.0
+        ));
+        assert!(close(
+            arial.drop("Arial Narrow", TextLine::Middle, Ascent),
             22.0 / 58.0
         ));
         assert!(close(
