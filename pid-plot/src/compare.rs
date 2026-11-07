@@ -356,6 +356,57 @@ pub struct PenReport {
     pub unpaired: usize,
     /// Every width pair that occurred, ours first, ascending.
     pub pairs: Vec<PenPair>,
+    /// Our strokes shorter than 0.2 mm, left out of every count above: a dash
+    /// stub whose midpoint names a locus the pen did not draw.
+    #[serde(default)]
+    pub short: usize,
+    /// Every unpaired stroke, with how the reference's ink lies around it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unpaired_strokes: Vec<UnpairedStroke>,
+}
+
+/// How the reference's ink lies around one of our strokes it has no stroke
+/// for — why the stroke is unpaired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnpairedReason {
+    /// No reference ink within 0.5 mm of any point of it: ink the reference
+    /// does not print.
+    Bare,
+    /// Within 0.5 mm of the reference's ink in places and farther in others:
+    /// where the two pages' geometry parts.
+    PartlyBare,
+    /// Within 0.5 mm of the reference's ink all along, yet along none of its
+    /// strokes at the pen tolerances: the same place drawn differently, which
+    /// coverage and extra ink both read as agreement.
+    Beside,
+}
+
+/// One of our strokes the reference has no stroke for at the same place.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct UnpairedStroke {
+    /// Start, in the reference's paper millimetres.
+    pub start_mm: [f64; 2],
+    /// End, in the reference's paper millimetres.
+    pub end_mm: [f64; 2],
+    /// Our stroke width, hundredths of a millimetre.
+    pub width_centi_mm: u64,
+    /// How the reference's ink lies around it.
+    pub reason: UnpairedReason,
+    /// Whether the stroke is border-template furniture. Only
+    /// [`compare_plots_with_model`] can tell; elsewhere it stays `false`.
+    pub furniture: bool,
+    /// Whether its midpoint lies in a missing-symbol box. Only
+    /// [`compare_plots_with_model`] can tell; elsewhere it stays `false`.
+    pub in_missing_box: bool,
+}
+
+impl UnpairedStroke {
+    /// Length, millimetres.
+    #[must_use]
+    pub fn length_mm(&self) -> f64 {
+        hypot(self.start_mm, self.end_mm)
+    }
 }
 
 impl PenReport {
@@ -726,6 +777,8 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
     let mut tally: BTreeMap<(u64, u64), usize> = BTreeMap::new();
     let mut paired = 0usize;
     let mut unpaired = 0usize;
+    let mut short = 0usize;
+    let mut unpaired_strokes: Vec<UnpairedStroke> = Vec::new();
     let reference_lines: Vec<Line> = reference
         .segments
         .iter()
@@ -739,6 +792,7 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
         let length = (segment.start_mm[0] - segment.end_mm[0])
             .hypot(segment.start_mm[1] - segment.end_mm[1]);
         if length < PEN_MIN_MM {
+            short += 1;
             continue;
         }
         let ours_width = centi_mm(segment.width_mm);
@@ -841,7 +895,22 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
                     paired += 1;
                     *tally.entry((ours_width, width)).or_default() += 1;
                 }
-                Chain::Off => unpaired += 1,
+                Chain::Off => {
+                    unpaired += 1;
+                    unpaired_strokes.push(UnpairedStroke {
+                        start_mm: mapped,
+                        end_mm: mapped_end,
+                        width_centi_mm: ours_width,
+                        reason: unpaired_reason(
+                            mapped,
+                            mapped_end,
+                            &reference.segments,
+                            &reference_index,
+                        ),
+                        furniture: false,
+                        in_missing_box: false,
+                    });
+                }
             },
         }
     }
@@ -864,6 +933,80 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
         differed: paired - agreed,
         unpaired,
         pairs,
+        short,
+        unpaired_strokes,
+    }
+}
+
+/// How the reference's ink lies around a stroke of ours it has no stroke
+/// for: each point the chain checks, held against [`COVER_MM`] — the radius
+/// coverage and extra ink are measured at — in any direction.
+fn unpaired_reason(
+    start: [f64; 2],
+    end: [f64; 2],
+    reference: &[InkSegment],
+    index: &Grid,
+) -> UnpairedReason {
+    let steps = ((hypot(start, end) / PEN_CHAIN_STEP_MM).ceil() as usize).max(1);
+    let mut inked = 0usize;
+    let mut bare = 0usize;
+    for step in 0..=steps {
+        let t = step as f64 / steps as f64;
+        let point = [
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * t,
+        ];
+        let near = index.near(point, COVER_MM).into_iter().any(|candidate| {
+            let segment = &reference[candidate];
+            dist_point_seg(point, segment.start_mm, segment.end_mm) <= COVER_MM
+        });
+        if near {
+            inked += 1;
+        } else {
+            bare += 1;
+        }
+    }
+    match (inked, bare) {
+        (0, _) => UnpairedReason::Bare,
+        (_, 0) => UnpairedReason::Beside,
+        _ => UnpairedReason::PartlyBare,
+    }
+}
+
+/// How far our own plot, read back, may sit from the model stroke that drew
+/// it, paper millimetres: the writer's coordinates survive the round trip to
+/// well under a hundredth of a millimetre.
+const OWN_STROKE_ON_MM: f64 = 0.01;
+
+/// Mark which unpaired strokes the border template drew and which lie in a
+/// missing-symbol box.
+///
+/// A stroke is furniture when it lies on a furniture primitive's own drawn
+/// line ([`shape_lines`]) — a dash piece lies on its line, a chord on its
+/// arc's chain, a fill's edge on its ring.
+fn label_unpaired(pen: &mut PenReport, fit: &Fit, missing: &[MaskRect], model: &PaperModel) {
+    let furniture: Vec<Line> = model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+        .flat_map(|primitive| shape_lines(&primitive.shape))
+        .collect();
+    let index = Grid::new(&furniture);
+    for stroke in &mut pen.unpaired_strokes {
+        let middle = [
+            (stroke.start_mm[0] + stroke.end_mm[0]) / 2.0,
+            (stroke.start_mm[1] + stroke.end_mm[1]) / 2.0,
+        ];
+        stroke.in_missing_box = missing.iter().any(|mask| mask.contains(middle));
+        let start = into_ours(stroke.start_mm, fit);
+        let end = into_ours(stroke.end_mm, fit);
+        stroke.furniture = index
+            .near(into_ours(middle, fit), OWN_STROKE_ON_MM)
+            .into_iter()
+            .any(|candidate| {
+                let line = furniture[candidate];
+                is_sub_piece(start, end, line.a, line.b, OWN_STROKE_ON_MM)
+            });
     }
 }
 
@@ -872,7 +1015,8 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
 /// `template` and `missing` are both excluded from the three numbers, the
 /// same way a single mask list is. The extra length is then split on
 /// `missing` alone, and uncovered reference ink is grouped by the nearest
-/// paper-table stroke.
+/// paper-table stroke. The pen report's unpaired strokes are marked as the
+/// template's or not, and as inside a missing-symbol box or not.
 #[must_use]
 pub fn compare_plots_with_model(
     reference: &PlotInk,
@@ -884,6 +1028,7 @@ pub fn compare_plots_with_model(
     let mut masks = template.to_vec();
     masks.extend_from_slice(missing);
     let mut report = compare_plots_with_sources(reference, ours, &masks, &text_sources(model));
+    label_unpaired(&mut report.pen, &report.fit, missing, model);
     let grouped = group_lengths(reference, ours, &report.fit, template, missing, model);
     report.extra_inside_missing_mm = grouped.extra_inside_missing_mm;
     report.extra_outside_missing_mm = grouped.extra_outside_missing_mm;
@@ -1281,6 +1426,13 @@ fn into_reference(point: [f64; 2], fit: &Fit) -> [f64; 2] {
     [
         (point[0] - fit.translation_mm[0]) / fit.scale,
         (point[1] - fit.translation_mm[1]) / fit.scale,
+    ]
+}
+
+fn into_ours(point: [f64; 2], fit: &Fit) -> [f64; 2] {
+    [
+        fit.scale * point[0] + fit.translation_mm[0],
+        fit.scale * point[1] + fit.translation_mm[1],
     ]
 }
 
@@ -2117,89 +2269,53 @@ fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
     let mut strokes = Vec::new();
     for primitive in &model.primitives {
         let label = stroke_name(primitive);
-        match &primitive.shape {
-            PaperShape::Line { start_mm, end_mm } => {
-                strokes.push((
-                    Line {
-                        a: *start_mm,
-                        b: *end_mm,
-                    },
-                    label,
-                ));
-            }
-            PaperShape::Polyline { points_mm, closed } => {
-                let mut points = points_mm.clone();
-                if *closed && points.len() > 2 {
-                    points.push(points[0]);
-                }
-                for pair in points.windows(2) {
-                    strokes.push((
-                        Line {
-                            a: pair[0],
-                            b: pair[1],
-                        },
-                        label.clone(),
-                    ));
-                }
-            }
-            PaperShape::Arc {
-                center_mm,
-                radius_mm,
-                start_angle,
-                end_angle,
-                clockwise,
-            } => {
-                let points = crate::write::arc_chain(
-                    *center_mm,
-                    *radius_mm,
-                    *start_angle,
-                    *end_angle,
-                    *clockwise,
-                );
-                for pair in points.windows(2) {
-                    strokes.push((
-                        Line {
-                            a: pair[0],
-                            b: pair[1],
-                        },
-                        label.clone(),
-                    ));
-                }
-            }
-            PaperShape::Circle {
-                center_mm,
-                radius_mm,
-            } => {
-                let points = crate::write::circle_outline(*center_mm, *radius_mm);
-                for pair in points.windows(2) {
-                    strokes.push((
-                        Line {
-                            a: pair[0],
-                            b: pair[1],
-                        },
-                        label.clone(),
-                    ));
-                }
-            }
-            PaperShape::Fill { chain_mm, .. } => {
-                let mut points = chain_mm.clone();
-                if points.len() > 2 {
-                    points.push(points[0]);
-                }
-                for pair in points.windows(2) {
-                    strokes.push((
-                        Line {
-                            a: pair[0],
-                            b: pair[1],
-                        },
-                        label.clone(),
-                    ));
-                }
-            }
-            _ => {}
+        for line in shape_lines(&primitive.shape) {
+            strokes.push((line, label.clone()));
         }
     }
     strokes
+}
+
+/// The straight pieces one shape inks, cut the way the writer draws it: a
+/// closed polyline and a fill's ring end on their first vertex, arcs and
+/// circles are the writer's own chains. Text inks none.
+fn shape_lines(shape: &PaperShape) -> Vec<Line> {
+    let points = match shape {
+        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
+        PaperShape::Polyline { points_mm, closed } => {
+            let mut points = points_mm.clone();
+            if *closed && points.len() > 2 {
+                points.push(points[0]);
+            }
+            points
+        }
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => crate::write::arc_chain(*center_mm, *radius_mm, *start_angle, *end_angle, *clockwise),
+        PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => crate::write::circle_outline(*center_mm, *radius_mm),
+        PaperShape::Fill { chain_mm, .. } => {
+            let mut points = chain_mm.clone();
+            if points.len() > 2 {
+                points.push(points[0]);
+            }
+            points
+        }
+        PaperShape::Text { .. } => Vec::new(),
+    };
+    points
+        .windows(2)
+        .map(|pair| Line {
+            a: pair[0],
+            b: pair[1],
+        })
+        .collect()
 }
 
 fn stroke_name(primitive: &PaperPrimitive) -> String {
@@ -2774,6 +2890,112 @@ mod tests {
         let report = compare_plots(&reference, &ours, &[]);
         assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
         assert_eq!(report.pen.unpaired, 1, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn each_unpaired_stroke_says_how_the_reference_ink_lies_around_it() {
+        // One reference stroke along y = 10. Ours: a stroke 20 mm off it, one
+        // leaving it at a right angle (on it at one end, off it at the other),
+        // one 0.35 mm beside it — inside the 0.5 mm cover radius all along,
+        // outside the 0.20 mm pen tolerance — and a 0.1 mm stub that carries
+        // no pen either way.
+        let reference = ink(vec![line([0.0, 10.0], [40.0, 10.0])], vec![]);
+        let ours = ink(
+            vec![
+                line([0.0, 30.0], [5.0, 30.0]),
+                line([20.0, 10.1], [20.0, 12.0]),
+                line([10.0, 10.35], [15.0, 10.35]),
+                line([30.0, 30.0], [30.1, 30.0]),
+            ],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        let reasons: Vec<super::UnpairedReason> = report
+            .pen
+            .unpaired_strokes
+            .iter()
+            .map(|stroke| stroke.reason)
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![
+                super::UnpairedReason::Bare,
+                super::UnpairedReason::PartlyBare,
+                super::UnpairedReason::Beside,
+            ]
+        );
+        assert_eq!(report.pen.unpaired, 3, "{:?}", report.pen);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.short, 1, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_template_stroke_the_reference_lacks_is_marked_as_the_templates() {
+        // The reference prints nothing. Ours draws a template rail in two
+        // dashes, a drawing line, and a drawing line inside a missing-symbol
+        // box: all four strokes are bare, and only the model tells them apart.
+        use crate::model::{PaperModel, PaperPrimitive, PaperShape};
+        let primitive = |start_mm: [f64; 2], end_mm: [f64; 2], furniture: bool| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: None,
+            byte_range: None,
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Line { start_mm, end_mm },
+            furniture,
+        };
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                primitive([10.0, 90.0], [190.0, 90.0], true),
+                primitive([10.0, 50.0], [60.0, 50.0], false),
+                primitive([150.0, 20.0], [160.0, 20.0], false),
+            ],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let ours = ink(
+            vec![
+                line([10.0, 90.0], [60.0, 90.0]),
+                line([70.0, 90.0], [120.0, 90.0]),
+                line([10.0, 50.0], [60.0, 50.0]),
+                line([150.0, 20.0], [160.0, 20.0]),
+            ],
+            vec![],
+        );
+        let missing = [super::MaskRect {
+            label: "valve.sym".into(),
+            min_mm: [140.0, 10.0],
+            max_mm: [170.0, 30.0],
+        }];
+        let report =
+            super::compare_plots_with_model(&ink(vec![], vec![]), &ours, &[], &missing, &model);
+        let marks: Vec<(bool, bool)> = report
+            .pen
+            .unpaired_strokes
+            .iter()
+            .map(|stroke| (stroke.furniture, stroke.in_missing_box))
+            .collect();
+        assert_eq!(
+            marks,
+            vec![(true, false), (true, false), (false, false), (false, true)]
+        );
+        assert!(
+            report
+                .pen
+                .unpaired_strokes
+                .iter()
+                .all(|stroke| stroke.reason == super::UnpairedReason::Bare),
+            "{:?}",
+            report.pen
+        );
     }
 
     #[test]

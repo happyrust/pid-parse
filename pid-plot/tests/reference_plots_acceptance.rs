@@ -64,6 +64,19 @@
 //! pen — the CCHB A2 title block declares 1.0606 / 1.1313 / 1.4141 mm rails
 //! and the plot prints every one of them at 1.02 mm.
 //!
+//! Every stroke the pen pairing leaves unpaired is pinned under the reason it
+//! has no partner (2026-11-07,
+//! `docs/analysis/2026-11-07-every-unpaired-pen-stroke-has-a-reason.md`). A
+//! curve the two pages cut at different vertices, or a short stroke the
+//! plotter snapped to its 1/150 in grid, pairs along the reference's chain,
+//! so what is left is ink the reference lacks or lays differently: the
+//! `CPE-SQ-A1.igr` border on `一级闪蒸分离器A` / `低温分离器A` (286 strokes,
+//! exactly their whole-page extra ink), the A2 instrument cluster, and on
+//! every other page the signal line's dash
+//! tail — `DashWalk` stops walking a dash after eight periods and reads the
+//! rest of a long fitted piece as one solid stroke, which is our plot misread,
+//! not misdrawn. No unpaired stroke lies in a missing-symbol box.
+//!
 //! Each page is also compared with no template mask at all, so the sign-off
 //! column and the title block are charged like any other ink (the `whole`
 //! pins, 2026-11-07). The seven `CPE-SQ` pages leave no reference ink
@@ -82,7 +95,8 @@
 use std::path::PathBuf;
 
 use pid_plot::compare::{
-    MaskRect, compare_plots_with_model, template_masks, write_overlay, write_report,
+    MaskRect, UnpairedReason, UnpairedStroke, compare_plots_with_model, template_masks,
+    write_overlay, write_report,
 };
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, lay_out_drawing};
@@ -106,11 +120,28 @@ struct Pin {
     text_reference: usize,
     min_pen_agreed: usize,
     max_pen_differed: usize,
+    /// Our strokes the pen pairing leaves unpaired, by why.
+    unpaired: Unpaired,
     /// Symbols the corpus cannot draw. The A0 wellsites both place a
     /// `pulsation damper.sym` the reference corpus never ships.
     missing_symbols: &'static [&'static str],
     /// The same page with no template mask.
     whole: WholePage,
+}
+
+/// One page's unpaired strokes by how the reference's ink lies around them
+/// (`CompareReport::pen`'s `unpaired_strokes`). Each count is a ceiling, and
+/// the four together are every unpaired stroke on the page.
+struct Unpaired {
+    /// Template furniture with no reference ink within 0.5 mm of it: border
+    /// the reference plot does not print.
+    template: usize,
+    /// Other ink with no reference ink within 0.5 mm of it.
+    bare: usize,
+    /// Ink within 0.5 mm of the reference's in places and farther in others.
+    partly: usize,
+    /// Ink within 0.5 mm of the reference's all along, on none of its strokes.
+    beside: usize,
 }
 
 /// One drawing's reading with its furniture compared too: only the
@@ -161,6 +192,12 @@ const PINS: [Pin; 11] = [
         text_reference: 546,
         min_pen_agreed: 9201,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 7,
+            beside: 0,
+        },
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -180,6 +217,12 @@ const PINS: [Pin; 11] = [
         text_reference: 775,
         min_pen_agreed: 14556,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 12,
+            beside: 1,
+        },
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -199,6 +242,12 @@ const PINS: [Pin; 11] = [
         text_reference: 921,
         min_pen_agreed: 17677,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 15,
+            beside: 1,
+        },
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -218,6 +267,12 @@ const PINS: [Pin; 11] = [
         text_reference: 151,
         min_pen_agreed: 1254,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 286,
+            bare: 0,
+            partly: 2,
+            beside: 0,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -237,6 +292,12 @@ const PINS: [Pin; 11] = [
         text_reference: 123,
         min_pen_agreed: 1401,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 2,
+            beside: 0,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -256,6 +317,12 @@ const PINS: [Pin; 11] = [
         text_reference: 167,
         min_pen_agreed: 1687,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 286,
+            bare: 0,
+            partly: 2,
+            beside: 0,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -275,6 +342,12 @@ const PINS: [Pin; 11] = [
         text_reference: 249,
         min_pen_agreed: 3098,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 4,
+            beside: 0,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -299,6 +372,12 @@ const PINS: [Pin; 11] = [
         text_reference: 288,
         min_pen_agreed: 3354,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 3,
+            beside: 1,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -320,6 +399,12 @@ const PINS: [Pin; 11] = [
         text_reference: 290,
         min_pen_agreed: 3361,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 3,
+            beside: 1,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -341,6 +426,12 @@ const PINS: [Pin; 11] = [
         text_reference: 283,
         min_pen_agreed: 3228,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 0,
+            partly: 3,
+            beside: 1,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
@@ -373,6 +464,12 @@ const PINS: [Pin; 11] = [
         text_reference: 225,
         min_pen_agreed: 2790,
         max_pen_differed: 0,
+        unpaired: Unpaired {
+            template: 0,
+            bare: 54,
+            partly: 28,
+            beside: 6,
+        },
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9882,
@@ -571,6 +668,49 @@ fn eleven_reference_plots_hold_their_readings() {
             "{name} pen differed {} > {}",
             pen.differed,
             pin.max_pen_differed
+        );
+        assert_eq!(
+            pen.unpaired_strokes.len(),
+            pen.unpaired,
+            "{name} every unpaired stroke carries a reason"
+        );
+        let unpaired = |keep: &dyn Fn(&UnpairedStroke) -> bool| {
+            pen.unpaired_strokes
+                .iter()
+                .filter(|stroke| keep(stroke))
+                .count()
+        };
+        for (label, count, ceiling) in [
+            (
+                "template",
+                unpaired(&|stroke| stroke.reason == UnpairedReason::Bare && stroke.furniture),
+                pin.unpaired.template,
+            ),
+            (
+                "bare",
+                unpaired(&|stroke| stroke.reason == UnpairedReason::Bare && !stroke.furniture),
+                pin.unpaired.bare,
+            ),
+            (
+                "partly bare",
+                unpaired(&|stroke| stroke.reason == UnpairedReason::PartlyBare),
+                pin.unpaired.partly,
+            ),
+            (
+                "beside",
+                unpaired(&|stroke| stroke.reason == UnpairedReason::Beside),
+                pin.unpaired.beside,
+            ),
+        ] {
+            assert!(
+                count <= ceiling,
+                "{name} unpaired {label} strokes {count} > {ceiling}"
+            );
+        }
+        assert_eq!(
+            unpaired(&|stroke| stroke.in_missing_box),
+            0,
+            "{name} an unpaired stroke lies in a missing-symbol box"
         );
         for class in &report.text_offsets {
             if class.count < CLASS_MIN_COUNT || class.class == "unknown" {
