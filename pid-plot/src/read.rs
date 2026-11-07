@@ -5,7 +5,8 @@
 //! Curves are broken into line segments at a 0.05 mm chord. A path that is
 //! filled and not stroked contributes its outline. A dashed stroke contributes
 //! only the pieces the pattern inks, so a dash and the gap beside it read the
-//! way they print.
+//! way they print. A piece that leaves the clip in force contributes only what
+//! lies inside it, because what lies outside prints nothing.
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -14,7 +15,7 @@ use hayro::hayro_interpret::{
     BlendMode, ClipPath, Context, Device, GlyphDrawMode, Image, InterpreterCache,
     InterpreterSettings, Paint, PathDrawMode, SoftMask, TransformExt, interpret_page,
 };
-use kurbo::{Affine, BezPath, PathEl, Point, Rect, flatten};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, flatten};
 use serde::Serialize;
 
 /// Chord height at which a curve becomes a run of straight segments.
@@ -119,6 +120,7 @@ pub fn read_plot(pdf_bytes: &[u8]) -> Result<PlotInk, PlotReadError> {
         page_pt: [width_pt, height_pt],
         segments: Vec::new(),
         glyphs: Vec::new(),
+        clips: Vec::new(),
     };
     interpret_page(page, &mut ctx, &mut device);
     Ok(PlotInk {
@@ -141,6 +143,15 @@ struct InkDevice {
     page_pt: [f64; 2],
     segments: Vec<InkSegment>,
     glyphs: Vec<RawGlyph>,
+    /// The clip in force, innermost last, page-view points: each entry is
+    /// its clip path's bounding box cut down to the entry beneath it.
+    ///
+    /// A clip that is not an axis-aligned rectangle clips to its bounding
+    /// box, so ink the true clip hides may still be read; ink outside the box
+    /// cannot print, whatever the path's shape. Text is not clipped: a
+    /// glyph's origin is not its ink, and no reference label starts outside
+    /// its clip.
+    clips: Vec<Rect>,
 }
 
 impl InkDevice {
@@ -149,6 +160,13 @@ impl InkDevice {
         {
             return;
         }
+        let (start, end) = match self.clips.last() {
+            Some(clip) => match clip_segment(*clip, start, end) {
+                Some(piece) => piece,
+                None => return,
+            },
+            None => (start, end),
+        };
         self.segments.push(InkSegment {
             start_mm: view_pt_to_paper_mm(start.x, start.y, self.page_pt[1]),
             end_mm: view_pt_to_paper_mm(end.x, end.y, self.page_pt[1]),
@@ -160,8 +178,18 @@ impl InkDevice {
 impl<'a> Device<'a> for InkDevice {
     fn set_soft_mask(&mut self, _: Option<SoftMask<'a>>) {}
     fn set_blend_mode(&mut self, _: BlendMode) {}
-    fn push_clip_path(&mut self, _: &ClipPath) {}
-    fn pop_clip_path(&mut self) {}
+    fn push_clip_path(&mut self, clip_path: &ClipPath) {
+        let bounds = clip_path.path.bounding_box();
+        let clip = self
+            .clips
+            .last()
+            .map_or(bounds, |outer| outer.intersect(bounds));
+        self.clips.push(clip);
+    }
+
+    fn pop_clip_path(&mut self) {
+        self.clips.pop();
+    }
     fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
     fn pop_transparency_group(&mut self) {}
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {}
@@ -438,6 +466,47 @@ impl DashWalk {
     }
 }
 
+/// Shortest piece of a segment inside its clip that still counts as ink, in
+/// points. A piece that only touches the clip's edge inks nothing.
+const CLIP_TOUCH_PT: f64 = 1e-6;
+
+/// The part of `start` → `end` that lies inside `clip`, or `None` when no
+/// length of it does.
+///
+/// The plotter ends every polyline one device unit (0.48 pt) past its last
+/// vertex, and a polyline that ends on its clip's edge puts that unit wholly
+/// outside: the outer sheet frame of a `CPE-SQ` plot closes with
+/// `0 2383.68 l 0 2384.16 l` under a clip whose top is `y 2383.68`.
+fn clip_segment(clip: Rect, start: Point, end: Point) -> Option<(Point, Point)> {
+    if clip.width() <= 0.0 || clip.height() <= 0.0 {
+        return None;
+    }
+    let delta = end - start;
+    let mut enter = 0.0_f64;
+    let mut leave = 1.0_f64;
+    for (toward, room) in [
+        (-delta.x, start.x - clip.x0),
+        (delta.x, clip.x1 - start.x),
+        (-delta.y, start.y - clip.y0),
+        (delta.y, clip.y1 - start.y),
+    ] {
+        if toward == 0.0 {
+            if room < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let at = room / toward;
+        if toward < 0.0 {
+            enter = enter.max(at);
+        } else {
+            leave = leave.min(at);
+        }
+    }
+    ((leave - enter) * delta.hypot() > CLIP_TOUCH_PT)
+        .then(|| (start + delta * enter, start + delta * leave))
+}
+
 fn transform_scale(transform: Affine) -> f64 {
     let origin = transform * Point::ORIGIN;
     let unit = transform * Point::new(1.0, 0.0);
@@ -588,7 +657,9 @@ impl OpenSpan {
 
 #[cfg(test)]
 mod tests {
-    use super::{DashWalk, sheet_edge_mm, view_pt_to_paper_mm};
+    use kurbo::{Point, Rect};
+
+    use super::{DashWalk, clip_segment, read_plot, sheet_edge_mm, view_pt_to_paper_mm};
 
     /// Pattern used by the sheet pen: 7 mm on, 1.75 off, 0.35 on, 1.75 off.
     const PEN: [f64; 4] = [7.0, 1.75, 0.35, 1.75];
@@ -663,5 +734,91 @@ mod tests {
         let page = [1189.0, 841.0];
         assert!(sheet_edge_mm([0.0, 0.0], [1189.0, 0.0], page));
         assert!(!sheet_edge_mm([0.0, 0.0], [1050.0, 0.0], page));
+    }
+
+    #[test]
+    fn a_tail_that_leaves_its_clip_from_the_edge_inks_nothing() {
+        // The I井场 sheet frame's last device unit, in page-view points.
+        let clip = Rect::new(0.0, 0.253, 3370.56, 2384.413);
+        let tail = clip_segment(clip, Point::new(0.0, 0.253), Point::new(0.0, -0.227));
+        assert_eq!(tail, None);
+    }
+
+    #[test]
+    fn a_segment_that_crosses_its_clip_keeps_the_inside() {
+        let clip = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let (start, end) =
+            clip_segment(clip, Point::new(-5.0, 5.0), Point::new(5.0, 5.0)).expect("inside");
+        assert!((start - Point::new(0.0, 5.0)).hypot() < 1e-9, "{start:?}");
+        assert!((end - Point::new(5.0, 5.0)).hypot() < 1e-9, "{end:?}");
+        let edge = clip_segment(clip, Point::new(0.0, 0.0), Point::new(10.0, 0.0));
+        assert_eq!(edge, Some((Point::new(0.0, 0.0), Point::new(10.0, 0.0))));
+        assert_eq!(
+            clip_segment(clip, Point::new(11.0, 0.0), Point::new(11.0, 10.0)),
+            None
+        );
+        let none = Rect::new(5.0, 5.0, 5.0, 10.0);
+        assert_eq!(
+            clip_segment(none, Point::new(5.0, 5.0), Point::new(5.0, 10.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_reader_keeps_only_the_ink_inside_the_clip() {
+        // A polyline that ends on the clip's top edge and steps one device
+        // unit past it, and a stroke that crosses the same edge.
+        let paths = "0.48 w 20 20 m 20 99.52 l 20 100 l 50 50 m 50 120 l S";
+        let clipped = read_plot(&one_page_pdf(
+            &format!("q 0 99.52 100 -100 re W n {paths} Q"),
+            100.0,
+        ))
+        .expect("read");
+        let ends: Vec<[f64; 2]> = clipped
+            .segments
+            .iter()
+            .map(|segment| segment.end_mm)
+            .collect();
+        let top_mm = 99.52 * 25.4 / 72.0;
+        assert_eq!(ends.len(), 2, "{ends:?}");
+        assert!(
+            ends.iter().all(|end| (end[1] - top_mm).abs() < 1e-6),
+            "{ends:?}"
+        );
+        let open = read_plot(&one_page_pdf(&format!("q {paths} Q"), 100.0)).expect("read");
+        assert_eq!(open.segments.len(), 3, "{:?}", open.segments);
+    }
+
+    /// A one-page PDF, `side` points square, that runs `content`.
+    fn one_page_pdf(content: &str, side: f64) -> Vec<u8> {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {side} {side}] \
+                 /Resources << >> /Contents 4 0 R >>"
+            ),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+        }
+        let xref = pdf.len();
+        let count = objects.len() + 1;
+        pdf.extend_from_slice(format!("xref\n0 {count}\n0000000000 65535 f \n").as_bytes());
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        pdf
     }
 }

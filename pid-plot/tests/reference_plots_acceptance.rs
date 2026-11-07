@@ -66,13 +66,18 @@
 //!
 //! Each page is also compared with no template mask at all, so the sign-off
 //! column and the title block are charged like any other ink (the `whole`
-//! pins, 2026-11-07). The seven `CPE-SQ` pages leave 0.169 mm of reference ink
-//! uncovered there and pair every furniture label. `一级闪蒸分离器A` and
-//! `低温分离器A` carry 3478.9 / 3478.7 mm of extra ink: their reference plots
-//! print no border at all, while ours draws the `CPE-SQ-A1.igr` both link —
-//! the same link `一级闪蒸分离器B` wears on its plot. The A2 page reads 0.9882,
-//! 208.815 mm uncovered and 249.872 mm extra, with 248 of 261 labels paired:
-//! its company name and `CPECC` letter off the reference's places.
+//! pins, 2026-11-07). The seven `CPE-SQ` pages leave no reference ink
+//! uncovered there and pair every furniture label. The 0.169 mm each used to
+//! read was the outer sheet frame's last device unit, which the plot draws
+//! wholly outside that frame's own clip: it never printed, and the reader now
+//! keeps only ink inside the clip
+//! (`docs/analysis/2026-11-07-the-corner-tail-is-outside-its-clip.md`).
+//! `一级闪蒸分离器A` and `低温分离器A` carry 3478.9 / 3478.7 mm of extra
+//! ink: their reference plots print no border at all, while ours draws the
+//! `CPE-SQ-A1.igr` both link — the same link `一级闪蒸分离器B` wears on its
+//! plot. The A2 page reads 0.9882, 208.646 mm uncovered and 249.872 mm extra,
+//! with 248 of 261 labels paired: its company name and `CPECC` letter off the
+//! reference's places.
 
 use std::path::PathBuf;
 
@@ -159,7 +164,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 583,
             text_reference: 583,
@@ -173,12 +178,12 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
         min_text_matched: 775,
         text_reference: 775,
-        min_pen_agreed: 13630,
+        min_pen_agreed: 13633,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 813,
             text_reference: 813,
@@ -197,7 +202,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 959,
             text_reference: 959,
@@ -235,7 +240,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 161,
             text_reference: 161,
@@ -297,7 +302,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 326,
             text_reference: 326,
@@ -318,7 +323,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
@@ -339,7 +344,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9999,
-            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
@@ -356,7 +361,7 @@ const PINS: [Pin; 11] = [
         page_mm: [594.0, 420.0],
         min_coverage: 0.9830,
         max_extra_mm: 210.048 + EXTRA_SLACK_MM,
-        max_uncovered_mm: 206.935 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 206.766 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
         min_pen_agreed: 2648,
@@ -364,7 +369,7 @@ const PINS: [Pin; 11] = [
         missing_symbols: &[],
         whole: WholePage {
             min_coverage: 0.9881,
-            max_uncovered_mm: 208.815 + EXTRA_SLACK_MM,
+            max_uncovered_mm: 208.646 + EXTRA_SLACK_MM,
             max_extra_mm: 249.872 + EXTRA_SLACK_MM,
             min_text_matched: 248,
             text_reference: 261,

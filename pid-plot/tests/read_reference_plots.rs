@@ -1,4 +1,8 @@
-//! The five reference plots read back to PyMuPDF's line counts. Text counts
+//! The five reference plots read back to PyMuPDF's line counts, less the lines
+//! that lie wholly outside their clip. PyMuPDF lists those; the page prints
+//! none of them. They are the 17 one-device-unit tails each `CPE-SQ` page ends
+//! a polyline with past its clip's edge, which is why I井场 reads 11 274 of
+//! PyMuPDF's 11 291 and `一级闪蒸分离器B` 1 645 of its 1 662. Text counts
 //! match too, except I井场, where `1"` and `NO` are left as two labels.
 
 use std::path::PathBuf;
@@ -15,7 +19,7 @@ fn corpus_dir() -> PathBuf {
 fn reference_plots_match_pymupdf_counts() {
     let dir = corpus_dir();
     let samples = [
-        ("I井场 注采阀组工艺及自控流程图.pdf", 11_291, 589),
+        ("I井场 注采阀组工艺及自控流程图.pdf", 11_274, 589),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图.pdf",
             1_451,
@@ -23,7 +27,7 @@ fn reference_plots_match_pymupdf_counts() {
         ),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pdf",
-            1_662,
+            1_645,
             165,
         ),
         (
