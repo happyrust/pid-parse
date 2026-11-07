@@ -1,9 +1,16 @@
 //! The `igEllipticalArc2d` (`0x007E`) records a `.sym` body carries.
 //!
-//! [`pid_parse::symbol_library::read_symbol_geometry`] skips `0x007E`, so a
-//! body whose dome is stored as an elliptical arc draws without it. This
-//! prints what the record says — centre, radii, sweep — so the shape the
-//! library asks for can be compared with the drawing's own cached body.
+//! `symbol_library::decode_primitive`'s `TYPE_ELLIPTICALARC` arm reads
+//! `0x007E` now, so a body whose dome is stored as an elliptical arc draws
+//! it as a `BSpline` primitive. This prints what the record says — centre,
+//! major axis, ratio, sweep, direction flag — so the shape the library
+//! reads can be compared byte-for-byte with the drawing's own cached body
+//! (`src/geometry.rs`'s `elliptical_arcs` path over the same record type).
+//!
+//! `2to1Parametric V Drum.sym`, `Diaphragm Actuator.sym` and
+//! `PCV-Self-Actuated Regulator Valve.sym` are the three drawing-used
+//! symbols carrying `0x007E`; extract them from `RefData~4~681.zip` (see
+//! `src/refdata_archive.rs`) to run this against each.
 //!
 //! ```text
 //! cargo run -p pid-parse --example probe_sym_elliptical_arcs -- "<symbol.sym>"

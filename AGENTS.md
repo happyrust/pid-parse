@@ -174,7 +174,14 @@ decompilation.
   3 rectangles, one BspCurve) still live in the `PSMcluster0` streams
   of nested `JSite` storages, each sitting on a sheet layer; those are
   symbol-body geometry and stay held back from page emission until a
-  transform is proven. `igEllipticalArc2d` (0x007E) really is absent.
+  transform is proven. `igEllipticalArc2d` (0x007E) is no longer
+  absent: beyond A01's two cached vessel heads, the library writes it
+  into `.sym` bodies too — `2to1Parametric V Drum.sym`, `Diaphragm
+  Actuator.sym` and `PCV-Self-Actuated Regulator Valve.sym` each carry
+  a dome/head arc, read by `symbol_library::decode_primitive`'s
+  `TYPE_ELLIPTICALARC` arm through the same geometry function the
+  drawing-side decoder uses, so the two paths can never disagree on
+  the curve (`tests/sym_elliptical_arc_matches_cached_body.rs`).
   See `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
 - Payload `+8` (`aux_hi`, the high half of the PSM envelope's `aux`)
   is **the oid of the sheet layer the object sits on** — never a

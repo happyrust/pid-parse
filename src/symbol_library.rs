@@ -76,6 +76,13 @@ const TYPE_TEXT: u16 = 0x004D;
 const TYPE_BSPLINE: u16 = 0x005D;
 const TYPE_BOUNDARY: u16 = 0x0013;
 const TYPE_ELLIPSE: u16 = crate::parsers::sheet_records::PSM_TYPE_CODE_IGELLIPSE2D;
+const TYPE_ELLIPTICALARC: u16 = crate::parsers::sheet_records::PSM_TYPE_CODE_IGELLIPTICALARC2D;
+
+/// Offset of the trailing direction byte in an `igEllipticalArc2d` payload
+/// (`0x007E`): the last of its 75 bytes, same slot [`SheetIgEllipticalArc2dDecoded::flag`]
+/// reads from the drawing side.
+const IGELLIPTICALARC2D_FLAG_AT: usize =
+    crate::parsers::sheet_records::IGELLIPTICALARC2D_PAYLOAD_LEN - 1;
 
 /// Bytes of placement and style following a text record's body: the
 /// insertion point (two `f64`s), the text direction pair, and a 4-byte
@@ -1141,6 +1148,39 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
                 knots,
             })
         }
+        TYPE_ELLIPTICALARC => {
+            // Same conic argument as `TYPE_ELLIPSE`, over a partial turn:
+            // the drawing side already draws a cached body's elliptical
+            // arcs (a vessel head, an actuator dome) as this exact rational
+            // quadratic B-spline (`geometry.rs`), so a `.sym` carrying the
+            // same record draws identically rather than losing the dome
+            // when its drawing's own cache is absent.
+            let (center, major, ratio, sweep_start, sweep_end) =
+                crate::parsers::sheet_records::elliptical_arc_geometry(payload)?;
+            if [center.0, center.1, major.0, major.1]
+                .iter()
+                .any(|v| v.abs() > COORDINATE_LIMIT)
+            {
+                return None;
+            }
+            // The trailing byte names the traversal direction, `0`
+            // clockwise -- the same convention `igArc2d` and the cached-body
+            // reading share; never folded to the minor sweep.
+            let clockwise = *payload.get(IGELLIPTICALARC2D_FLAG_AT)? == 0;
+            let (poles, weights, knots) = crate::bspline::elliptical_arc_directed(
+                center,
+                major,
+                ratio,
+                sweep_start,
+                sweep_end,
+                clockwise,
+            )?;
+            Some(SymbolPrimitive::BSpline {
+                poles,
+                weights,
+                knots,
+            })
+        }
         TYPE_TEXT => decode_text(payload),
         TYPE_BOUNDARY => {
             use crate::parsers::sheet_records::{decode_igsym_boundary_payload, IgBoundaryMember};
@@ -2079,6 +2119,150 @@ mod tests {
     }
 
     const CIRCLE_UNC: &str = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
+
+    /// One `0x007E igEllipticalArc2d` payload: the 18-byte header
+    /// (`decode_primitive`'s own `PAYLOAD_HEADER_LEN` shape — oid,
+    /// `parent_ref`, `sheet_layer_ref`, `sub_type_word`, `index`), then
+    /// `sweep_start`, `sweep_end`, centre, major axis, ratio (7×f64), then
+    /// the trailing direction byte — the same layout
+    /// `IgEllipticalArc2dDecoder` reads on the drawing side, since a `.sym`
+    /// carries the identical bytes.
+    fn elliptical_arc_payload(doubles: [f64; 7], flag: u8) -> Vec<u8> {
+        let mut out = Vec::with_capacity(PAYLOAD_HEADER_LEN + 7 * 8 + 1);
+        out.extend_from_slice(&1u32.to_le_bytes()); // oid
+        out.extend_from_slice(&6u32.to_le_bytes()); // parent_ref
+        out.extend_from_slice(&8u32.to_le_bytes()); // sheet_layer_ref
+        out.extend_from_slice(&0u16.to_le_bytes()); // sub_type_word
+        out.extend_from_slice(&11u32.to_le_bytes()); // index
+        for value in doubles {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.push(flag);
+        out
+    }
+
+    /// The diaphragm actuator dome's own record
+    /// (`Diaphragm Actuator.sym` `/Sheet6` oid 429, measured directly off
+    /// the library file): `sweep_start`, `sweep_end`, centre, major axis,
+    /// ratio, in payload order.
+    const ACTUATOR_DOME_DOUBLES: [f64; 7] = [
+        3.141_592_600_265_042,
+        std::f64::consts::TAU,
+        0.0,
+        0.008_889_999_999_999_999,
+        -0.003_175,
+        5.278_971_314_610_806e-52,
+        0.800_000_000_102_480_4,
+    ];
+
+    /// The `.sym` reader's `0x007E` dispatch reconstructs exactly the same
+    /// rational B-spline `bspline::elliptical_arc_directed` makes from the
+    /// record's own fields — the same cross-check the drawing-side cached
+    /// body already passes (`tests/elliptical_arcs.rs`), now proven for the
+    /// library path a cache miss falls back to.
+    ///
+    /// The fixture is the diaphragm actuator's dome, flag `1`
+    /// (counter-clockwise): the one case prior analysis
+    /// (`docs/analysis/2026-10-20-the-actuator-dome-is-on-the-wrong-side.md`)
+    /// measured against a reference plot, so a regression here would
+    /// silently flip the dome to the wrong side of its chord again.
+    #[test]
+    fn elliptical_arc_decodes_to_the_same_bspline_the_cached_body_draws() {
+        let payload = elliptical_arc_payload(ACTUATOR_DOME_DOUBLES, 1);
+        let primitive = decode_primitive(TYPE_ELLIPTICALARC, &payload)
+            .expect("a valid igEllipticalArc2d payload decodes");
+        let SymbolPrimitive::BSpline {
+            poles,
+            weights,
+            knots,
+        } = primitive
+        else {
+            panic!("expected a BSpline, got {primitive:?}");
+        };
+        let [sweep_start, sweep_end, center_x, center_y, major_x, major_y, ratio] =
+            ACTUATOR_DOME_DOUBLES;
+        let (expected_poles, expected_weights, expected_knots) =
+            crate::bspline::elliptical_arc_directed(
+                (center_x, center_y),
+                (major_x, major_y),
+                ratio,
+                sweep_start,
+                sweep_end,
+                false, // flag 1 => counter-clockwise
+            )
+            .expect("the reference call accepts the same fields");
+        assert_eq!(poles, expected_poles);
+        assert_eq!(weights, expected_weights);
+        assert_eq!(knots, expected_knots);
+        // Flag 0 (clockwise) must trace a different arc -- the dome's own
+        // regression was exactly this byte read backwards.
+        let clockwise_primitive = decode_primitive(
+            TYPE_ELLIPTICALARC,
+            &elliptical_arc_payload(ACTUATOR_DOME_DOUBLES, 0),
+        )
+        .expect("flag 0 still decodes");
+        assert_ne!(
+            clockwise_primitive,
+            SymbolPrimitive::BSpline {
+                poles,
+                weights,
+                knots
+            }
+        );
+    }
+
+    /// Validation failures the sweep gate rejects: an off-length payload, a
+    /// non-positive ratio, a zero-length major axis, and a non-finite
+    /// angle -- the same gate [`crate::parsers::sheet_records::elliptical_arc_geometry`]
+    /// applies on the drawing side, shared rather than re-implemented here.
+    #[test]
+    fn elliptical_arc_rejects_the_same_shapes_the_drawing_side_refuses() {
+        let with = |slot: usize, value: f64| {
+            let mut doubles = ACTUATOR_DOME_DOUBLES;
+            doubles[slot] = value;
+            elliptical_arc_payload(doubles, 1)
+        };
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("too short", {
+                let mut payload = elliptical_arc_payload(ACTUATOR_DOME_DOUBLES, 1);
+                payload.truncate(payload.len() - 1);
+                payload
+            }),
+            ("ratio 0", with(6, 0.0)),
+            ("ratio -1", with(6, -1.0)),
+            ("NaN sweep", with(0, f64::NAN)),
+            ("zero major axis", {
+                let mut doubles = ACTUATOR_DOME_DOUBLES;
+                doubles[4] = 0.0;
+                doubles[5] = 0.0;
+                elliptical_arc_payload(doubles, 1)
+            }),
+        ];
+        for (what, payload) in cases {
+            assert!(
+                decode_primitive(TYPE_ELLIPTICALARC, &payload).is_none(),
+                "{what} should be refused"
+            );
+        }
+        // A ratio of exactly 1 (a circular arc) is still accepted, as the
+        // drawing-side decoder admits it.
+        assert!(decode_primitive(TYPE_ELLIPTICALARC, &with(6, 1.0)).is_some());
+        // So is a ratio past 1: `Nozzle NPD.sym`'s own `0x007E` records
+        // reach `3.0` (the record's "major axis" field is the shorter
+        // semi-axis there), and the arc this traces is an exact ellipse
+        // either way.
+        assert!(decode_primitive(TYPE_ELLIPTICALARC, &with(6, 2.384_470_402_521_848)).is_some());
+    }
+
+    /// `decode_primitive` on `TYPE_ELLIPTICALARC` never panics, whatever
+    /// the payload length.
+    #[test]
+    fn elliptical_arc_survives_truncation_at_every_length() {
+        let payload = elliptical_arc_payload(ACTUATOR_DOME_DOUBLES, 1);
+        for cut in 0..=payload.len() {
+            let _ = decode_primitive(TYPE_ELLIPTICALARC, &payload[..cut]);
+        }
+    }
 
     /// A bare name the library holds only numbered variants of is reported,
     /// never substituted: `01` and `02` are different wellheads.

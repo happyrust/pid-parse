@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### `igEllipticalArc2d`（0x007E）进 `.sym` 库体，`igEllipse2d`/`igEllipticalArc2d` 的 `ratio` 上限撤掉（2026-11-10）
+
+`igEllipticalArc2d`（0x007E）此前只在 A01 的两个缓存体里见到过
+（AGENTS.md 曾写「really is absent」）；全量语料核查发现库里另有
+3 个带图纸引用的 `.sym` 体也写了该记录——`2to1Parametric V Drum.sym`
+（`/Sheet59` oid 2057/2059，风机罩两段）、`Diaphragm Actuator.sym`
+（`/Sheet6` oid 429，隔膜执行器顶盖）、`PCV-Self-Actuated Regulator
+Valve.sym`（同一顶盖记录的两处拷贝）。`symbol_library::decode_primitive`
+新增 `TYPE_ELLIPTICALARC` 分支，调用与图纸侧 `igEllipticalArc2d`
+解码器共享的 `elliptical_arc_geometry`，再走与缓存体路径相同的
+`bspline::elliptical_arc_directed`——两条路径不可能画出不同的曲线。
+新增集成测试 `tests/sym_elliptical_arc_matches_cached_body.rs`：从
+`RefData~4~681.zip` 直接读 `Diaphragm Actuator.sym`，与 `I井场` 图纸
+缓存体 `/JSite37311`（oid 79，同一顶盖记录的第三份拷贝）各自算出的
+poles/weights/knots 逐位相等。
+
+同一次核查命中 `Nozzle NPD.sym` / `Nozzle Rating.sym` 两个喷嘴标签
+符号：各 10 条 `0x0063 igEllipse2d` 的 `ratio` 落在 `1.9245..=3.0`，
+原先的 `ratio <= 1.0` 上限把它们全部拒收（`skipped_records` 记
+`{99:10, 126:2}`，各丢 12 个图元）。几何核对：`P(t) = C + cos t ·
+major + sin t · ratio · rot90(major)` 对任意有限正 `ratio` 都是精确
+椭圆，这两个符号只是把 `major_axis` 字段写成*较短*的那条半轴、再用
+`ratio` 放大，不是损坏数据。`ellipse_geometry` 与
+`elliptical_arc_geometry` 的上限从 `ratio <= 1.0` 改为 `ratio > 0`
+（有限且非零长主轴仍然保留校验）；全量语料的 `examples/probe_ellipse_ratio_census.rs`
+统计 595 条活记录里仅这两个符号的 144 条 `ratio > 1`，取值只有
+1.9245/2.25/2.3845/3.0 四种，没有任何 `.pid` 图纸记录越过 `1.0`。
+两个符号修复后 `skipped_records` 清零，图元数 `Nozzle NPD.sym` 10 →
+22、`Nozzle Rating.sym` 6 → 18（各新增 10 个椭圆 + 2 个椭圆弧）。新增
+回归测试钉住上限撤掉后的接受/拒收边界（`an_ellipse_with_ratio_past_one_is_accepted`、
+`an_elliptical_arc_with_ratio_past_one_is_accepted` 等），11 张验收
+参考图与 `export_plant_backup`/`export_every_fixture`/`border_template`
+的既有钉数不变——这 3 个符号的新增几何不出现在任何参考图页面上。
+
 ### `run_advance` 的误差扩散改成逐字先取整（2026-11-10）
 
 `修改号`（唯一一个 3 字、`width_permille=1000` 的串）钉在 15.5787 mm——此前

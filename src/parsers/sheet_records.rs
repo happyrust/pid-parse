@@ -7731,7 +7731,7 @@ impl PsmRecordDecoder for IgArc2dDecoder {
 // 2026-09-30: igEllipticalArc2d (cached bodies only)
 // ---------------------------------------------------------------------------
 //
-// The corpus holds four `0x007E` records, all in A01 and all inside nested
+// The corpus's first four `0x007E` records were all in A01, inside nested
 // `JSite<N>/PSMcluster0` definition caches: `/JSite121` oids 489 / 490 are
 // the two 2:1 heads of the vessel `V 010121A` (sheet 481, placed by oid
 // 184), `/JSite39` oids 114 / 115 the heads of a body no placement names
@@ -7739,9 +7739,18 @@ impl PsmRecordDecoder for IgArc2dDecoder {
 // bodies only, and deliberately not registered in `model::sheet_families`
 // (OCS plan `2026-09-30-a-cached-body-draws-its-elliptical-arcs`, E-D4).
 //
+// 2026-11-09: the library also writes `0x007E` into `.sym` bodies, not
+// only drawing caches. `2to1Parametric V Drum.sym`, `Diaphragm
+// Actuator.sym` and `PCV-Self-Actuated Regulator Valve.sym` each carry the
+// dome/head arc the drawings using them already cache -- the same record,
+// read the same way, from the symbol body instead of the drawing's own
+// cache. `symbol_library::decode_primitive`'s `TYPE_ELLIPTICALARC` arm
+// reads it via [`elliptical_arc_geometry`], the geometry function this
+// family's `decode_at` also calls, so the two paths can never disagree on
+// the curve. See `examples/probe_sym_elliptical_arcs.rs`.
+//
 // The payload is the shared 18-byte sub-header, seven doubles and one flag
-// byte, measured on those four records. Unlike `igArc2d`, the two angles
-// come first:
+// byte. Unlike `igArc2d`, the two angles come first:
 //
 // | payload | field |
 // |---|---|
@@ -7754,9 +7763,15 @@ impl PsmRecordDecoder for IgArc2dDecoder {
 //
 // The angles are parameters of `P(t) = C + cos t · major + sin t · minor`,
 // where `minor` is the major semi-axis turned +90° and scaled by the ratio.
-// What is kept from `igArc2d` is its sweep convention: the arc runs
-// **clockwise** -- decreasing `t` -- from the start angle to the end angle.
-// Read that way, all four corpus heads bulge out of their body's rectangle.
+// What is kept from `igArc2d` is its direction byte: `+74` is `0` for
+// clockwise and `1` for counter-clockwise traversal from the start angle
+// to the end angle, the same convention and the same trailing-byte
+// position (relative to the record's own geometry fields) as `igArc2d`'s
+// `+58` (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+// All four A01 cached heads and the three `.sym` domes draw correctly only
+// when their own `flag` is honoured -- folding it to the minor sweep
+// mirrors the diaphragm actuator's dome, the same failure mode the arc note
+// describes for `FT-Ultrasonic`, `Local Vent` and `Remarks`.
 
 /// PSM type code for `igEllipticalArc2d` ("Elliptical Arc Object",
 /// `imagdex.dex`; IGDS class tag `0x7E = 126`).
@@ -7773,10 +7788,12 @@ pub const IGELLIPTICALARC2D_PAYLOAD_LEN: usize = 75;
 ///
 /// The ellipse is `P(t) = center + cos t · major_axis + sin t · minor`,
 /// with `minor = ratio · (−major_axis.y, major_axis.x)` -- the major
-/// semi-axis turned +90°. The arc runs **clockwise**, with decreasing `t`,
-/// from `t = sweep_start` to `t = sweep_end`: the same convention as
-/// [`SheetIgArc2dDecoded`], clockwise from start to end. Lengths are in the
-/// storage's own units (metres in every nested cache).
+/// semi-axis turned +90°. The arc runs from `t = sweep_start` to
+/// `t = sweep_end` in the direction [`Self::flag`] names -- clockwise
+/// (decreasing `t`) when `flag == 0`, counter-clockwise otherwise; the
+/// same per-record direction byte [`SheetIgArc2dDecoded`] carries, not a
+/// fixed convention. Lengths are in the storage's own units (metres in
+/// every nested cache).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgEllipticalArc2dDecoded {
     /// Byte range covering the full PSM record (envelope + payload).
@@ -7804,10 +7821,18 @@ pub struct SheetIgEllipticalArc2dDecoded {
     /// Major semi-axis vector, same units (payload `+50`, `+58`); never
     /// zero.
     pub major_axis: (f64, f64),
-    /// Minor / major semi-axis ratio (payload `+66`), in `(0, 1]`.
+    /// Ratio of the second semi-axis (`minor` in [`Self`]'s formula) to
+    /// `major_axis`'s own length (payload `+66`), finite and `> 0`. Not
+    /// always `<= 1`: the nozzle-label symbols' records reach `3.0` --
+    /// see the `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`].
     pub ratio: f64,
-    /// The trailing byte (payload `+74`); meaning unknown, carried for
-    /// audit.
+    /// The trailing byte (payload `+74`): the arc's traversal direction,
+    /// `0` clockwise and `1` counter-clockwise -- the same byte, read the
+    /// same way, as [`SheetIgArc2dDecoded::flag`]
+    /// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+    /// Measured on the diaphragm actuator's dome (`oid 429` /
+    /// `Diaphragm Actuator.sym` and its two copies), which mirrors unless
+    /// read in its own direction.
     pub flag: u8,
 }
 
@@ -7817,8 +7842,9 @@ pub struct SheetIgEllipticalArc2dDecoded {
 /// stream's own chain says a record starts ([`sheet_record_starts`]), then
 /// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
 /// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
-/// major semi-axis; `0 < ratio <= 1`. As for `igArc2d`, the angles only
-/// have to be finite: they are not normalised.
+/// major semi-axis; a finite `ratio > 0` (not capped at `1` -- see the
+/// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]). As for
+/// `igArc2d`, the angles only have to be finite: they are not normalised.
 pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
     sheet_record_starts(data)
         .into_iter()
@@ -7833,6 +7859,41 @@ pub fn decode_igellipticalarc_at(
     offset: usize,
 ) -> Option<SheetIgEllipticalArc2dDecoded> {
     IgEllipticalArc2dDecoder.decode_at(data, offset)
+}
+
+/// Centre, major semi-axis vector, minor/major ratio and the two sweep
+/// parameters (`sweep_start`, `sweep_end`) of an `igEllipticalArc2d`
+/// payload.
+pub(crate) type EllipticalArcGeometry = ((f64, f64), (f64, f64), f64, f64, f64);
+
+/// The centre, major semi-axis, ratio and sweep of an
+/// `igEllipticalArc2d` payload, held to the same rules
+/// [`decode_igellipticalarcs`] applies. Shared with the `.sym` reader
+/// (`src/symbol_library.rs`), whose payloads are the same bytes — a `.sym`
+/// body's dome or vessel head is this same record, not a drawing-only one.
+pub(crate) fn elliptical_arc_geometry(payload: &[u8]) -> Option<EllipticalArcGeometry> {
+    if payload.len() < IGELLIPTICALARC2D_PAYLOAD_LEN {
+        return None;
+    }
+    let [sweep_start, sweep_end, center_x, center_y, major_x, major_y, ratio] =
+        curve_doubles::<7>(payload)?;
+    // Every double is finite and inside the domain here, so `hypot`
+    // is finite too and `<= 0` means a zero-length major axis. `ratio` is
+    // not capped at `1` for the same reason `ellipse_geometry` drops the
+    // cap: the nozzle-label symbols' two `0x007E` records per sheet carry
+    // `ratio` up to `3.0`, and the arc this traces is exact for any
+    // finite positive ratio regardless of which semi-axis is longer. See
+    // the `2026-11-09` note above `PSM_TYPE_CODE_IGELLIPSE2D`.
+    if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 {
+        return None;
+    }
+    Some((
+        (center_x, center_y),
+        (major_x, major_y),
+        ratio,
+        sweep_start,
+        sweep_end,
+    ))
 }
 
 /// [`PsmRecordDecoder`] adapter for `0x007E` `igEllipticalArc2d`.
@@ -7861,13 +7922,7 @@ impl PsmRecordDecoder for IgEllipticalArc2dDecoder {
             .checked_add(IGELLIPTICALARC2D_PAYLOAD_LEN)?;
         let payload = data.get(header.body_start..end)?;
         let sub = curve_sub_header(payload)?;
-        let [sweep_start, sweep_end, center_x, center_y, major_x, major_y, ratio] =
-            curve_doubles::<7>(payload)?;
-        // Every double is finite and inside the domain here, so `hypot`
-        // is finite too and `<= 0` means a zero-length major axis.
-        if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 || ratio > 1.0 {
-            return None;
-        }
+        let (center, major_axis, ratio, sweep_start, sweep_end) = elliptical_arc_geometry(payload)?;
         Some(SheetIgEllipticalArc2dDecoded {
             byte_range: offset..end,
             type_flags: header.type_flags,
@@ -7878,8 +7933,8 @@ impl PsmRecordDecoder for IgEllipticalArc2dDecoder {
             index: sub.index,
             sweep_start,
             sweep_end,
-            center: (center_x, center_y),
-            major_axis: (major_x, major_y),
+            center,
+            major_axis,
             ratio,
             flag: *payload.get(IGELLIPTICALARC2D_PAYLOAD_LEN - 1)?,
         })
@@ -7913,6 +7968,23 @@ impl PsmRecordDecoder for IgEllipticalArc2dDecoder {
 // The ellipse is `P(t) = C + cos t · major + sin t · minor`, `minor` the
 // major semi-axis turned +90° and scaled by the ratio, as for
 // `igEllipticalArc2d`; a closed ellipse has no sweep to read.
+//
+// 2026-11-09: the library's `Nozzle NPD.sym` / `Nozzle Rating.sym` (the
+// nozzle size/rating call-out labels, `Equipment Components\Labels -
+// Equipment Components\`) write 10 `0x0063` records apiece with `ratio`
+// in `1.92..=3.00` -- the field at `+34`/`+42` is the *shorter* semi-axis
+// there, not the longer one, and `ratio` scales it up rather than down.
+// The parametric curve `P(t) = C + cos t · major + sin t · ratio ·
+// rot90(major)` is an exact ellipse for *any* finite positive `ratio`,
+// not only `ratio <= 1`: which semi-axis the record calls `major_axis` is
+// a labelling choice, not a constraint the formula needs. A full-corpus
+// census of every live `0x0063`/`0x007E` record in the `.pid`/`.sym`
+// fixtures and every `RefData~*.zip` (`examples/probe_ellipse_ratio_census.rs`)
+// found `ratio > 1` nowhere else: 144 hits, all inside these two symbols,
+// topping out at `3.0000`. The upper bound is dropped rather than raised
+// to a specific ceiling -- `ratio > 0` is what the geometry actually
+// requires -- but the two-sided finite/positive check stays, so a NaN,
+// infinite or non-positive ratio is still refused.
 
 /// PSM type code for `igEllipse2d` ("Ellipse Object", `imagdex.dex`; IGDS
 /// class tag `0x63 = 99`).
@@ -7948,7 +8020,11 @@ pub struct SheetIgEllipse2dDecoded {
     /// Major semi-axis vector, same units (payload `+34`, `+42`); never
     /// zero.
     pub major_axis: (f64, f64),
-    /// Minor / major semi-axis ratio (payload `+50`), in `(0, 1]`.
+    /// Ratio of the second semi-axis (`minor` in [`Self`]'s formula) to
+    /// `major_axis`'s own length (payload `+50`), finite and `> 0`. Despite
+    /// the name, this is not always `<= 1`: the nozzle-label symbols write
+    /// it as high as `3.0`, which makes `major_axis` the record's *shorter*
+    /// semi-axis -- see the `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`].
     pub ratio: f64,
     /// The trailing byte (payload `+58`); meaning unknown, carried for
     /// audit.
@@ -7959,7 +8035,9 @@ pub struct SheetIgEllipse2dDecoded {
 ///
 /// Chain-gated like [`decode_igarcs`], then: type code
 /// [`PSM_TYPE_CODE_IGELLIPSE2D`]; `bytes_to_follow == 59`; five finite
-/// in-domain doubles; a non-zero major semi-axis; `0 < ratio <= 1`.
+/// in-domain doubles; a non-zero major semi-axis; a finite `ratio > 0`
+/// (not capped at `1` -- see the `2026-11-09` note above
+/// [`PSM_TYPE_CODE_IGELLIPSE2D`]).
 pub fn decode_igellipses(data: &[u8]) -> Vec<SheetIgEllipse2dDecoded> {
     sheet_record_starts(data)
         .into_iter()
@@ -7984,7 +8062,13 @@ pub(crate) fn ellipse_geometry(payload: &[u8]) -> Option<EllipseGeometry> {
         return None;
     }
     let [center_x, center_y, major_x, major_y, ratio] = curve_doubles::<5>(payload)?;
-    if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 || ratio > 1.0 {
+    // `ratio` is not capped at `1`: the nozzle-label symbols write it up
+    // to `3.0`, naming the record's shorter semi-axis as `major_axis` --
+    // see the `2026-11-09` note above `PSM_TYPE_CODE_IGELLIPSE2D`. The
+    // curve this traces is an exact ellipse for any finite positive
+    // ratio, so only non-positive and non-finite values are refused
+    // (`curve_doubles` already guarantees `ratio` is finite here).
+    if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 {
         return None;
     }
     Some(((center_x, center_y), (major_x, major_y), ratio))
@@ -8810,7 +8894,7 @@ mod nested_curve_family_tests {
                 with_payload_len(elliptical_record(&HEAD_DOUBLES), 76),
             ),
             ("ratio 0", with(6, 0.0)),
-            ("ratio 1.5", with(6, 1.5)),
+            ("ratio -1", with(6, -1.0)),
             ("zero major axis", {
                 let mut doubles = HEAD_DOUBLES;
                 doubles[4] = 0.0;
@@ -8833,6 +8917,19 @@ mod nested_curve_family_tests {
                 "{what}"
             );
         }
+    }
+
+    /// The nozzle-label symbols' `0x007E` records write `ratio` up to
+    /// `3.0` (`Nozzle NPD.sym` `/Sheet43 +138`): accepted, not refused,
+    /// the same relaxation [`decode_igellipses`] needed.
+    #[test]
+    fn an_elliptical_arc_with_ratio_past_one_is_accepted() {
+        let mut doubles = HEAD_DOUBLES;
+        doubles[6] = 2.384_470_402_521_848;
+        assert_eq!(
+            decode_igellipticalarcs(&chain(&[elliptical_record(&doubles)])).len(),
+            1
+        );
     }
 
     /// `Air Cooler Type 1.sym`'s left fan oval (`Sheet6` oid 726): centre,
@@ -8883,7 +8980,7 @@ mod nested_curve_family_tests {
             ("btf 58", with_payload_len(base(), 58)),
             ("btf 60", with_payload_len(base(), 60)),
             ("ratio 0", with(4, 0.0)),
-            ("ratio 1.5", with(4, 1.5)),
+            ("ratio -1", with(4, -1.0)),
             ("zero major axis", {
                 let mut doubles = FAN_OVAL;
                 doubles[2] = 0.0;
@@ -8906,6 +9003,23 @@ mod nested_curve_family_tests {
                 "{what}"
             );
         }
+    }
+
+    /// `Nozzle NPD.sym` / `Nozzle Rating.sym` write `ratio` up to `3.0`:
+    /// the field at `+34`/`+42` is the shorter semi-axis there, not the
+    /// longer one. The record is still a legitimate ellipse, not a
+    /// corrupt one, so a ratio past `1` is accepted rather than refused.
+    #[test]
+    fn an_ellipse_with_ratio_past_one_is_accepted() {
+        let stream = chain(&[curve_record(
+            PSM_TYPE_CODE_IGELLIPSE2D,
+            5,
+            &[0.101_346, 0.147_066, 0.003_048, 0.0, 2.25],
+            0,
+        )]);
+        let decoded = decode_igellipses(&stream);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].ratio, 2.25);
     }
 
     #[test]
