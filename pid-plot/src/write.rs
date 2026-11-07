@@ -42,7 +42,8 @@ use pdfcraft_fonts::pdf::Metrics;
 use crate::fonts::typeface_key;
 use crate::model::PaperTextSpan;
 use crate::model::{
-    DashFit, PaperModel, PaperShape, PaperStroke, TextAnchor, TextHeightBasis, TextLine,
+    DashFit, PaperModel, PaperShape, PaperStroke, STANDARD_SHEETS_MM, TextAnchor, TextHeightBasis,
+    TextLine,
 };
 use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
@@ -1473,6 +1474,8 @@ fn show_text(
         below_mm,
         text.anchor,
     );
+    let origin_mm =
+        device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
         "Tm",
@@ -1795,6 +1798,42 @@ const PLOT_DPI: f64 = 150.0;
 /// The plot's coordinate grid: every `Tf`, `Tm` and path coordinate the
 /// reference plots carry is a multiple of 0.03 pt, 1/2400 in.
 const PLOT_UNITS_PER_INCH: f64 = 2400.0;
+
+/// The scale the reference's plotter draws a page at, or `None` where that
+/// scale is not known.
+///
+/// The plotter fills the whole [`PLOT_DPI`] pixels its paper is wide with the
+/// sheet's width, and draws both axes at that one scale from the page's
+/// lower-left corner: an A0 sheet's 7021.65 pixels become 7021. Every label
+/// start on the ten reference plots drawn on a standard sheet sits on that
+/// grid. A page that is not itself one of the [`STANDARD_SHEETS_MM`] was
+/// fitted to some other paper by a mapping this is not — the `594.33 × 420.57`
+/// sheet A2 states was printed on `594 × 420` — so it has none.
+fn device_scale(page_mm: [f64; 2]) -> Option<f64> {
+    let is_paper = STANDARD_SHEETS_MM.iter().any(|sheet| {
+        [*sheet, [sheet[1], sheet[0]]].iter().any(|paper| {
+            (paper[0] - page_mm[0]).abs() < 1e-3 && (paper[1] - page_mm[1]).abs() < 1e-3
+        })
+    });
+    let width_px = page_mm[0] * PLOT_DPI / 25.4;
+    if is_paper && width_px >= 1.0 {
+        Some(width_px.floor() / width_px)
+    } else {
+        None
+    }
+}
+
+/// Where the reference's device sets a run that starts at `start_mm`.
+///
+/// The start is rounded once, after the page is scaled ([`device_scale`]), to
+/// a whole pixel from the page's lower-left corner — not the insertion point
+/// and the alignment offset each on their own. The page here is written at
+/// 1:1, so the rounded start is carried back by the same scale, and the
+/// comparison's fit takes that scale out with the rest of the page.
+fn on_the_device_grid(start_mm: [f64; 2], scale: f64) -> [f64; 2] {
+    let pixel_mm = 25.4 / PLOT_DPI;
+    start_mm.map(|mm| (mm * scale / pixel_mm).round() * pixel_mm / scale)
+}
 
 /// GDI's own measured cap and ascent heights, in pixels, for a face asked
 /// for at `lfHeight = 72`.
@@ -3566,7 +3605,9 @@ mod tests {
         .expect("write");
         let ink = read_plot(&pdf).expect("read");
         assert_eq!(ink.spans.len(), 2, "two labels, two runs: {:?}", ink.spans);
+        let scale = super::device_scale([841.0, 594.0]).expect("A1 is a standard sheet");
         let at = |y: f64| {
+            let y = super::on_the_device_grid([20.0, y], scale)[1];
             ink.spans
                 .iter()
                 .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
@@ -3648,7 +3689,9 @@ mod tests {
         )
         .expect("write");
         let ink = read_plot(&pdf).expect("read");
+        let scale = super::device_scale([841.0, 594.0]).expect("A1 is a standard sheet");
         let advance = |y: f64| {
+            let y = super::on_the_device_grid([20.0, y], scale)[1];
             ink.spans
                 .iter()
                 .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
@@ -3671,6 +3714,73 @@ mod tests {
                 "the run at y = {y} letters at {ratio:.3} of the sheet's advance, not {expected:.3}"
             );
         }
+    }
+
+    /// A run on a standard sheet starts on a whole pixel of the reference
+    /// device's grid, and a run on any other page starts where the model puts
+    /// it.
+    ///
+    /// An A1 sheet is 4966.5 pixels wide at [`super::PLOT_DPI`], which the
+    /// reference plotter fills with 4966, so both axes shrink by that ratio
+    /// from the lower-left corner: a label set at 20, 40 mm starts on pixel
+    /// 118, 236 rather than 118.10, 236.20. A 700 × 500 page is no paper the
+    /// plotter draws at its own width, and its label keeps the model's start.
+    #[test]
+    fn a_run_on_a_standard_sheet_starts_on_the_device_pixel_grid() {
+        let start_mm = |page_mm: [f64; 2]| {
+            let model = PaperModel {
+                library: Vec::new(),
+                template: None,
+                page_mm: Some(page_mm),
+                off_sheet_primitives: 0,
+                skipped_endpoint_pairs: 0,
+                primitives: vec![primitive(
+                    "decoded",
+                    PaperShape::Text {
+                        origin_mm: [20.0, 40.0],
+                        height_mm: Some(3.0),
+                        rotation: 0.0,
+                        value: "A".to_string(),
+                        font: None,
+                        anchor: TextAnchor::Left,
+                        line: TextLine::Bottom,
+                        height_basis: crate::model::TextHeightBasis::Cap,
+                        width_permille: None,
+                        paragraph: None,
+                        spans: Vec::new(),
+                    },
+                )],
+                missing_symbols: Vec::new(),
+                missing_templates: Vec::new(),
+                missing_boxes: Vec::new(),
+                symbols_found: 0,
+                symbols_referenced: 0,
+            };
+            let pdf = write_plot(
+                &model,
+                &[PlotFont {
+                    key: "",
+                    bytes: pdfcraft_fonts::INTER_REGULAR,
+                    subset: false,
+                }],
+            )
+            .expect("write");
+            let ink = read_plot(&pdf).expect("read");
+            assert_eq!(ink.spans.len(), 1, "one label, one run: {:?}", ink.spans);
+            ink.spans[0].origin_mm
+        };
+        let pixel_mm = 25.4 / super::PLOT_DPI;
+        let scale = 4966.0 / (841.0 / pixel_mm);
+        let start = start_mm([841.0, 594.0]).map(|mm| mm * scale / pixel_mm);
+        assert!(
+            (start[0] - 118.0).abs() < 0.01 && (start[1] - 236.0).abs() < 0.01,
+            "an A1 run starts at device pixel {start:?}, not 118, 236"
+        );
+        let start = start_mm([700.0, 500.0]);
+        assert!(
+            (start[0] - 20.0).abs() < 1e-3 && (start[1] - 40.0).abs() < 1e-3,
+            "a 700 × 500 run starts at {start:?}, not 20, 40"
+        );
     }
 
     /// A symbol label that letters one character at another size is cut where
