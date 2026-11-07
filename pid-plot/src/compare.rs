@@ -204,7 +204,7 @@ pub struct UnmatchedText {
 }
 
 /// Paper-table lettering that can be copied onto an unmatched run.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TextSource {
     /// Characters as the paper table stored them.
     pub text: String,
@@ -256,6 +256,37 @@ pub struct TextOffsetClass {
     pub mean_advance_heights: f64,
     /// Largest shift in the class, millimetres.
     pub max_shift_mm: f64,
+}
+
+/// One label the text pairing matched, and where our runs sit against the
+/// reference's.
+///
+/// [`TextOffsetClass`] is the mean of these per class; a pair is the single
+/// reading behind it, so a class whose mean is near zero can still be read
+/// label by label. Each side is a chain of runs, first run first — one run
+/// when neither side split the label.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TextPair {
+    /// Indices into the reference plot's [`PlotInk::spans`].
+    pub reference_runs: Vec<usize>,
+    /// Indices into our plot's [`PlotInk::spans`].
+    pub our_runs: Vec<usize>,
+    /// The lettering class, named as [`TextOffsetClass::class`] names it.
+    pub class: String,
+    /// The paper-table lettering our first run came from, when one was within
+    /// reach of it.
+    pub source: Option<TextSource>,
+    /// Shift of our first run's baseline start along the reference run's
+    /// writing direction, millimetres. Positive overshoots to the right.
+    pub along_mm: f64,
+    /// Shift of our first run's baseline start toward the reference run's
+    /// descenders, millimetres. Positive is a line too low.
+    pub down_mm: f64,
+    /// Our chain's width minus the reference chain's, millimetres, each
+    /// measured from its first run's origin to its farthest run end.
+    pub advance_mm: f64,
+    /// The reference's first run's body size, millimetres.
+    pub height_mm: f64,
 }
 
 /// A length of ink sharing one label.
@@ -398,6 +429,12 @@ pub struct CompareReport {
     /// outside the pairing window.
     #[serde(default)]
     pub text_offsets: Vec<TextOffsetClass>,
+    /// Every pair behind [`Self::text_offsets`], in the order they paired.
+    ///
+    /// Not written to the JSON report: its run indices only mean something
+    /// beside the two [`PlotInk`]s they index.
+    #[serde(skip)]
+    pub text_pairs: Vec<TextPair>,
     /// Pen weight, stroke by stroke. Empty on a page whose strokes paired with
     /// nothing, which is a geometry result rather than a pen one.
     #[serde(default)]
@@ -473,6 +510,7 @@ pub fn compare_plots_with_sources(
         unmatched_reference_text: text.unmatched_reference,
         unmatched_our_text: text.unmatched_ours,
         text_offsets: text.offsets,
+        text_pairs: text.pairs,
         pen,
         extra_inside_missing_mm: 0.0,
         extra_outside_missing_mm: 0.0,
@@ -1145,6 +1183,7 @@ struct CoverText {
     unmatched_reference: Vec<UnmatchedText>,
     unmatched_ours: Vec<UnmatchedText>,
     offsets: Vec<TextOffsetClass>,
+    pairs: Vec<TextPair>,
 }
 
 /// Running mean of the paired runs' shifts, one bucket per class.
@@ -1170,40 +1209,79 @@ struct OffsetBucket {
 /// Without the two numbers side by side the I drawing's leading-space padding
 /// read as a 0.05-body centring error for two rounds.
 ///
-/// `reference` and `ours` are the paired chains, first run first: a label
+/// `reference_chain` and `ours_chain` are the paired chains, first run first,
+/// as indices into `reference` and `ours`: a label
 /// one side split into runs is as wide as all of its runs together, so the
 /// advance is measured from the first run's origin to the last run's end on
 /// each side. Taking only the first run's advance read every fused grid
 /// reference such as `B2B5` as a run 1.2 bodies narrower than ours.
 fn record_offset(
-    buckets: &mut HashMap<String, OffsetBucket>,
-    reference_chain: &[&TextSpan],
-    ours_chain: &[&TextSpan],
+    reference_chain: &[usize],
+    ours_chain: &[usize],
+    reference: &[TextSpan],
+    ours: &[TextSpan],
     fit: &Fit,
     sources: &[TextSource],
-) {
-    let (Some(&reference), Some(&ours)) = (reference_chain.first(), ours_chain.first()) else {
-        return;
+) -> Option<TextPair> {
+    let reference_spans: Vec<&TextSpan> = reference_chain
+        .iter()
+        .map(|index| &reference[*index])
+        .collect();
+    let our_spans: Vec<&TextSpan> = ours_chain.iter().map(|index| &ours[*index]).collect();
+    let (Some(&first_reference), Some(&first_ours)) = (reference_spans.first(), our_spans.first())
+    else {
+        return None;
     };
-    let height = reference.height_mm;
-    if !height.is_finite() || height <= 0.1 {
-        return;
-    }
-    let ours_in_ref = into_reference(ours.origin_mm, fit);
+    let ours_in_ref = into_reference(first_ours.origin_mm, fit);
     let delta = [
-        ours_in_ref[0] - reference.origin_mm[0],
-        ours_in_ref[1] - reference.origin_mm[1],
+        ours_in_ref[0] - first_reference.origin_mm[0],
+        ours_in_ref[1] - first_reference.origin_mm[1],
     ];
-    let direction = reference.direction;
-    let along = delta[0] * direction[0] + delta[1] * direction[1];
-    let down = delta[0] * direction[1] - delta[1] * direction[0];
-    let class = offset_class(ours_in_ref, &ours.text, sources, fit);
-    let bucket = buckets.entry(class).or_default();
-    bucket.count += 1;
-    bucket.along += along / height;
-    bucket.down += down / height;
-    bucket.advance += (chain_advance(ours_chain) - chain_advance(reference_chain)) / height;
-    bucket.max_mm = bucket.max_mm.max(along.hypot(down));
+    let direction = first_reference.direction;
+    let source = find_source(ours_in_ref, &first_ours.text, sources, fit);
+    Some(TextPair {
+        reference_runs: reference_chain.to_vec(),
+        our_runs: ours_chain.to_vec(),
+        class: offset_class(source),
+        source: source.cloned(),
+        along_mm: delta[0] * direction[0] + delta[1] * direction[1],
+        down_mm: delta[0] * direction[1] - delta[1] * direction[0],
+        advance_mm: chain_advance(&our_spans) - chain_advance(&reference_spans),
+        height_mm: first_reference.height_mm,
+    })
+}
+
+/// The per-class means of `pairs`, summed in pairing order.
+///
+/// A pair whose reference body is not a size — not finite, or a tenth of a
+/// millimetre or less — paired, but has no heights to be measured in.
+fn offset_classes(pairs: &[TextPair]) -> Vec<TextOffsetClass> {
+    let mut buckets: HashMap<String, OffsetBucket> = HashMap::new();
+    for pair in pairs {
+        let height = pair.height_mm;
+        if !height.is_finite() || height <= 0.1 {
+            continue;
+        }
+        let bucket = buckets.entry(pair.class.clone()).or_default();
+        bucket.count += 1;
+        bucket.along += pair.along_mm / height;
+        bucket.down += pair.down_mm / height;
+        bucket.advance += pair.advance_mm / height;
+        bucket.max_mm = bucket.max_mm.max(pair.along_mm.hypot(pair.down_mm));
+    }
+    let mut offsets: Vec<TextOffsetClass> = buckets
+        .into_iter()
+        .map(|(class, bucket)| TextOffsetClass {
+            class,
+            count: bucket.count,
+            mean_along_heights: bucket.along / bucket.count as f64,
+            mean_down_heights: bucket.down / bucket.count as f64,
+            mean_advance_heights: bucket.advance / bucket.count as f64,
+            max_shift_mm: bucket.max_mm,
+        })
+        .collect();
+    offsets.sort_by(|left, right| left.class.cmp(&right.class));
+    offsets
 }
 
 /// How far a chain of runs reaches along its first run's writing direction,
@@ -1223,8 +1301,8 @@ fn chain_advance(chain: &[&TextSpan]) -> f64 {
 }
 
 /// Which lettering rule produced our run, as a stable label.
-fn offset_class(origin: [f64; 2], text: &str, sources: &[TextSource], fit: &Fit) -> String {
-    let Some(source) = find_source(origin, text, sources, fit) else {
+fn offset_class(source: Option<&TextSource>) -> String {
+    let Some(source) = source else {
         return "unknown".to_string();
     };
     match source.symbol {
@@ -1295,7 +1373,7 @@ fn match_text(
     // First pass: a run that spells the same text as the reference's run.
     let mut used = vec![false; ours.len()];
     let mut matched = 0;
-    let mut buckets: HashMap<String, OffsetBucket> = HashMap::new();
+    let mut pairs: Vec<TextPair> = Vec::new();
     for index in tallied.iter().copied() {
         let wanted = normalize(&reference[index].text);
         let found = ours.iter().enumerate().find(|(slot, other)| {
@@ -1311,13 +1389,14 @@ fn match_text(
             used[slot] = true;
             hit[index] = true;
             matched += 1;
-            record_offset(
-                &mut buckets,
-                &[&reference[index]],
-                &[&ours[slot]],
+            pairs.extend(record_offset(
+                &[index],
+                &[slot],
+                reference,
+                ours,
                 fit,
                 sources,
-            );
+            ));
         }
     }
     // Second pass: a label one side split into runs and the other did not.
@@ -1328,8 +1407,14 @@ fn match_text(
         let origin = reference[index].origin_mm;
         let wanted = normalize(&reference[index].text);
         if let Some(taken) = join_ours(&wanted, ours, &used, &blocked, origin, fit) {
-            let joined: Vec<&TextSpan> = taken.iter().map(|slot| &ours[*slot]).collect();
-            record_offset(&mut buckets, &[&reference[index]], &joined, fit, sources);
+            pairs.extend(record_offset(
+                &[index],
+                &taken,
+                reference,
+                ours,
+                fit,
+                sources,
+            ));
             for slot in taken {
                 used[slot] = true;
             }
@@ -1349,12 +1434,14 @@ fn match_text(
             let Some((slot, _)) = found else {
                 continue;
             };
-            let joined: Vec<&TextSpan> = chain
-                .iter()
-                .take(cuts)
-                .map(|member| &reference[*member])
-                .collect();
-            record_offset(&mut buckets, &joined, &[&ours[slot]], fit, sources);
+            pairs.extend(record_offset(
+                &chain[..cuts],
+                &[slot],
+                reference,
+                ours,
+                fit,
+                sources,
+            ));
             used[slot] = true;
             for member in chain.iter().take(cuts) {
                 hit[*member] = true;
@@ -1385,18 +1472,6 @@ fn match_text(
             symbol: source.and_then(|item| item.symbol.clone()),
         });
     }
-    let mut offsets: Vec<TextOffsetClass> = buckets
-        .into_iter()
-        .map(|(class, bucket)| TextOffsetClass {
-            class,
-            count: bucket.count,
-            mean_along_heights: bucket.along / bucket.count as f64,
-            mean_down_heights: bucket.down / bucket.count as f64,
-            mean_advance_heights: bucket.advance / bucket.count as f64,
-            max_shift_mm: bucket.max_mm,
-        })
-        .collect();
-    offsets.sort_by(|left, right| left.class.cmp(&right.class));
     CoverText {
         reference: tallied.len(),
         ours: our_count,
@@ -1404,7 +1479,8 @@ fn match_text(
         masked,
         unmatched_reference,
         unmatched_ours,
-        offsets,
+        offsets: offset_classes(&pairs),
+        pairs,
     }
 }
 
