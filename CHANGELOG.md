@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### 熊安夹具戴上自己的 `XA-A1.igr`，`Xa …` 符号不再缺（2026-11-07）
+
+`test-file/工艺管道及仪表流程-1.pid` 与 XaLNG 工厂备份
+`PLANT_XaLNG_1_1_3_p` 的 `180700/气化区/工艺管道及仪表流程图（一）.pid`
+逐字节相同（SHA-256 `a3cceb23…`），同一备份的 `RefData~4~682.zip` /
+`RefData~4~681.zip` 带着它链接的 `XA-A1.igr` 和点名的 `Xa.sym`、
+`Xa chu.sym`、`Xa Item Note & Label.sym`。四个文件入库到 `test-file/Ref`
+（附 `PROVENANCE.md`），`symbol_library` 在本地符号包之后加入入库的
+`test-file/Ref/Symbols`；`export_every_fixture` 去掉这张图的三项豁免，
+收紧为每个夹具都不缺符号。`model.rs` 里拿 `XA-A1` 当「点名缺文件」范例的
+三个单测改用合成名，新增熊安图戴模板、不缺 `Xa …` 符号的单测。备份图另外
+7 个缺失 `.sym` 与 3 张待到参考 PDF 本机全盘查无，查找清单见
+`docs/analysis/2026-11-07-the-xa-fixture-reference-data-was-in-its-own-plant-backup.md`。
+
 ### `0x0021 igBoundary2d` 同类的纯关联记录：D04 的那一条不丢墨（2026-11-11）
 
 `D04.pid` `/Sheet6 +2478`（`oid=62`，`bytes_to_follow=191`）是整个

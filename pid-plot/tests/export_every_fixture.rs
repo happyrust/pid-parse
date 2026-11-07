@@ -118,27 +118,19 @@ fn every_fixture_drawing_exports_a_pdf() {
         }
     }
 
-    // The library search now unions the corpus's `Ref` with the bundled
-    // `test-file/symbols-full`, so a symbol missing from both is missing from
-    // the repository, not from the reader. Only one fixture is in that state:
-    // its three `XA …` files are the project library this set was drawn with,
-    // and no `.sym` of those names exists anywhere in the tree. Pinned as a
-    // ratchet so a regression that loses a symbol shows up as a failure rather
-    // than a quieter page.
-    const KNOWN_LIBRARY_GAPS: [&str; 3] = [
-        "design\\annotation\\labels\\xa item note & label.sym",
-        "piping\\piping opc's\\xa chu.sym",
-        "piping\\piping opc's\\xa.sym",
-    ];
+    // The library search unions the corpus's `Ref` with the bundled
+    // `test-file/symbols-full` and the committed `test-file/Ref/Symbols`, so a
+    // symbol missing from all three is missing from the repository, not from
+    // the reader. No fixture is in that state: the three `XA …` files the
+    // 熊安 drawing names, its own plant's library, are committed beside the
+    // template it links. A regression that loses a symbol fails here rather
+    // than printing a quieter page.
     for (path, model) in &models {
-        let missing: Vec<&str> = model.missing_symbols.iter().map(String::as_str).collect();
-        if missing == KNOWN_LIBRARY_GAPS {
-            continue;
-        }
         assert!(
-            missing.is_empty(),
-            "{}: symbols no library carries: {missing:?}",
-            path.display()
+            model.missing_symbols.is_empty(),
+            "{}: symbols no library carries: {:?}",
+            path.display(),
+            model.missing_symbols
         );
     }
 }

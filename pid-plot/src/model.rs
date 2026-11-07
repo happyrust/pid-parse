@@ -1816,6 +1816,11 @@ struct Placement {
 /// drawings that needed them, which is why `DWG-0201GP06-01` reported three
 /// missing symbols and never drew them.
 ///
+/// `test-file/Ref/Symbols` follows the bundle. It holds the few project
+/// symbols a committed fixture names that neither shared library carries —
+/// the XaLNG plant's `Xa …` set behind `工艺管道及仪表流程-1` — and, unlike the
+/// bundle, it is committed, so those names resolve in any checkout.
+///
 /// A path found in an earlier root still wins, so a project's own library
 /// keeps deciding what its drawings look like; the later roots only answer
 /// for names the earlier ones do not carry.
@@ -1878,6 +1883,10 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols-full");
     if bundled.is_dir() && !roots.iter().any(|seen| seen == &bundled) {
         roots.push(bundled.clone());
+    }
+    let committed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/Ref/Symbols");
+    if committed.is_dir() && !roots.iter().any(|seen| seen == &committed) {
+        roots.push(committed);
     }
     let archives = refdata_archive_files(corpus);
     if roots.is_empty() && archives.is_empty() {
@@ -5500,23 +5509,31 @@ mod tests {
     /// A page that names a template wears only that template: a name no file
     /// answers leaves the page bare, and the gap is reported by name.
     ///
-    /// `工艺管道及仪表流程-1` is 841.00 × 594.00 and links `XA-A1.igr`, a file
-    /// that is nowhere in the tree; `CPE-SQ-A1.igr` is exactly that size, so
-    /// the extent rule would dress this 熊安 drawing in 华北分公司's title
-    /// block. `DWG-0202GP06-01` is the same story one size down: its
-    /// `CPECCHBA2.igr` lives in its own package archive rather than beside the
-    /// fixture, and `CPECCHB-SQ-A2.igr` sits 0.37 mm from its page. The first
-    /// draws no furniture; the second finds its own name in another package or
-    /// none; a page that names nothing still answers to the extent.
+    /// `工艺管道及仪表流程-1` is 841.00 × 594.00 and links `XA-A1.igr`;
+    /// `CPE-SQ-A1.igr` is exactly that size too, so the extent rule alone would
+    /// dress this 熊安 drawing in 华北分公司's title block. Its own file sits in
+    /// the tree and answers the name, and a name no file answers draws no
+    /// furniture rather than borrow either. `DWG-0202GP06-01` is the same
+    /// story one size down: its `CPECCHBA2.igr` lives in its own package
+    /// archive rather than beside the fixture, and `CPECCHB-SQ-A2.igr` sits
+    /// 0.37 mm from its page; it finds its own name in another package or
+    /// none. A page that names nothing still answers to the extent.
     #[test]
     fn a_named_sheet_wears_no_template_it_does_not_name() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
 
         let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
+        let own = super::load_border_template(&corpus, None, [841.0, 594.0], &xa)
+            .expect("the 熊安 page's own template");
+        assert!(own.path.ends_with("XA-A1.igr"), "{}", own.path.display());
+        let nowhere = vec![r"Ref\Template Files\NOWHERE-A1.igr".to_string()];
         assert!(
-            super::load_border_template(&corpus, None, [841.0, 594.0], &xa).is_none(),
+            super::load_border_template(&corpus, None, [841.0, 594.0], &nowhere).is_none(),
             "a named A1 page wore a stranger's furniture"
         );
+        // `XA-A1` and `CPE-SQ-A1` are both exactly 841 × 594, so an unnamed
+        // A1 page ties and the path orders them — the same tie the A2 pair
+        // below reads, and the reason a named page is never handed either.
         let unnamed = super::load_border_template(&corpus, None, [841.0, 594.0], &[])
             .expect("an unnamed page still answers to its extent");
         assert!(
@@ -5644,13 +5661,43 @@ mod tests {
         ));
     }
 
+    /// The 熊安 fixture wears its own `XA-A1.igr` and resolves its plant's own
+    /// `Xa …` symbols, both committed under `test-file/Ref`.
+    #[test]
+    fn the_xa_fixture_wears_its_own_template_and_symbols() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        let model = super::lay_out_drawing(&corpus.join("工艺管道及仪表流程-1.pid"), &corpus)
+            .expect("the 熊安 fixture lays out");
+        let template = model.template.as_ref().expect("it wears its template");
+        assert!(template.path.ends_with("XA-A1.igr"), "{}", template.path);
+        assert!(
+            model.missing_templates.is_empty(),
+            "{:?}",
+            model.missing_templates
+        );
+        for own in [
+            r"design\annotation\labels\xa item note & label.sym",
+            r"piping\piping opc's\xa chu.sym",
+            r"piping\piping opc's\xa.sym",
+        ] {
+            assert!(
+                !model.missing_symbols.iter().any(|missing| missing == own),
+                "{own} is still missing: {:?}",
+                model.missing_symbols
+            );
+        }
+    }
+
     /// A bare page says which name went unanswered, so a missing template is a
     /// reading rather than a blank.
     #[test]
     fn a_page_whose_template_is_missing_names_the_gap() {
-        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
-        let model = super::lay_out_drawing(&corpus.join("工艺管道及仪表流程-1.pid"), &corpus)
-            .expect("the 熊安 fixture lays out");
+        // A corpus with no `Ref` and no package beside it answers no name.
+        let corpus = std::env::temp_dir().join("pid-plot-a-corpus-with-no-templates");
+        std::fs::create_dir_all(&corpus).expect("an empty corpus");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test-file/工艺管道及仪表流程-1.pid");
+        let model = super::lay_out_drawing(&fixture, &corpus).expect("the 熊安 fixture lays out");
         assert!(
             model.template.is_none(),
             "it must not wear CPE-SQ's furniture"
@@ -5841,9 +5888,9 @@ mod tests {
 
         // A name no file answers gets no furniture: the same-size stranger
         // that used to stand in is not a substitute (§2.10).
-        let xa = vec![r"Ref\Template Files\XA-A1.igr".to_string()];
+        let nowhere = vec![r"Ref\Template Files\NOWHERE-A1.igr".to_string()];
         assert!(
-            super::load_border_template(&corpus, None, [841.5, 594.5], &xa).is_none(),
+            super::load_border_template(&corpus, None, [841.5, 594.5], &nowhere).is_none(),
             "a named page wore the stranger its frame almost fit"
         );
     }
