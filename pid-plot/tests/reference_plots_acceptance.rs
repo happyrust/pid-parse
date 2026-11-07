@@ -63,6 +63,16 @@
 //! differences on all eleven pages only after `pen_width_mm` grew the fourth
 //! pen — the CCHB A2 title block declares 1.0606 / 1.1313 / 1.4141 mm rails
 //! and the plot prints every one of them at 1.02 mm.
+//!
+//! Each page is also compared with no template mask at all, so the sign-off
+//! column and the title block are charged like any other ink (the `whole`
+//! pins, 2026-11-07). The seven `CPE-SQ` pages leave 0.169 mm of reference ink
+//! uncovered there and pair every furniture label. `一级闪蒸分离器A` and
+//! `低温分离器A` carry 3478.9 / 3478.7 mm of extra ink: their reference plots
+//! print no border at all, while ours draws the `CPE-SQ-A1.igr` both link —
+//! the same link `一级闪蒸分离器B` wears on its plot. The A2 page reads 0.9882,
+//! 208.815 mm uncovered and 249.872 mm extra, with 248 of 261 labels paired:
+//! its company name and `CPECC` letter off the reference's places.
 
 use std::path::PathBuf;
 
@@ -94,6 +104,18 @@ struct Pin {
     /// Symbols the corpus cannot draw. The A0 wellsites both place a
     /// `pulsation damper.sym` the reference corpus never ships.
     missing_symbols: &'static [&'static str],
+    /// The same page with no template mask.
+    whole: WholePage,
+}
+
+/// One drawing's reading with its furniture compared too: only the
+/// missing-symbol boxes are left out.
+struct WholePage {
+    min_coverage: f64,
+    max_uncovered_mm: f64,
+    max_extra_mm: f64,
+    min_text_matched: usize,
+    text_reference: usize,
 }
 
 /// One bridge's worth of slack above the reading, as `plot_compare.rs` holds
@@ -135,6 +157,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 8685,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 583,
+            text_reference: 583,
+        },
     },
     Pin {
         name: "J K井场 注采阀组工艺及自控流程图",
@@ -147,6 +176,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 13630,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 813,
+            text_reference: 813,
+        },
     },
     Pin {
         name: "L M井场 注采阀组工艺及自控流程图",
@@ -159,6 +195,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 16481,
         max_pen_differed: 0,
         missing_symbols: &[PULSATION_DAMPER],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 959,
+            text_reference: 959,
+        },
     },
     Pin {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
@@ -171,6 +214,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 1229,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
+            max_extra_mm: 3478.898 + EXTRA_SLACK_MM,
+            min_text_matched: 155,
+            text_reference: 155,
+        },
     },
     Pin {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
@@ -183,6 +233,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 1362,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 161,
+            text_reference: 161,
+        },
     },
     Pin {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
@@ -195,6 +252,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 1646,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
+            max_extra_mm: 3478.694 + EXTRA_SLACK_MM,
+            min_text_matched: 171,
+            text_reference: 171,
+        },
     },
     Pin {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
@@ -207,6 +271,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 2976,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 253,
+            text_reference: 253,
+        },
     },
     Pin {
         // The riser's stamped glyph centres itself now, so this sheet keeps
@@ -224,6 +295,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 3253,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 326,
+            text_reference: 326,
+        },
     },
     Pin {
         // Same glyph, same fix as the A sheet: no extra ink left. The
@@ -238,6 +316,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 3260,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 328,
+            text_reference: 328,
+        },
     },
     Pin {
         // Same glyph, same fix as the A sheet: no extra ink left. The
@@ -252,6 +337,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 3132,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.169 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 321,
+            text_reference: 321,
+        },
     },
     Pin {
         // The two `动火点` labels are the only whole-string font fallback on
@@ -270,6 +362,13 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 2648,
         max_pen_differed: 0,
         missing_symbols: &[],
+        whole: WholePage {
+            min_coverage: 0.9881,
+            max_uncovered_mm: 208.815 + EXTRA_SLACK_MM,
+            max_extra_mm: 249.872 + EXTRA_SLACK_MM,
+            min_text_matched: 248,
+            text_reference: 261,
+        },
     },
 ];
 
@@ -300,6 +399,14 @@ fn corpus_dir() -> PathBuf {
         || PathBuf::from(r"D:\work\cad\pid-test-data\验收数据"),
         PathBuf::from,
     )
+}
+
+/// Where the reports and overlays go: `PID_ACCEPTANCE_OUT`, else
+/// `plot/acceptance` in the corpus. Two checkouts running this gate at once
+/// must each name their own, or they write the same files.
+fn report_dir(corpus: &std::path::Path) -> PathBuf {
+    std::env::var_os("PID_ACCEPTANCE_OUT")
+        .map_or_else(|| corpus.join("plot/acceptance"), PathBuf::from)
 }
 
 /// A page that matches no surveyed sheet gets no masks at all.
@@ -334,8 +441,9 @@ fn eleven_reference_plots_hold_their_readings() {
         );
         return;
     }
-    let out_dir = corpus.join("plot/acceptance");
-    std::fs::create_dir_all(&out_dir).expect("mkdir acceptance");
+    let out_dir = report_dir(&corpus);
+    let whole_dir = out_dir.join("whole-page");
+    std::fs::create_dir_all(&whole_dir).expect("mkdir acceptance");
 
     let models: Vec<PaperModel> = PINS
         .iter()
@@ -475,6 +583,38 @@ fn eleven_reference_plots_hold_their_readings() {
         assert_eq!(
             missing_now, pin.missing_symbols,
             "{name} missing symbol list moved"
+        );
+
+        let whole = compare_plots_with_model(&reference, &ours, &[], &missing, model);
+        write_report(&whole_dir.join(format!("{name}.json")), &whole).expect("json");
+        let floor = &pin.whole;
+        assert!(
+            whole.coverage >= floor.min_coverage,
+            "{name} whole-page coverage {:.6} < {:.4}",
+            whole.coverage,
+            floor.min_coverage
+        );
+        let uncovered_mm = whole.reference_length_mm - whole.covered_length_mm;
+        assert!(
+            uncovered_mm <= floor.max_uncovered_mm,
+            "{name} whole-page uncovered {uncovered_mm:.3} mm > {:.3} mm",
+            floor.max_uncovered_mm
+        );
+        assert!(
+            whole.extra_length_mm <= floor.max_extra_mm,
+            "{name} whole-page extra {:.3} mm > {:.3} mm",
+            whole.extra_length_mm,
+            floor.max_extra_mm
+        );
+        assert_eq!(
+            whole.text_reference, floor.text_reference,
+            "{name} whole-page reference label count moved"
+        );
+        assert!(
+            whole.text_matched >= floor.min_text_matched,
+            "{name} whole-page text_matched {} < {}",
+            whole.text_matched,
+            floor.min_text_matched
         );
     }
 }
