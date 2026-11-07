@@ -186,9 +186,10 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
 /// What the writer draws for each placed run, in page order.
 ///
 /// A drawing pads its label fields with spaces (`H=11.8MPa `,
-/// ` 1001102A`). Those spaces ink nothing and the writer drops them rather
-/// than centre a run half a space off, so the expectation is the trimmed
-/// value — empty once trimmed means no run at all.
+/// ` 1001102A`). The reference plots letter a leading pad as a glyph and
+/// end no run in a space, and the writer follows them, so the expectation
+/// keeps the leading pad and drops the trailing one — blank once trimmed
+/// means no run at all.
 fn text_runs(model: &PaperModel) -> Vec<&str> {
     let mut runs = Vec::new();
     for confidence in ["decoded", "inferred"] {
@@ -205,7 +206,7 @@ fn text_runs(model: &PaperModel) -> Vec<&str> {
             } = &primitive.shape
             {
                 let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
-                let inked = value.trim();
+                let inked = value.trim_end();
                 if inked.is_empty()
                     || !rotation.is_finite()
                     || !origin_mm[0].is_finite()
