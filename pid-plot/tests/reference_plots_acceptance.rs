@@ -174,10 +174,13 @@ const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 /// Largest mean width difference a lettering class may show, in body heights.
 ///
 /// Every class of ten or more labels on the eleven pages reads within
-/// ±0.092 (the widest is a `Left/Ascender` class on a 烃水露点 page). The A2
-/// `Left/Ascender` class read −0.320 while its 8 pt Arial line labels were
-/// lettered at the style size rather than the reference's `Tf 11.16`.
-const CLASS_ADVANCE_HEIGHTS: f64 = 0.10;
+/// ±0.009 (the widest is A2's `Center/Middle`). Every `Center` class read
+/// about +0.028 while an upright two-glyph run kept its natural advance
+/// rather than the whole-pixel `lpDx` steps the plotter spaces it by, and
+/// the A2 `Left/Ascender` class read −0.320 while its 8 pt Arial line
+/// labels were lettered at the style size rather than the reference's
+/// `Tf 11.16`.
+const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
 
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 

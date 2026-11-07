@@ -1307,9 +1307,9 @@ fn show_text(
     );
     let plate = permille * han_pitch;
     // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
-    // device font's natural width for a one- or two-glyph run, or the
-    // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`
-    // otherwise ([`run_advance`]) — at `plate`, the scale this whole label's
+    // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`,
+    // the device font's natural width only for a lone glyph or a rotated
+    // pair ([`run_advance`]) — at `plate`, the scale this whole label's
     // `Tm` carries: the same scale narrows every glyph's outline and its
     // advance together, which is why it belongs in `Tm` rather than folded
     // into the width this loop sums.
@@ -1343,6 +1343,7 @@ fn show_text(
             text.width_permille,
             plate,
             han_pitch == 1.0,
+            sin.abs() < 1e-9,
         );
         width_mm += advance.width_mm;
         // `Tc` is a graphics-state parameter: once set it adds to *every*
@@ -1463,8 +1464,8 @@ fn show_text(
     // along the same baseline — across a change of face, and across a change
     // of size, since the advance is the glyph width at the size in force.
     // `Tc` is a per-run correction ([`run_advance`]), so every run sets its
-    // own — including back to zero for a one- or two-glyph run that follows
-    // one that needed it.
+    // own — including back to zero for a lone glyph that follows one that
+    // needed it.
     for (size, face, bytes, tc_pt) in &emitted {
         ops.push(Op::new("Tc", vec![Object::Real(*tc_pt)]));
         ops.push(Op::new(
@@ -1877,16 +1878,24 @@ fn reference_advance_px(key: &str, code: u32, width_em: f64, cell: f64, wf_scale
 
 /// One run's letter-spacing and glyph advances, `render.dll`'s way.
 ///
-/// `n < 3` is the `ExtTextOutW(lpDx = NULL)` path: every glyph keeps its
-/// device font's own natural advance and `Tc` is `0`. `n >= 3` instead
-/// drives each glyph's advance from the 72-unit reference font
-/// ([`reference_advance_px`], narrowed by [`wf_reference_scale`] when the
-/// style states a character width) scaled by `a8` ([`reference_scale`]),
-/// rounded with the running error carried into the next glyph so the
-/// cumulative pixel position never drifts by more than one; `Tc` is the
-/// per-glyph correction (excluding the last glyph, which carries none) that
-/// makes a PDF reader's own glyph-width arithmetic land on the same `lpDx`
-/// the vendor wrote. Both `width_mm` and `tc_pt` are figured at `sx = 1` —
+/// Every glyph but the last advances by a whole 150 dpi pixel: its 72-unit
+/// reference-font advance ([`reference_advance_px`], narrowed by
+/// [`wf_reference_scale`] when the style states a character width) scaled by
+/// `a8` ([`reference_scale`]), rounded with the running error carried into
+/// the next glyph so the cumulative pixel position never drifts by more than
+/// one; `Tc` is the per-glyph correction (excluding the last glyph, which
+/// carries none) that makes a PDF reader's own glyph-width arithmetic land on
+/// the same `lpDx` the vendor wrote.
+///
+/// A two-glyph run is spaced the same way. `sub_1007EF20` only leaves `lpDx`
+/// out for a run under three glyphs whose justification bits are clear, and
+/// then GDI's own device-font advance is a whole pixel too — Arial Narrow's
+/// at a 24 px cell is `round(72 px advance × a8)` glyph for glyph — so the
+/// reference spaces all 1101 of its horizontal two-glyph runs by this rule
+/// (`docs/analysis/2026-11-07-every-label-miss-is-a-reference-font-rule-or-the-pixel-grid.md`).
+/// A single glyph has no gap to space, and a two-glyph run that is not
+/// `upright` keeps its natural advance: GDI does not hint a rotated device
+/// font, so there the two paths part. Both `width_mm` and `tc_pt` are figured at `sx = 1` —
 /// the one `Tm` horizontal scale the caller's whole label carries,
 /// `permille` and the borrowed-Han pitch alike, is what turns either into
 /// what actually lands on the page, the same way it turns every glyph's
@@ -1899,12 +1908,13 @@ fn reference_advance_px(key: &str, code: u32, width_em: f64, cell: f64, wf_scale
 /// borrowed-Han pitch ([`BORROWED_HAN_ADVANCE`]): `render.dll` never built
 /// that pitch, it is this crate's own stand-in for a face that cannot draw
 /// the string at all, so there is no 72-unit reference font for it either
-/// — treating it as `n < 3` keeps the run's own even spacing rather than
-/// feeding an invented ratio through a formula calibrated on real `lfWidth`
-/// values. See `docs/findings/2026-11-07-text-geometry-writer.md` §2.
+/// — such a run keeps its own even spacing rather than feeding an invented
+/// ratio through a formula calibrated on real `lfWidth` values. See
+/// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
 struct RunAdvance {
     /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
-    /// (`0` for `n < 3`); the caller's own `Tm` carries `sx` from here on.
+    /// (`0` for a single glyph); the caller's own `Tm` carries `sx` from
+    /// here on.
     tc_pt: f64,
     /// This run's total advance to the end of its last glyph, in
     /// millimetres, at `Tm`'s horizontal scale `1`; the caller's own `Tm`
@@ -1912,7 +1922,7 @@ struct RunAdvance {
     /// `lpDx`; the last glyph (drawn under its own `Tc = 0`, see
     /// [`last_glyph_byte_offset`]) advances by its own embedded-font natural
     /// width — not the reference font's `lpDx` reading of it, which this
-    /// field never folds in for `n ≥ 3`.
+    /// field never folds in.
     width_mm: f64,
 }
 
@@ -1929,10 +1939,12 @@ fn run_advance(
     width_permille: Option<u16>,
     sx: f64,
     reference_font_applies: bool,
+    upright: bool,
 ) -> RunAdvance {
     let codes = metrics.codes(bytes);
     let n = codes.len();
-    if n < 3 || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
+    let spaced = n >= 3 || (n == 2 && upright);
+    if !spaced || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
         return RunAdvance {
             tc_pt: 0.0,
             width_mm: run_width_mm(metrics, size_pt, bytes),
@@ -2139,13 +2151,13 @@ mod tests {
         (metrics, encoded)
     }
 
-    /// `ExtTextOutW(lpDx = NULL)` — `render.dll`'s path for a run under
-    /// three glyphs ([`super::run_advance`]) — keeps the device font's own
-    /// natural advance and sets no letter-spacing at all, so a two-glyph
-    /// run's `Tc` is exactly `0` and its width is exactly
-    /// [`super::run_width_mm`]'s, not an `lpDx`-rounded approximation of it.
+    /// An upright two-glyph run advances its first glyph by a whole 150 dpi
+    /// pixel, the same `lpDx` a longer run uses ([`super::run_advance`]):
+    /// the reference spaces `HS`, `LT` and every other horizontal pair that
+    /// way, `Tc −0.26` on Arial Narrow's `HS`, where lettering the pair at
+    /// its glyphs' own fractional advance left it 0.09 mm wide.
     #[test]
-    fn a_run_under_three_glyphs_keeps_its_natural_advance_with_no_letter_spacing() {
+    fn an_upright_two_glyph_run_is_spaced_like_a_longer_one() {
         let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB");
         let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
         let size_pt = super::plotted_size_pt(inter, crate::model::TextHeightBasis::Cap, 4.0);
@@ -2161,15 +2173,52 @@ mod tests {
             None,
             1.0,
             true,
+            true,
+        );
+        let codes = metrics.codes(&bytes);
+        let last_code = codes.last().expect("two codes").0;
+        let last_natural_mm = metrics.width(last_code) * size_pt / super::PT_PER_MM;
+        let leading_px = (advance.width_mm - last_natural_mm) * 150.0 / 25.4;
+        assert!(
+            (leading_px - leading_px.round()).abs() < 1e-6,
+            "the first glyph advances a whole 150 dpi pixel: {leading_px}"
+        );
+        assert_ne!(
+            advance.tc_pt, 0.0,
+            "a fractional natural advance is corrected onto that pixel"
+        );
+    }
+
+    /// A rotated pair is the one short run that keeps the device font's own
+    /// natural advance: GDI does not hint a rotated font, and the reference
+    /// letters a rotated `NC` a whole pixel off its `lpDx`.
+    #[test]
+    fn a_rotated_two_glyph_run_keeps_its_natural_advance() {
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let size_pt = super::plotted_size_pt(inter, crate::model::TextHeightBasis::Cap, 4.0);
+        let advance = super::run_advance(
+            "",
+            &metrics,
+            &bytes,
+            "AB",
+            inter,
+            crate::model::TextHeightBasis::Cap,
+            4.0,
+            size_pt,
+            None,
+            1.0,
+            true,
+            false,
         );
         assert_eq!(
             advance.tc_pt, 0.0,
-            "a two-glyph run states no letter-spacing"
+            "a rotated pair states no letter-spacing"
         );
         assert_eq!(
             advance.width_mm,
             super::run_width_mm(&metrics, size_pt, &bytes),
-            "a two-glyph run keeps every glyph's own natural advance"
+            "a rotated pair keeps every glyph's own natural advance"
         );
     }
 
@@ -2198,6 +2247,7 @@ mod tests {
             size_pt,
             None,
             1.0,
+            true,
             true,
         );
         assert_ne!(
@@ -3071,11 +3121,10 @@ mod tests {
     /// rather than a second copy of the formula.
     #[test]
     fn furniture_lettering_is_condensed_horizontally_and_keeps_its_height() {
-        // Two glyphs keep the device font's own natural advance
-        // (`n < 3`, [`super::run_advance`]), so the realised ratio matches
-        // [`super::permille_scale`] exactly rather than an `lpDx`-rounded
-        // approximation of it.
-        let value = "AB";
+        // A lone glyph has no gap to letter-space ([`super::run_advance`]),
+        // so the realised ratio matches [`super::permille_scale`] exactly
+        // rather than an `lpDx`-rounded approximation of it.
+        let value = "A";
         let shape = |y: f64, width_permille: Option<u16>| PaperShape::Text {
             origin_mm: [20.0, y],
             height_mm: Some(3.0),
@@ -3149,8 +3198,8 @@ mod tests {
     /// width, furniture and sheet alike: `1000` and no stated width both
     /// leave the face's own advance alone, and any other value narrows it
     /// by [`super::permille_scale`] — the same rule a sheet label (`900`
-    /// here) and a template label (`800`) both go through. Two glyphs stay
-    /// on the `n < 3` natural-advance path, so the realised ratio matches
+    /// here) and a template label (`800`) both go through. A lone glyph has
+    /// no gap to letter-space, so the realised ratio matches
     /// `permille_scale` exactly rather than an `lpDx`-rounded approximation.
     #[test]
     fn a_template_label_letters_at_the_width_its_style_states() {
@@ -3158,7 +3207,7 @@ mod tests {
             origin_mm: [20.0, y],
             height_mm: Some(3.0),
             rotation: 0.0,
-            value: "AB".to_string(),
+            value: "A".to_string(),
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
