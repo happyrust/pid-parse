@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### 53 张备份图 PSM 普查：没出图的记录除 EF 那颗点外都不带墨（2026-11-07）
+
+新增普查探针 `examples/probe_which_records_reach_no_page.rs`：53 张图的 Sheet 流（57 条 / 14 万条记录）、
+103 个图内缓存体、`RefData~4~682.zip` 的 10 个模板（Sheet 与缓存）、`RefData~4~681.zip` 的 644 个 `.sym`，
+每条没出图的记录按类型码 × 位置 × 原因入账，并给出放置去向（53 张图 9225 个放置全部取缓存体，库体 0）。
+结论文档 `docs/analysis/2026-11-07-every-undrawn-record-of-the-plant-backup-is-inkless.md`：带墨未出图的只有
+EF井场 那颗实心点（已修）；缓存体 40 条 `0x0115` 拒收是种类 3/4 尺寸、所在 `Dimension`/`Construction` 层被缓存体
+自己的视图过滤集关闭；6533 条缓存 `igPoint2d` 的样式都没有线端符号；`0x0021` 在 D04、CCHB 模板、CPE-SQ 缓存里都
+是关联记录、笔画成员各自出图，`0x8000` 标记的成员是 `0x0019 KeyPoint Constraint`；模板的 `0x0020` 矩形四边都是
+活的 `igLine2d`、`0x007B` 只把两只矩形编组。另一个探针
+`pid-plot/examples/probe_does_the_reference_print_a_retired_record.rs` 把 11 张参考图对应 `.pid` 里 237 条带
+`0x8000` 的记录当活记录放上页逐条核对：参考图画了而我方没画的为 0（两边都不画的线 34 条、圆 1、线串 12、文字 117；
+其余压在活记录下或同点有活放置）。`.sym` 库读取器另有三处缺口（会画 280 条 `0x8000` 旧副本、不读根
+`/PSMcluster0` 里的 199 条图元、读不了 17 条 `0x68`/`0x74` 成员的边界），因 53 张图不用库体，本次只记录不修。
+
 ### 普查沿流自己的记录链走：0x2C90 / 0x3D00 等无类名码是普查的幻影（2026-11-07）
 
 `undecoded_census::unclaimed_counts`（三份 Sheet 普查共用）此前从字节 0 起
