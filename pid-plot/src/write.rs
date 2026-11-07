@@ -1293,11 +1293,11 @@ fn show_text(
     // `Tf 8.16` under a 0.809 horizontal scale, the template's own styles
     // state the same `800` and letter at 0.742..0.797 across their nine
     // heights. See [`permille_scale`].
-    let scale_heights = faces
+    let named_face = faces
         .iter()
         .find(|face| face.key == text.typeface)
-        .or_else(|| runs.first().map(|(_, face, ..)| *face))
-        .map_or(FaceHeights::ARIAL, |face| face.heights);
+        .or_else(|| runs.first().map(|(_, face, ..)| *face));
+    let scale_heights = named_face.map_or(FaceHeights::ARIAL, |face| face.heights);
     let permille = permille_scale(
         text.typeface,
         scale_heights,
@@ -1368,36 +1368,35 @@ fn show_text(
         }
     }
     let laid_out_mm = width_mm * plate;
-    // The anchor places a box as wide as the stored run, its trailing pad
-    // included, and the paragraph sets the trimmed glyphs inside it — so
-    // they move by the pad's own advance times how far the paragraph's
-    // alignment sits from the anchor's, and the pad itself is not drawn.
-    // The two L M line numbers `25-CI-…-B8- ` (left anchor, right
-    // paragraph) start one Arial Narrow space right of the insertion, and
-    // the CCHB A2 company name (centre anchor, left paragraph) starts half
-    // a space left of where its trimmed glyphs would centre.
+    // The anchor hangs a box from the insertion point as wide as the stored
+    // run, its trailing pad included, and the paragraph sets the trimmed line
+    // inside it. Both widths are the reference font's
+    // ([`reference_extent_mm`]), not the widths the glyphs are laid out at. A
+    // paragraph that sits where the anchor does leaves the line where the box
+    // is; any other moves it by the pad times how far the paragraph's
+    // alignment sits from the anchor's, and the pad itself is not drawn. The
+    // two L M line numbers `25-CI-…-B8- ` (left anchor, right paragraph)
+    // start one Arial Narrow space right of the insertion, and the CCHB A2
+    // company name (centre anchor, left paragraph) starts half a space left
+    // of where its trimmed glyphs would centre. The pad is the record's own
+    // characters in the face its style names: `L=-18℃ ` letters its `℃`
+    // in a borrowed face, and that face's space is twice the Arial Narrow
+    // one the plot measures.
+    let extent_mm = |value: &str| {
+        named_face.map(|face| {
+            reference_extent_mm(
+                face,
+                value,
+                text.height_basis,
+                height_mm,
+                text.width_permille,
+            )
+        })
+    };
+    let line_mm = extent_mm(inked).unwrap_or(laid_out_mm);
     let pad_mm = match text.paragraph {
         Some(paragraph) if paragraph != text.anchor => {
-            let kept = text.value.trim_end();
-            let pad = &text.value[kept.len()..];
-            // The pad is the record's own characters in the face its style
-            // names: `L=-18℃ ` letters its `℃` in a borrowed face, and that
-            // face's space is twice the Arial Narrow one the plot measures.
-            let named = faces.iter().find(|face| face.key == text.typeface).zip(
-                segments
-                    .iter()
-                    .rev()
-                    .find(|segment| segment.typeface == text.typeface)
-                    .map(|segment| segment.size_pt),
-            );
-            let pad_width_mm = named
-                .or_else(|| emitted.last().map(|(size_pt, face, ..)| (*face, *size_pt)))
-                .and_then(|(face, size_pt)| {
-                    face.metrics
-                        .encode(pad)
-                        .map(|bytes| run_width_mm(&face.metrics, size_pt, &bytes) * plate)
-                })
-                .unwrap_or(0.0);
+            let pad_width_mm = extent_mm(text.value).map_or(0.0, |box_mm| box_mm - line_mm);
             pad_width_mm * (anchor_fraction(paragraph) - anchor_fraction(text.anchor))
         }
         _ => 0.0,
@@ -1421,7 +1420,7 @@ fn show_text(
     // the sheet edge.
     let mut condense = 1.0;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
-        let start = baseline_origin(origin_mm, text.rotation, laid_out_mm, below_mm, text.anchor);
+        let start = baseline_origin(origin_mm, text.rotation, line_mm, below_mm, text.anchor);
         let reach = page_reach_mm(start, [cos, sin], page);
         if reach > 0.0 && laid_out_mm > reach {
             condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
@@ -1444,7 +1443,7 @@ fn show_text(
     let origin_mm = baseline_origin(
         origin_mm,
         text.rotation,
-        width_mm * scale,
+        line_mm * condense,
         below_mm,
         text.anchor,
     );
@@ -1876,6 +1875,69 @@ fn reference_advance_px(key: &str, code: u32, width_em: f64, cell: f64, wf_scale
     (width_em * 72.0 / cell).round() * wf_scale
 }
 
+/// `text`'s continuous advance in `face`'s 72-unit reference font, in
+/// millimetres on the page: what `GetTextExtentExPointA` measures on that
+/// font, times `a8` ([`reference_scale`]).
+///
+/// This is the width `sub_1000bcd0` hangs a label's box on before it spaces
+/// a single glyph, so every character is measured in the face the label
+/// names, whichever face letters it. Arial and Arial Narrow read
+/// [`ARIAL_72PX`] / [`ARIAL_NARROW_72PX`] and measure a character they do
+/// not carry as `?`, what the ANSI conversion in front of
+/// `GetTextExtentExPointA` turns it into: the A2 `动火点`, named Arial
+/// Narrow, centres on three `?` (−2.386 mm against the reference's
+/// −2.336 / −2.391). Every other face reads its own advance on the
+/// 72-pixel cell. The style's character width narrows the reference font
+/// itself ([`wf_reference_scale`]), the hinted tables included: the symbol
+/// bodies' `M`, Arial at `800`, centres on 1.795 mm, not on the table's
+/// 2.321.
+fn reference_extent_mm(
+    face: &ReadyFace<'_>,
+    text: &str,
+    basis: TextHeightBasis,
+    height_mm: f64,
+    width_permille: Option<u16>,
+) -> f64 {
+    let a8 = reference_scale(face.key, face.heights, basis, height_mm);
+    let wf_scale = wf_reference_scale(face.heights, width_permille);
+    let cell = face.heights.ascent + face.heights.descent;
+    let table = match face.key {
+        "Arial" => Some(&ARIAL_72PX),
+        "Arial Narrow" => Some(&ARIAL_NARROW_72PX),
+        _ => None,
+    };
+    let px: f64 = text
+        .chars()
+        .map(|glyph| {
+            if let Some(table) = table {
+                let ansi = if (' '..='~').contains(&glyph) {
+                    glyph
+                } else {
+                    '?'
+                };
+                let index = usize::try_from(u32::from(ansi) - 0x20).unwrap_or(0);
+                return table.get(index).map_or(0.0, |px| f64::from(*px)) * wf_scale;
+            }
+            let width_em = face
+                .metrics
+                .encode(glyph.encode_utf8(&mut [0; 4]))
+                .and_then(|bytes| {
+                    face.metrics
+                        .codes(&bytes)
+                        .first()
+                        .map(|(code, _)| face.metrics.width(*code))
+                })
+                .unwrap_or(0.0);
+            if cell > 0.0 {
+                (width_em * 72.0 / cell).round() * wf_scale
+            } else {
+                0.0
+            }
+        })
+        .sum();
+    px * a8 * 25.4 / PLOT_DPI
+}
+
 /// One run's letter-spacing and glyph advances, `render.dll`'s way.
 ///
 /// Every glyph but the last advances by a whole 150 dpi pixel: its 72-unit
@@ -2271,6 +2333,60 @@ mod tests {
         assert!(
             (leading_px - leading_px.round()).abs() < 1e-6,
             "the diffused leading portion lands on a whole 150 dpi pixel: {leading_px}"
+        );
+    }
+
+    /// A label's box is its stored value measured in the 72-unit reference
+    /// font of the face it names ([`super::reference_extent_mm`]): Arial
+    /// Narrow's hinted table for `120`, and `?` for the `℃` it does not
+    /// carry; the style's character width narrows the hinted table as it
+    /// narrows any face; every other face measures its own advance on the
+    /// 72-pixel cell.
+    #[test]
+    fn a_label_box_is_its_value_in_the_named_reference_font() {
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let face = |key: &'static str| super::ReadyFace {
+            key,
+            resource: String::new(),
+            metrics: metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB").0,
+            heights: inter,
+        };
+        let cap = crate::model::TextHeightBasis::Cap;
+        let ascent = crate::model::TextHeightBasis::Ascent;
+        let px_mm = 25.4 / super::PLOT_DPI;
+
+        let a8 = super::reference_scale("Arial Narrow", inter, cap, 2.5);
+        let narrow = face("Arial Narrow");
+        let measured = super::reference_extent_mm(&narrow, "120℃", cap, 2.5, None);
+        let expected = 4.0 * 28.0 * a8 * px_mm;
+        assert!(
+            (measured - expected).abs() < 1e-9,
+            "120℃ measures {measured} mm, `120?` is {expected}"
+        );
+
+        let wf = super::wf_reference_scale(inter, Some(800));
+        assert!(wf < 1.0, "800 narrows the reference font: {wf}");
+        let a8 = super::reference_scale("Arial", inter, ascent, 2.54);
+        let measured = super::reference_extent_mm(&face("Arial"), "M", ascent, 2.54, Some(800));
+        let expected = 53.0 * wf * a8 * px_mm;
+        assert!(
+            (measured - expected).abs() < 1e-9,
+            "M at 800 measures {measured} mm, the narrowed table {expected}"
+        );
+
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB");
+        let cell = inter.ascent + inter.descent;
+        let own_px: f64 = metrics
+            .codes(&bytes)
+            .iter()
+            .map(|(code, _)| (metrics.width(*code) * 72.0 / cell).round())
+            .sum();
+        let a8 = super::reference_scale("", inter, cap, 4.0);
+        let measured = super::reference_extent_mm(&face(""), "AB", cap, 4.0, None);
+        let expected = own_px * a8 * px_mm;
+        assert!(
+            (measured - expected).abs() < 1e-9,
+            "AB measures {measured} mm, its own advances {expected}"
         );
     }
 
@@ -2734,6 +2850,55 @@ mod tests {
         );
     }
 
+    /// A centred label hangs half its reference-font width left of the
+    /// insertion point and a right-aligned one all of it
+    /// ([`super::reference_extent_mm`]), not its laid-out width.
+    #[test]
+    fn centre_and_right_step_back_by_the_reference_width() {
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "ABA");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let size_pt = super::plotted_size_pt(inter, basis, 5.0);
+        let laid_out_mm = super::run_advance(
+            "", &metrics, &bytes, "ABA", inter, basis, 5.0, size_pt, None, 1.0, true, true,
+        )
+        .width_mm;
+        let face = super::ReadyFace {
+            key: "",
+            resource: String::new(),
+            metrics,
+            heights: inter,
+        };
+        let box_mm = super::reference_extent_mm(&face, "ABA", basis, 5.0, None);
+        assert!(
+            (box_mm - laid_out_mm).abs() > 0.02,
+            "the two widths must differ for this run to tell them apart: {box_mm} vs {laid_out_mm}"
+        );
+        let left = placed("ABA", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Bottom);
+        let centre = placed(
+            "ABA",
+            [80.0, 44.0],
+            0.0,
+            TextAnchor::Center,
+            TextLine::Bottom,
+        );
+        let right = placed(
+            "ABA",
+            [80.0, 68.0],
+            0.0,
+            TextAnchor::Right,
+            TextLine::Bottom,
+        );
+        for (start, fraction) in [(centre, 0.5), (right, 1.0)] {
+            let back = left[0] - start[0];
+            assert!(
+                (back - fraction * box_mm).abs() < 0.01,
+                "steps back {back:.4} mm, {fraction} of the reference width is {:.4} mm",
+                fraction * box_mm
+            );
+        }
+    }
+
     /// The vertical half of the anchor: the label letters below the point.
     ///
     /// The reference plots put the baseline 0.00 mm / 1.25 mm / 3.26 mm below
@@ -2842,9 +3007,20 @@ mod tests {
     /// a space, while every leading-pad tag's run starts with one, takes its
     /// letter spacing over all nine glyphs and is centred on that width: a
     /// centred run steps back half the pad further, a right-aligned one all
-    /// of it.
+    /// of it — the pad as the reference font measures it
+    /// ([`super::reference_extent_mm`]).
     #[test]
     fn a_leading_pad_is_lettered_and_a_trailing_one_is_not() {
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let reference_width = |value: &str| {
+            let face = super::ReadyFace {
+                key: "",
+                resource: String::new(),
+                metrics: metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value).0,
+                heights: inter,
+            };
+            super::reference_extent_mm(&face, value, crate::model::TextHeightBasis::Cap, 5.0, None)
+        };
         for (anchor, step) in [(TextAnchor::Center, 0.5), (TextAnchor::Right, 1.0)] {
             let tight = placed_span("WW", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
             let trailing = placed_span("WW ", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
@@ -2857,8 +3033,12 @@ mod tests {
                 leading.text, " WW",
                 "{anchor:?}: the leading pad is a glyph"
             );
-            let pad_mm = leading.advance_mm - tight.advance_mm;
-            assert!(pad_mm > 0.5, "{anchor:?}: the pad has an advance: {pad_mm}");
+            let lettered_mm = leading.advance_mm - tight.advance_mm;
+            assert!(
+                lettered_mm > 0.5,
+                "{anchor:?}: the pad has an advance: {lettered_mm}"
+            );
+            let pad_mm = reference_width(" ");
             assert!(
                 (leading.origin_mm[0] - (tight.origin_mm[0] - step * pad_mm)).abs() < 0.05,
                 "{anchor:?}: the pad counts in the width the anchor steps back by: \
@@ -3761,11 +3941,12 @@ mod tests {
         );
     }
 
-    /// The two A2 `动火点` labels are centred. The reference pitches that
-    /// borrowed run at 1.524 mm a glyph, so the baseline steps back by
-    /// `3 × 1.524 / 2` mm rather than by half of three ems. `120℃` is centred
-    /// in the same test and still steps back by its own em: the named face
-    /// draws the digits, so the pitch does not apply.
+    /// The two A2 `动火点` labels are centred, and the face they name, Arial
+    /// Narrow, carries none of the three characters: the box is three `?` in
+    /// its reference font ([`super::reference_extent_mm`]), and the reference
+    /// starts the run 2.336 / 2.391 mm left of the insertion, against 2.386
+    /// for the three `?` and 2.286 for half of the 1.524 mm pitch the glyphs
+    /// are lettered at. `120℃` is centred in the same test on `120?`.
     #[test]
     fn a_centred_borrowed_han_run_steps_back_by_the_reference_pitch() {
         let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -3831,40 +4012,36 @@ mod tests {
             .iter()
             .find(|span| span.text == "动火点" && span.origin_mm[0] > 70.0)
             .expect("the centred 动火点");
+        let px_mm = 25.4 / super::PLOT_DPI;
+        let a8 = super::reference_scale(
+            "Arial Narrow",
+            super::FaceHeights::ARIAL,
+            crate::model::TextHeightBasis::Cap,
+            2.5,
+        );
+        let ansi_px = |value: &str| -> f64 {
+            value
+                .bytes()
+                .map(|byte| f64::from(super::ARIAL_NARROW_72PX[usize::from(byte - b' ')]))
+                .sum()
+        };
+        let boxed = 100.0 - ansi_px("???") * a8 * px_mm / 2.0;
         let pitched = 100.0 - 3.0 * 1.524 / 2.0;
-        let full_em = 100.0 - 3.0 * 2.5 / 2.0;
         assert!(
-            (borrowed.origin_mm[0] - pitched).abs() < 0.05,
-            "left edge {:.3} mm, pitched {pitched:.3}, full em {full_em:.3}",
+            (borrowed.origin_mm[0] - boxed).abs() < 0.05,
+            "left edge {:.3} mm, three `?` centre it at {boxed:.3}, the pitch at {pitched:.3}",
             borrowed.origin_mm[0]
         );
-        let digits = ink
-            .spans
-            .iter()
-            .find(|span| span.text == "120" && span.origin_mm[0] < 70.0)
-            .expect("left-anchored digits");
-        let degree = ink
-            .spans
-            .iter()
-            .find(|span| {
-                span.text.contains('℃') && (span.origin_mm[1] - digits.origin_mm[1]).abs() < 1.0
-            })
-            .expect("the degree that follows the left-anchored digits");
         let centred_digits = ink
             .spans
             .iter()
             .find(|span| span.text == "120" && span.origin_mm[0] > 70.0)
             .expect("centred digits");
-        let em_width = degree.origin_mm[0] + degree.advance_mm - digits.origin_mm[0];
         let retreat = 100.0 - centred_digits.origin_mm[0];
+        let half_box = ansi_px("120?") * a8 * px_mm / 2.0;
         assert!(
-            (retreat - em_width / 2.0).abs() < 0.05,
-            "120℃ retreats {retreat:.3} mm, half its em is {:.3}",
-            em_width / 2.0
-        );
-        assert!(
-            (retreat - em_width / 2.0 * super::BORROWED_HAN_ADVANCE).abs() > 0.3,
-            "120℃ must not take the borrowed pitch"
+            (retreat - half_box).abs() < 0.05,
+            "120℃ retreats {retreat:.3} mm, half of `120?` is {half_box:.3}"
         );
     }
 }
