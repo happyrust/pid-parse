@@ -589,26 +589,41 @@ impl FaceHeights {
     }
 
     /// How far below the insertion point the baseline runs, as a multiple of
-    /// a style height that measures `basis`.
+    /// a style height that measures `basis`, for the face keyed `key`.
     ///
-    /// A cap-height style's middle and top are half and one style height
-    /// down by definition; its ascender line is the face's ascent over its cap
-    /// (Arial 1.264, Arial Narrow 1.288). An ascent style's ascender is one
-    /// style height; its middle and top are the face's cap over its ascent,
-    /// halved for the middle (Arial 0.396).
-    fn drop(self, line: TextLine, basis: TextHeightBasis) -> f64 {
-        let reference = match basis {
-            TextHeightBasis::Cap => self.cap,
-            TextHeightBasis::Ascent => self.ascent,
-        };
-        let line_height = match line {
+    /// `render.dll` reads every line off the same 72-unit reference font its
+    /// scale `a8` divides the style height by ([`reference_scale`]): the
+    /// middle is halfway between that font's ascent and descent, the top its
+    /// cap, the ascender its ascent and the descender its descent below, each
+    /// over the reading `basis` names. A face [`REFERENCE_CAP_PX`] carries
+    /// reads GDI's own pixels and the descent is the rest of the 72-pixel
+    /// cell; any other face puts its own tables on that cell, as
+    /// [`reference_scale`] does. So Arial's cap-height middle is 22/46 =
+    /// 0.478 of the style height, not half, and SimSun's and FangSong's, 62
+    /// of whose 72 pixels are ascent, are 0.528 and 0.539.
+    fn drop(self, key: &str, line: TextLine, basis: TextHeightBasis) -> f64 {
+        let cell = (self.ascent + self.descent).max(1e-9);
+        let cap72 = reference_cap_px(key, TextHeightBasis::Cap)
+            .unwrap_or(72.0 * self.stated_cap.unwrap_or(UNSTATED_CAP_EM) / cell);
+        let asc72 =
+            reference_cap_px(key, TextHeightBasis::Ascent).unwrap_or(72.0 * self.ascent / cell);
+        let desc72 = 72.0 - asc72;
+        let line72 = match line {
             TextLine::Bottom => 0.0,
-            TextLine::Middle => self.cap / 2.0,
-            TextLine::Top => self.cap,
-            TextLine::Ascender => self.ascent,
-            TextLine::Descender => -self.descent,
+            TextLine::Middle => (asc72 - desc72) / 2.0,
+            TextLine::Top => cap72,
+            TextLine::Ascender => asc72,
+            TextLine::Descender => -desc72,
         };
-        line_height / reference
+        let measures = match basis {
+            TextHeightBasis::Cap => cap72,
+            TextHeightBasis::Ascent => asc72,
+        };
+        if measures > 0.0 {
+            line72 / measures
+        } else {
+            0.0
+        }
     }
 }
 
@@ -1409,7 +1424,8 @@ fn show_text(
     // is read off that face; a label whose named face draws none of it takes
     // the face that does — the same face [`permille_scale`] already sized
     // the run's width from.
-    let below_mm = height_mm * scale_heights.drop(text.line, text.height_basis);
+    let scale_key = named_face.map_or("Arial", |face| face.key);
+    let below_mm = height_mm * scale_heights.drop(scale_key, text.line, text.height_basis);
     // A run the page still cannot hold loses its tail to the page box, so it
     // is condensed along its own direction until it fits: the template states
     // the label and the page states its edge, and keeping every glyph on the
@@ -2903,12 +2919,16 @@ mod tests {
     ///
     /// The reference plots put the baseline 0.00 mm / 1.25 mm / 3.26 mm below
     /// a 2.5 mm body's insertion point, one mode per class, so the step is
-    /// measured against the body size and not against the pen. A sheet top
-    /// stops on the face's ascender line: its ascent over its cap height of
-    /// a cap-height body.
+    /// measured against the body size and not against the pen. Each line is
+    /// the reference font's ([`super::FaceHeights::drop`]): the top one body
+    /// down, the middle and the ascender where that font's own heights put
+    /// them.
     #[test]
     fn middle_and_top_step_down_across_the_baseline() {
         let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let middle_mm = 5.0 * inter.drop("", TextLine::Middle, cap);
+        let ascender_mm = 5.0 * inter.drop("", TextLine::Ascender, cap);
         let bottom = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Bottom);
         let middle = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Middle);
         let top = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Top);
@@ -2920,12 +2940,18 @@ mod tests {
             TextLine::Ascender,
         );
         assert!((bottom[1] - 20.0).abs() < 0.05, "bottom {}", bottom[1]);
-        assert!((middle[1] - 17.5).abs() < 0.05, "middle {}", middle[1]);
+        assert!(
+            (middle[1] - (20.0 - middle_mm)).abs() < 0.01,
+            "middle {} against {}",
+            middle[1],
+            20.0 - middle_mm
+        );
         assert!((top[1] - 15.0).abs() < 0.05, "top {}", top[1]);
         assert!(
-            (ascender[1] - (20.0 - 5.0 * inter.ascent / inter.cap)).abs() < 0.05,
-            "ascender {}",
-            ascender[1]
+            (ascender[1] - (20.0 - ascender_mm)).abs() < 0.01,
+            "ascender {} against {}",
+            ascender[1],
+            20.0 - ascender_mm
         );
         for (name, point) in [
             ("bottom", bottom),
@@ -2936,7 +2962,6 @@ mod tests {
             assert!((point[0] - bottom[0]).abs() < 0.05, "{name} moved along x");
         }
         // Rotated a quarter turn the run climbs +Y, so the step lands on +X.
-        // `placed` states a 5 mm body, so the middle step is 2.5 mm.
         let turned = std::f64::consts::FRAC_PI_2;
         let upright = placed(
             "WW",
@@ -2953,35 +2978,71 @@ mod tests {
             TextLine::Middle,
         );
         assert!(
-            (dropped[0] - (upright[0] + 2.5)).abs() < 0.1,
+            (dropped[0] - (upright[0] + middle_mm)).abs() < 0.1,
             "turned {dropped:?}"
         );
         assert!((dropped[1] - upright[1]).abs() < 0.1, "turned {dropped:?}");
     }
 
-    /// The insertion line's depth is a height of the face, measured in the
-    /// height the style states.
+    /// The insertion line's depth is a line of the face's 72-unit reference
+    /// font, measured in the height the style states.
     ///
-    /// A cap-height style (`0x0D`, every drawing-sheet label) hangs its middle
-    /// and top half and one style height down by definition, and its ascender
-    /// line at Arial's 0.905 / 0.716 = 1.264 — the 1.267 the A0/A1 sheets'
-    /// 192 Arial ascender labels measure. An ascent style (`0x0C`, the valve
-    /// and motor `M`) is one style height to its ascender line, and its
-    /// middle is Arial's cap over twice its ascent, 0.396 — the reference's
-    /// `M` baselines sit 0.37–0.45 style heights below their insertion.
+    /// Arial's 72-pixel font is 58 pixels of ascent, 14 of descent and 46 of
+    /// cap, so a cap-height style hangs its middle 22/46 of a style height
+    /// down and its ascender line 58/46 — the 266 Arial `0x01` labels on
+    /// the eleven reference plots sit 1.258 style heights down. SimSun and
+    /// FangSong are 62 pixels of ascent: their middles are 26/49.2 and
+    /// 26/48.2, where the reference letters the 115 SimSun template middles
+    /// (0.525) and the 121 FangSong `0x05` labels (0.538). A face the table
+    /// does not carry puts its own tables on the same 72-pixel cell.
     #[test]
     fn the_line_depth_is_a_height_of_the_face() {
         use crate::model::TextHeightBasis::{Ascent, Cap};
         let arial = super::FaceHeights::ARIAL;
-        let close = |got: f64, want: f64| (got - want).abs() < 2e-3;
-        assert!(close(arial.drop(TextLine::Bottom, Cap), 0.0));
-        assert!(close(arial.drop(TextLine::Middle, Cap), 0.5));
-        assert!(close(arial.drop(TextLine::Top, Cap), 1.0));
-        assert!(close(arial.drop(TextLine::Ascender, Cap), 1.264));
-        assert!(close(arial.drop(TextLine::Descender, Cap), -0.296));
-        assert!(close(arial.drop(TextLine::Middle, Ascent), 0.396));
-        assert!(close(arial.drop(TextLine::Top, Ascent), 0.791));
-        assert!(close(arial.drop(TextLine::Ascender, Ascent), 1.0));
+        let close = |got: f64, want: f64| (got - want).abs() < 1e-9;
+        assert!(close(arial.drop("Arial", TextLine::Bottom, Cap), 0.0));
+        assert!(close(
+            arial.drop("Arial", TextLine::Middle, Cap),
+            22.0 / 46.0
+        ));
+        assert!(close(arial.drop("Arial", TextLine::Top, Cap), 1.0));
+        assert!(close(
+            arial.drop("Arial", TextLine::Ascender, Cap),
+            58.0 / 46.0
+        ));
+        assert!(close(
+            arial.drop("Arial", TextLine::Descender, Cap),
+            -14.0 / 46.0
+        ));
+        assert!(close(
+            arial.drop("Arial", TextLine::Middle, Ascent),
+            22.0 / 58.0
+        ));
+        assert!(close(
+            arial.drop("Arial", TextLine::Top, Ascent),
+            46.0 / 58.0
+        ));
+        assert!(close(arial.drop("Arial", TextLine::Ascender, Ascent), 1.0));
+        assert!(close(
+            arial.drop("Arial Narrow", TextLine::Middle, Cap),
+            0.5
+        ));
+        assert!(close(
+            arial.drop("Arial Narrow", TextLine::Ascender, Cap),
+            58.0 / 44.0
+        ));
+        assert!(close(
+            arial.drop("SimSun", TextLine::Middle, Cap),
+            26.0 / 49.2
+        ));
+        assert!(close(
+            arial.drop("FangSong", TextLine::Middle, Cap),
+            26.0 / 48.2
+        ));
+
+        let unlisted = arial.drop("", TextLine::Middle, Cap);
+        let own = (arial.ascent - arial.descent) / 2.0 / arial.cap;
+        assert!(close(unlisted, own), "{unlisted} against {own}");
     }
 
     /// The heights come off the face's own tables, with the top of `H`
