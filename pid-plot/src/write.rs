@@ -1323,8 +1323,8 @@ fn show_text(
     let plate = permille * han_pitch;
     // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
     // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`,
-    // the device font's natural width only for a lone glyph or a rotated
-    // pair ([`run_advance`]) — at `plate`, the scale this whole label's
+    // the device font's natural width only for a lone glyph and, rounded to
+    // the pixel, a rotated pair ([`run_advance`]) — at `plate`, the scale this whole label's
     // `Tm` carries: the same scale narrows every glyph's outline and its
     // advance together, which is why it belongs in `Tm` rather than folded
     // into the width this loop sums.
@@ -1336,7 +1336,7 @@ fn show_text(
     // hair off for `plate * condense` — only shows on a run the page
     // cannot hold at its stated width, already the rarest path through
     // this function.
-    let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>, f64)> = Vec::with_capacity(runs.len());
+    let mut emitted: Vec<LetteredPiece<'_, '_>> = Vec::with_capacity(runs.len());
     let mut width_mm = 0.0;
     for (size_pt, face, bytes, run_text) in runs {
         // `face.key`/`face.heights`, not `text.typeface`/`scale_heights`:
@@ -1376,10 +1376,10 @@ fn show_text(
             let tail = bytes[split..].to_vec();
             let mut head = bytes;
             head.truncate(split);
-            emitted.push((size_pt, face, head, advance.tc_pt));
-            emitted.push((size_pt, face, tail, 0.0));
+            emitted.push((size_pt, face, head, advance.tc_pt, Vec::new()));
+            emitted.push((size_pt, face, tail, 0.0, Vec::new()));
         } else {
-            emitted.push((size_pt, face, bytes, advance.tc_pt));
+            emitted.push((size_pt, face, bytes, advance.tc_pt, advance.steps_px));
         }
     }
     let laid_out_mm = width_mm * plate;
@@ -1480,17 +1480,31 @@ fn show_text(
     // of size, since the advance is the glyph width at the size in force.
     // `Tc` is a per-run correction ([`run_advance`]), so every run sets its
     // own — including back to zero for a lone glyph that follows one that
-    // needed it.
-    for (size, face, bytes, tc_pt) in &emitted {
+    // needed it. A rotated run instead sets each glyph on its own whole-pixel
+    // step ([`glyph_by_glyph`]).
+    for (size, face, bytes, tc_pt, steps_px) in &emitted {
         ops.push(Op::new("Tc", vec![Object::Real(*tc_pt)]));
         ops.push(Op::new(
             "Tf",
             vec![Object::name(&face.resource), Object::Real(*size)],
         ));
-        ops.push(Op::new(
-            "Tj",
-            vec![Object::String(PdfString::literal(bytes.clone()))],
-        ));
+        if steps_px.is_empty() {
+            ops.push(Op::new(
+                "Tj",
+                vec![Object::String(PdfString::literal(bytes.clone()))],
+            ));
+        } else {
+            ops.push(Op::new(
+                "TJ",
+                vec![Object::Array(glyph_by_glyph(
+                    &face.metrics,
+                    bytes,
+                    steps_px,
+                    *size,
+                    plate,
+                ))],
+            ));
+        }
     }
     ops.push(Op::new("ET", Vec::new()));
     Ok(())
@@ -1971,9 +1985,20 @@ fn reference_extent_mm(
 /// at a 24 px cell is `round(72 px advance × a8)` glyph for glyph — so the
 /// reference spaces all 1101 of its horizontal two-glyph runs by this rule
 /// (`docs/analysis/2026-11-07-every-label-miss-is-a-reference-font-rule-or-the-pixel-grid.md`).
-/// A single glyph has no gap to space, and a two-glyph run that is not
-/// `upright` keeps its natural advance: GDI does not hint a rotated device
-/// font, so there the two paths part. Both `width_mm` and `tc_pt` are figured at `sx = 1` —
+/// A single glyph has no gap to space. A two-glyph run that is not `upright`
+/// steps by the device font's own advance rounded to the pixel instead: GDI
+/// does not hint a rotated device font, so there the two paths part, and the
+/// reference letters a rotated Arial Narrow `NC` 13 px apart (`N`'s unhinted
+/// 12.54 px) where the hinted table reads 12.
+///
+/// A rotated run is not lettered as one string either. The reference splits
+/// it into glyphs, each under its own `Tm` at its cumulative step, so they
+/// land on whole pixels however the 1/2400 in grid rounds the `Tf`
+/// ([`plotted_size_pt`]); such a run comes back with `steps_px` and no
+/// `tc_pt`, for [`glyph_by_glyph`]. An upright run keeps the one `Tj` and
+/// `Tc` the reference writes for it, that grid's drift included.
+///
+/// Both `width_mm` and `tc_pt` are figured at `sx = 1` —
 /// the one `Tm` horizontal scale the caller's whole label carries,
 /// `permille` and the borrowed-Han pitch alike, is what turns either into
 /// what actually lands on the page, the same way it turns every glyph's
@@ -2002,6 +2027,11 @@ struct RunAdvance {
     /// width — not the reference font's `lpDx` reading of it, which this
     /// field never folds in.
     width_mm: f64,
+    /// The whole-pixel step each glyph but the last takes, in 150 dpi
+    /// pixels at `Tm`'s horizontal scale `sx`, for a run the reference
+    /// letters glyph by glyph: a rotated one ([`glyph_by_glyph`]). Empty for
+    /// a run lettered as one string under `tc_pt`.
+    steps_px: Vec<i64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2021,23 +2051,33 @@ fn run_advance(
 ) -> RunAdvance {
     let codes = metrics.codes(bytes);
     let n = codes.len();
-    let spaced = n >= 3 || (n == 2 && upright);
-    if !spaced || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
-        return RunAdvance {
-            tc_pt: 0.0,
-            width_mm: run_width_mm(metrics, size_pt, bytes),
-        };
+    let natural = || RunAdvance {
+        tc_pt: 0.0,
+        width_mm: run_width_mm(metrics, size_pt, bytes),
+        steps_px: Vec::new(),
+    };
+    if n < 2 || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
+        return natural();
     }
     let cell = heights.ascent + heights.descent;
     let Some(cell_px) = whole_pixel_cell(heights, basis, height_mm) else {
+        return natural();
+    };
+    let em_px = cell_px / cell;
+    let widths_em: Vec<f64> = codes.iter().map(|(code, _)| metrics.width(*code)).collect();
+    if n == 2 && !upright {
+        #[allow(clippy::cast_possible_truncation)]
+        let step = (widths_em[0] * em_px * sx).round() as i64;
+        #[allow(clippy::cast_precision_loss)]
+        let width_mm = step as f64 * 25.4 / PLOT_DPI / sx + widths_em[1] * size_pt / PT_PER_MM;
         return RunAdvance {
             tc_pt: 0.0,
-            width_mm: run_width_mm(metrics, size_pt, bytes),
+            width_mm,
+            steps_px: vec![step],
         };
-    };
+    }
     let a8 = reference_scale(key, heights, basis, height_mm);
     let wf_scale = wf_reference_scale(heights, width_permille);
-    let em_px = cell_px / cell;
     // `reference_advance_px` keys the hinted Arial/Arial Narrow tables on
     // the glyph's own *Unicode* codepoint — the table is GDI's reading of
     // `0x20..=0x7E` — but `codes` are this run's *embedded* encoding
@@ -2051,10 +2091,7 @@ fn run_advance(
     let mut float_acc = 0.0;
     let mut int_acc: i64 = 0;
     let mut lp_dx = Vec::with_capacity(n);
-    let mut widths_em = Vec::with_capacity(n);
-    for (code, _) in &codes {
-        let width_em = metrics.width(*code);
-        widths_em.push(width_em);
+    for ((code, _), &width_em) in codes.iter().zip(&widths_em) {
         let unicode = chars.next().map_or(*code, u32::from);
         // `lpDx_i = round(Δref_i × a8)`, each glyph's own step rounded on
         // its own — not the running total rounded once per glyph, which
@@ -2087,7 +2124,8 @@ fn run_advance(
     #[allow(clippy::cast_precision_loss)]
     let tc_pt = (leading_px - embedded_px) / (n - 1) as f64 * (72.0 / PLOT_DPI) / sx;
     // The page renders the first `n - 1` glyphs at `leading_px` (that is
-    // what `tc_pt` was solved to make them do) and the last glyph at its
+    // what `tc_pt` was solved to make them do, and where [`glyph_by_glyph`]
+    // sets a rotated run's) and the last glyph at its
     // own embedded-font natural width, under `Tc = 0`
     // ([`last_glyph_byte_offset`]'s split) — not at the reference font's
     // own `lp_dx` reading of it, which `widths_em[n - 1]` never enters.
@@ -2095,7 +2133,19 @@ fn run_advance(
     // reference font's own rounding on the glyph that is never drawn
     // under its correction.
     let width_mm = leading_px * 25.4 / PLOT_DPI / sx + widths_em[n - 1] * size_pt / PT_PER_MM;
-    RunAdvance { tc_pt, width_mm }
+    if upright {
+        return RunAdvance {
+            tc_pt,
+            width_mm,
+            steps_px: Vec::new(),
+        };
+    }
+    lp_dx.truncate(n - 1);
+    RunAdvance {
+        tc_pt: 0.0,
+        width_mm,
+        steps_px: lp_dx,
+    }
 }
 
 /// The byte offset where `bytes`' last glyph starts, or `None` for a run of
@@ -2114,6 +2164,41 @@ fn last_glyph_byte_offset(metrics: &Metrics, bytes: &[u8]) -> Option<usize> {
     }
     let last_len = codes.last()?.1;
     bytes.len().checked_sub(last_len)
+}
+
+/// One piece of a label as the page letters it: its size, its face, its
+/// bytes, its `Tc`, and the whole-pixel steps a rotated run is set at
+/// ([`glyph_by_glyph`]; empty for a run shown as one string).
+type LetteredPiece<'f, 'a> = (f64, &'f ReadyFace<'a>, Vec<u8>, f64, Vec<i64>);
+
+/// A rotated run's `TJ` array: each glyph but the last followed by the
+/// adjustment that moves the next one onto its own whole-pixel step
+/// ([`RunAdvance::steps_px`]), the way the reference sets every glyph of a
+/// rotated run under its own `Tm`. A `TJ` number is thousandths of the `Tf`
+/// em taken off the glyph's own advance, so each step lands on its pixel
+/// whatever the 1/2400 in grid did to `size_pt`; `sx` is the horizontal
+/// scale of the label's `Tm` the steps were figured at.
+fn glyph_by_glyph(
+    metrics: &Metrics,
+    bytes: &[u8],
+    steps_px: &[i64],
+    size_pt: f64,
+    sx: f64,
+) -> Vec<Object> {
+    let mut array = Vec::with_capacity(2 * steps_px.len() + 1);
+    let mut at = 0;
+    for (index, (code, len)) in metrics.codes(bytes).into_iter().enumerate() {
+        array.push(Object::String(PdfString::literal(
+            bytes[at..at + len].to_vec(),
+        )));
+        at += len;
+        if let Some(&step) = steps_px.get(index) {
+            #[allow(clippy::cast_precision_loss)]
+            let step_em = step as f64 * (72.0 / PLOT_DPI) / (size_pt * sx);
+            array.push(Object::Real(1000.0 * (metrics.width(code) - step_em)));
+        }
+    }
+    array
 }
 
 /// The cap height, in em, the plotter assumes for a face whose `OS/2` table
@@ -2267,37 +2352,94 @@ mod tests {
         );
     }
 
-    /// A rotated pair is the one short run that keeps the device font's own
-    /// natural advance: GDI does not hint a rotated font, and the reference
-    /// letters a rotated `NC` a whole pixel off its `lpDx`.
+    /// A rotated pair steps by the device font's own advance rounded to the
+    /// pixel ([`super::run_advance`]): GDI does not hint a rotated font, and
+    /// the reference letters a rotated Arial Narrow `NC` 13 px apart, `N`'s
+    /// unhinted 12.54 px, where the hinted `lpDx` reads 12.
     #[test]
-    fn a_rotated_two_glyph_run_keeps_its_natural_advance() {
+    fn a_rotated_two_glyph_run_steps_by_its_rounded_natural_advance() {
         let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "AB");
         let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
-        let size_pt = super::plotted_size_pt(inter, crate::model::TextHeightBasis::Cap, 4.0);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let size_pt = super::plotted_size_pt(inter, cap, 4.0);
         let advance = super::run_advance(
-            "",
-            &metrics,
-            &bytes,
-            "AB",
-            inter,
-            crate::model::TextHeightBasis::Cap,
-            4.0,
-            size_pt,
-            None,
-            1.0,
-            true,
-            false,
+            "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, true, false,
         );
         assert_eq!(
             advance.tc_pt, 0.0,
             "a rotated pair states no letter-spacing"
         );
+        let codes = metrics.codes(&bytes);
+        let cell_px = super::whole_pixel_cell(inter, cap, 4.0).expect("a cell");
+        let natural_px = metrics.width(codes[0].0) * cell_px / (inter.ascent + inter.descent);
+        #[allow(clippy::cast_possible_truncation)]
+        let rounded = natural_px.round() as i64;
         assert_eq!(
-            advance.width_mm,
-            super::run_width_mm(&metrics, size_pt, &bytes),
-            "a rotated pair keeps every glyph's own natural advance"
+            advance.steps_px,
+            vec![rounded],
+            "the first glyph steps its natural {natural_px} px rounded"
         );
+        let last_natural_mm = metrics.width(codes[1].0) * size_pt / super::PT_PER_MM;
+        let expected_mm = natural_px.round() * 25.4 / 150.0 + last_natural_mm;
+        assert!(
+            (advance.width_mm - expected_mm).abs() < 1e-9,
+            "the pair is that step and the last glyph's own width: {} against {expected_mm}",
+            advance.width_mm
+        );
+    }
+
+    /// A rotated run is lettered glyph by glyph, the way the reference sets
+    /// each of `40-WO-1001405-B5-EH40`'s 21 glyphs under its own `Tm` at the
+    /// cumulative `lpDx`: one `Tj` under `Tc` drifts with the 1/2400 in grid
+    /// its `Tf` is rounded to, while the `TJ` adjustments land every glyph on
+    /// the whole-pixel step an upright run of the same glyphs reads.
+    #[test]
+    fn a_rotated_run_sets_every_glyph_on_its_own_pixel() {
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "ABAB");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let size_pt = super::plotted_size_pt(inter, cap, 4.0);
+        let sx = 0.9;
+        let advance = |upright| {
+            super::run_advance(
+                "", &metrics, &bytes, "ABAB", inter, cap, 4.0, size_pt, None, sx, true, upright,
+            )
+        };
+        let (rotated, upright) = (advance(false), advance(true));
+        assert_eq!(rotated.tc_pt, 0.0, "a rotated run states no letter-spacing");
+        assert!(
+            upright.steps_px.is_empty(),
+            "an upright run stays one string"
+        );
+        assert_eq!(
+            rotated.steps_px.len(),
+            3,
+            "every glyph but the last takes a step"
+        );
+        assert!(
+            (rotated.width_mm - upright.width_mm).abs() < 1e-9,
+            "both orientations read the same lpDx"
+        );
+        let array = super::glyph_by_glyph(&metrics, &bytes, &rotated.steps_px, size_pt, sx);
+        let codes = metrics.codes(&bytes);
+        assert_eq!(
+            array.len(),
+            2 * codes.len() - 1,
+            "each glyph but the last is followed by its adjustment"
+        );
+        for (index, &step) in rotated.steps_px.iter().enumerate() {
+            let super::Object::Real(adjust) = &array[2 * index + 1] else {
+                panic!("glyph {index} is followed by its adjustment");
+            };
+            let landed_px =
+                (metrics.width(codes[index].0) - *adjust / 1000.0) * size_pt * sx * 150.0 / 72.0;
+            #[allow(clippy::cast_precision_loss)]
+            let step_px = step as f64;
+            assert!(
+                (landed_px - step_px).abs() < 1e-9,
+                "glyph {index} lands {landed_px} px, not {step}"
+            );
+        }
     }
 
     /// `n >= 3` instead rounds each glyph's *cumulative* reference-font
