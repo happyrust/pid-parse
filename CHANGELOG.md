@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### `0x0021 igBoundary2d` 同类的纯关联记录：D04 的那一条不丢墨（2026-11-11）
+
+`D04.pid` `/Sheet6 +2478`（`oid=62`，`bytes_to_follow=191`）是整个
+`pid-test-data` 语料里唯一一条 IGDS `0x0021`（`ComplexString Object`，
+`imagdex.dex`）记录。逐字节核对其成员列表（18 字节子头后 `01 06 00
+<member_count:u32> <f64 1.0>`，随后每 14 字节一组
+`u32 member_oid + 4×i16 + u16 tag`）：11 个成员里 6 个（`tag & 0x8000
+== 0`）的 oid 能在同一 Sheet 流解析出真实的 `igArc2d`（27/337/380/275）
+或 `igLine2d`（361/175）记录，另外 5 个（`tag & 0x8000 != 0`）解析不出
+任何 `igLine2d`/`igArc2d`/`igPoint2d`/`igCircle2d`。同一判别规律在
+`CPECCHB-SQ-A2.igr` 边框模板另外 3 条 `0x0021` 记录上同样成立。用
+`build_normalized_geometry` 核对，这 6 个几何成员的字节区间已经作为
+独立的 `Decoded` `Arc`/`Line` 实体出现在归一化输出里，与 `0x0021`
+是否解码无关——同 `0x0013 igBoundary2d` 一样是纯关联记录，不写专属
+解码器，不登记进 `SHEET_RECORD_FAMILIES`（该表每行都要求完整的
+`decode_into`/`record_count`/`decoded_ranges`，等于强制实现一个完整
+解码器，与「没丢墨就不写解码器」矛盾）。新增只读探针
+`examples/probe_0021_complexstring_members.rs` 留作审计轨迹。
+
+
 ### `igEllipticalArc2d`（0x007E）进 `.sym` 库体，`igEllipse2d`/`igEllipticalArc2d` 的 `ratio` 上限撤掉（2026-11-10）
 
 `igEllipticalArc2d`（0x007E）此前只在 A01 的两个缓存体里见到过
