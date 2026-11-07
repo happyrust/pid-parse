@@ -357,6 +357,10 @@ const PINS: [Pin; 11] = [
         // once it letters from the descender line. The other eleven stay out.
         // The template sits where the border frame places it, (0.388, 0.566)
         // mm off the origin, which pairs two more of its strokes.
+        // The logo's boundary arcs turn the way their direction byte says.
+        // The near-circles drawn before lent eight chords to the scallop
+        // strokes beside them; the short arcs pair four of their own, so
+        // the pen tally is four below the rings' 2794.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
         min_coverage: 0.9830,
@@ -364,7 +368,7 @@ const PINS: [Pin; 11] = [
         max_uncovered_mm: 206.766 + EXTRA_SLACK_MM,
         min_text_matched: 214,
         text_reference: 225,
-        min_pen_agreed: 2794,
+        min_pen_agreed: 2790,
         max_pen_differed: 0,
         missing_symbols: &[],
         whole: WholePage {
