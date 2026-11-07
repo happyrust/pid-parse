@@ -476,9 +476,14 @@ static CPECCHB_SQ_A1_LABELS: [PinnedLabel; 37] = [
 /// Its company-name cell is `中国石油工程建设有限公司 ` with a trailing space,
 /// which the A1 file's same cell does not carry; both are pinned as the files
 /// spell them.
+///
+/// `CPECC` follows the same ratio — 3.173864 mm against the A1 file's
+/// 2.244375 — because that is the height its run style states and the A2
+/// reference plot letters it at (`Tf 12.96`); the record scales its own
+/// direction pair to 1 mm, which no plot uses.
 static CPECCHB_SQ_A2_LABELS: [PinnedLabel; 36] = [
     ("CADD号", [399.494979, 3.731490], 3.535354),
-    ("CPECC", [398.236067, 91.605293], 1.000000),
+    ("CPECC", [398.236067, 91.605293], 3.173864),
     ("专业", [501.019500, 11.566782], 3.535354),
     (
         "中国石油工程建设有限公司 ",

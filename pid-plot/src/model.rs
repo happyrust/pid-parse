@@ -2884,14 +2884,21 @@ fn push_entity_with(
             // offsets — the same one a symbol label draws span by span, read
             // off the same `resolve_text_style` the symbol library calls.
             let partitions = sheet_text_spans(resolved, value);
-            let height_mm = if height.abs() > 1e-9 {
-                Some(height.abs() * MM_PER_METRE)
-            } else if let Some(millimetres) = styled
+            // The style the record resolves to states the height it letters
+            // at; the length a template scales its direction pair to is only
+            // the fallback for a record no style answers. The two agree on
+            // every template label but the CCHB logo's `CPECC`, which scales
+            // its pair to 1.0 mm while its run style states 3.174 mm (2.244 mm
+            // in `CPECCHBA2.igr`), and the A2 reference letters it at
+            // `Tf 12.96`, the 3.174 mm body.
+            let height_mm = if let Some(millimetres) = styled
                 .as_ref()
                 .map(pid_parse::style_link::ResolvedTextHeight::height_mm)
                 .filter(|millimetres| *millimetres > 0.0)
             {
                 Some(millimetres)
+            } else if height.abs() > 1e-9 {
+                Some(height.abs() * MM_PER_METRE)
             } else {
                 Some(0.0)
             };
