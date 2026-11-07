@@ -599,6 +599,17 @@ pub const TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET: usize = 35;
 /// See `docs/analysis/2026-08-22-four-labels-have-a-second-line.md`.
 pub const TEXT_PARA_LINE_SPACING_OFFSET: usize = 66;
 
+/// Offset of the line leading type, a `u16`, within a `JStyleTextPara`
+/// payload: what the [`TEXT_PARA_LINE_SPACING_OFFSET`] multiple multiplies.
+///
+/// Level: **native-reader**. `sub_100337A0` reads the `u32` at `+26` and keeps
+/// only its high half, this word, in the object slot `IJStyleTextParaImp`'s
+/// `GetLineLeading` (`sub_10033580`) returns beside the spacing multiple and
+/// `SetLineLeading` (`sub_10033EF0`) stores with it. The values are the
+/// vendor's `LeadingTypeConstants` ([`LineLeading`]): the corpus states `17`
+/// on the 10 pt device-tag paragraph and `18` on every other one.
+pub const TEXT_PARA_LINE_LEADING_OFFSET: usize = 28;
+
 /// Offset of the character height, an `f64` in metres, within a
 /// `JStyleTextChar` payload. Level: native-reader.
 pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
@@ -1241,6 +1252,9 @@ pub struct StyleRecord {
     /// Line spacing multiple, when this is a `JStyleTextPara` stating a
     /// plausible one.
     pub line_spacing: Option<f64>,
+    /// What [`Self::line_spacing`] multiplies, when this is a `JStyleTextPara`
+    /// stating a leading type [`LineLeading`] reads.
+    pub line_leading: Option<LineLeading>,
     /// `JStyleSimpleDashType` this record names, when it is a
     /// `JStyleSimpleLine` that draws dashed.
     ///
@@ -1382,6 +1396,41 @@ impl TextAlignment {
     }
 }
 
+/// What a paragraph's line spacing multiple multiplies: one of the vendor's
+/// `LeadingTypeConstants`, read at [`TEXT_PARA_LINE_LEADING_OFFSET`].
+///
+/// `Interop.RAD2D.dll` declares the whole set. Only its three `Fraction`
+/// values are read: they are the ones under which the spacing is a multiple,
+/// which is what [`TEXT_PARA_LINE_SPACING_OFFSET`] stores, and the corpus
+/// states two of them. `render.dll` branches on the same words where it lays a
+/// paragraph's lines out (`0x1004277B`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum LineLeading {
+    /// `igLinespacingFractionCap` (16): lines a multiple of the cap height
+    /// apart.
+    FractionCap,
+    /// `igLinespacingFractionAscender` (17): lines a multiple of the face's
+    /// ascent apart.
+    FractionAscender,
+    /// `igLinespacingFractionTile` (18): lines a multiple of the face's whole
+    /// cell, ascent and descent, apart.
+    FractionTile,
+}
+
+impl LineLeading {
+    /// Read the stated word, refusing anything the vendor's set does not name
+    /// as a fraction.
+    #[must_use]
+    pub fn from_stated(word: u16) -> Option<Self> {
+        match word {
+            16 => Some(Self::FractionCap),
+            17 => Some(Self::FractionAscender),
+            18 => Some(Self::FractionTile),
+            _ => None,
+        }
+    }
+}
+
 /// A text record's character style: the height it letters at, the colour and
 /// typeface it letters in, the side it letters from, and which style record
 /// they came from.
@@ -1427,6 +1476,13 @@ pub struct ResolvedTextHeight {
     /// every one of them states `1.5` while every single-line label states
     /// `1.0`.
     pub line_spacing: Option<f64>,
+    /// What [`Self::line_spacing`] multiplies, read at
+    /// [`TEXT_PARA_LINE_LEADING_OFFSET`] off the **paragraph** style like the
+    /// spacing itself, so `None` for the one-hop shape.
+    ///
+    /// A one-line label still needs it when it hangs from the middle of its
+    /// box: that box is one line pitch tall.
+    pub leading: Option<LineLeading>,
     /// Typeface the character style names, read at
     /// [`TEXT_CHAR_FONT_NAME_OFFSET`]. Carried verbatim, including the twelve
     /// corpus names the vendor damaged on the way out.
@@ -1575,6 +1631,7 @@ impl DocumentStyleTable {
                     text_char_reference: read_text_char_reference(type_code, payload),
                     text_alignment: read_text_alignment(type_code, payload),
                     line_spacing: read_line_spacing(type_code, payload),
+                    line_leading: read_line_leading(type_code, payload),
                     dash_reference: read_dash_reference(type_code, payload),
                     point_symbol_reference: read_reference_of(
                         type_code,
@@ -1936,6 +1993,7 @@ impl DocumentStyleTable {
             colour: char_style.text_colour,
             alignment: para.text_alignment,
             line_spacing: para.line_spacing,
+            leading: para.line_leading,
             font_name: char_style.font_name.clone(),
         })
     }
@@ -1962,6 +2020,7 @@ impl DocumentStyleTable {
             colour: char_style.text_colour,
             alignment: None,
             line_spacing: None,
+            leading: None,
             font_name: char_style.font_name.clone(),
         })
     }
@@ -2306,6 +2365,13 @@ fn read_line_spacing(type_code: u16, payload: &[u8]) -> Option<f64> {
         return None;
     }
     Some(multiple)
+}
+
+fn read_line_leading(type_code: u16, payload: &[u8]) -> Option<LineLeading> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_PARA {
+        return None;
+    }
+    LineLeading::from_stated(u16_at(payload, TEXT_PARA_LINE_LEADING_OFFSET)?)
 }
 
 fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
@@ -2769,6 +2835,8 @@ pub struct ResolvedTextStyle {
     pub alignment: Option<TextAlignment>,
     /// The paragraph's line spacing, read the same way.
     pub line_spacing: Option<f64>,
+    /// The paragraph's leading type, read the same way.
+    pub leading: Option<LineLeading>,
     /// The run partition, when it is worth drawing separately: `(first
     /// character, length, lettering)` per selector-1 run, in stored order,
     /// accumulated to char offsets.
@@ -2806,6 +2874,7 @@ impl ResolvedTextStyle {
             Some(run) => Some(ResolvedTextHeight {
                 alignment: self.alignment,
                 line_spacing: self.line_spacing,
+                leading: self.leading,
                 ..run.clone()
             }),
             None => self.paragraph.clone(),
@@ -2841,6 +2910,7 @@ pub(crate) fn resolve_text_style(
 ) -> Option<ResolvedTextStyle> {
     let paragraph = table.resolve_text_height(index);
     let (alignment, line_spacing) = table.paragraph_layout(index);
+    let leading = table.get(index).and_then(|para| para.line_leading);
     let selector_one: Vec<_> = runs.iter().filter(|run| run.selector == 1).collect();
     let mut spans: Vec<TextStyleSpan> = Vec::new();
     let (run, runs) = if selector_one.is_empty() {
@@ -2931,6 +3001,7 @@ pub(crate) fn resolve_text_style(
         runs,
         alignment,
         line_spacing,
+        leading,
         spans,
     })
 }
@@ -3539,6 +3610,59 @@ mod tests {
                 "stated {multiple}"
             );
         }
+    }
+
+    fn text_para_led(style_id: u32, names: u32, stated: u16) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = text_para(style_id, names);
+        payload[TEXT_PARA_LINE_LEADING_OFFSET..TEXT_PARA_LINE_LEADING_OFFSET + 2]
+            .copy_from_slice(&stated.to_le_bytes());
+        (type_code, payload)
+    }
+
+    /// The leading type rides the paragraph end of the walk with the spacing
+    /// it qualifies: `17` on the corpus's 10 pt device-tag paragraph, `18` on
+    /// every other one.
+    #[test]
+    fn a_paragraph_style_resolves_to_what_its_spacing_multiplies() {
+        for (stated, expected) in [
+            (16u16, LineLeading::FractionCap),
+            (17, LineLeading::FractionAscender),
+            (18, LineLeading::FractionTile),
+        ] {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_led(9, 4, stated),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+            let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+            assert_eq!(resolved.leading, Some(expected), "stated {stated}");
+            assert_eq!(resolved.style_id, 4, "the height still comes off the char");
+        }
+    }
+
+    /// The rest of the vendor's set names a leading, an absolute or a distance
+    /// rather than a fraction, so the paragraph's `+66` would not be a multiple
+    /// of anything under it. Those words are refused rather than guessed at,
+    /// as the `Shape` alignments are, and a character style reached without a
+    /// paragraph has none to state.
+    #[test]
+    fn a_leading_type_that_is_not_a_fraction_is_refused() {
+        for stated in [0u16, 1, 2, 32, 48, 49, 50] {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_led(9, 4, stated),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+            assert_eq!(
+                table.get(9).expect("defined").line_leading,
+                None,
+                "stated {stated}"
+            );
+        }
+        let data = stream(&[text_char_of_height(4, 0.003_175)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.resolve_text_height(4).expect("defined").leading, None);
     }
 
     #[test]

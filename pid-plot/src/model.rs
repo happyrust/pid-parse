@@ -22,7 +22,7 @@ use pid_parse::refdata_archive::{
     ArchiveFile, archive_members, read_archive_file, refdata_archives,
 };
 use pid_parse::style_link::{
-    LineStyleIndex, MarkerStroke, ResolvedLineStyle, ResolvedTextStyle, TextAlignment,
+    LineLeading, LineStyleIndex, MarkerStroke, ResolvedLineStyle, ResolvedTextStyle, TextAlignment,
     TextStyleIndex,
 };
 use pid_parse::symbol_library::{
@@ -801,6 +801,15 @@ pub enum TextLine {
     /// Valve Type 2.sym`'s `D` on the A2 and flash-drum A sheets letters
     /// 0.88 / 0.91 mm above its insertion at a 3.17 mm body, against 0.98.
     Descender,
+    /// The insertion point is halfway down the face's ascent: the baseline
+    /// runs half the ascent below the point.
+    ///
+    /// It is the middle of a one-line box whose paragraph spaces its lines by
+    /// the ascender; see [`TextLine::from_paragraph`]. The 59 Arial Narrow
+    /// 10 pt device tags on the acceptance sheets (`V-10019`, `P-10015B`)
+    /// letter 0.656 of a cap body below their insertion point, against Arial
+    /// Narrow's half ascent of 29/44 = 0.659.
+    HalfAscender,
 }
 
 impl TextLine {
@@ -844,6 +853,28 @@ impl TextLine {
             1 | 3 => Self::Ascender,
             2 => Self::Top,
             _ => Self::Middle,
+        }
+    }
+
+    /// The vertical hot point of an `igTextBox`, given what its paragraph's
+    /// line spacing multiplies.
+    ///
+    /// Nibble `8` is the vendor's `igVerticalShapeCenter`: the middle of the
+    /// box the paragraph's lines fill, which for one line is one line pitch
+    /// tall and hangs from the ascender line. A paragraph that spaces its
+    /// lines by the face's whole cell (`igLinespacingFractionTile`, every
+    /// corpus paragraph but one) puts that middle at the cell's middle,
+    /// [`Self::Middle`]; one that spaces them by the ascent
+    /// (`igLinespacingFractionAscender`, the 10 pt device-tag paragraph) puts
+    /// it half the ascent down, [`Self::HalfAscender`]. The 59 tags measure
+    /// 0.656 of a body against 0.659, where the cell middle left them 0.55 mm
+    /// high; the 7 pt tags beside them, same face and same code but spaced by
+    /// the tile, measure 0.497. Of the nibbles the corpus carries only `8`
+    /// names the box, so only it reads the leading.
+    fn from_paragraph(code: u8, leading: Option<LineLeading>) -> Self {
+        match (code & 0x0F, leading) {
+            (8, Some(LineLeading::FractionAscender)) => Self::HalfAscender,
+            _ => Self::from_anchor_code(code),
         }
     }
 
@@ -896,6 +927,7 @@ impl TextLine {
             Self::Top => Self::Bottom,
             Self::Ascender => Self::Descender,
             Self::Descender => Self::Ascender,
+            Self::HalfAscender => Self::HalfAscender,
         }
     }
 }
@@ -3022,7 +3054,10 @@ fn push_entity_with(
                         // keeps the record's own anchor code: `(code >> 4) % 3`
                         // is the horizontal hot point the insertion sits at.
                         anchor,
-                        line: TextLine::from_anchor_code(*anchor_code),
+                        line: TextLine::from_paragraph(
+                            *anchor_code,
+                            styled.as_ref().and_then(|style| style.leading),
+                        ),
                         height_basis: TextHeightBasis::from_mode(
                             styled.as_ref().and_then(|style| style.height_mode),
                         ),
@@ -3640,7 +3675,7 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{label_line_ranges, line_spans, sheet_text_spans};
-    use pid_parse::style_link::{MarkerStroke, TextAlignment};
+    use pid_parse::style_link::{LineLeading, MarkerStroke, TextAlignment};
     use pid_parse::symbol_library::{NameMiss, PrimitiveStyle, SymbolLettering, SymbolPrimitive};
     use pid_parse::{
         PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
@@ -4003,6 +4038,7 @@ mod tests {
             colour: None,
             alignment: None,
             line_spacing: None,
+            leading: None,
             font_name: Some(font.to_string()),
         };
         let mut styles = pid_parse::style_link::TextStyleIndex::new();
@@ -4014,6 +4050,7 @@ mod tests {
                 runs: TextRunStatus::Uniform,
                 alignment: None,
                 line_spacing: Some(1.5),
+                leading: None,
                 spans: vec![
                     TextStyleSpan {
                         start: 0,
@@ -4092,16 +4129,59 @@ mod tests {
                     colour: None,
                     alignment: None,
                     line_spacing,
+                    leading: None,
                     font_name: Some("仿宋".to_string()),
                 }),
                 run: None,
                 runs: TextRunStatus::NoRuns,
                 alignment: None,
                 line_spacing,
+                leading: None,
                 spans: Vec::new(),
             },
         );
         styles
+    }
+
+    /// The paragraph's leading reaches the label through the style index: a
+    /// `0x48` tag under an ascender-spaced paragraph letters half the ascent
+    /// down, and the same tag under a tile-spaced one, or one stating none,
+    /// keeps the cell middle.
+    #[test]
+    fn a_sheet_label_reads_its_paragraph_leading() {
+        let line_of = |leading: Option<LineLeading>| {
+            let mut styles = text_style(Some(1.0));
+            for style in styles.values_mut() {
+                style.leading = leading;
+                if let Some(paragraph) = style.paragraph.as_mut() {
+                    paragraph.leading = leading;
+                }
+            }
+            let mut record = note(0.0, "V-10019");
+            if let PidGraphicKind::Text { anchor_code, .. } = &mut record.kind {
+                *anchor_code = 0x48;
+            }
+            let mut out = Vec::new();
+            push_entity(
+                &mut out,
+                &record,
+                None,
+                &styles,
+                &pid_parse::style_link::LineStyleIndex::new(),
+                &pid_parse::style_link::FillIndex::new(),
+                &mut std::collections::HashSet::new(),
+            );
+            match out.first().map(|primitive| &primitive.shape) {
+                Some(PaperShape::Text { line, .. }) => *line,
+                other => panic!("one text: {other:?}"),
+            }
+        };
+        assert_eq!(
+            line_of(Some(LineLeading::FractionAscender)),
+            TextLine::HalfAscender
+        );
+        assert_eq!(line_of(Some(LineLeading::FractionTile)), TextLine::Middle);
+        assert_eq!(line_of(None), TextLine::Middle);
     }
 
     fn note(rotation: f64, value: &str) -> PidGraphicEntity {
@@ -4436,12 +4516,14 @@ mod tests {
                     colour: None,
                     alignment: Some(TextAlignment::Right),
                     line_spacing: None,
+                    leading: None,
                     font_name: Some("仿宋".to_string()),
                 }),
                 run: None,
                 runs: TextRunStatus::NoRuns,
                 alignment: Some(TextAlignment::Right),
                 line_spacing: None,
+                leading: None,
                 spans: Vec::new(),
             },
         );
@@ -4496,6 +4578,7 @@ mod tests {
                 colour: None,
                 alignment: Some(alignment),
                 line_spacing: Some(1.0),
+                leading: None,
                 font_name: Some("Arial".to_string()),
             };
             ResolvedTextStyle {
@@ -4504,6 +4587,7 @@ mod tests {
                 runs: TextRunStatus::NoRuns,
                 alignment: Some(alignment),
                 line_spacing: Some(1.0),
+                leading: None,
                 spans: Vec::new(),
             }
         };
@@ -4652,6 +4736,31 @@ mod tests {
         // ascender line a third of a body higher.
         assert_eq!(TextLine::from_anchor_code(0x12), TextLine::Top);
         assert_eq!(TextLine::from_anchor_code(0x11), TextLine::Ascender);
+    }
+
+    /// Nibble `8` hangs from the middle of the paragraph's box, one line pitch
+    /// tall: spaced by the ascender that is half the ascent down (the 10 pt
+    /// device tags), spaced by the tile it is the cell middle (the 7 pt tags in
+    /// the same face). The other nibbles name a line of their own and do not
+    /// read the leading.
+    #[test]
+    fn a_shape_centre_label_hangs_from_the_middle_of_its_paragraph_box() {
+        assert_eq!(
+            TextLine::from_paragraph(0x48, Some(LineLeading::FractionAscender)),
+            TextLine::HalfAscender
+        );
+        assert_eq!(
+            TextLine::from_paragraph(0x48, Some(LineLeading::FractionTile)),
+            TextLine::Middle
+        );
+        assert_eq!(TextLine::from_paragraph(0x48, None), TextLine::Middle);
+        for code in [0x40_u8, 0x41, 0x42, 0x45] {
+            assert_eq!(
+                TextLine::from_paragraph(code, Some(LineLeading::FractionAscender)),
+                TextLine::from_anchor_code(code),
+                "code {code:#04x}"
+            );
+        }
     }
 
     /// A symbol body's own labels keep the other reading: `0x13` — the `M`

@@ -595,7 +595,8 @@ impl FaceHeights {
     /// `render.dll` reads every line off the same 72-unit reference font its
     /// scale `a8` divides the style height by ([`reference_scale`]): the
     /// middle is halfway between that font's ascent and descent, the top its
-    /// cap, the ascender its ascent and the descender its descent below, each
+    /// cap, the ascender its ascent, the half ascender half of it and the
+    /// descender its descent below, each
     /// over the reading `basis` names. A face [`REFERENCE_CAP_PX`] carries
     /// reads GDI's own pixels and the descent is the rest of the 72-pixel
     /// cell; any other face puts its own tables on that cell, as
@@ -625,6 +626,7 @@ impl FaceHeights {
             TextLine::Top => cap72,
             TextLine::Ascender => asc72,
             TextLine::Descender => -desc72,
+            TextLine::HalfAscender => asc72 / 2.0,
         };
         let measures = match basis {
             TextHeightBasis::Cap => cap72,
@@ -3228,6 +3230,10 @@ mod tests {
         assert!(close(
             arial.drop("Arial Narrow", TextLine::Ascender, Cap),
             58.0 / 44.0
+        ));
+        assert!(close(
+            arial.drop("Arial Narrow", TextLine::HalfAscender, Cap),
+            29.0 / 44.0
         ));
         assert!(close(
             arial.drop("SimSun", TextLine::Middle, Cap),
