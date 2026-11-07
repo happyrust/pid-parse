@@ -559,6 +559,21 @@ const PEN_ON_MM: f64 = 0.08;
 /// a *different* width that far off stays a difference, so this never forgives
 /// a wrong pen, only a placement.
 const PEN_SAME_PEN_ON_MM: f64 = 0.20;
+/// How far a reference stroke may turn from ours and still carry it in the
+/// chain [`pen_pairs`] falls back on, as the absolute cosine of their angle:
+/// at least as much along our stroke as across it.
+///
+/// The plotter puts every vertex on its 1/150 in grid — each coordinate in a
+/// reference content stream is a whole multiple of 0.48 pt — so a small
+/// circle reaches the page as a polygon of a few snapped sides. The
+/// `Wellhead Christmas Tree 02` ring on I井场, r ≈ 1.06 mm, turns from 166° to
+/// 108° at one vertex, and our chord across that vertex runs 31° and 27° off
+/// the two sides. A stroke more than 45° off ours crosses it.
+const PEN_CHAIN_DOT: f64 = std::f64::consts::FRAC_1_SQRT_2;
+/// How far apart the points the chain checks along our stroke may be, paper
+/// millimetres: under a third of the plotter's 0.169 mm device unit, so a
+/// stretch of our stroke one unit long cannot fall between two checks.
+const PEN_CHAIN_STEP_MM: f64 = 0.05;
 
 /// A width in hundredths of a millimetre, which is the resolution both readers
 /// state and keeps the tally free of float keys.
@@ -599,6 +614,93 @@ fn is_sub_piece(
     })
 }
 
+/// What the reference prints along one of our strokes, point by point.
+enum Chain {
+    /// Every point lies within [`PEN_SAME_PEN_ON_MM`] of a reference stroke of
+    /// our width running along it.
+    SamePen,
+    /// Every point lies on a reference stroke running along it, but some only
+    /// on another pen's, within [`PEN_ON_MM`]: the width most of those points
+    /// lie on.
+    OtherPen(u64),
+    /// Some point lies on no reference stroke running along it.
+    Off,
+}
+
+/// Whether our stroke lies along a chain of the reference's strokes.
+///
+/// One curve reaches the two pages cut at different vertices: ours at a
+/// 0.05 mm sagitta, the reference's on its plotter's 1/150 in grid. A chord
+/// of ours that straddles a reference vertex is a piece of neither side's
+/// chord there, so the one-stroke rules in [`pen_pairs`] refuse it, and a
+/// short stroke the plotter snapped turns too far to pass [`PEN_DOT`]. Here
+/// every point of the stroke is held against all the reference strokes
+/// running along it ([`PEN_CHAIN_DOT`]), with the two tolerances
+/// [`is_sub_piece`] holds one stroke to: [`PEN_SAME_PEN_ON_MM`] for our own
+/// width, [`PEN_ON_MM`] for another, so a curve printed with another pen
+/// pairs as a difference instead of hiding among the unpaired.
+fn along_chain(
+    start: [f64; 2],
+    end: [f64; 2],
+    width: u64,
+    reference: &[InkSegment],
+    index: &Grid,
+) -> Chain {
+    let length = hypot(start, end);
+    if length < 1e-9 {
+        return Chain::Off;
+    }
+    let unit = [(end[0] - start[0]) / length, (end[1] - start[1]) / length];
+    let steps = ((length / PEN_CHAIN_STEP_MM).ceil() as usize).max(1);
+    let mut other_pens: BTreeMap<u64, usize> = BTreeMap::new();
+    for step in 0..=steps {
+        let t = step as f64 / steps as f64;
+        let point = [
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * t,
+        ];
+        let mut same = false;
+        let mut other: Option<(f64, u64)> = None;
+        for candidate in index.near(point, PEN_SAME_PEN_ON_MM) {
+            let segment = &reference[candidate];
+            let along = [
+                segment.end_mm[0] - segment.start_mm[0],
+                segment.end_mm[1] - segment.start_mm[1],
+            ];
+            let along_len = along[0].hypot(along[1]);
+            if along_len < 1e-9
+                || ((along[0] * unit[0] + along[1] * unit[1]) / along_len).abs() < PEN_CHAIN_DOT
+            {
+                continue;
+            }
+            let off = dist_point_seg(point, segment.start_mm, segment.end_mm);
+            let candidate_width = centi_mm(segment.width_mm);
+            if candidate_width == width {
+                if off <= PEN_SAME_PEN_ON_MM {
+                    same = true;
+                    break;
+                }
+            } else if off <= PEN_ON_MM && other.is_none_or(|(nearest, _)| off < nearest) {
+                other = Some((off, candidate_width));
+            }
+        }
+        if same {
+            continue;
+        }
+        let Some((_, other_width)) = other else {
+            return Chain::Off;
+        };
+        *other_pens.entry(other_width).or_default() += 1;
+    }
+    match other_pens
+        .into_iter()
+        .max_by_key(|(width, points)| (*points, std::cmp::Reverse(*width)))
+    {
+        None => Chain::SamePen,
+        Some((other_width, _)) => Chain::OtherPen(other_width),
+    }
+}
+
 /// Pair every stroke of ours with the reference strokes at the same place, and
 /// tally the two widths.
 ///
@@ -615,10 +717,24 @@ fn is_sub_piece(
 /// outline is charged against whatever nearby pen did survive. Three template
 /// fills on the `I` / `B` / `低温分离器A` pages lost their partner that way while
 /// the page already stroked the same edge at 0.17 mm.
+///
+/// A stroke no single reference stroke pairs with is then held against the
+/// chain of reference strokes running along it ([`along_chain`]): a curve the
+/// two pages cut at different vertices, or a short stroke the plotter snapped
+/// to its grid, is the same ink without being any one stroke's piece.
 fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
     let mut tally: BTreeMap<(u64, u64), usize> = BTreeMap::new();
     let mut paired = 0usize;
     let mut unpaired = 0usize;
+    let reference_lines: Vec<Line> = reference
+        .segments
+        .iter()
+        .map(|segment| Line {
+            a: segment.start_mm,
+            b: segment.end_mm,
+        })
+        .collect();
+    let reference_index = Grid::new(&reference_lines);
     for segment in &ours.segments {
         let length = (segment.start_mm[0] - segment.end_mm[0])
             .hypot(segment.start_mm[1] - segment.end_mm[1]);
@@ -710,7 +826,23 @@ fn pen_pairs(reference: &PlotInk, ours: &PlotInk, fit: &Fit) -> PenReport {
                 };
                 *tally.entry((ours_width, matched)).or_default() += 1;
             }
-            None => unpaired += 1,
+            None => match along_chain(
+                mapped,
+                mapped_end,
+                ours_width,
+                &reference.segments,
+                &reference_index,
+            ) {
+                Chain::SamePen => {
+                    paired += 1;
+                    *tally.entry((ours_width, ours_width)).or_default() += 1;
+                }
+                Chain::OtherPen(width) => {
+                    paired += 1;
+                    *tally.entry((ours_width, width)).or_default() += 1;
+                }
+                Chain::Off => unpaired += 1,
+            },
         }
     }
     let pairs: Vec<PenPair> = tally
@@ -2514,6 +2646,134 @@ mod tests {
         assert_eq!(report.pen.unpaired, 0, "{:?}", report.pen);
         assert_eq!(report.pen.paired, fit_lines + 1, "{:?}", report.pen);
         assert_eq!(report.pen.differed, 0, "{:?}", report.pen);
+    }
+
+    /// I井场's `Wellhead Christmas Tree 02` inner ring, r ≈ 1.06 mm, near
+    /// (149.4, 165.3): two sides of the reference's polygon, whose vertices the
+    /// plotter put on its 1/150 in grid, turning from 166° to 108° at
+    /// (149.013, 165.269).
+    fn snapped_ring_sides(width_mm: f64) -> Vec<InkSegment> {
+        vec![
+            InkSegment {
+                start_mm: [149.691, 165.100],
+                end_mm: [149.013, 165.269],
+                width_mm,
+            },
+            InkSegment {
+                start_mm: [149.013, 165.269],
+                end_mm: [148.844, 165.777],
+                width_mm,
+            },
+        ]
+    }
+
+    #[test]
+    fn a_chord_across_a_snapped_vertex_pairs_with_the_sides_it_runs_along() {
+        // Our 0.05 mm-sagitta chord of the same ring runs at 135°, 31° and
+        // 27° off the two sides it straddles, so neither side is parallel
+        // enough, long enough or straight enough to hold it alone; every point
+        // of it lies within 0.09 mm of one of them.
+        let reference = ink(snapped_ring_sides(0.339), vec![]);
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [149.247, 165.176],
+                end_mm: [148.865, 165.558],
+                width_mm: 0.339,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.agreed, 1, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_chord_along_another_pens_polygon_is_a_pen_difference() {
+        // The reference cuts a 1 mm circle every 30°, ours every 30° too but
+        // 15° later: each of our chords straddles a reference vertex, 0.034 mm
+        // off it at most. The reference printed the circle with the thin pen,
+        // ours with the thick one — the chain pairs the chord and reports the
+        // two pens, rather than leaving a wrong pen unpaired.
+        let at = |degrees: f64| {
+            let radians = degrees.to_radians();
+            [radians.cos(), radians.sin()]
+        };
+        let reference = ink(
+            vec![
+                InkSegment {
+                    start_mm: at(60.0),
+                    end_mm: at(90.0),
+                    width_mm: 0.17,
+                },
+                InkSegment {
+                    start_mm: at(90.0),
+                    end_mm: at(120.0),
+                    width_mm: 0.17,
+                },
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: at(75.0),
+                end_mm: at(105.0),
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 1, "{:?}", report.pen);
+        assert_eq!(report.pen.differed, 1, "{:?}", report.pen);
+        let differences: Vec<(f64, f64)> = report
+            .pen
+            .differences()
+            .map(|pair| (pair.ours_mm(), pair.reference_mm()))
+            .collect();
+        assert_eq!(differences, vec![(0.34, 0.17)]);
+    }
+
+    #[test]
+    fn a_chord_outside_the_same_pen_tolerance_stays_unpaired() {
+        // The same chord 0.30 mm further out than the ring: no point of it is
+        // within 0.20 mm of the sides, so it is not on the reference's ink.
+        let reference = ink(snapped_ring_sides(0.339), vec![]);
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [149.247 - 0.212, 165.176 - 0.212],
+                end_mm: [148.865 - 0.212, 165.558 - 0.212],
+                width_mm: 0.339,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.unpaired, 1, "{:?}", report.pen);
+    }
+
+    #[test]
+    fn a_short_stroke_across_the_same_pen_is_not_along_it() {
+        // A 0.3 mm stroke centred on a stroke of its own pen at a right angle:
+        // every point of it is within 0.15 mm of that stroke, which crosses it
+        // rather than running along it.
+        let reference = ink(
+            vec![InkSegment {
+                start_mm: [5.0, 0.0],
+                end_mm: [5.0, 8.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let ours = ink(
+            vec![InkSegment {
+                start_mm: [4.85, 4.0],
+                end_mm: [5.15, 4.0],
+                width_mm: 0.34,
+            }],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.pen.paired, 0, "{:?}", report.pen);
+        assert_eq!(report.pen.unpaired, 1, "{:?}", report.pen);
     }
 
     #[test]

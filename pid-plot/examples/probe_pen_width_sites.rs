@@ -12,6 +12,10 @@
 //! nearest reference segments with their distance and angle. It is the evidence
 //! behind `docs/analysis/2026-10-30-a-fill-outline-is-not-a-pen.md`.
 //!
+//! It replays the one-stroke rules only. A difference the pairing finds through
+//! its chain fallback (`along_chain`) — a curve along another pen's polygon —
+//! is not listed.
+//!
 //! ```text
 //! cargo run -p pid-plot --example probe_pen_width_sites -- [drawing ...]
 //! ```
