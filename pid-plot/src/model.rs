@@ -630,18 +630,25 @@ pub enum PaperShape {
         /// none or `0`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width_permille: Option<u16>,
-        /// Draw the trimmed glyphs one trailing-pad width along the baseline.
+        /// Where the paragraph puts the line inside the box its whole stored
+        /// run spans, when that differs from [`Self::Text::anchor`] and the
+        /// run carries trailing whitespace; `None` otherwise.
         ///
-        /// A left anchor keeps the insertion at the left of the stored run.
-        /// When the paragraph is right-aligned and the run carries trailing
-        /// whitespace, the reference letters the trimmed glyphs at the right
-        /// of that stored advance: one space in, not a whole word back.
-        /// Measured on L M's two `25-CI-…-B8- ` line numbers (anchor `0x01`,
-        /// paragraph right), whose reference starts sit 1.17 mm — one Arial
-        /// space at 3.175 mm — to the right of the insertion, while the same
-        /// paragraph with no pad stays on the insertion.
-        #[serde(default, skip_serializing_if = "is_false")]
-        right_pad: bool,
+        /// The anchor places a box as wide as the stored run, trailing pad
+        /// included, and the paragraph's alignment then sets the line — the
+        /// run without that pad — at the box's left, middle or right. So the
+        /// trimmed glyphs move along the baseline by the pad's width times
+        /// the difference of the two: a right paragraph on a left anchor is
+        /// one pad in (L M's `25-CI-…-B8- `, 1.17 mm, one Arial Narrow space
+        /// at 3.175 mm), a centred one half a pad in, and a left paragraph on
+        /// a centre anchor half a pad back (the CCHB A2 company name,
+        /// 2.21 mm). Measured on every padded label of the eleven reference
+        /// plots: 132 left-anchored labels with a centred paragraph sat
+        /// 0.39 mm left of the reference before, nine right-anchored ones
+        /// 0.37 mm right, and the 105 whose paragraph matches the anchor sit
+        /// on it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        paragraph: Option<TextAnchor>,
         /// The label's own run partition, when it letters its characters in
         /// more than one style. Empty for every sheet label and for a symbol
         /// label in one style; `height_mm` and `font` are the single style a
@@ -2943,6 +2950,23 @@ fn push_entity_with(
                     TextAnchor::from_anchor_code(*anchor_code),
                 ),
             };
+            // An unboxed record's paragraph alignment says where its line sits
+            // inside the box the anchor places, which only moves a run that
+            // carries a trailing pad; a boxed record already hangs from the
+            // box edge that alignment names.
+            let paragraph = if text_box_width.is_some_and(|width| width > 0.0) {
+                None
+            } else {
+                styled
+                    .as_ref()
+                    .and_then(|style| style.alignment)
+                    .map(|alignment| match alignment {
+                        TextAlignment::Left => TextAnchor::Left,
+                        TextAlignment::Center => TextAnchor::Center,
+                        TextAlignment::Right => TextAnchor::Right,
+                    })
+                    .filter(|paragraph| *paragraph != anchor)
+            };
             // One `igTextBox` can letter several lines: the text carries a
             // `U+000D` where the line ends, and the paragraph's `+66` says how
             // far apart the lines sit as a multiple of the character height.
@@ -2988,12 +3012,8 @@ fn push_entity_with(
                         ),
                         height_mm,
                         rotation: *rotation,
-                        right_pad: matches!(anchor, TextAnchor::Left)
-                            && matches!(
-                                styled.as_ref().and_then(|style| style.alignment),
-                                Some(TextAlignment::Right)
-                            )
-                            && line.text.trim_end().len() != line.text.len(),
+                        paragraph: paragraph
+                            .filter(|_| line.text.trim_end().len() != line.text.len()),
                         spans: line_spans(&partitions, &line),
                         value: line.text,
                         font: styled.as_ref().and_then(|style| style.font_name.clone()),
@@ -3484,7 +3504,7 @@ fn symbol_text_shape(
         width_permille: lettering
             .and_then(|lettering| lettering.width_permille)
             .filter(|width| *width > 0),
-        right_pad: false,
+        paragraph: None,
         spans: lettering.map_or_else(Vec::new, |lettering| {
             lettering
                 .spans
@@ -4227,7 +4247,7 @@ mod tests {
             line: TextLine::Middle,
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille: None,
-            right_pad: false,
+            paragraph: None,
             spans: Vec::new(),
         };
         assert!(!beyond_the_sheet(&off_page, page));
@@ -4272,7 +4292,7 @@ mod tests {
                 line: TextLine::Middle,
                 height_basis: crate::model::TextHeightBasis::Cap,
                 width_permille: None,
-                right_pad: false,
+                paragraph: None,
                 spans: Vec::new(),
             },
             furniture: false,
@@ -4458,13 +4478,13 @@ mod tests {
         );
     }
 
-    /// An unboxed left anchor stays the insertion. A right-aligned paragraph
-    /// with a trailing pad does not move that point: it asks the writer to
-    /// start the trimmed glyphs one pad further along. The same paragraph
-    /// without a pad, a left paragraph with a pad, and a centred anchor do
-    /// not.
+    /// An unboxed anchor stays the insertion. A paragraph aligned otherwise
+    /// with a trailing pad does not move that point: it names where the
+    /// writer sets the trimmed glyphs inside the box the whole run spans.
+    /// The same paragraph without a pad, and a paragraph that matches the
+    /// anchor, name nothing.
     #[test]
-    fn a_right_aligned_trailing_pad_is_a_writer_shift() {
+    fn a_trailing_pad_carries_its_paragraph_to_the_writer() {
         use pid_parse::style_link::{ResolvedTextHeight, ResolvedTextStyle, TextRunStatus};
 
         let style = |alignment: TextAlignment| {
@@ -4490,6 +4510,7 @@ mod tests {
         let mut styles = pid_parse::style_link::TextStyleIndex::new();
         styles.insert(("/Sheet6".to_string(), 1), style(TextAlignment::Right));
         styles.insert(("/Sheet6".to_string(), 2), style(TextAlignment::Left));
+        styles.insert(("/Sheet6".to_string(), 3), style(TextAlignment::Center));
         let emit = |oid: u32, value: &str, anchor_code: u8| {
             let mut record = entity(PidGraphicKind::Text {
                 insertion: PidPoint { x: 0.1, y: 0.2 },
@@ -4513,26 +4534,30 @@ mod tests {
             );
             let PaperShape::Text {
                 anchor,
-                right_pad,
+                paragraph,
                 origin_mm,
                 ..
             } = &out[0].shape
             else {
                 panic!("{:?}", out[0].shape);
             };
-            (*anchor, *right_pad, *origin_mm)
+            (*anchor, *paragraph, *origin_mm)
         };
-        let (anchor, pad, origin) = emit(1, "25-CI-2301201-B8- ", 0x01);
+        let (anchor, paragraph, origin) = emit(1, "25-CI-2301201-B8- ", 0x01);
         assert_eq!(anchor, TextAnchor::Left);
-        assert!(pad);
+        assert_eq!(paragraph, Some(TextAnchor::Right));
         assert!((origin[0] - 100.0).abs() < 1e-6);
-        let (_, pad, _) = emit(1, "100-PG-2101301-D8-P40", 0x01);
-        assert!(!pad, "no trailing pad, nothing to shift");
-        let (_, pad, _) = emit(2, "25-CI-2601201-B8- ", 0x01);
-        assert!(!pad, "a left paragraph keeps the pad as storage");
-        let (anchor, pad, _) = emit(1, "25-CI-2301201-B8- ", 0x15);
+        let (_, paragraph, _) = emit(1, "100-PG-2101301-D8-P40", 0x01);
+        assert_eq!(paragraph, None, "no trailing pad, nothing to shift");
+        let (_, paragraph, _) = emit(2, "25-CI-2601201-B8- ", 0x01);
+        assert_eq!(paragraph, None, "a left paragraph keeps the pad as storage");
+        let (anchor, paragraph, _) = emit(1, "25-CI-2301201-B8- ", 0x15);
         assert_eq!(anchor, TextAnchor::Center);
-        assert!(!pad);
+        assert_eq!(paragraph, Some(TextAnchor::Right));
+        let (anchor, paragraph, origin) = emit(3, "L=200mm ", 0x21);
+        assert_eq!(anchor, TextAnchor::Right);
+        assert_eq!(paragraph, Some(TextAnchor::Center));
+        assert!((origin[0] - 100.0).abs() < 1e-6);
     }
 
     /// A left-anchored boxed record already sits on its box's left edge, so

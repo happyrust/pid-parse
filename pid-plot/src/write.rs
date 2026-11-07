@@ -660,7 +660,7 @@ fn push_layer(
             line,
             height_basis,
             width_permille,
-            right_pad,
+            paragraph,
             spans,
         } = &primitive.shape
         {
@@ -677,7 +677,7 @@ fn push_layer(
                     line: *line,
                     height_basis: *height_basis,
                     width_permille: *width_permille,
-                    right_pad: *right_pad,
+                    paragraph: *paragraph,
                     spans,
                     furniture: primitive.furniture,
                 },
@@ -979,8 +979,9 @@ struct ShownText<'a> {
     height_basis: TextHeightBasis,
     /// The style's character width in thousandths, `JStyleTextChar +52`.
     width_permille: Option<u16>,
-    /// Shift the trimmed run forward by the width of `value`'s trailing pad.
-    right_pad: bool,
+    /// Where the paragraph sets the trimmed run inside the box `value`'s
+    /// whole stored run spans; `None` is the anchor's own place.
+    paragraph: Option<TextAnchor>,
     spans: &'a [PaperTextSpan],
     /// Whether this run is the sheet's furniture — the lettering a linked
     /// `.igr` border template carries, rather than the drawing's own.
@@ -1362,25 +1363,39 @@ fn show_text(
         }
     }
     let laid_out_mm = width_mm * plate;
-    // A left anchor is the left of the stored run, padding included. A
-    // right-aligned paragraph letters the trimmed glyphs at the right of
-    // that run, so the pad's own advance is added along the baseline and
-    // the pad itself is not drawn. The two L M line numbers `25-CI-…-B8- `
-    // start one Arial space to the right of the insertion; the same
-    // paragraph with no trailing pad stays on it.
-    let pad_mm = if text.right_pad && text.anchor == TextAnchor::Left {
-        let kept = text.value.trim_end();
-        let pad = &text.value[kept.len()..];
-        emitted
-            .last()
-            .and_then(|(size_pt, face, ..)| {
-                face.metrics
-                    .encode(pad)
-                    .map(|bytes| run_width_mm(&face.metrics, *size_pt, &bytes) * plate)
-            })
-            .unwrap_or(0.0)
-    } else {
-        0.0
+    // The anchor places a box as wide as the stored run, its trailing pad
+    // included, and the paragraph sets the trimmed glyphs inside it — so
+    // they move by the pad's own advance times how far the paragraph's
+    // alignment sits from the anchor's, and the pad itself is not drawn.
+    // The two L M line numbers `25-CI-…-B8- ` (left anchor, right
+    // paragraph) start one Arial Narrow space right of the insertion, and
+    // the CCHB A2 company name (centre anchor, left paragraph) starts half
+    // a space left of where its trimmed glyphs would centre.
+    let pad_mm = match text.paragraph {
+        Some(paragraph) if paragraph != text.anchor => {
+            let kept = text.value.trim_end();
+            let pad = &text.value[kept.len()..];
+            // The pad is the record's own characters in the face its style
+            // names: `L=-18℃ ` letters its `℃` in a borrowed face, and that
+            // face's space is twice the Arial Narrow one the plot measures.
+            let named = faces.iter().find(|face| face.key == text.typeface).zip(
+                segments
+                    .iter()
+                    .rev()
+                    .find(|segment| segment.typeface == text.typeface)
+                    .map(|segment| segment.size_pt),
+            );
+            let pad_width_mm = named
+                .or_else(|| emitted.last().map(|(size_pt, face, ..)| (*face, *size_pt)))
+                .and_then(|(face, size_pt)| {
+                    face.metrics
+                        .encode(pad)
+                        .map(|bytes| run_width_mm(&face.metrics, size_pt, &bytes) * plate)
+                })
+                .unwrap_or(0.0);
+            pad_width_mm * (anchor_fraction(paragraph) - anchor_fraction(text.anchor))
+        }
+        _ => 0.0,
     };
     let origin_mm = [
         text.origin_mm[0] + cos * pad_mm,
@@ -1471,6 +1486,16 @@ fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
     units * size_pt / PT_PER_MM
 }
 
+/// How far along a run an alignment sits: `0` at its left end, `0.5` at its
+/// middle, `1` at its right end.
+fn anchor_fraction(anchor: TextAnchor) -> f64 {
+    match anchor {
+        TextAnchor::Left => 0.0,
+        TextAnchor::Center => 0.5,
+        TextAnchor::Right => 1.0,
+    }
+}
+
 /// Left end of the baseline, from the insertion point.
 ///
 /// Centre and right step back **along** the run by half the word or the whole
@@ -1484,13 +1509,8 @@ fn baseline_origin(
     below_mm: f64,
     anchor: TextAnchor,
 ) -> [f64; 2] {
-    let along = match anchor {
-        TextAnchor::Left => 0.0,
-        TextAnchor::Center => 0.5,
-        TextAnchor::Right => 1.0,
-    };
     let back = if width_mm.is_finite() && width_mm > 0.0 {
-        width_mm * along
+        width_mm * anchor_fraction(anchor)
     } else {
         0.0
     };
@@ -2526,7 +2546,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )],
@@ -2567,7 +2587,7 @@ mod tests {
                         line: TextLine::Bottom,
                         height_basis: crate::model::TextHeightBasis::Cap,
                         width_permille: None,
-                        right_pad: false,
+                        paragraph: None,
                         spans: Vec::new(),
                     },
                 ),
@@ -2820,7 +2840,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )],
@@ -2866,19 +2886,21 @@ mod tests {
     /// `25-CI-…-B8- ` line numbers are that case.
     #[test]
     fn a_right_aligned_pad_shifts_the_trimmed_run_by_the_pad() {
-        let shape = |value: &str, y: f64, rotation: f64, right_pad: bool| PaperShape::Text {
-            origin_mm: [40.0, y],
-            height_mm: Some(3.175),
-            rotation,
-            value: value.to_string(),
-            font: None,
-            anchor: TextAnchor::Left,
-            line: TextLine::Bottom,
-            height_basis: crate::model::TextHeightBasis::Cap,
-            width_permille: None,
-            right_pad,
-            spans: Vec::new(),
-        };
+        let right = Some(TextAnchor::Right);
+        let shape =
+            |value: &str, y: f64, rotation: f64, paragraph: Option<TextAnchor>| PaperShape::Text {
+                origin_mm: [40.0, y],
+                height_mm: Some(3.175),
+                rotation,
+                value: value.to_string(),
+                font: None,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph,
+                spans: Vec::new(),
+            };
         let model = PaperModel {
             library: Vec::new(),
             template: None,
@@ -2886,13 +2908,13 @@ mod tests {
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
             primitives: vec![
-                primitive("decoded", shape("AB", 40.0, 0.0, false)),
-                primitive("decoded", shape("AB ", 60.0, 0.0, false)),
-                primitive("decoded", shape("AB ", 80.0, 0.0, true)),
-                primitive("decoded", shape("AB  ", 100.0, 0.0, true)),
+                primitive("decoded", shape("AB", 40.0, 0.0, None)),
+                primitive("decoded", shape("AB ", 60.0, 0.0, None)),
+                primitive("decoded", shape("AB ", 80.0, 0.0, right)),
+                primitive("decoded", shape("AB  ", 100.0, 0.0, right)),
                 primitive(
                     "decoded",
-                    shape("AB ", 140.0, std::f64::consts::FRAC_PI_2, true),
+                    shape("AB ", 140.0, std::f64::consts::FRAC_PI_2, right),
                 ),
             ],
             missing_symbols: Vec::new(),
@@ -2942,6 +2964,83 @@ mod tests {
         );
     }
 
+    /// Between the centre and an edge the paragraph sits half the box away
+    /// from the anchor, so a trailing pad moves the trimmed glyphs by half
+    /// its width: back on a centre anchor with a left paragraph (the CCHB A2
+    /// company name) and on a right anchor with a centred one (`L=200mm `),
+    /// forward on a left anchor with a centred one.
+    #[test]
+    fn a_pad_between_centre_and_an_edge_moves_the_run_by_half_its_width() {
+        let shape = |value: &str, y: f64, anchor: TextAnchor, paragraph: Option<TextAnchor>| {
+            PaperShape::Text {
+                origin_mm: [100.0, y],
+                height_mm: Some(3.175),
+                rotation: 0.0,
+                value: value.to_string(),
+                font: None,
+                anchor,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph,
+                spans: Vec::new(),
+            }
+        };
+        let (left, center, right) = (TextAnchor::Left, TextAnchor::Center, TextAnchor::Right);
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 200.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: [
+                shape("AB", 20.0, center, None),
+                shape("AB ", 40.0, center, Some(left)),
+                shape("AB", 60.0, right, None),
+                shape("AB ", 80.0, right, Some(center)),
+                shape("AB", 100.0, left, None),
+                shape("AB ", 120.0, left, Some(center)),
+                shape("AB ", 140.0, left, Some(right)),
+            ]
+            .into_iter()
+            .map(|shape| primitive("decoded", shape))
+            .collect(),
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let start = |y: f64| {
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.5)
+                .unwrap_or_else(|| panic!("no run near y = {y}: {:?}", ink.spans))
+                .origin_mm[0]
+        };
+        let pad = start(140.0) - start(100.0);
+        assert!(pad > 0.2, "one trailing space: {pad}");
+        for (tight, padded, moved) in [(20.0, 40.0, -0.5), (60.0, 80.0, -0.5), (100.0, 120.0, 0.5)]
+        {
+            let shift = start(padded) - start(tight);
+            assert!(
+                (shift - moved * pad).abs() < 0.02,
+                "y {padded}: moved {shift:.3} mm, half a pad is {:.3}",
+                moved * pad
+            );
+        }
+    }
+
     /// A template's lettering is drawn one narrower glyph than the sheet's
     /// own, at the same height, when its style states a character width.
     ///
@@ -2971,7 +3070,7 @@ mod tests {
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille,
-            right_pad: false,
+            paragraph: None,
             spans: Vec::new(),
         };
         let mut model = PaperModel {
@@ -3049,7 +3148,7 @@ mod tests {
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille,
-            right_pad: false,
+            paragraph: None,
             spans: Vec::new(),
         };
         let mut model = PaperModel {
@@ -3133,7 +3232,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: vec![PaperTextSpan {
                         start: 0,
                         len: 1,
@@ -3210,7 +3309,7 @@ mod tests {
             line: TextLine::Bottom,
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille: None,
-            right_pad: false,
+            paragraph: None,
             spans: &spans,
             furniture: false,
         };
@@ -3258,7 +3357,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: vec![
                         PaperTextSpan {
                             start: 0,
@@ -3316,7 +3415,7 @@ mod tests {
                     line: TextLine::Middle,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )],
@@ -3366,7 +3465,7 @@ mod tests {
                     line: TextLine::Middle,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )],
@@ -3432,7 +3531,7 @@ mod tests {
                     line,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )],
@@ -3532,7 +3631,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )
@@ -3617,7 +3716,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans: Vec::new(),
                 },
             )

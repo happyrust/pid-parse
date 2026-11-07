@@ -448,7 +448,7 @@ mod tests {
                     line: TextLine::Bottom,
                     height_basis: crate::model::TextHeightBasis::Cap,
                     width_permille: None,
-                    right_pad: false,
+                    paragraph: None,
                     spans,
                 },
                 stream_path: None,
