@@ -1372,6 +1372,7 @@ fn show_text(
             plate,
             han_pitch == 1.0,
             sin.abs() < 1e-9,
+            device_scale(page).unwrap_or(1.0),
         );
         width_mm += advance.width_mm;
         // `Tc` is a graphics-state parameter: once set it adds to *every*
@@ -2099,6 +2100,7 @@ fn run_advance(
     sx: f64,
     reference_font_applies: bool,
     upright: bool,
+    device: f64,
 ) -> RunAdvance {
     let codes = metrics.codes(bytes);
     let n = codes.len();
@@ -2127,7 +2129,12 @@ fn run_advance(
             steps_px: vec![step],
         };
     }
-    let a8 = reference_scale(key, heights, basis, height_mm);
+    // The steps are rounded in the plotter's own pixels, on a sheet `device`
+    // times this page ([`device_scale`]), so a run whose drift sits within
+    // that sliver of a whole pixel is nudged as the reference's is:
+    // `AC-01031A`, Arial Narrow 10 pt on A1, drifts 0.996 px there and keeps
+    // 106 px where this page's own 1.008 would push it to 107.
+    let a8 = reference_scale(key, heights, basis, height_mm * device);
     let wf_scale = wf_reference_scale(heights, width_permille);
     // `reference_advance_px` keys the hinted Arial/Arial Narrow tables on
     // the glyph's own *Unicode* codepoint — the table is GDI's reading of
@@ -2388,6 +2395,7 @@ mod tests {
             1.0,
             true,
             true,
+            1.0,
         );
         let codes = metrics.codes(&bytes);
         let last_code = codes.last().expect("two codes").0;
@@ -2414,7 +2422,7 @@ mod tests {
         let cap = crate::model::TextHeightBasis::Cap;
         let size_pt = super::plotted_size_pt(inter, cap, 4.0);
         let advance = super::run_advance(
-            "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, true, false,
+            "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, true, false, 1.0,
         );
         assert_eq!(
             advance.tc_pt, 0.0,
@@ -2454,6 +2462,7 @@ mod tests {
         let advance = |upright| {
             super::run_advance(
                 "", &metrics, &bytes, "ABAB", inter, cap, 4.0, size_pt, None, sx, true, upright,
+                1.0,
             )
         };
         let (rotated, upright) = (advance(false), advance(true));
@@ -2520,6 +2529,7 @@ mod tests {
             1.0,
             true,
             true,
+            1.0,
         );
         assert_ne!(
             advance.tc_pt, 0.0,
@@ -2542,6 +2552,50 @@ mod tests {
         assert!(
             (leading_px - leading_px.round()).abs() < 1e-6,
             "the diffused leading portion lands on a whole 150 dpi pixel: {leading_px}"
+        );
+    }
+
+    /// `lpDx` is rounded on the plotter's own sheet, [`super::device_scale`]
+    /// times this page: `AC-01031A` (Arial Narrow 10 pt) drifts 0.996 px over
+    /// its leading eight glyphs on A1 and keeps the 106 px the reference
+    /// letters it at, a pixel short of what this page's own scale takes;
+    /// `CT-10017A` drifts past a pixel on both and takes 106 px either way.
+    #[test]
+    fn a_run_is_spaced_on_the_plotters_own_sheet() {
+        let a1 = super::device_scale([841.0, 594.0]).expect("A1 is a standard sheet");
+        let inter = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let height_mm = 10.0 / super::PT_PER_MM;
+        let size_pt = super::plotted_size_pt(inter, basis, height_mm);
+        let width_px = |text: &'static str, device: f64| {
+            let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, text);
+            let advance = super::run_advance(
+                "Arial Narrow",
+                &metrics,
+                &bytes,
+                text,
+                inter,
+                basis,
+                height_mm,
+                size_pt,
+                None,
+                1.0,
+                true,
+                true,
+                device,
+            );
+            advance.width_mm * 150.0 / 25.4
+        };
+        let narrower = |text: &'static str| width_px(text, 1.0) - width_px(text, a1);
+        assert!(
+            (narrower("AC-01031A") - 1.0).abs() < 1e-6,
+            "AC-01031A keeps a pixel less on the plotter's sheet: {}",
+            narrower("AC-01031A")
+        );
+        assert!(
+            narrower("CT-10017A").abs() < 1e-6,
+            "CT-10017A is nudged on either sheet: {}",
+            narrower("CT-10017A")
         );
     }
 
@@ -3069,7 +3123,7 @@ mod tests {
         let basis = crate::model::TextHeightBasis::Cap;
         let size_pt = super::plotted_size_pt(inter, basis, 5.0);
         let laid_out_mm = super::run_advance(
-            "", &metrics, &bytes, "ABA", inter, basis, 5.0, size_pt, None, 1.0, true, true,
+            "", &metrics, &bytes, "ABA", inter, basis, 5.0, size_pt, None, 1.0, true, true, 1.0,
         )
         .width_mm;
         let face = super::ReadyFace {
