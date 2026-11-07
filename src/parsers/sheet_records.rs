@@ -5367,8 +5367,8 @@ pub const IGBOUNDARY2D_POINTRUN_TAG: u8 = 0x68;
 /// Member tag of an arc `igBoundary2d` member in the linked-template
 /// (`0x0000` sub-type) layout: `tag + 7×f64` carrying
 /// `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-/// trailing flag byte that carries the sweep sign on the corpus (0 =
-/// clockwise, 1 = counter-clockwise). 58 bytes in total.
+/// trailing byte that is the arc's direction (0 = clockwise, 1 =
+/// counter-clockwise), read the way `igArc2d`'s is. 58 bytes in total.
 pub const IGBOUNDARY2D_ARC_TAG: u8 = 0x74;
 
 /// Fixed trailer length of the linked-template (`0x0000` sub-type)
@@ -5764,6 +5764,29 @@ fn decode_igboundary_payload(
     })
 }
 
+/// The signed sweep of one `0x74` boundary arc member, in radians.
+///
+/// The two angles alone name two arcs; the member's trailing byte says
+/// which one the ring runs along — `0` clockwise from the start angle,
+/// anything else counter-clockwise — the same byte, read the same way, as
+/// `igArc2d`'s
+/// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+/// Taking `end − start` as it stands is only right for an arc that does not
+/// cross the angle origin: seven members of the CCHB A2 title block's logo
+/// do, and drew as 219–334° near-circles where the reference plot prints
+/// their 26° and 92° arcs. Angles stored a whole turn apart stay a whole
+/// turn.
+fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
+    use std::f64::consts::TAU;
+    let whole_turn = (end - start).abs() >= TAU - 1e-9;
+    match (direction == 0, whole_turn) {
+        (true, true) => -TAU,
+        (false, true) => TAU,
+        (true, false) => -(start - end).rem_euclid(TAU),
+        (false, false) => (end - start).rem_euclid(TAU),
+    }
+}
+
 /// Family-specific payload validation for the linked-template
 /// `igBoundary2d` variant (sub-type word `0x0000` rather than the
 /// drawing-side `0x0010`). Linked `.igr` border templates letter their
@@ -5774,8 +5797,8 @@ fn decode_igboundary_payload(
 ///   count × 16-byte (x, y)`, closed onto its first point;
 /// * `0x74` arc — `tag + 7×f64`
 ///   `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-///   flag byte carrying the sweep sign; flattened to chords of at most
-///   [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians.
+///   direction byte ([`igboundary_arc_sweep`]); flattened to chords of at
+///   most [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians.
 ///
 /// Members chain end-to-start and the record ends with a fixed
 /// 21-byte trailer (two identical 8-byte words, `u32 1`, `u8` flag)
@@ -5896,7 +5919,7 @@ fn decode_igboundary_template_payload(
                 {
                     return None;
                 }
-                let sweep = end_ang - start_ang;
+                let sweep = igboundary_arc_sweep(start_ang, end_ang, *payload.get(pos + 57)?);
                 let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
                 let mut prev = (cx + radius * start_ang.cos(), cy + radius * start_ang.sin());
                 for i in 1..=chords {
@@ -12949,5 +12972,126 @@ mod tests {
         assert_eq!(decoded[1].oid, 522);
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
         assert!(decoded[1].is_closed_loop(1e-9));
+    }
+
+    /// Build a linked-template (`0x0000` sub-type) `igBoundary2d` whose
+    /// members are one `0x74` arc closed by one `0x67` chord back to the
+    /// arc's start: the 18-byte prefix, `u32 1`, the member count, the
+    /// `[2, 1]` tail, the members, and the 21-byte trailer.
+    fn build_template_boundary_arc_and_chord(
+        start_angle: f64,
+        end_angle: f64,
+        centre: (f64, f64),
+        radius: f64,
+        direction: u8,
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&111u32.to_le_bytes());
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.extend_from_slice(&21u32.to_le_bytes());
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        payload.extend_from_slice(&[2, 1]);
+        payload.push(IGBOUNDARY2D_ARC_TAG);
+        for value in [start_angle, end_angle, centre.0, centre.1, radius, 0.0, 1.0] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(direction);
+        let at = |angle: f64| {
+            (
+                centre.0 + radius * angle.cos(),
+                centre.1 + radius * angle.sin(),
+            )
+        };
+        let (from, to) = (at(end_angle), at(start_angle));
+        payload.push(IGBOUNDARY2D_SEGMENT_TAG);
+        for value in [from.0, from.1, to.0, to.1] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.extend_from_slice(&[0x5A; 16]);
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.push(1);
+        let mut out = PSM_TYPE_CODE_IGBOUNDARY2D.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend(payload);
+        out
+    }
+
+    /// Angles (radians, counter-clockwise from +X) of every vertex the arc
+    /// member flattened to — every segment but the closing chord.
+    fn flattened_arc_angles(record: &SheetIgBoundary2dDecoded, centre: (f64, f64)) -> Vec<f64> {
+        let arc = &record.segments[..record.segments.len() - 1];
+        arc.iter()
+            .flat_map(|segment| [segment.start, segment.end])
+            .map(|(x, y)| (y - centre.1).atan2(x - centre.0))
+            .collect()
+    }
+
+    /// A clockwise member that crosses the angle origin runs the short way
+    /// across it: `0.172 -> 5.996` clockwise is a 26° arc, the CCHB A2
+    /// logo's own oid-111 member, not the 334° the raw difference names.
+    #[test]
+    fn template_boundary_arc_runs_clockwise_across_the_angle_origin() {
+        let centre = (0.394_572, 0.103_313);
+        let record =
+            build_template_boundary_arc_and_chord(0.172_04, 5.996_42, centre, 0.003_651, 0);
+        let decoded = decode_igboundaries(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].sub_type_word, 0x0000);
+        assert!(decoded[0].is_closed_loop(1e-12));
+        let angles = flattened_arc_angles(&decoded[0], centre);
+        // Every vertex sits within the 0.4588 rad wedge around +X.
+        let sweep = (0.172_04 - 5.996_42_f64).rem_euclid(std::f64::consts::TAU);
+        for angle in &angles {
+            assert!(
+                *angle <= 0.172_04 + 1e-9 && *angle >= 0.172_04 - sweep - 1e-9,
+                "{angle} is off the clockwise arc"
+            );
+        }
+        assert_eq!(
+            decoded[0].segments.len(),
+            2 + 1,
+            "two chords and the closing line"
+        );
+    }
+
+    /// A counter-clockwise member whose end angle is the smaller number
+    /// sweeps forward through the origin: `4.425 -> 0.601` is 141°.
+    #[test]
+    fn template_boundary_arc_runs_counter_clockwise_through_the_origin() {
+        let centre = (0.403_232, 0.100_857);
+        let record =
+            build_template_boundary_arc_and_chord(4.425_17, 0.601_38, centre, 0.000_096, 1);
+        let decoded = decode_igboundaries(&record);
+        assert_eq!(decoded.len(), 1);
+        let unwrapped: Vec<f64> = flattened_arc_angles(&decoded[0], centre)
+            .into_iter()
+            .map(|angle| {
+                let turned = (angle - 4.425_17).rem_euclid(std::f64::consts::TAU);
+                if turned > std::f64::consts::TAU - 1e-6 {
+                    0.0
+                } else {
+                    turned
+                }
+            })
+            .collect();
+        let swept = unwrapped.iter().copied().fold(0.0_f64, f64::max);
+        assert!(
+            (swept - 2.459_4).abs() < 1e-3,
+            "swept {swept} rad, not the 2.4594 the direction byte names"
+        );
+        assert!(unwrapped.windows(2).all(|pair| pair[1] >= pair[0] - 1e-9));
+    }
+
+    /// Two angles a whole turn apart are a full circle in the member's own
+    /// direction, not the empty arc a fold to `[0, 2π)` would leave.
+    #[test]
+    fn template_boundary_arc_keeps_a_whole_turn() {
+        use std::f64::consts::TAU;
+        assert_eq!(super::igboundary_arc_sweep(0.0, TAU, 1), TAU);
+        assert_eq!(super::igboundary_arc_sweep(0.0, TAU, 0), -TAU);
+        assert_eq!(super::igboundary_arc_sweep(1.0, 1.0, 1), 0.0);
     }
 }
