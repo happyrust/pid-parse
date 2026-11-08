@@ -29,3 +29,10 @@ fontcull-klippa = "0.1.2"
 fontcull-skrifa = "0.39.2"
 fontcull-read-fonts = "0.38.0"
 fontcull-write-fonts = "0.44.3"
+
+[dev-dependencies]
+# `probe_export_bytes_unchanged` hashes the bytes a page writes and the model
+# it was written from, so the export-ledger work can prove it changed neither.
+# The parser crate already depends on `sha2` for its backup pipeline; this is
+# the same 0.11 line, so the lock file keeps one copy.
+sha2 = "0.11"
