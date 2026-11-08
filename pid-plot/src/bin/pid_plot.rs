@@ -56,13 +56,15 @@ fn main() -> ExitCode {
             subset: face.subset,
         })
         .collect();
-    let (pdf, audit) = match write_plot_audited(&model, &fonts) {
+    let written = match write_plot_audited(&model, &fonts) {
         Ok(written) => written,
         Err(error) => {
             eprintln!("{pid}: {error}");
             return ExitCode::from(1);
         }
     };
+    let pdf = written.pdf;
+    let audit = written.audit;
     if let Some(parent) = PathBuf::from(&out).parent()
         && !parent.as_os_str().is_empty()
         && let Err(error) = fs::create_dir_all(parent)

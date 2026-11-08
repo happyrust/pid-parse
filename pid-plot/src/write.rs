@@ -31,6 +31,15 @@
 //! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
 //! a variable font.
 
+mod verdict;
+
+pub use verdict::{
+    PrimitiveFate, PrimitiveOutcome, SegmentTally, TextMarks, WriteLedger, WriteMismatch,
+    primitive_verdict,
+};
+
+use self::verdict::{fill_fate, pen_fate, segment_fate, text_fate};
+
 use std::f64::consts::TAU;
 
 use kurbo::{Arc, BezPath, PathEl, flatten};
@@ -201,7 +210,47 @@ impl std::error::Error for PlotWriteError {}
 /// What the sheet's edge, rather than the drawing, decided is
 /// [`write_plot_audited`]'s answer; this drops it.
 pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>, PlotWriteError> {
-    write_plot_audited(model, fonts).map(|(pdf, _)| pdf)
+    write_plot_audited(model, fonts).map(|written| written.pdf)
+}
+
+/// A page as written: its bytes, what the sheet edge decided, and the write
+/// layer's own account of every primitive.
+///
+/// The three travel together because they are answers about the same write.
+/// [`write_plot`] keeps only the bytes, [`write_ledger`] takes the account
+/// without writing a page at all, and a gate that wants both reads the whole
+/// value.
+#[derive(Clone, Debug)]
+pub struct WrittenPlot {
+    /// The PDF.
+    pub pdf: Vec<u8>,
+    /// What the sheet edge, rather than the drawing, decided.
+    pub audit: PlotAudit,
+    /// One verdict per page primitive, in `PaperModel::primitives` order.
+    pub ledger: WriteLedger,
+}
+
+/// The write layer's account of `model`, read without any typeface.
+///
+/// This is the same verdict [`write_plot_audited`] reaches — every primitive
+/// gets its appendix A.5 answer — but nothing is written and no face is
+/// loaded, so the two font marks (`text_condensed`, `text_clipped_at_floor`)
+/// are absent and `fonts_measured` is `false`. A drawing that states no page
+/// is [`PlotWriteError::NoPage`], exactly as the writer would say.
+pub fn write_ledger(model: &PaperModel) -> Result<WriteLedger, PlotWriteError> {
+    let Some(page) = model.resolved_page_mm() else {
+        return Err(PlotWriteError::NoPage);
+    };
+    let fates = model
+        .primitives
+        .iter()
+        .map(|primitive| primitive_verdict(primitive, page))
+        .collect();
+    Ok(WriteLedger {
+        fonts_measured: false,
+        fates,
+        mismatches: Vec::new(),
+    })
 }
 
 /// What the writer had to do because the sheet ends, not because the drawing
@@ -243,11 +292,12 @@ impl Default for PlotAudit {
     }
 }
 
-/// Write `model` to PDF bytes and report what the sheet edge decided.
+/// Write `model` to PDF bytes and report what the sheet edge decided, plus the
+/// write layer's account of every primitive.
 pub fn write_plot_audited(
     model: &PaperModel,
     fonts: &[PlotFont<'_>],
-) -> Result<(Vec<u8>, PlotAudit), PlotWriteError> {
+) -> Result<WrittenPlot, PlotWriteError> {
     // A drawing can hold no lettering at all: `D03` in the plant backup is a
     // template with zero primitives, so `prepare_fonts` loads nothing. The
     // page still writes; only a run that needs a face without one is fatal.
@@ -259,6 +309,20 @@ pub fn write_plot_audited(
     // one to check the written page against.
     let Some([page_w, page_h]) = model.resolved_page_mm() else {
         return Err(PlotWriteError::NoPage);
+    };
+    // Every primitive is judged up front, including the `probe_only` ones
+    // `push_layer` never visits: the ledger owes every primitive an answer, and
+    // the answer has to be the same one the writing pass acts on.
+    let page = [page_w, page_h];
+    let fates = model
+        .primitives
+        .iter()
+        .map(|primitive| primitive_verdict(primitive, page))
+        .collect();
+    let mut ledger = WriteLedger {
+        fonts_measured: true,
+        fates,
+        mismatches: Vec::new(),
     };
 
     let mut doc = Document::new_empty();
@@ -316,13 +380,20 @@ pub fn write_plot_audited(
 
     let mut ops = Vec::new();
     let mut audit = PlotAudit::default();
-    let page = [page_w, page_h];
-    push_layer(
-        &mut ops, model, &fonts, "decoded", "Decoded", page, &mut audit,
-    )?;
-    push_layer(
-        &mut ops, model, &fonts, "inferred", "Inferred", page, &mut audit,
-    )?;
+    {
+        // Scoped so the two mutable borrows end before `audit` and `ledger`
+        // are read again for the returned value.
+        let mut sink = WriteSink {
+            audit: &mut audit,
+            ledger: &mut ledger,
+        };
+        push_layer(
+            &mut ops, model, &fonts, "decoded", "Decoded", page, &mut sink,
+        )?;
+        push_layer(
+            &mut ops, model, &fonts, "inferred", "Inferred", page, &mut sink,
+        )?;
+    }
 
     let contents = doc.add(Object::Stream(Stream::flate(
         Dict::new(),
@@ -365,7 +436,7 @@ pub fn write_plot_audited(
 
     let pdf = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
         .map_err(|error| PlotWriteError::Save(error.to_string()))?;
-    Ok((pdf, audit))
+    Ok(WrittenPlot { pdf, audit, ledger })
 }
 
 /// Declare an embedded program a subset in the PDF's own names.
@@ -640,6 +711,17 @@ impl FaceHeights {
     }
 }
 
+/// The two accounts one writing pass fills: what the sheet edge decided, and
+/// what the write layer's verdict said about each primitive.
+///
+/// They travel together because every branch of `push_layer` that observes one
+/// observes the other — a condensed run bumps [`PlotAudit::runs_condensed`]
+/// *and* marks its fate, and the two must never drift.
+struct WriteSink<'a> {
+    audit: &'a mut PlotAudit,
+    ledger: &'a mut WriteLedger,
+}
+
 fn push_layer(
     ops: &mut Vec<Op>,
     model: &PaperModel,
@@ -647,12 +729,15 @@ fn push_layer(
     confidence: &str,
     property: &str,
     page: [f64; 2],
-    audit: &mut PlotAudit,
+    sink: &mut WriteSink<'_>,
 ) -> Result<(), PlotWriteError> {
-    let primitives: Vec<_> = model
+    // The index is kept because the ledger's `fates` is indexed by the model's
+    // own primitive order, not by this layer's filtered view.
+    let primitives: Vec<(usize, &crate::model::PaperPrimitive)> = model
         .primitives
         .iter()
-        .filter(|primitive| primitive.confidence == confidence)
+        .enumerate()
+        .filter(|(_, primitive)| primitive.confidence == confidence)
         .collect();
     if primitives.is_empty() {
         return Ok(());
@@ -674,10 +759,16 @@ fn push_layer(
     ops.push(Op::new("J", vec![Object::Int(0)]));
     ops.push(Op::new("j", vec![Object::Int(0)]));
 
-    for primitive in &primitives {
-        paint_primitive(ops, primitive, page);
+    for (index, primitive) in &primitives {
+        let painted = paint_primitive(ops, primitive, page);
+        // A label is observed by its run, not by a path: `paint_primitive`
+        // deliberately writes nothing for one, so recording it here would file
+        // a correct page as a mismatch.
+        if !matches!(primitive.shape, PaperShape::Text { .. }) {
+            sink.ledger.observe_path(*index, painted.wrote_path);
+        }
     }
-    for primitive in &primitives {
+    for (index, primitive) in &primitives {
         if let PaperShape::Text {
             origin_mm,
             height_mm,
@@ -692,7 +783,7 @@ fn push_layer(
             spans,
         } = &primitive.shape
         {
-            show_text(
+            let shown = show_text(
                 ops,
                 fonts,
                 ShownText {
@@ -710,8 +801,19 @@ fn push_layer(
                     furniture: primitive.furniture,
                 },
                 page,
-                audit,
+                sink.audit,
             )?;
+            sink.ledger.observe_run(*index, shown.wrote_run);
+            // The two condensation marks are partial-on-page facts, and they
+            // only exist when a face actually lettered the run.
+            if let Some(fate) = sink.ledger.fates.get_mut(*index)
+                && shown.wrote_run
+            {
+                fate.text = Some(TextMarks {
+                    condensed: shown.condensed,
+                    clipped_at_floor: shown.clipped_at_floor,
+                });
+            }
         }
     }
     ops.push(Op::new("Q", Vec::new()));
@@ -719,14 +821,42 @@ fn push_layer(
     Ok(())
 }
 
+/// What one primitive's paint pass actually wrote.
+///
+/// `wrote_path` is the one fact the ledger checks: a pen state is written even
+/// when the shape has nothing to stroke, so only an `S` or an `f` means ink.
+struct Painted {
+    /// The pass emitted an `S` or an `f`.
+    wrote_path: bool,
+}
+
+/// What one label's pass actually wrote.
+///
+/// `wrote_run` is the fact the ledger checks — a `BT … ET` block was emitted.
+/// The two marks are appendix A.6's partial-on-page facts and are set on the
+/// same branches that bump [`PlotAudit`], so the two can never disagree.
+#[derive(Clone, Copy, Debug, Default)]
+struct Shown {
+    /// A `BT … ET` block was written.
+    wrote_run: bool,
+    /// The run was condensed to fit the page.
+    condensed: bool,
+    /// The run was condensed to the floor and still lost its tail.
+    clipped_at_floor: bool,
+}
+
 /// Paint one non-text primitive in its own pen state: `q`, the stroke's
 /// colour/width/dash or the fill's colour, the path, `S` or `f`, `Q`.
 /// The layer's `J`/`j` ride inside every saved state, so a one-stroke
 /// group keeps the layer's cap and join.
-fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, page: [f64; 2]) {
+fn paint_primitive(
+    ops: &mut Vec<Op>,
+    primitive: &crate::model::PaperPrimitive,
+    page: [f64; 2],
+) -> Painted {
     if let PaperShape::Fill { chain_mm, rgb } = &primitive.shape {
-        if chain_mm.len() < 3 || !chain_mm.iter().all(|point| finite(*point)) {
-            return;
+        if fill_fate(chain_mm).is_some() {
+            return Painted { wrote_path: false };
         }
         let ink = plot_ink(rgb.unwrap_or(PLOT_INK));
         ops.push(Op::new("q", Vec::new()));
@@ -745,10 +875,10 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         ops.push(Op::new("h", Vec::new()));
         ops.push(Op::new("f", Vec::new()));
         ops.push(Op::new("Q", Vec::new()));
-        return;
+        return Painted { wrote_path: true };
     }
     if matches!(primitive.shape, PaperShape::Text { .. }) {
-        return;
+        return Painted { wrote_path: false };
     }
     let pen = primitive.stroke.clone().unwrap_or(PaperStroke {
         rgb: [0, 0, 0],
@@ -756,8 +886,8 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         dash_mm: Vec::new(),
         dash_fit: None,
     });
-    if !pen.width_mm.is_finite() || pen.width_mm <= 0.0 {
-        return;
+    if pen_fate(pen.width_mm).is_some() {
+        return Painted { wrote_path: false };
     }
     let ink = plot_ink(pen.rgb);
     ops.push(Op::new("q", Vec::new()));
@@ -774,17 +904,19 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
     if let Some(fit) = fitted_dash(&pen, &primitive.shape) {
-        paint_fitted_pieces(ops, fit, &primitive.shape, page, primitive.furniture);
+        let wrote_path = paint_fitted_pieces(ops, fit, &primitive.shape, page, primitive.furniture);
         ops.push(Op::new("Q", Vec::new()));
-        return;
+        return Painted { wrote_path };
     }
     if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
-    if paint_shape(ops, &primitive.shape, page, primitive.furniture) {
+    let wrote_path = paint_shape(ops, &primitive.shape, page, primitive.furniture);
+    if wrote_path {
         ops.push(Op::new("S", Vec::new()));
     }
     ops.push(Op::new("Q", Vec::new()));
+    Painted { wrote_path }
 }
 
 /// The dash state a pen asks for, or `None` when its pattern inks no dash.
@@ -826,7 +958,8 @@ fn paint_fitted_pieces(
     shape: &PaperShape,
     page: [f64; 2],
     keep_sheet_edge: bool,
-) {
+) -> bool {
+    let mut any = false;
     for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
         for pair in run.windows(2) {
             let steps: Vec<Object> = fit
@@ -838,8 +971,10 @@ fn paint_fitted_pieces(
             ops.push(Op::new("m", vec![pt(pair[0][0]), pt(pair[0][1])]));
             ops.push(Op::new("l", vec![pt(pair[1][0]), pt(pair[1][1])]));
             ops.push(Op::new("S", Vec::new()));
+            any = true;
         }
     }
+    any
 }
 
 fn paint_shape(
@@ -898,10 +1033,9 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
     let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
         let (start, end) = (pair[0], pair[1]);
-        let prints = finite(start)
-            && finite(end)
-            && hypot(start, end) >= 1e-4
-            && (keep_sheet_edge || !sheet_edge_mm(start, end, page));
+        // One copy of the rule, in `write::verdict`, so the page and the
+        // ledger cannot disagree about whether this segment prints.
+        let prints = segment_fate(start, end, page, keep_sheet_edge).is_none();
         if !prints {
             if run.len() >= 2 {
                 runs.push(std::mem::take(&mut run));
@@ -1254,14 +1388,13 @@ fn show_text(
     text: ShownText<'_>,
     page: [f64; 2],
     audit: &mut PlotAudit,
-) -> Result<(), PlotWriteError> {
-    if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
-        return Ok(());
+) -> Result<Shown, PlotWriteError> {
+    // One copy of the four text rules, in `write::verdict`, so the page and the
+    // ledger cannot disagree about whether this label letters.
+    if text_fate(text.value, text.rotation, text.origin_mm, text.height_mm).is_some() {
+        return Ok(Shown::default());
     }
     let height_mm = text.height_mm.unwrap_or(DEFAULT_TEXT_MM);
-    if !height_mm.is_finite() || height_mm <= 0.0 {
-        return Ok(());
-    }
     // A drawing file pads label fields with spaces, on either side
     // (`L=200mm `, ` 1001102A`). The two pads are not the same thing to the
     // plotter. A leading pad is part of the line: the reference run starts
@@ -1275,7 +1408,9 @@ fn show_text(
     // `docs/analysis/2026-11-07-every-label-miss-is-a-reference-font-rule-or-the-pixel-grid.md`.
     let inked = text.value.trim_end();
     if inked.trim_start().is_empty() {
-        return Ok(());
+        // `text_fate` already refuses this case, so the branch is a second
+        // guard rather than a second rule.
+        return Ok(Shown::default());
     }
     // A label that letters in more than one style is cut into the stretches
     // that share a size and a face; a plain label is one stretch. `encode_runs`
@@ -1449,6 +1584,8 @@ fn show_text(
     // when it was drawn at the full em and lost its last two characters to
     // the sheet edge.
     let mut condense = 1.0;
+    let mut condensed = false;
+    let mut clipped_at_floor = false;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
         let start = baseline_origin(origin_mm, text.rotation, line_mm, below_mm, text.anchor);
         let reach = page_reach_mm(start, [cos, sin], page);
@@ -1457,6 +1594,7 @@ fn show_text(
             if condense < 1.0 {
                 audit.runs_condensed += 1;
                 audit.smallest_condense = audit.smallest_condense.min(condense);
+                condensed = true;
             }
             // Even half width leaves it hanging over the edge, so the page
             // clip takes the tail. Said out loud in [`PlotAudit`]: a run whose
@@ -1466,6 +1604,7 @@ fn show_text(
             if held_mm > reach {
                 audit.runs_clipped_at_the_condensation_floor += 1;
                 audit.deepest_clip_mm = audit.deepest_clip_mm.max(held_mm - reach);
+                clipped_at_floor = true;
             }
         }
     }
@@ -1523,7 +1662,11 @@ fn show_text(
         }
     }
     ops.push(Op::new("ET", Vec::new()));
-    Ok(())
+    Ok(Shown {
+        wrote_run: true,
+        condensed,
+        clipped_at_floor,
+    })
 }
 
 /// Advance of `bytes` at `size_pt`, in paper millimetres.
@@ -2290,7 +2433,7 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 mod tests {
     use super::{
         Dict, Document, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, STROKE_MM, ShownText, embed,
-        embedding, pen_width_mm, plotted_size_pt, text_segments, write_plot,
+        embedding, pen_width_mm, plotted_size_pt, text_segments, write_plot, write_plot_audited,
     };
     use crate::model::{
         PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
@@ -4433,5 +4576,230 @@ mod tests {
             (retreat - half_box).abs() < 0.05,
             "120℃ retreats {retreat:.3} mm, half of `120?` is {half_box:.3}"
         );
+    }
+
+    /// A one-primitive page, for the verdict-versus-write and condensation
+    /// tests below.
+    fn one_page(primitive: PaperPrimitive, page_mm: [f64; 2]) -> PaperModel {
+        PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some(page_mm),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        }
+    }
+
+    fn inter_font() -> [PlotFont<'static>; 1] {
+        [PlotFont {
+            key: "Arial",
+            bytes: pdfcraft_fonts::INTER_REGULAR,
+            subset: false,
+        }]
+    }
+
+    /// Feature: pdf-export-ledger, Property 5: 判定与真实写出一致
+    ///
+    /// The set `write_ledger` calls on-page has to equal the set
+    /// `write_plot_audited` actually wrote a path or a run for. The writer
+    /// records that observation itself, so the property is that the
+    /// observation never disagrees with the verdict — a non-empty
+    /// `mismatches` is exactly the drift requirement 5.6 forbids.
+    #[test]
+    fn write_verdict_matches_the_real_write() {
+        use proptest::prelude::*;
+
+        fn coordinate() -> impl Strategy<Value = f64> {
+            prop_oneof![
+                Just(f64::NAN),
+                Just(f64::INFINITY),
+                Just(0.0),
+                Just(-1.0),
+                Just(1e-4),
+                Just(0.9e-4),
+                Just(50.0),
+                Just(99.0),
+                (0.0f64..100.0),
+            ]
+        }
+
+        fn point() -> impl Strategy<Value = [f64; 2]> {
+            (coordinate(), coordinate()).prop_map(|(x, y)| [x, y])
+        }
+
+        fn shape() -> impl Strategy<Value = PaperShape> {
+            prop_oneof![
+                (point(), point())
+                    .prop_map(|(start_mm, end_mm)| PaperShape::Line { start_mm, end_mm }),
+                (proptest::collection::vec(point(), 0..4), any::<bool>())
+                    .prop_map(|(points_mm, closed)| PaperShape::Polyline { points_mm, closed }),
+                (proptest::collection::vec(point(), 0..4), any::<bool>()).prop_map(
+                    |(chain_mm, _)| PaperShape::Fill {
+                        chain_mm,
+                        rgb: None
+                    }
+                ),
+                (point(), "[A-Za-z0-9 ]{0,5}").prop_map(|(origin_mm, value)| {
+                    PaperShape::Text {
+                        origin_mm,
+                        height_mm: Some(2.5),
+                        rotation: 0.0,
+                        value,
+                        font: Some("Arial".to_string()),
+                        anchor: crate::model::TextAnchor::Left,
+                        line: crate::model::TextLine::Middle,
+                        height_basis: crate::model::TextHeightBasis::Cap,
+                        width_permille: None,
+                        paragraph: None,
+                        spans: Vec::new(),
+                    }
+                }),
+            ]
+        }
+
+        proptest!(ProptestConfig::with_cases(128), |(
+            shape in shape(),
+            plotted in any::<bool>(),
+            furniture in any::<bool>(),
+            width in prop_oneof![Just(0.35), Just(0.0), Just(f64::NAN)],
+        )| {
+            let mut primitive = primitive(if plotted { "decoded" } else { "probe_only" }, shape);
+            primitive.stroke = Some(super::PaperStroke {
+                rgb: [0, 0, 0],
+                width_mm: width,
+                dash_mm: Vec::new(),
+                dash_fit: None,
+            });
+            primitive.furniture = furniture;
+            let model = one_page(primitive, [100.0, 100.0]);
+            let fonts = inter_font();
+            let written = write_plot_audited(&model, &fonts).expect("the page writes");
+            prop_assert!(
+                written.ledger.mismatches.is_empty(),
+                "verdict and writer disagreed: {:?}",
+                written.ledger.mismatches
+            );
+            prop_assert_eq!(written.ledger.fates.len(), model.primitives.len());
+            prop_assert!(written.ledger.fonts_measured);
+        });
+    }
+
+    /// Feature: pdf-export-ledger, A.6: the ledger's two text marks equal the
+    /// audit's two counts.
+    ///
+    /// A run wider than the sheet is condensed; one that is still too wide at
+    /// half its width is clipped at the floor. Both are facts about the page,
+    /// and the ledger has to repeat them rather than reach its own answer.
+    #[test]
+    fn text_marks_equal_the_audit_counts() {
+        let page = [100.0, 50.0];
+        let label = |value: &str, x: f64| {
+            let mut primitive = primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [x, 25.0],
+                    height_mm: Some(2.5),
+                    rotation: 0.0,
+                    value: value.to_string(),
+                    font: Some("Arial".to_string()),
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
+                    paragraph: None,
+                    spans: Vec::new(),
+                },
+            );
+            primitive.stroke = None;
+            primitive
+        };
+        let fonts = inter_font();
+
+        // A run a little wider than the room it has: condensed, not clipped.
+        let condensed = one_page(label(&"M".repeat(40), 10.0), page);
+        let written = write_plot_audited(&condensed, &fonts).expect("write");
+        assert_eq!(written.audit.runs_condensed, 1, "the run is condensed");
+        let marks = written.ledger.fates[0]
+            .text
+            .expect("a written run has marks");
+        assert!(marks.condensed, "{marks:?}");
+        assert_eq!(
+            marks.clipped_at_floor,
+            written.audit.runs_clipped_at_the_condensation_floor > 0
+        );
+
+        // A run that overflows even at half width: clipped at the floor.
+        let clipped = one_page(label(&"M".repeat(400), 1.0), page);
+        let written = write_plot_audited(&clipped, &fonts).expect("write");
+        assert!(
+            written.audit.runs_clipped_at_the_condensation_floor > 0,
+            "the run is clipped at the floor"
+        );
+        let marks = written.ledger.fates[0]
+            .text
+            .expect("a written run has marks");
+        assert!(marks.condensed, "{marks:?}");
+        assert!(marks.clipped_at_floor, "{marks:?}");
+    }
+
+    /// The face-free entry reaches the same verdicts as the writer, and says
+    /// so by leaving `fonts_measured` false.
+    #[test]
+    fn write_ledger_judges_without_a_face() {
+        let mut drawn = primitive(
+            "decoded",
+            PaperShape::Line {
+                start_mm: [10.0, 10.0],
+                end_mm: [90.0, 10.0],
+            },
+        );
+        drawn.stroke = Some(super::PaperStroke {
+            rgb: [0, 0, 0],
+            width_mm: 0.35,
+            dash_mm: Vec::new(),
+            dash_fit: None,
+        });
+        let mut probe = drawn.clone();
+        probe.confidence = "probe_only";
+        let mut model = one_page(drawn, [100.0, 100.0]);
+        model.primitives.push(probe);
+
+        let ledger = super::write_ledger(&model).expect("no page stated? it is");
+        assert!(!ledger.fonts_measured);
+        assert_eq!(ledger.fates.len(), 2);
+        assert!(ledger.fates[0].is_on_page());
+        assert_eq!(
+            ledger.fates[1].reason(),
+            Some(crate::ledger::DropReason::ProbeOnly)
+        );
+        assert!(ledger.mismatches.is_empty());
+
+        // A model that states no page and holds no ink has nothing to judge
+        // against. (One that holds ink still resolves a page from the ink's
+        // own extent — that is `resolved_page_mm`'s job, not this entry's.)
+        let page_less = PaperModel {
+            page_mm: None,
+            primitives: Vec::new(),
+            ..one_page(
+                primitive(
+                    "decoded",
+                    PaperShape::Line {
+                        start_mm: [0.0, 0.0],
+                        end_mm: [0.0, 0.0],
+                    },
+                ),
+                [100.0, 100.0],
+            )
+        };
+        assert!(matches!(
+            super::write_ledger(&page_less),
+            Err(super::PlotWriteError::NoPage)
+        ));
     }
 }

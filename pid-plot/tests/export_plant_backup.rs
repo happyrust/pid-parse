@@ -1374,8 +1374,10 @@ fn every_backup_drawing_exports_a_readable_page() {
             model.missing_boxes
         );
 
-        let (pdf, audit) =
+        let written =
             write_plot_audited(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let pdf = written.pdf;
+        let audit = written.audit;
         clipped_at_floor += audit.runs_clipped_at_the_condensation_floor;
         deepest_clip_mm = deepest_clip_mm.max(audit.deepest_clip_mm);
         condensed += audit.runs_condensed;
