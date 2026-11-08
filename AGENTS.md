@@ -82,7 +82,7 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 ### CI 覆盖：pid-plot 的测试文件哪些真跑、哪些软跳过
 
 `pid-plot/tests/` 下 13 个既有测试文件，加上本 mission 新增的
-`paper_model_golden.rs`。下表是**实测**定论，不是推断：用
+`paper_model_golden.rs`，共 14 个。下表是**实测**定论，不是推断：用
 `git worktree add --detach … <HEAD>` 建一个模拟 CI 的干净检出（无
 `test-file/symbols-full`、无 `test-file/fonts`、无 `PID_PLOT_FONTS`，且
 `PID_PARSE_SELF_CHECK_DIR` / `PID_ACCEPTANCE_CORPUS` / `PID_TEST_DATA_DIR`
@@ -91,27 +91,36 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 测试自己打出的 stderr 行，而不是「它没报错」。一个文件里的多个用例可能分属
 两类，所以「混合」那一列写清哪几条真跑、哪几条跳过。
 
+**复现这张表必须加 `-- --nocapture`。** CI 的 `cargo test --locked
+--workspace --all-targets` 不带该参数，通过用例的 `eprintln!` 被测试框架吞掉，
+CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部真跑」的错误结论。
+
 | 测试文件 | 定论 | 判定依据（stderr 原文或断言实际执行） |
 |---|---|---|
-| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4162420 bytes (3.97 MiB)`。干净检出里 7.68 s 通过 |
-| `refdata_archive_corpus.rs` | **真跑** | 4 个用例全 `ok`（1.00 s）；夹具 `test-file/backup-test/DWG-0202GP06-01_p` 已入库，`backup_dir()` 返回 `Some`，`skipping the archive corpus` 一次都没出现 |
-| `border_template.rs` | **混合** | 4 个用例全 `ok`。A0/A1 建模段与 A2 CCHB 建模段真跑；两处渲染段打印 `skipping the page render; no font directory is present` 软跳过。另有两行 `skipping border template; … is absent`（语料 `.pid` 不在）——那是 `corpus_dir()` 分支，CI 上同样跳过 |
+| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4162420 bytes (3.97 MiB)`。干净检出里 7.28 s 通过 |
+| `refdata_archive_corpus.rs` | **真跑** | 4 个用例全 `ok`（0.77 s）；夹具 `test-file/backup-test/DWG-0202GP06-01_p` 已入库，`backup_dir()` 返回 `Some`，`skipping the archive corpus` 一次都没出现 |
+| `border_template.rs` | **混合（真跑 A2 与 A01，A0/A1 软跳过）** | 4 个用例全 `ok`，但只有 `an_a2_sheet_draws_its_linked_a2_template`（`D06.pid` + `CPECCHB-SQ-A2.igr`）与 `the_a01_sheets_embedded_frame_draws_the_a2_template_it_states`（`export-test/publish-data/A01/A01.pid` + `CPE-SQ-A2.igr`）的建模段真跑——两者的夹具都在仓库里。A0/A1 两条各打印一行 `skipping border template; C:\nonexistent-pid-corpus\I井场 注采阀组工艺及自控流程图.pid is absent` 与 `skipping border template; C:\nonexistent-pid-corpus\集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent`，因为 `corpus_dir()` 指向不存在的目录。两条 A2 用例的渲染段也打印 `skipping the page render; no font directory is present`，但建模段已过钉 |
 | `paper_model.rs` | **软跳过** | `skipping paper models; C:\nonexistent-pid-corpus is absent`；该门读 `PID_PARSE_SELF_CHECK_DIR` 下的五张图，仓库里没有 |
 | `plot_compare.rs` | **软跳过** | `skipping plot ratchet; …I井场 注采阀组工艺及自控流程图.pdf is absent` |
 | `plot_text_sources.rs` | **软跳过** | `skipping sourced compare; …I井场 … .pdf is absent` |
 | `read_reference_plots.rs` | **软跳过** | `skipping reference-plot counts; … is absent` |
-| `reference_plots_acceptance.rs` | **软跳过** | `skipping the acceptance gate; …验收数据…I井场 … .pdf is absent`。两个用例都 `ok`，但一条断言都没执行 |
-| `style_witness.rs` | **软跳过** | `skipping the style-witness gate; … carries no drawing with a plot beside it` |
+| `reference_plots_acceptance.rs` | **混合（`eleven_reference_plots` 软跳过，`only_the_surveyed_sheets_carry_furniture_masks` 真跑）** | 两个用例都 `ok`，但只有后者执行了断言：它只读 `MASK_SHEETS` 常量表与 `template_masks` 的纯函数，不需要任何语料。前者打印 `skipping the acceptance gate; C:\nonexistent-pid-acceptance\I井场 注采阀组工艺及自控流程图.pdf is absent` 后早退，一条页面断言都没跑 |
+| `style_witness.rs` | **软跳过** | `skipping the style-witness gate; no extracted plant backup here`；`backup_dir()` 返回 `None`，53 张备份不在检出里 |
 | `export_every_fixture.rs` | **软跳过** | `skipping fixture export; no font directory is present`。夹具在仓库里，缺的是字体 |
 | `write_five_drawings.rs` | **混合** | 4 个用例 `ok`；3 条纯单测（`an_inserted_space_span_is_not_a_placed_run` / `a_glued_inch_mark_still_covers_both_placed_runs` / `a_missing_placed_run_is_reported`）真跑，落盘那一条打印 `skipping rendered plots; … .pid is absent` |
-| `compare_five_drawings.rs` | **软跳过** | `skipping plot compare; …\plot/I井场 … .pdf is absent` |
+| `compare_five_drawings.rs` | **软跳过** | 两个用例都跳过，但打的字不一样：`five_drawings_write_compare_reports` 打 `skipping plot compare; …\plot/I井场 … .pdf is absent`，`survey_margin_text_once` 打的是 `skip survey`（`compare_five_drawings.rs:83-85` 的 `eprintln!` 后紧跟 `return`）。按关键字 `skipping` 抓会漏掉后一条，模式要写成 `skipping\|skip survey\|is absent\|no font directory` |
 | `template_symbol_gap.rs` | **软跳过** | `skipping template symbol gap; …集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent` |
-| `export_plant_backup.rs` | **混合（需打补丁才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None` → `skipping the backup export; no backup-plant-data directory is present`，软跳过。本机模拟时这两个根恰好存在（语料在这台机器上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并**失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1287`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，两条都打印 `skipping … no backup-plant-data directory is present` 并 `ok`，与 Linux runner 的行为一致。`style_witness.rs` 有同样的两个绝对根，同样处理后软跳过 |
+| `export_plant_backup.rs` | **软跳过（需临时打掉 `export_plant_backup.rs:121-122` 的两个硬编码绝对根才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None`，两条用例各打印一行 `skipping the D04 refusal pin; no backup-plant-data directory is present` 与 `skipping the backup export; no backup-plant-data directory is present` 并 `ok`。本机模拟时这两个根恰好存在（语料在这台机器上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并**失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1287`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，行为才与 Linux runner 一致。`style_witness.rs:108-109` 有同样的两个绝对根，同样处理后软跳过 |
 
-**结论**：CI 上真正带断言跑的出图门禁有 4 条——`paper_model_golden`（7 页整棵
-模型）、`refdata_archive_corpus`（4 个用例）、`border_template` 的两个建模段、
-`write_five_drawings` 的三条纯单测。其余 8 个文件在 CI 上一条出图断言都不执行，
-因为它们读的语料（验收数据、备份语料、字体）都不在仓库里。
+**结论**：**真跑 2 个 + 混合 3 个 + 软跳过 9 个 = 14 个**测试文件。
+
+真跑的两个文件是 `paper_model_golden`（7 页整棵模型）与
+`refdata_archive_corpus`（4 个用例）。混合的三个文件各有一半用例真跑：
+`border_template` 真跑两条 A2 建模段（A0/A1 软跳过）、`write_five_drawings`
+真跑三条纯单测（落盘那条跳过）、`reference_plots_acceptance` 真跑
+`only_the_surveyed_sheets_carry_furniture_masks`（`eleven_reference_plots`
+跳过）。其余 9 个文件在 CI 上一条出图断言都不执行，因为它们读的语料
+（验收数据、备份语料、字体）都不在仓库里。
 
 **金样可行性（S8.1）**：`cargo run -q -p pid-plot --example
 probe_paper_model_golden_size` 量了 7 张夹具的 `PaperModel` 序列化。每张各建两次

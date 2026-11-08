@@ -59,8 +59,8 @@
 //!   rewrite every golden from current behaviour. Only for an **intentional**
 //!   layout change; call it out in the PR.
 //!
-//! The seven goldens total about 4.25 MiB, which is why they are committed as
-//! one file per fixture rather than one blob.
+//! The seven goldens total 4 162 420 bytes (3.97 MiB), which is why they are
+//! committed as one file per fixture rather than one blob.
 
 use std::path::{Path, PathBuf};
 
