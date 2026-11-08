@@ -105,8 +105,13 @@ fn main() {
     }
 }
 
-/// Canonical serialization: pretty JSON with a trailing newline, and every
-/// absolute path replaced by the `<repo>` token.
+/// Canonical serialization: pretty JSON with a trailing newline, every path
+/// normalized onto `<repo>`, every float quantized to a micrometre.
+///
+/// The quantization is what the golden gate needs to be portable: `sin_cos`,
+/// `hypot` and `atan2` come from the platform's libm, so the same layout can
+/// differ in the last bit between Windows and the Linux runner. See
+/// `tests/paper_model_golden.rs`.
 fn render(model: &PaperModel, repo: &Path) -> String {
     let mut value = serde_json::to_value(model).expect("PaperModel is serializable");
     let prefix = repo.display().to_string().replace('\\', "/");
@@ -116,7 +121,10 @@ fn render(model: &PaperModel, repo: &Path) -> String {
     json
 }
 
-/// Replace the repository root in every string, and unify separators.
+/// How many decimals a coordinate keeps, in paper millimetres.
+const GOLDEN_DECIMALS: usize = 6;
+
+/// Unify separators, replace the repository root, and quantize every float.
 fn normalize(value: &mut serde_json::Value, prefix: &str) {
     match value {
         serde_json::Value::String(text) => {
@@ -131,6 +139,22 @@ fn normalize(value: &mut serde_json::Value, prefix: &str) {
         serde_json::Value::Object(map) => {
             for (_, item) in map.iter_mut() {
                 normalize(item, prefix);
+            }
+        }
+        serde_json::Value::Number(number) if number.is_f64() => {
+            let Some(raw) = number.as_f64() else {
+                return;
+            };
+            if !raw.is_finite() {
+                return;
+            }
+            let spelled = format!("{raw:.GOLDEN_DECIMALS$}");
+            let Ok(rounded) = spelled.parse::<f64>() else {
+                return;
+            };
+            let rounded = if rounded == 0.0 { 0.0 } else { rounded };
+            if let Some(quantized) = serde_json::Number::from_f64(rounded) {
+                *value = serde_json::Value::Number(quantized);
             }
         }
         _ => {}

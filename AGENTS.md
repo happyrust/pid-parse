@@ -75,7 +75,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/style_witness.rs` | The plant backup draws only style vocabulary a reference plot has exercised: the eleven acceptance pages' 10 pen widths / 2 dash patterns / 4 faces / 3 templates are pinned, every unexercised entry is pinned with its drawing-vs-furniture split (3 of the 4 unexercised widths are `CPECCHB-SQ-A1` furniture, `0.5000 mm` is also `D04`'s own ink, the 2 unexercised dash patterns are the drawing's own ink), and the four widths the open band boundaries cannot settle are pinned — `0.3000 mm` inside `(0.25, 0.35)`, `0.5000 mm` inside `(0.35, 0.70)`, `0.7500 mm` and `0.7999 mm` inside `(0.70, 1.06)` | `PID_ACCEPTANCE_CORPUS` (default `验收数据`; no fallback to the five-sheet corpus) and `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings — copied to a directory with no `Ref` and no archive in reach — draw nothing | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
 | `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm（只剩 `/Sheet6` 划线端头），见计划 §7.1。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
-| `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/` 并把仓库根替换成 `<repo>`。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 4.25 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected …, actual …` | 全部在仓库内（`test-file/**`），CI 上真跑 |
+| `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364` | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
@@ -93,7 +93,7 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 
 | 测试文件 | 定论 | 判定依据（stderr 原文或断言实际执行） |
 |---|---|---|
-| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4451569 bytes (4.25 MiB)`。干净检出里 7.57 s 通过 |
+| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4162420 bytes (3.97 MiB)`。干净检出里 7.68 s 通过 |
 | `refdata_archive_corpus.rs` | **真跑** | 4 个用例全 `ok`（1.00 s）；夹具 `test-file/backup-test/DWG-0202GP06-01_p` 已入库，`backup_dir()` 返回 `Some`，`skipping the archive corpus` 一次都没出现 |
 | `border_template.rs` | **混合** | 4 个用例全 `ok`。A0/A1 建模段与 A2 CCHB 建模段真跑；两处渲染段打印 `skipping the page render; no font directory is present` 软跳过。另有两行 `skipping border template; … is absent`（语料 `.pid` 不在）——那是 `corpus_dir()` 分支，CI 上同样跳过 |
 | `paper_model.rs` | **软跳过** | `skipping paper models; C:\nonexistent-pid-corpus is absent`；该门读 `PID_PARSE_SELF_CHECK_DIR` 下的五张图，仓库里没有 |
@@ -120,19 +120,28 @@ probe_paper_model_golden_size` 量了 7 张夹具的 `PaperModel` 序列化。�
 
 | 夹具 | 字节 | 图元 |
 |---|---:|---:|
-| `d06` | 106 869 | 156 |
-| `dwg-0201gp06-01` | 208 972 | 358 |
-| `dwg-0202gp06-01` | 208 181 | 340 |
-| `gongyi-guandao-1` | 3 109 560 | 5 478 |
-| `jizhuzhan-flash-b` | 447 958 | 777 |
-| `publish-a01` | 161 848 | 279 |
-| `publish-dwg-0202gp06-01` | 208 181 | 340 |
-| **合计** | **4 451 569（4.25 MiB）** | |
+| `d06` | 98 971 | 156 |
+| `dwg-0201gp06-01` | 197 944 | 358 |
+| `dwg-0202gp06-01` | 193 671 | 340 |
+| `gongyi-guandao-1` | 2 907 733 | 5 478 |
+| `jizhuzhan-flash-b` | 419 897 | 777 |
+| `publish-a01` | 150 533 | 279 |
+| `publish-dwg-0202gp06-01` | 193 671 | 340 |
+| **合计** | **4 162 420（3.97 MiB）** | |
 
 低于 5 MB 上限，所以按 D4(a) 上了金样门禁而不是退回 D4(b)。三个路径字段的处理
 见 `paper_model_golden.rs` 的模块注释：`library` 用声明的相对标签，
 `template.path` 与 `template.symbols[].key` 归一化到 `<repo>`；`.pid` 自己存下的
 作者机绝对路径原样保留（那是源字节，跨平台一致）。
+
+**浮点必须量化到 1 µm，这一条是 CI 教出来的。** 第一次推送（`5c8c3da`）在
+`test (stable)` 上红了：`publish-a01` 的 `primitives[167].shape.end_angle` 在
+Windows 上是 `-0.4081037359805999`，在 Linux runner 上是 `-0.4081037359806` ——
+差 1 ulp，画法完全相同。`sin_cos` / `hypot` / `atan2` 都来自平台的 libm，所以
+只要模型里有角度或长度，原始 `f64` 就不可跨平台比。现在序列化前把每个浮点按
+十进制拼写四舍五入到 6 位小数（`GOLDEN_DECIMALS`）；1 µm 比本语料需要分辨的
+最小读数（0.0532 mm 的文字残差）细 50 倍，不损失任何可测差异。量化后总量从
+4.25 MiB 降到 3.97 MiB。
 
 **`export_plant_backup` 的两个硬编码根是一处真实隐患**：它们让「本机 CI 模拟」
 与「Linux runner」在同一份代码上走出两条不同分支，而失败模式是 `panic!` 而不是

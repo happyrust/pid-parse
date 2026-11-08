@@ -38,23 +38,31 @@ CI 的 `test (stable)` job 在 `ubuntu-latest` 上跑，那里没有字体目录
 
 符号来源是**声明**的（`lay_out_with_symbol_roots`），不走 `lay_out_drawing`
 的自动搜索，因此不会被本机 gitignore 的 `test-file/symbols-full` 影响——带它
-生成的金样在干净检出上必然对不上。序列化前把 `\` 归一为 `/`，并把仓库根替换
-成 `<repo>`；`.pid` 自己存下的作者机绝对路径（`C:\Users\…\Temp\x.sym`）原样
-保留，那是源字节，跨平台一致。
+生成的金样在干净检出上必然对不上。序列化前把 `\` 归一为 `/`、把仓库根替换成
+`<repo>`；`.pid` 自己存下的作者机绝对路径（`C:\Users\…\Temp\x.sym`）原样保留，
+那是源字节，跨平台一致。
+
+**浮点量化到 1 µm，这是第一次推送被 CI 教出来的。** `5c8c3da` 的 `test (stable)`
+红在 `publish-a01` 的 `primitives[167].shape.end_angle`：Windows 上
+`-0.4081037359805999`，Linux runner 上 `-0.4081037359806`，差 1 ulp，画法完全
+相同。`sin_cos` / `hypot` / `atan2` 来自平台的 libm，所以只要模型里有角度或长度，
+原始 `f64` 就不能跨平台比。现在序列化前把每个浮点按十进制拼写四舍五入到 6 位
+小数（`GOLDEN_DECIMALS`）；1 µm 比本语料需要分辨的最小读数（0.0532 mm 的文字
+残差）细 50 倍，不损失任何可测差异。
 
 可行性读数（`cargo run -q -p pid-plot --example
 probe_paper_model_golden_size`）：7 张各建两次模型、各序列化一次，**全部逐字节
-相同**（无 `HashMap` 迭代顺序、无时间戳、无绝对路径漂移）；合计
-**4 451 569 字节（4.25 MiB）**，低于 5 MB 上限，所以上金样门禁而不是退回
-「只写清 CI 覆盖」。逐张：`d06` 106 869、`dwg-0201gp06-01` 208 972、
-`dwg-0202gp06-01` 208 181、`gongyi-guandao-1` 3 109 560、
-`jizhuzhan-flash-b` 447 958、`publish-a01` 161 848、
-`publish-dwg-0202gp06-01` 208 181。
+相同**（无 `HashMap` 迭代顺序、无时间戳、无绝对路径漂移）；量化后合计
+**4 162 420 字节（3.97 MiB）**，低于 5 MB 上限，所以上金样门禁而不是退回
+「只写清 CI 覆盖」。逐张：`d06` 98 971、`dwg-0201gp06-01` 197 944、
+`dwg-0202gp06-01` 193 671、`gongyi-guandao-1` 2 907 733、
+`jizhuzhan-flash-b` 419 897、`publish-a01` 150 533、
+`publish-dwg-0202gp06-01` 193 671。
 
 失败信息定位到具体页与具体字段：比对走 `first_difference`，打印第一个差异的
 JSON 路径与两侧值，例如把 `MM_PER_METRE` 从 1000.0 改成 1000.5 后
-`D06.pid`（golden `d06`）报 `template.extent_mm[0]: expected 593.9393939392176,
-actual 594.2363636361872`；把 `SHEET_REACH` 从 4.0 改成 0.9 报
+`D06.pid`（golden `d06`）报 `template.extent_mm[0]: expected 593.939394,
+actual 594.236364`；把 `SHEET_REACH` 从 4.0 改成 0.9 报
 `primitives[66].byte_range[0]: expected 8, actual 273`。
 `PID_PLOT_BLESS=1 cargo test -p pid-plot --test paper_model_golden` 重写金样。
 

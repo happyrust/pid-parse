@@ -38,6 +38,18 @@
 //! machine's `C:\Users\…\Temp\x.sym` — is left alone: it is source bytes, it is
 //! the same on every platform, and rewriting it would hide a real difference.
 //!
+//! # Why the floats are quantized
+//!
+//! Every coordinate is rounded to a micrometre ([`GOLDEN_DECIMALS`]) before it
+//! is compared. `f64::sin_cos`, `hypot` and `atan2` come from the platform's
+//! libm, so the same layout can differ in the last bit between Windows and the
+//! Linux runner: the first push of this gate failed on exactly that, with
+//! `publish-a01`'s `primitives[167].shape.end_angle` reading
+//! `-0.4081037359805999` on Windows and `-0.4081037359806` on the runner — one
+//! ulp, no layout difference at all. A micrometre is 50× finer than the
+//! smallest reading this corpus has ever needed to tell apart (a 0.0532 mm text
+//! residual), so nothing measurable is lost.
+//!
 //! # Workflow
 //!
 //! * Normal run — read the committed golden, and on a mismatch report the first
@@ -156,7 +168,7 @@ fn render(model: &PaperModel, repo: &Path) -> String {
     json
 }
 
-/// Unify separators and replace the repository root in every string.
+/// Unify separators, replace the repository root, and quantize every float.
 fn normalize(value: &mut Value, prefix: &str) {
     match value {
         Value::String(text) => {
@@ -172,8 +184,46 @@ fn normalize(value: &mut Value, prefix: &str) {
                 normalize(item, prefix);
             }
         }
+        Value::Number(number) if number.is_f64() => {
+            if let Some(quantized) = quantize(number.as_f64().unwrap_or(f64::NAN)) {
+                *value = Value::Number(quantized);
+            }
+        }
         _ => {}
     }
+}
+
+/// How many decimals a coordinate keeps, in paper millimetres.
+///
+/// Ten to a micrometre: far coarser than any layout difference this gate is
+/// meant to catch (the closest reading anywhere in the corpus is a 0.0532 mm
+/// text residual) and far finer than the last bit of an `f64`.
+const GOLDEN_DECIMALS: usize = 6;
+
+/// One float as a number with [`GOLDEN_DECIMALS`] decimals, via its decimal
+/// spelling so the rounding is exact.
+///
+/// This is not cosmetic. `f64::sin_cos`, `hypot` and `atan2` are implemented by
+/// the platform's libm, so the same layout can differ in the last bit between
+/// Windows and the Linux runner — measured: `publish-a01`'s
+/// `primitives[167].shape.end_angle` is `-0.4081037359805999` here and
+/// `-0.4081037359806` there, one ulp, no layout difference at all. Comparing
+/// raw `f64`s makes the gate red on a clean push and hides the reading that
+/// matters. Quantizing to a micrometre keeps every difference this gate exists
+/// to see.
+///
+/// `None` leaves the value alone — a float that will not round-trip through a
+/// decimal spelling is not one this gate can pin, and silently turning it into
+/// `null` would be worse than leaving it to fail loudly.
+fn quantize(value: f64) -> Option<serde_json::Number> {
+    if !value.is_finite() {
+        return None;
+    }
+    let spelled = format!("{value:.GOLDEN_DECIMALS$}");
+    let rounded: f64 = spelled.parse().ok()?;
+    // `-0` and `0` are the same reading; one spelling keeps the golden stable.
+    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
+    serde_json::Number::from_f64(rounded)
 }
 
 /// The first place two JSON documents disagree, as a readable path with both
