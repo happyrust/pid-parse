@@ -69,15 +69,30 @@ fn main() {
     let mut unstable = 0usize;
     for (path, slug) in FIXTURES {
         let fixture = corpus.join(path);
-        let model =
-            lay_out_with_symbol_roots(&fixture, &corpus, roots.clone(), archives.clone(), &label)
-                .unwrap_or_else(|error| panic!("{path}: {error}"));
-        let first = render(&model, &repo);
-        let second = render(&model, &repo);
+        // Two **separate layouts**, not one model rendered twice: a `PaperModel`
+        // built once and serialized twice only proves the serializer is
+        // deterministic. The question the golden gate depends on is whether
+        // `lay_out_drawing` itself is — two independent walks over the same
+        // `.pid`, which is what two runs of the test do.
+        let mut laid_out = Vec::new();
+        for _ in 0..2 {
+            let model = lay_out_with_symbol_roots(
+                &fixture,
+                &corpus,
+                roots.clone(),
+                archives.clone(),
+                &label,
+            )
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+            laid_out.push(model);
+        }
+        let first = render(&laid_out[0], &repo);
+        let second = render(&laid_out[1], &repo);
         let same = first == second;
         if !same {
             unstable += 1;
         }
+        let model = &laid_out[0];
         total += first.len();
         println!(
             "{slug:<24} bytes={:<9} primitives={:<6} symbols={}/{} template={} same_twice={same}",
