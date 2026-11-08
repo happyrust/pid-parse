@@ -267,6 +267,22 @@ Arial Narrow（以及 `SP:30℃` 这条仿宋）样式的字符串里名义字�
 - `chain-quantization` 1 对：JK 的 `1-1/2"` 和 `FC` 是两条各自放置的标签，比对时被当成一串。两个起点各自取整到设备像素，跨两条的宽度带了两次取整，+0.058 mm 在上限 2 × 0.085 mm 之内。差别出在取整的叠加，不是我方缺的规则，登记为源侧、不修。
 - `a2-title-block` 1 对：A2 公司名 `华北分公司`（字高、框位）属于 CT-4 那条线，这里只列出。
 
+### 其中 8 对在 2026-11-08 单独查完（`b17dfcd`）
+
+上表 `line-metrics` 3、`two-glyph-spacing` 3、`unexplained` 2 共 8 对，各写了一个只读探针查到底，
+结论都是「不是本 crate 缺的规则」，一对也不修：
+
+| 原因名 | 对数 | 探针 | 查到什么 |
+|---|---:|---|---|
+| `line-metrics`（模板标题 `华北油田苏桥储气库群`） | 3 | `probe_template_title_width` | 7 张带标签的图全部 `+0.0532 mm`，98% 来自 `Tm` 横向缩放（参考 `0.742`，本 crate `0.7429`），与 `template-scale` 同一条写出规则；9 个 gap 两侧逐项相等，字距不是原因 |
+| `two-glyph-spacing`（空冷 A/B/C 的 `SP:`） | 3 | `probe_sp_colon_step` | 参考把冒号写成第二个文字对象，AirA/B/C 那一步 21 px、另六张 22 px；记录字节、字体、字高、段落逐项相同，我方与 `lpDx` 模型 9/9 一致 |
+| `unexplained`（A2 `仪表风管线`） | 2 | `probe_a2_device_grid` | 同码、同字体、同字高、同框（42.009×4.034 mm）的另两条 `低压放空总管` 也偏，四条落点分成 −0.1978 / −0.1221 mm 两组；框相同 → 「`Middle` 按框高中线」修不了。另：A2 参考 run 起点 261/261 在 1/150 in 网格上，「A2 不适用网格」这条旧口径要重看 |
+
+所以「未修，宽度差的来源待查」「原因未找到」「待 A2 复核」这三条处理状态分别改为
+「已查：源侧（驱动写出值）」「已查：源侧（逐条放置）」「已查：待 A2 复核（框高不是原因）」。
+超限总数与分类计数都不变（4309 对 / 64 对）。完整读数与逐项排除的假设见
+`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`。
+
 ### docs 门禁的 11 条旧错误不是回归
 
 `b23b04c` 上其余门禁全过：fmt、build、clippy、parser-lib（无默认特性）、wasm32、examples、完整测试（403 组，1984 通过、0 失败、3 忽略，其中验收测试 2 个通过）。只有 docs 门禁 `cargo rustdoc --lib --locked -- -W missing-docs` 是 exit 101，报的是 11 条 `rustdoc::private_intra_doc_links`。`src/lib.rs:31` 把这个 lint 设成了 deny，所以它们是错误而不是警告；missing-docs 计数是 0。
