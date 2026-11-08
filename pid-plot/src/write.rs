@@ -2957,6 +2957,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -3010,6 +3011,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let expected = super::stroked_segments(&model);
         let pdf = write_plot(&model, &[]).expect("write");
@@ -3063,6 +3065,7 @@ mod tests {
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
                 symbols_referenced: 0,
+                ledger: crate::ledger::LayoutLedger::default(),
             }
         };
         let solid = write_plot(&page(Vec::new()), &[]).expect("solid");
@@ -3092,6 +3095,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(&model, &[]).expect("an empty page still writes");
         let ink = read_plot(&pdf).expect("read");
@@ -3131,6 +3135,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         assert!(write_plot(&model, &[]).is_err());
     }
@@ -3187,6 +3192,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -3557,6 +3563,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -3630,6 +3637,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -3718,6 +3726,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -3795,6 +3804,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         model.primitives[1].furniture = true;
         let pdf = write_plot(
@@ -3878,6 +3888,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         for primitive in &mut model.primitives[1..4] {
             primitive.furniture = true;
@@ -3958,6 +3969,7 @@ mod tests {
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
                 symbols_referenced: 0,
+                ledger: crate::ledger::LayoutLedger::default(),
             };
             let pdf = write_plot(
                 &model,
@@ -4024,6 +4036,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -4157,6 +4170,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -4202,6 +4216,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -4252,6 +4267,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(&model, &[]).expect("no run letters, so no face is needed");
         let ink = read_plot(&pdf).expect("read");
@@ -4329,6 +4345,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -4441,6 +4458,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let prepared = crate::fonts::prepare_fonts(&[&model], &dirs).expect("fonts");
         let fonts: Vec<PlotFont<'_>> = prepared
@@ -4528,6 +4546,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let prepared = crate::fonts::prepare_fonts(&[&model], &dirs).expect("fonts");
         let fonts: Vec<PlotFont<'_>> = prepared
@@ -4593,6 +4612,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         }
     }
 

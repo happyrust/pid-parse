@@ -102,6 +102,18 @@ pub struct PaperModel {
     pub symbols_found: usize,
     /// Distinct symbol files the drawing names.
     pub symbols_referenced: usize,
+    /// What the layout pass recorded about this page.
+    ///
+    /// This is the layout half of the export ledger: one record per entity the
+    /// pass visited, the parse-layer counts, the page's sources, and the index
+    /// of the entity each page primitive came from. It is **not** serialized —
+    /// a page model's JSON is byte-for-byte what it was before the ledger
+    /// existed, which is part of the "observe, never redraw" guardrail. A
+    /// consumer that wants the serializable account reads
+    /// [`ExportLedger`](crate::ledger::ExportLedger), assembled from this one
+    /// plus the writer's.
+    #[serde(skip)]
+    pub ledger: crate::ledger::LayoutLedger,
 }
 
 /// One `.igr` border template, as drawn.
@@ -1387,6 +1399,9 @@ pub fn lay_out_with_symbol_roots(
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
+        // Filled in by the recorder as the pass runs; the field is not
+        // serialized, so an empty ledger here changes no page's bytes.
+        ledger: crate::ledger::LayoutLedger::default(),
     })
 }
 
@@ -4392,6 +4407,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         assert!(
             !super::beyond_the_sheet(&model.primitives[0].shape, [841.0, 594.0]),
@@ -4963,6 +4979,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let pdf = write_plot(
             &model,
@@ -5393,6 +5410,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let owner = model
             .template_symbol_at([1100.0, 19.0], 0.5)
@@ -5570,6 +5588,7 @@ mod tests {
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
                 symbols_referenced: 0,
+                ledger: crate::ledger::LayoutLedger::default(),
             }
         }
 

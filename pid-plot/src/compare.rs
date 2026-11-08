@@ -2960,6 +2960,7 @@ mod tests {
             missing_boxes: Vec::new(),
             symbols_found: 0,
             symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
         };
         let ours = ink(
             vec![
