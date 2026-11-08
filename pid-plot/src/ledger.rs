@@ -28,9 +28,9 @@
 //! (`pid_parse::export_bundle::ExportBundleConfidenceLedger`). It is a
 //! different account of a different thing: that one lists how far each file in
 //! a publish bundle can be trusted, built statically from the bundle plan and
-//! checked only for existence. `ExportLedger` is computed per page from a
-//! laid-out `PaperModel` and a written PDF, and a gate compares it page by page
-//! against a committed baseline.
+//! checked only for existence. [`ExportLedger`](assemble::ExportLedger) is
+//! computed per page from a laid-out `PaperModel` and a written PDF, and a gate
+//! compares it page by page against a committed baseline.
 //!
 //! # Panic-free
 //!
@@ -46,8 +46,21 @@
     clippy::indexing_slicing
 )]
 
+pub mod assemble;
+pub mod baseline;
+pub mod layout;
 pub mod reason;
 
+pub use assemble::{
+    BodyAccount, CorpusDescriptor, DomainAccount, EntityAccount, ExportLedger, PageAccount,
+    PageSizeSource, ParseAccount, PrimitiveAccount, RecordItem, SegmentAccount, SuspectSite,
+    TemplateFact, TemplateSourceKind,
+};
+pub use layout::{
+    BodyItemLayout, BodyTally, Confidence, EntityKind, EntityLayout, EntityRecord, LayoutLedger,
+    PageSources, ParseCounts, ParseRecord, PlacementAccount, PlacementLayout, Site, SourceKind,
+    SourceName, TemplateTrace, TextNormalization,
+};
 pub use reason::{
     Asymmetry, DomainPair, DropReason, LedgerDomain, PartialMark, PlacementSource, ReasonLayer,
     Tier,
