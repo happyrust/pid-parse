@@ -75,8 +75,69 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/style_witness.rs` | The plant backup draws only style vocabulary a reference plot has exercised: the eleven acceptance pages' 10 pen widths / 2 dash patterns / 4 faces / 3 templates are pinned, every unexercised entry is pinned with its drawing-vs-furniture split (3 of the 4 unexercised widths are `CPECCHB-SQ-A1` furniture, `0.5000 mm` is also `D04`'s own ink, the 2 unexercised dash patterns are the drawing's own ink), and the four widths the open band boundaries cannot settle are pinned — `0.3000 mm` inside `(0.25, 0.35)`, `0.5000 mm` inside `(0.35, 0.70)`, `0.7500 mm` and `0.7999 mm` inside `(0.70, 1.06)` | `PID_ACCEPTANCE_CORPUS` (default `验收数据`; no fallback to the five-sheet corpus) and `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings — copied to a directory with no `Ref` and no archive in reach — draw nothing | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
 | `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm（只剩 `/Sheet6` 划线端头），见计划 §7.1。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
+| `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/` 并把仓库根替换成 `<repo>`。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 4.25 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected …, actual …` | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
+
+### CI 覆盖：pid-plot 的测试文件哪些真跑、哪些软跳过
+
+`pid-plot/tests/` 下 13 个既有测试文件，加上本 mission 新增的
+`paper_model_golden.rs`。下表是**实测**定论，不是推断：用
+`git worktree add --detach … <HEAD>` 建一个模拟 CI 的干净检出（无
+`test-file/symbols-full`、无 `test-file/fonts`、无 `PID_PLOT_FONTS`，且
+`PID_PARSE_SELF_CHECK_DIR` / `PID_ACCEPTANCE_CORPUS` / `PID_TEST_DATA_DIR`
+三个变量都指向不存在的目录），`rustup run stable cargo test -p pid-plot --
+--nocapture`（stable 1.99.1，与 CI 的 `test (stable)` 同档）。判定依据是该
+测试自己打出的 stderr 行，而不是「它没报错」。一个文件里的多个用例可能分属
+两类，所以「混合」那一列写清哪几条真跑、哪几条跳过。
+
+| 测试文件 | 定论 | 判定依据（stderr 原文或断言实际执行） |
+|---|---|---|
+| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4451569 bytes (4.25 MiB)`。干净检出里 7.57 s 通过 |
+| `refdata_archive_corpus.rs` | **真跑** | 4 个用例全 `ok`（1.00 s）；夹具 `test-file/backup-test/DWG-0202GP06-01_p` 已入库，`backup_dir()` 返回 `Some`，`skipping the archive corpus` 一次都没出现 |
+| `border_template.rs` | **混合** | 4 个用例全 `ok`。A0/A1 建模段与 A2 CCHB 建模段真跑；两处渲染段打印 `skipping the page render; no font directory is present` 软跳过。另有两行 `skipping border template; … is absent`（语料 `.pid` 不在）——那是 `corpus_dir()` 分支，CI 上同样跳过 |
+| `paper_model.rs` | **软跳过** | `skipping paper models; C:\nonexistent-pid-corpus is absent`；该门读 `PID_PARSE_SELF_CHECK_DIR` 下的五张图，仓库里没有 |
+| `plot_compare.rs` | **软跳过** | `skipping plot ratchet; …I井场 注采阀组工艺及自控流程图.pdf is absent` |
+| `plot_text_sources.rs` | **软跳过** | `skipping sourced compare; …I井场 … .pdf is absent` |
+| `read_reference_plots.rs` | **软跳过** | `skipping reference-plot counts; … is absent` |
+| `reference_plots_acceptance.rs` | **软跳过** | `skipping the acceptance gate; …验收数据…I井场 … .pdf is absent`。两个用例都 `ok`，但一条断言都没执行 |
+| `style_witness.rs` | **软跳过** | `skipping the style-witness gate; … carries no drawing with a plot beside it` |
+| `export_every_fixture.rs` | **软跳过** | `skipping fixture export; no font directory is present`。夹具在仓库里，缺的是字体 |
+| `write_five_drawings.rs` | **混合** | 4 个用例 `ok`；3 条纯单测（`an_inserted_space_span_is_not_a_placed_run` / `a_glued_inch_mark_still_covers_both_placed_runs` / `a_missing_placed_run_is_reported`）真跑，落盘那一条打印 `skipping rendered plots; … .pid is absent` |
+| `compare_five_drawings.rs` | **软跳过** | `skipping plot compare; …\plot/I井场 … .pdf is absent` |
+| `template_symbol_gap.rs` | **软跳过** | `skipping template symbol gap; …集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent` |
+| `export_plant_backup.rs` | **混合（需打补丁才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None` → `skipping the backup export; no backup-plant-data directory is present`，软跳过。本机模拟时这两个根恰好存在（语料在这台机器上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并**失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1287`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，两条都打印 `skipping … no backup-plant-data directory is present` 并 `ok`，与 Linux runner 的行为一致。`style_witness.rs` 有同样的两个绝对根，同样处理后软跳过 |
+
+**结论**：CI 上真正带断言跑的出图门禁有 4 条——`paper_model_golden`（7 页整棵
+模型）、`refdata_archive_corpus`（4 个用例）、`border_template` 的两个建模段、
+`write_five_drawings` 的三条纯单测。其余 8 个文件在 CI 上一条出图断言都不执行，
+因为它们读的语料（验收数据、备份语料、字体）都不在仓库里。
+
+**金样可行性（S8.1）**：`cargo run -q -p pid-plot --example
+probe_paper_model_golden_size` 量了 7 张夹具的 `PaperModel` 序列化。每张各建两次
+模型并各序列化一次，7 张全部逐字节相同（`unstable 0`），所以没有 `HashMap`
+迭代顺序、没有时间戳、没有绝对路径漂移。逐张字节数：
+
+| 夹具 | 字节 | 图元 |
+|---|---:|---:|
+| `d06` | 106 869 | 156 |
+| `dwg-0201gp06-01` | 208 972 | 358 |
+| `dwg-0202gp06-01` | 208 181 | 340 |
+| `gongyi-guandao-1` | 3 109 560 | 5 478 |
+| `jizhuzhan-flash-b` | 447 958 | 777 |
+| `publish-a01` | 161 848 | 279 |
+| `publish-dwg-0202gp06-01` | 208 181 | 340 |
+| **合计** | **4 451 569（4.25 MiB）** | |
+
+低于 5 MB 上限，所以按 D4(a) 上了金样门禁而不是退回 D4(b)。三个路径字段的处理
+见 `paper_model_golden.rs` 的模块注释：`library` 用声明的相对标签，
+`template.path` 与 `template.symbols[].key` 归一化到 `<repo>`；`.pid` 自己存下的
+作者机绝对路径原样保留（那是源字节，跨平台一致）。
+
+**`export_plant_backup` 的两个硬编码根是一处真实隐患**：它们让「本机 CI 模拟」
+与「Linux runner」在同一份代码上走出两条不同分支，而失败模式是 `panic!` 而不是
+跳过。这条不影响本 mission 的验收（CI 上确实软跳过），但后续要改 CI 覆盖面时
+得先处理它。
 
 D06 fixture test
 (`d06_pid_parses_with_expected_structure_and_geometry_summary`) covers

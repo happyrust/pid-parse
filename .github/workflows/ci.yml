@@ -46,6 +46,14 @@ jobs:
         # `parse_real_files.rs`) for sparse-checkout / shallow-clone
         # scenarios. --workspace picks up vendored oxidized-mdf unit
         # tests too.
+        #
+        # Which `pid-plot` gates actually assert here and which soft-skip is
+        # measured, not inferred: see "CI 覆盖" in `AGENTS.md`. Four gates
+        # assert on this runner — `paper_model_golden` (the whole `PaperModel`
+        # of all seven committed fixtures), `refdata_archive_corpus`,
+        # `border_template`'s two modelling cases, and `write_five_drawings`'
+        # three pure unit tests. Everything that needs the licensed symbol
+        # library, a font directory or the acceptance corpus soft-skips.
         run: cargo test --locked --workspace --all-targets
 
       - name: cargo build --examples

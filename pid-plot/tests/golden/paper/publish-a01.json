@@ -1,0 +1,8373 @@
+{
+  "library": [
+    "test-file/Ref/Symbols",
+    "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip"
+  ],
+  "page_mm": [
+    594.0010414848327,
+    420.0010166893005
+  ],
+  "template": {
+    "path": "<repo>/test-file/Ref/Template Files/CPE-SQ-A2.igr",
+    "extent_mm": [
+      594.0000000000001,
+      419.9999999999991
+    ],
+    "offset_mm": [
+      0.001000000000001,
+      0.001000000000001
+    ],
+    "scale": 1.0,
+    "primitives": 175,
+    "symbols": [
+      {
+        "key": "c:/users/admini~1.win/appdata/local/temp/blfh.sym",
+        "insertion_mm": [
+          505.6934515187929,
+          19.00099454983481
+        ],
+        "body": "cached",
+        "library_available": false,
+        "extent_mm": [
+          [
+            503.39129227073846,
+            18.55803420206845
+          ],
+          [
+            508.0102669426896,
+            19.413122076137448
+          ]
+        ],
+        "name_gap": "no_such_file"
+      }
+    ]
+  },
+  "primitives": [
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12366,
+        12485
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/BLFH.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          504.69345151879435,
+          20.05099454983642
+        ],
+        "radius_mm": 1.4500000000001312,
+        "start_angle": -2.686091917032798,
+        "end_angle": -0.8097835725716289,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12366,
+        12485
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/BLFH.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          506.69345151879327,
+          17.950994549841162
+        ],
+        "radius_mm": 1.4499999999956859,
+        "start_angle": 2.3318090810228,
+        "end_angle": 0.4319561048049334,
+        "clockwise": true
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        732,
+        802
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          207.9078059086931
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "日期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        802,
+        874
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          177.29015902927472
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "修改号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        874,
+        944
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          164.8928297236687
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "次数",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        944,
+        1014
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          192.31722518053792
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "页次",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1014,
+        1094
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          372.5009945498339
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "签     署",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1318,
+        1398
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          297.5009945498348
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "签     署",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1846,
+        1916
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          237.7740997497356
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "审核",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1916,
+        1986
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.226907737338276,
+          222.7470335984724
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "修改",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1986,
+        2066
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          272.5009945498348
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "会 签 专 业",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2290,
+        2368
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          322.5009945498339
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "日    期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2368,
+        2448
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          347.50099454983393
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "会 签 专 业",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2638,
+        2716
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          24.00097041457391,
+          397.5009945498339
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "日    期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2772,
+        2856
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          542.9325535396636,
+          66.35040832687335
+        ],
+        "height_mm": 3.5,
+        "rotation": 0.0,
+        "value": "010065-kj",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2856,
+        2942
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          530.2472048514753,
+          57.73177834781634
+        ],
+        "height_mm": 4.0,
+        "rotation": 0.0,
+        "value": "华北油田苏桥储气库群",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2998,
+        3106
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          468.4146609414999,
+          74.14612168735837
+        ],
+        "height_mm": 4.500000000000001,
+        "rotation": 0.0,
+        "value": "中国石油集团工程设计有限责任公司华北分公司",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3330,
+        3422
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          549.4367873679399,
+          12.695842649205382
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "CPENC-DD11008",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4094,
+        4168
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          37.14489523750742
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "审  定",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4224,
+        4298
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          31.14489523750742
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "批  准",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6030,
+        6104
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          48.92429879631507
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "校  对",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6104,
+        6178
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          43.16169727111153
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "审  核",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6178,
+        6252
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          55.19530133831974
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "设  计",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6252,
+        6326
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          451.5009704145739,
+          61.195301338319744
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "制  图",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11958,
+        12044
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          496.961693734014,
+          66.56161632317415
+        ],
+        "height_mm": 3.5,
+        "rotation": 0.0,
+        "value": "A111001641",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12100,
+        12170
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          482.3293579203562,
+          17.550994549834993
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "比例",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12170,
+        12240
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          486.12819446569455,
+          13.00698575998083
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "日期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12240,
+        12310
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          482.28020596068717,
+          23.54370231415103
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "阶段",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12485,
+        12571
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          505.44838111357944,
+          12.81480666089717
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "2012,05,15",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12571,
+        12643
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          504.7339297110081,
+          24.76306394901783
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "施工图",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12643,
+        12719
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          495.5326115822715,
+          66.24137618543027
+        ],
+        "height_mm": 3.5,
+        "rotation": 0.0,
+        "value": "设计证书号",
+        "font": "SimSun",
+        "anchor": "right",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12775,
+        12847
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          525.5882816669724,
+          19.312561945910396
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "文件号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12847,
+        12919
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          525.5882816669724,
+          13.317535058314911
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "项目号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12919,
+        12995
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          525.5882816669724,
+          25.125922251977304
+        ],
+        "height_mm": 3.2,
+        "rotation": 0.0,
+        "value": "CADD号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        13051,
+        13127
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          541.3921700789832,
+          66.01503657912579
+        ],
+        "height_mm": 3.5,
+        "rotation": 0.0,
+        "value": "勘察证书号",
+        "font": "SimSun",
+        "anchor": "right",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        13239,
+        13311
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          577.6084673938492,
+          12.695842649205382
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "1 版",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        288,
+        398
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            25.00097041457391,
+            410.00099454983376
+          ],
+          [
+            584.0009704145739,
+            410.00099454983376
+          ],
+          [
+            584.0009704145739,
+            10.000994549834811
+          ],
+          [
+            25.00097041457391,
+            10.000994549834811
+          ],
+          [
+            25.00097041457391,
+            410.00099454983376
+          ]
+        ],
+        "closed": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        398,
+        508
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            0.0009704145739098001,
+            420.0009945498339
+          ],
+          [
+            594.000970414574,
+            420.0009945498339
+          ],
+          [
+            594.000970414574,
+            0.0009945498348107001
+          ],
+          [
+            0.0009704145739098001,
+            0.0009945498348107001
+          ],
+          [
+            0.0009704145739098001,
+            420.0009945498339
+          ]
+        ],
+        "closed": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2448,
+        2526
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            75.00097041457391,
+            410.00099454983376
+          ],
+          [
+            75.00097041457391,
+            400.0009945498339
+          ],
+          [
+            25.00097041457391,
+            400.0009945498339
+          ]
+        ],
+        "closed": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8,
+        64
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          160.0009945498339
+        ],
+        "end_mm": [
+          25.00097041457391,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        64,
+        120
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          20.00097041457391,
+          160.0009945498339
+        ],
+        "end_mm": [
+          20.00097041457391,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        120,
+        176
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          5.000970414573909,
+          160.0009945498339
+        ],
+        "end_mm": [
+          5.000970414573909,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        176,
+        232
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          10.00097041457391,
+          160.0009945498339
+        ],
+        "end_mm": [
+          10.00097041457391,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        232,
+        288
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          15.000970414573912,
+          160.0009945498339
+        ],
+        "end_mm": [
+          15.000970414573912,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        508,
+        564
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          215.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          215.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        564,
+        620
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          200.00099454983393
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          200.00099454983393
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        620,
+        676
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          170.00099454983393
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          170.00099454983393
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        676,
+        732
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          185.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          185.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1094,
+        1150
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          20.00097041457391,
+          410.00099454983376
+        ],
+        "end_mm": [
+          20.00097041457391,
+          335.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1150,
+        1206
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          10.00097041457391,
+          410.00099454983376
+        ],
+        "end_mm": [
+          10.00097041457391,
+          334.9072645181275
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1206,
+        1262
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          5.000970414573909,
+          410.00099454983376
+        ],
+        "end_mm": [
+          5.000970414573909,
+          335.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1262,
+        1318
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          15.000970414573912,
+          410.00099454983376
+        ],
+        "end_mm": [
+          15.000970414573912,
+          335.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1398,
+        1454
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          20.00097041457391,
+          335.0009945498339
+        ],
+        "end_mm": [
+          20.00097041457391,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1454,
+        1510
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          10.00097041457391,
+          335.0009945498339
+        ],
+        "end_mm": [
+          10.00097041457391,
+          259.9072645181284
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1510,
+        1566
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          5.000970414573909,
+          335.0009945498339
+        ],
+        "end_mm": [
+          5.000970414573909,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1566,
+        1622
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          15.000970414573912,
+          335.0009945498339
+        ],
+        "end_mm": [
+          15.000970414573912,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1622,
+        1678
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          245.00099454983481
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          245.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1678,
+        1734
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          230.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          230.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1734,
+        1790
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          260.0009945498348
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1790,
+        1846
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          260.0009945498348
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          260.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2066,
+        2122
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          360.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          360.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2122,
+        2178
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          310.0009945498348
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          310.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2178,
+        2234
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          335.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          335.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2234,
+        2290
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          335.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          335.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2526,
+        2582
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          410.00099454983376
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          410.00099454983376
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2582,
+        2638
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          385.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          385.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2716,
+        2772
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          160.0009945498339
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          160.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2942,
+        2998
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.00097041457377,
+          52.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          52.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3106,
+        3162
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          64.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          64.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3162,
+        3218
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          84.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          84.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3218,
+        3274
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          84.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          84.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3274,
+        3330
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.00097041457377,
+          28.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          28.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3422,
+        3478
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.00097041457377,
+          22.00099454983481
+        ],
+        "end_mm": [
+          584.0009704145739,
+          22.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3478,
+        3534
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0009704145739,
+          16.00099454983481
+        ],
+        "end_mm": [
+          444.0009704145739,
+          16.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3534,
+        3590
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0009704145739,
+          16.00099454983481
+        ],
+        "end_mm": [
+          444.0009704145739,
+          16.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3590,
+        3646
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          10.000994549834811
+        ],
+        "end_mm": [
+          584.0009704145739,
+          10.000994549834811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3646,
+        3702
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          34.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          34.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3702,
+        3758
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          40.000994549834815
+        ],
+        "end_mm": [
+          479.00097041457377,
+          40.000994549834815
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3758,
+        3814
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          46.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          46.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3814,
+        3870
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          28.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          28.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3870,
+        3926
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          52.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          52.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3926,
+        3982
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          58.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          58.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3982,
+        4038
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          22.00099454983481
+        ],
+        "end_mm": [
+          479.00097041457377,
+          22.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4038,
+        4094
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          16.00099454983481
+        ],
+        "end_mm": [
+          444.0009704145739,
+          84.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4168,
+        4224
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.00097041457377,
+          10.000994549834811
+        ],
+        "end_mm": [
+          459.00097041457377,
+          64.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4298,
+        4354
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.0009704145739,
+          16.00099454983481
+        ],
+        "end_mm": [
+          444.0009704145739,
+          10.000994549834811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5001,
+        5057
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.85404173278926,
+          71.52034234386045
+        ],
+        "end_mm": [
+          454.1650686556384,
+          71.52034234386045
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5057,
+        5113
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.0803297947384,
+          75.59176074214045
+        ],
+        "end_mm": [
+          458.87549807680966,
+          75.59176074214045
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5113,
+        5169
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.1650686556384,
+          75.07217101584753
+        ],
+        "end_mm": [
+          458.8338478722505,
+          75.07217101584753
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5169,
+        5225
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          453.9955909338348,
+          77.57131467347953
+        ],
+        "end_mm": [
+          455.63698740632367,
+          77.57131467347953
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5225,
+        5281
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.0803297947384,
+          76.69826613358126
+        ],
+        "end_mm": [
+          455.7217262672236,
+          76.69826613358126
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5281,
+        5337
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.1650686556384,
+          79.721521887205
+        ],
+        "end_mm": [
+          457.53652423639835,
+          79.721521887205
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5549,
+        5605
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.1650686556384,
+          79.05756462567186
+        ],
+        "end_mm": [
+          458.85384076180685,
+          79.05756462567186
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5605,
+        5661
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.0803297947384,
+          78.42379156721816
+        ],
+        "end_mm": [
+          458.87184572632725,
+          78.42379156721816
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6326,
+        6382
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.0803297947384,
+          75.59176074214045
+        ],
+        "end_mm": [
+          454.0803297947384,
+          76.69826613358217
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6382,
+        6438
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.1650686556384,
+          71.52034234386045
+        ],
+        "end_mm": [
+          454.1650686556384,
+          75.07217101584753
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6503,
+        6559
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.0803297947384,
+          77.31728617577735
+        ],
+        "end_mm": [
+          454.0803297947384,
+          78.42379156721816
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6559,
+        6615
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.1650686556384,
+          79.05756462567186
+        ],
+        "end_mm": [
+          454.1650686556384,
+          79.721521887205
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7112,
+        7168
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          447.9363997402977,
+          75.55975865481176
+        ],
+        "end_mm": [
+          449.70936052645607,
+          75.55975865481176
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7168,
+        7224
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          448.1219366692747,
+          75.03778238756037
+        ],
+        "end_mm": [
+          450.01704479894005,
+          75.03778238756037
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7354,
+        7410
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          447.94497469834795,
+          78.4032892088542
+        ],
+        "end_mm": [
+          449.6845320257268,
+          78.4032892088542
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7410,
+        7466
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          448.14168890006454,
+          79.0192710456129
+        ],
+        "end_mm": [
+          450.0029301490683,
+          79.0192710456129
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7703,
+        7759
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          447.80005988757665,
+          76.66279261492835
+        ],
+        "end_mm": [
+          449.2953561137217,
+          76.66279261492835
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7759,
+        7815
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          447.6960771167248,
+          77.56361260542306
+        ],
+        "end_mm": [
+          449.20882065134685,
+          77.56361260542306
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8549,
+        8605
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          452.0262416346774,
+          75.55975865481176
+        ],
+        "end_mm": [
+          453.5811319353777,
+          75.55975865481176
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8605,
+        8661
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          451.88707915840826,
+          75.03778238756037
+        ],
+        "end_mm": [
+          453.5650727282043,
+          75.03778238756037
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8661,
+        8717
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          452.168944480454,
+          75.855911395405
+        ],
+        "end_mm": [
+          453.6598572079927,
+          75.855911395405
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9256,
+        9312
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          451.946128894913,
+          78.4032892088542
+        ],
+        "end_mm": [
+          453.62328252581545,
+          78.4032892088542
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9312,
+        9368
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          451.82034789180005,
+          79.0192710456129
+        ],
+        "end_mm": [
+          453.59604604590606,
+          79.0192710456129
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9368,
+        9424
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          453.70030824942626,
+          78.14429069558517
+        ],
+        "end_mm": [
+          452.05676032188757,
+          78.14429069558517
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9424,
+        9480
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          463.8245145048893,
+          75.08659864170548
+        ],
+        "end_mm": [
+          463.8245145048893,
+          74.13760767659167
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9480,
+        9536
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          463.4934195374915,
+          76.72896602569634
+        ],
+        "end_mm": [
+          463.4934195374915,
+          76.3071920213686
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9536,
+        9592
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          463.4934195374915,
+          77.77062820236259
+        ],
+        "end_mm": [
+          463.4934195374915,
+          77.34885419803484
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9592,
+        9648
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          463.8245145048893,
+          79.97310887934582
+        ],
+        "end_mm": [
+          463.8245145048893,
+          79.07683966477342
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9648,
+        9704
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.44614108725335,
+          75.60423589211203
+        ],
+        "end_mm": [
+          459.44614108725335,
+          76.72896602569634
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9704,
+        9760
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          460.73071250883345,
+          76.3071920213686
+        ],
+        "end_mm": [
+          460.73071250883345,
+          75.60423589211203
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9760,
+        9816
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.7217262672236,
+          75.93190219259557
+        ],
+        "end_mm": [
+          455.7217262672236,
+          76.69826613358126
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9946,
+        10002
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.44614108725335,
+          75.60423589211203
+        ],
+        "end_mm": [
+          460.73071250883345,
+          75.60423589211203
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10002,
+        10058
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.53087994815695,
+          74.13760767659167
+        ],
+        "end_mm": [
+          459.53087994815695,
+          75.08659864170548
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10058,
+        10114
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.85404173278926,
+          74.37122128022182
+        ],
+        "end_mm": [
+          455.85404173278926,
+          71.52034234386045
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10114,
+        10170
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.7217262672236,
+          75.93190219259557
+        ],
+        "end_mm": [
+          456.77334175953337,
+          75.93190219259557
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10170,
+        10226
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.85404173278926,
+          74.37122128022182
+        ],
+        "end_mm": [
+          457.53652423639835,
+          74.37122128022182
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10291,
+        10347
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.44614108725335,
+          78.4560104147711
+        ],
+        "end_mm": [
+          460.73071250883345,
+          78.4560104147711
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10347,
+        10403
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.44614108725335,
+          77.34885419803484
+        ],
+        "end_mm": [
+          459.44614108725335,
+          78.4560104147711
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10403,
+        10459
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.53087994815326,
+          79.07683966477342
+        ],
+        "end_mm": [
+          459.53087994815326,
+          79.97310887934582
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10459,
+        10515
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.7217262672236,
+          77.31728617577735
+        ],
+        "end_mm": [
+          455.7217262672236,
+          78.07616426430721
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10515,
+        10571
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          455.7217262672236,
+          78.07616426430721
+        ],
+        "end_mm": [
+          456.77334175953337,
+          78.07616426430721
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10766,
+        10822
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          457.65630120770555,
+          76.69826613358217
+        ],
+        "end_mm": [
+          459.158304147011,
+          76.69826613358217
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10822,
+        10878
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          457.5703859521707,
+          77.57131467347953
+        ],
+        "end_mm": [
+          459.07319579935194,
+          77.57131467347953
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10878,
+        10934
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          460.73071250883345,
+          78.4560104147711
+        ],
+        "end_mm": [
+          460.73071250883345,
+          77.77062820236259
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11250,
+        11306
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.53087994815695,
+          75.08659864170548
+        ],
+        "end_mm": [
+          463.8245145048893,
+          75.08659864170548
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11306,
+        11362
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          463.8245145048893,
+          74.13760767659167
+        ],
+        "end_mm": [
+          459.53087994815695,
+          74.13760767659167
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11678,
+        11734
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.36140222635345,
+          77.60288269573701
+        ],
+        "end_mm": [
+          463.4086806765879,
+          77.60288269573701
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11734,
+        11790
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.53087994815326,
+          79.07683966477342
+        ],
+        "end_mm": [
+          463.8245145048893,
+          79.07683966477342
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11790,
+        11846
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.53087994815326,
+          79.97310887934582
+        ],
+        "end_mm": [
+          463.8245145048893,
+          79.97310887934582
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11846,
+        11902
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          460.73071250883345,
+          76.3071920213686
+        ],
+        "end_mm": [
+          463.4934195374915,
+          76.3071920213686
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11902,
+        11958
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          460.73071250883345,
+          77.77062820236259
+        ],
+        "end_mm": [
+          463.4934195374915,
+          77.77062820236259
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12044,
+        12100
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.00097041457377,
+          10.000994549834811
+        ],
+        "end_mm": [
+          479.00097041457377,
+          64.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12310,
+        12366
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          494.00097041457394,
+          10.000994549834811
+        ],
+        "end_mm": [
+          494.00097041457394,
+          28.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12719,
+        12775
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          534.0009704145738,
+          28.00099454983481
+        ],
+        "end_mm": [
+          534.0009704145738,
+          10.000994549834813
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        12995,
+        13051
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          516.0009704145739,
+          10.000994549834811
+        ],
+        "end_mm": [
+          516.0009704145739,
+          28.00099454983481
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        13127,
+        13183
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          569.0009704145739,
+          10.000994549834811
+        ],
+        "end_mm": [
+          569.0009704145739,
+          16.0009945498339
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        13183,
+        13239
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00097041457391,
+          285.0009945498348
+        ],
+        "end_mm": [
+          0.0009704145739093673,
+          285.0009945498348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4354,
+        4723
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            454.0803297947384,
+            76.69826613358126
+          ],
+          [
+            454.0803297947384,
+            75.59176074214045
+          ],
+          [
+            458.87549807680966,
+            75.59176074214047
+          ],
+          [
+            459.07303420038073,
+            76.13066666803819
+          ],
+          [
+            459.158304147011,
+            76.69826613358126
+          ],
+          [
+            457.65630120770555,
+            76.69826613358126
+          ],
+          [
+            457.5988889061707,
+            76.49147587052695
+          ],
+          [
+            457.4942908200066,
+            76.30407889714586
+          ],
+          [
+            457.3484174205344,
+            76.1466643597358
+          ],
+          [
+            457.16951150239544,
+            76.02812720220095
+          ],
+          [
+            456.9676824121097,
+            75.95516554394109
+          ],
+          [
+            456.75433480432895,
+            75.93190219259557
+          ],
+          [
+            455.7217262672236,
+            75.93190219259557
+          ],
+          [
+            455.7217262672236,
+            76.69826613358126
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4723,
+        5001
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            455.85404173278926,
+            74.37122128022182
+          ],
+          [
+            457.53652423639835,
+            74.37122128022179
+          ],
+          [
+            457.91396833905577,
+            74.4265923337138
+          ],
+          [
+            458.26840858841916,
+            74.5676671855724
+          ],
+          [
+            458.58066697810676,
+            74.78681257627328
+          ],
+          [
+            458.8338478722505,
+            75.07217101584753
+          ],
+          [
+            454.1650686556384,
+            75.07217101584753
+          ],
+          [
+            454.1650686556384,
+            71.52034234386045
+          ],
+          [
+            455.85404173278926,
+            71.52034234386045
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5337,
+        5549
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            458.85384076180685,
+            79.05756462567184
+          ],
+          [
+            458.59262077481173,
+            79.33584257448055
+          ],
+          [
+            458.27411526014697,
+            79.54614886427493
+          ],
+          [
+            457.91560081688255,
+            79.67707591407641
+          ],
+          [
+            457.53652423639835,
+            79.721521887205
+          ],
+          [
+            454.1650686556384,
+            79.721521887205
+          ],
+          [
+            454.1650686556384,
+            79.05756462567186
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5661,
+        6030
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            457.6551248130743,
+            77.31728617577735
+          ],
+          [
+            459.1579346602555,
+            77.31728617577735
+          ],
+          [
+            459.0710642909698,
+            77.88506278420843
+          ],
+          [
+            458.87184572632725,
+            78.42379156721816
+          ],
+          [
+            454.0803297947384,
+            78.42379156721816
+          ],
+          [
+            454.0803297947384,
+            77.31728617577735
+          ],
+          [
+            455.7217262672236,
+            77.31728617577735
+          ],
+          [
+            455.7217262672236,
+            78.07616426430721
+          ],
+          [
+            456.7543348043325,
+            78.07616426430725
+          ],
+          [
+            456.9664518683074,
+            78.05318520785067
+          ],
+          [
+            457.16725335879875,
+            77.98107108106954
+          ],
+          [
+            457.3455249043427,
+            77.86384931724407
+          ],
+          [
+            457.4913103869428,
+            77.7080665231748
+          ],
+          [
+            457.59646797183507,
+            77.52242286396555
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6680,
+        6917
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            449.2953561137217,
+            76.66279261492835
+          ],
+          [
+            447.8000598875767,
+            76.66279261492834
+          ],
+          [
+            447.8160851747757,
+            76.1048303279434
+          ],
+          [
+            447.9363997402977,
+            75.55975865481176
+          ],
+          [
+            449.70936052645607,
+            75.5597586548118
+          ],
+          [
+            449.50295743016903,
+            75.89929308474615
+          ],
+          [
+            449.3633306279903,
+            76.27130144941161
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7466,
+        7703
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            449.2935595122505,
+            77.3095841077209
+          ],
+          [
+            449.35551873619556,
+            77.69624050507964
+          ],
+          [
+            449.4873331403031,
+            78.06497764440805
+          ],
+          [
+            449.6845320257268,
+            78.4032892088542
+          ],
+          [
+            447.944974698348,
+            78.40328920885419
+          ],
+          [
+            447.8121508945118,
+            77.86405310161955
+          ],
+          [
+            447.7808159776284,
+            77.3095841077209
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8010,
+        8247
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            450.01704479894005,
+            75.03778238756037
+          ],
+          [
+            448.12193666927476,
+            75.03778238756041
+          ],
+          [
+            448.46636863942234,
+            74.44227395099867
+          ],
+          [
+            448.93876406220033,
+            73.94216771766978
+          ],
+          [
+            449.5136934511186,
+            73.56438487285806
+          ],
+          [
+            450.1602078205959,
+            73.32926181968067
+          ],
+          [
+            450.84350469873766,
+            73.24945545152816
+          ],
+          [
+            451.5268015768794,
+            73.32926181968067
+          ],
+          [
+            452.17331594635664,
+            73.56438487285807
+          ],
+          [
+            452.74824533527493,
+            73.94216771766979
+          ],
+          [
+            453.2206407580529,
+            74.44227395099868
+          ],
+          [
+            453.56507272820056,
+            75.03778238756037
+          ],
+          [
+            451.88707915840826,
+            75.03778238756033
+          ],
+          [
+            451.6094526036939,
+            74.8383781192393
+          ],
+          [
+            451.2912297275349,
+            74.71358722535545
+          ],
+          [
+            450.9520619786742,
+            74.67111600875016
+          ],
+          [
+            450.6128942298134,
+            74.71358722535548
+          ],
+          [
+            450.2946713536544,
+            74.83837811923935
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8312,
+        8549
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            452.168944480454,
+            75.85591139540503
+          ],
+          [
+            452.0262416346774,
+            75.55975865481176
+          ],
+          [
+            453.5811319353777,
+            75.55975865481174
+          ],
+          [
+            453.6598572079927,
+            75.855911395405
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8717,
+        8954
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            451.82034789180005,
+            79.0192710456129
+          ],
+          [
+            453.59604604590606,
+            79.01927104561203
+          ],
+          [
+            453.24111382804557,
+            79.6016970488632
+          ],
+          [
+            452.76399314387,
+            80.08909091553613
+          ],
+          [
+            452.18925928444156,
+            80.45634820867677
+          ],
+          [
+            451.54651535091904,
+            80.6845524252431
+          ],
+          [
+            450.8688674729856,
+            80.76194933778345
+          ],
+          [
+            450.191219595052,
+            80.68455242524333
+          ],
+          [
+            449.54847566152955,
+            80.45634820867718
+          ],
+          [
+            448.9737418021009,
+            80.08909091553673
+          ],
+          [
+            448.4966211179252,
+            79.60169704886395
+          ],
+          [
+            448.14168890006454,
+            79.0192710456129
+          ],
+          [
+            450.0029301490683,
+            79.01927104561285
+          ],
+          [
+            450.22790855342663,
+            79.1987243695143
+          ],
+          [
+            450.48718281520274,
+            79.3236068545449
+          ],
+          [
+            450.7677477612426,
+            79.38765440672722
+          ],
+          [
+            451.0555302796257,
+            79.38765440672724
+          ],
+          [
+            451.3360952256656,
+            79.32360685454492
+          ],
+          [
+            451.5953694874416,
+            79.19872436951432
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9019,
+        9256
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            451.946128894913,
+            78.40328920885423
+          ],
+          [
+            452.05676032188757,
+            78.14429069558426
+          ],
+          [
+            453.7003082494262,
+            78.14429069558425
+          ],
+          [
+            453.62328252581545,
+            78.4032892088542
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10934,
+        11108
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            463.4934195374915,
+            76.3071920213686
+          ],
+          [
+            463.4934195374915,
+            76.72896602569634
+          ],
+          [
+            459.44614108725335,
+            76.72896602569634
+          ],
+          [
+            459.44614108725335,
+            75.60423589211203
+          ],
+          [
+            460.73071250883345,
+            75.60423589211203
+          ],
+          [
+            460.73071250883345,
+            76.3071920213686
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11108,
+        11250
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            459.53087994815695,
+            74.13760767659167
+          ],
+          [
+            463.8245145048893,
+            74.13760767659167
+          ],
+          [
+            463.8245145048893,
+            75.08659864170548
+          ],
+          [
+            459.53087994815695,
+            75.08659864170548
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11362,
+        11536
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            460.73071250883345,
+            77.77062820236259
+          ],
+          [
+            460.73071250883345,
+            78.4560104147711
+          ],
+          [
+            459.44614108725335,
+            78.4560104147711
+          ],
+          [
+            459.44614108725335,
+            77.34885419803484
+          ],
+          [
+            463.4934195374915,
+            77.34885419803484
+          ],
+          [
+            463.4934195374915,
+            77.77062820236259
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        11536,
+        11678
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            459.53087994815326,
+            79.07683966477252
+          ],
+          [
+            463.8245145048893,
+            79.07683966477252
+          ],
+          [
+            463.8245145048893,
+            79.97310887934582
+          ],
+          [
+            459.53087994815326,
+            79.97310887934582
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6438,
+        6503
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.7587658378359,
+          76.46855861076419
+        ],
+        "radius_mm": 2.9650746615351165,
+        "start_angle": -0.3115154946629127,
+        "end_angle": -0.2081203497566915,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6615,
+        6680
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.7841286120854,
+          77.41797667788504
+        ],
+        "radius_mm": 3.0052679962949136,
+        "start_angle": 0.24409709303398305,
+        "end_angle": 0.3340393657570986,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6917,
+        6982
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.7587658378359,
+          76.46855861076419
+        ],
+        "radius_mm": 2.9650746615351165,
+        "start_angle": 3.076038422545927,
+        "end_angle": -2.8300771589268816,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6982,
+        7047
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          451.4151338575281,
+          76.82920231864117
+        ],
+        "radius_mm": 2.126299572646484,
+        "start_angle": -3.063249952838993,
+        "end_angle": -2.501811192734367,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7047,
+        7112
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.95206197867424,
+          76.04661894280869
+        ],
+        "radius_mm": 1.3755029340586922,
+        "start_angle": -2.318236943077763,
+        "end_angle": -0.8233557105120737,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7224,
+        7289
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.86732311777064,
+          76.30064744051086
+        ],
+        "radius_mm": 1.3755029340586922,
+        "start_angle": -0.568811647166273,
+        "end_angle": -0.32924231501248546,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7289,
+        7354
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.9116390204324,
+          78.11078699294356
+        ],
+        "radius_mm": 1.2849494491434799,
+        "start_angle": 0.7852744458247627,
+        "end_angle": 2.3563182077650304,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7815,
+        7880
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.7841286120854,
+          77.41797667788504
+        ],
+        "radius_mm": 3.0052679962949136,
+        "start_angle": 2.8075532878326945,
+        "end_angle": -3.1055173069757016,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7880,
+        7945
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          451.4151338575281,
+          77.16790782142725
+        ],
+        "radius_mm": 2.126299572646484,
+        "start_angle": 2.5216350823140115,
+        "end_angle": 3.0749128077695107,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7945,
+        8010
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.8269001595288,
+          77.77208232934098
+        ],
+        "radius_mm": 1.2849494491434799,
+        "start_angle": 0.29387964669093675,
+        "end_angle": 0.5135023508642476,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8247,
+        8312
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.8435046987395,
+          76.21453011306201
+        ],
+        "radius_mm": 2.9650746615351165,
+        "start_angle": -2.7334889176091894,
+        "end_angle": -0.4081037359805999,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8954,
+        9019
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          450.868867472989,
+          77.75668134148853
+        ],
+        "radius_mm": 3.0052679962949136,
+        "start_angle": 0.4335836071671262,
+        "end_angle": 2.708009046422667,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9816,
+        9881
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          456.76383828193116,
+          76.8346804770579
+        ],
+        "radius_mm": 0.9028283042656904,
+        "start_angle": -1.5813228610959948,
+        "end_angle": -0.15167757835974108,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        9881,
+        9946
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          456.31851385088856,
+          76.8346804770579
+        ],
+        "radius_mm": 2.8430648601584507,
+        "start_angle": -0.452456317946502,
+        "end_angle": -0.04799986883671383,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10226,
+        10291
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          457.4888203160769,
+          76.01053568318075
+        ],
+        "radius_mm": 1.6400083462478898,
+        "start_angle": -1.5417046151866345,
+        "end_angle": -0.6091501382010469,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10571,
+        10636
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          456.76383828193116,
+          77.17338597984488
+        ],
+        "radius_mm": 0.9028283042656904,
+        "start_angle": 0.1600709191174096,
+        "end_angle": 1.5813228610923047,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10636,
+        10701
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          457.53652423639835,
+          78.08274014677843
+        ],
+        "radius_mm": 1.6387817404270866,
+        "start_angle": 0.6370753570671437,
+        "end_angle": 1.5707963267948966,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        10701,
+        10766
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "arc",
+        "center_mm": [
+          456.31851385088856,
+          77.17338597984488
+        ],
+        "radius_mm": 2.8430648601584507,
+        "start_angle": 0.05063609699627011,
+        "end_angle": 0.4553860181667314,
+        "clockwise": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        292,
+        419
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment Components/Nozzles/Flanged Nozzle.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          319.6953543201624,
+          257.9717639574142
+        ],
+        "end_mm": [
+          323.5053543201624,
+          257.9717639574146
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        292,
+        419
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment Components/Nozzles/Flanged Nozzle.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          321.60035432016264,
+          255.4317639574144
+        ],
+        "end_mm": [
+          321.60035432016235,
+          257.9717639574144
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          213.55033431856302,
+          255.43176395741517
+        ],
+        "end_mm": [
+          347.0508891387297,
+          255.43176395741517
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          347.0508891387297,
+          203.51489079353664
+        ],
+        "end_mm": [
+          213.55033431856302,
+          203.5148907935366
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          213.55033431856305,
+          203.5148907935366
+        ],
+        "end_mm": [
+          213.55033431856302,
+          255.43176395741517
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          347.0508891387297,
+          203.51489079353664
+        ],
+        "end_mm": [
+          347.0508891387297,
+          255.43176395741517
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            213.55033431856305,
+            203.5148907935366
+          ],
+          [
+            212.29958994372865,
+            203.6357000886323
+          ],
+          [
+            211.0425437407537,
+            204.00404439675881
+          ],
+          [
+            209.7975676926126,
+            204.62363119256102
+          ],
+          [
+            208.583402513559,
+            205.49085912142993
+          ],
+          [
+            207.41824670730085,
+            206.59472523527108
+          ],
+          [
+            206.31885868882273,
+            207.91727322253652
+          ],
+          [
+            205.2997634153905,
+            209.4345462532256
+          ],
+          [
+            204.37264105051793,
+            211.11794083938568
+          ],
+          [
+            203.53094375743788,
+            212.9721855691308
+          ],
+          [
+            202.77230724209335,
+            215.0103761159953
+          ],
+          [
+            202.11103324846064,
+            217.20915215295156
+          ],
+          [
+            201.55910019154004,
+            219.53946376546784
+          ],
+          [
+            201.12548622710557,
+            221.96779412357503
+          ],
+          [
+            200.81569282920447,
+            224.45774621985726
+          ],
+          [
+            200.63152067514122,
+            226.97183862580715
+          ],
+          [
+            200.57111602759338,
+            229.4733273754759
+          ],
+          [
+            200.63152067514122,
+            231.97481612514463
+          ],
+          [
+            200.81569282920447,
+            234.4889085310945
+          ],
+          [
+            201.12548622710557,
+            236.97886062737678
+          ],
+          [
+            201.55910019154004,
+            239.40719098548394
+          ],
+          [
+            202.11103324846064,
+            241.73750259800025
+          ],
+          [
+            202.77230724209335,
+            243.93627863495647
+          ],
+          [
+            203.53094375743788,
+            245.97446918182098
+          ],
+          [
+            204.37264105051793,
+            247.82871391156613
+          ],
+          [
+            205.2997634153905,
+            249.51210849772622
+          ],
+          [
+            206.31885868882276,
+            251.02938152841526
+          ],
+          [
+            207.41824670730085,
+            252.35192951568075
+          ],
+          [
+            208.58340251355904,
+            253.45579562952187
+          ],
+          [
+            209.7975676926126,
+            254.32302355839076
+          ],
+          [
+            211.04254374075373,
+            254.94261035419296
+          ],
+          [
+            212.29958994372865,
+            255.31095466231946
+          ],
+          [
+            213.55033431856305,
+            255.43176395741517
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        663,
+        784
+      ],
+      "symbol": "//Mm-128/SPID/TEST02/ZGSY P&ID Reference Data/Symbols/Equipment/Vessels/Horizontal Drums/Horizontal Drum.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            347.0508891387297,
+            255.43176395741517
+          ],
+          [
+            348.301633513564,
+            255.31095466231946
+          ],
+          [
+            349.55867971653896,
+            254.94261035419296
+          ],
+          [
+            350.8036557646802,
+            254.32302355839076
+          ],
+          [
+            352.0178209437337,
+            253.45579562952187
+          ],
+          [
+            353.1829767499919,
+            252.35192951568075
+          ],
+          [
+            354.28236476846996,
+            251.02938152841526
+          ],
+          [
+            355.3014600419022,
+            249.51210849772622
+          ],
+          [
+            356.2285824067748,
+            247.8287139115661
+          ],
+          [
+            357.07027969985484,
+            245.97446918182098
+          ],
+          [
+            357.82891621519934,
+            243.93627863495644
+          ],
+          [
+            358.49019020883213,
+            241.73750259800025
+          ],
+          [
+            359.0421232657527,
+            239.40719098548394
+          ],
+          [
+            359.4757372301871,
+            236.97886062737678
+          ],
+          [
+            359.7855306280882,
+            234.48890853109452
+          ],
+          [
+            359.96970278215144,
+            231.97481612514463
+          ],
+          [
+            360.03010742969934,
+            229.47332737547592
+          ],
+          [
+            359.96970278215144,
+            226.97183862580718
+          ],
+          [
+            359.7855306280882,
+            224.45774621985726
+          ],
+          [
+            359.4757372301871,
+            221.96779412357503
+          ],
+          [
+            359.0421232657527,
+            219.53946376546784
+          ],
+          [
+            358.49019020883213,
+            217.20915215295156
+          ],
+          [
+            357.82891621519934,
+            215.0103761159953
+          ],
+          [
+            357.07027969985484,
+            212.97218556913083
+          ],
+          [
+            356.2285824067748,
+            211.11794083938568
+          ],
+          [
+            355.3014600419022,
+            209.43454625322562
+          ],
+          [
+            354.28236476846996,
+            207.91727322253655
+          ],
+          [
+            353.1829767499919,
+            206.5947252352711
+          ],
+          [
+            352.01782094373374,
+            205.49085912142993
+          ],
+          [
+            350.8036557646802,
+            204.62363119256105
+          ],
+          [
+            349.55867971653896,
+            204.00404439675884
+          ],
+          [
+            348.30163351356407,
+            203.6357000886323
+          ],
+          [
+            347.0508891387297,
+            203.51489079353664
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1262,
+        1354
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          284.9896178279795,
+          232.32107265790836
+        ],
+        "height_mm": 3.52778,
+        "rotation": 0.0,
+        "value": "V 010121A",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "half_ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1636,
+        1780
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          363.3933409815455,
+          280.98533010753533
+        ],
+        "height_mm": 2.469446,
+        "rotation": 0.0,
+        "value": "PH- 0102102-DN250 mm-B5-P-40.000 in",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "bottom"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        824,
+        902
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            321.6003543201623,
+            258.6067639574144
+          ],
+          [
+            321.60035432016184,
+            277.8103301075352
+          ],
+          [
+            420.66594379991085,
+            277.8103301075352
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        298,
+        376
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.119263789250514,
+          253.21836449535283
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "专业",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        376,
+        454
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.222243212954126,
+          380.2692284896932
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "日期",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        510,
+        588
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.19649835702823,
+          279.6325866753312
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "签署",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2072,
+        2150
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.093518933324614,
+          329.8865454426974
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "专业",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2374,
+        2452
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.14500864517641,
+          353.85500630971484
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "签署",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3106,
+        3184
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          20.0162843655469,
+          303.472323262719
+        ],
+        "height_mm": 3.0,
+        "rotation": 1.5707963267948966,
+        "value": "日期",
+        "font": "Arial",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3240,
+        3314
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          444.6937019070285,
+          38.98968963166661
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "项目经理",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender",
+        "width_permille": 800
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3314,
+        3386
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          479.9833984547218,
+          21.073909436343598
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "文件号",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3442,
+        3516
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          517.1153609070628,
+          15.16188440457098
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "版  次",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3516,
+        3590
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          480.02738593883544,
+          27.07390943634361
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "阶  段",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3646,
+        3720
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          479.76346103415347,
+          15.073909436343605
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "日  期",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3720,
+        3794
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          445.0242930688588,
+          44.91479845865112
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "审  定",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3850,
+        3924
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          444.9094013864019,
+          62.79895057085358
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "设  计",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3980,
+        4054
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          445.0242930688588,
+          57.02304890783714
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "校  对",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4278,
+        4348
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          567.2402525142694,
+          89.17580479694425
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "日期",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4348,
+        4418
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          503.21873317040667,
+          89.10731981888777
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "修改",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4418,
+        4488
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          533.4735267446812,
+          89.3149839458977
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "审核",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4916,
+        4986
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          518.3807406453788,
+          89.22219784659538
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "校对",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5098,
+        5172
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          444.9160426196728,
+          50.914798458651134
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "审  核",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5172,
+        5246
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          548.0439153937939,
+          15.12359231812265
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "比  例",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5246,
+        5316
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          444.740913778223,
+          89.10731981888779
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "版次",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5316,
+        5394
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          548.2450737536082,
+          89.24075506645585
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "审定",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5898,
+        5972
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          444.8007658002243,
+          32.89326957973304
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "核  准",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6084,
+        6156
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          517.1153609070628,
+          27.117896920457298
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "项目号",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6744,
+        6814
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          472.3796980523818,
+          89.14073460208154
+        ],
+        "height_mm": 3.0,
+        "rotation": 0.0,
+        "value": "说明",
+        "font": "宋体",
+        "anchor": "left",
+        "line": "ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        242,
+        298
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390133,
+          394.8340189891369
+        ],
+        "end_mm": [
+          19.90569158390132,
+          369.8340189891369
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        454,
+        510
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.905691583901325,
+          382.6190180496141
+        ],
+        "end_mm": [
+          14.905691583901287,
+          244.83401898913664
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        588,
+        644
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.905691583901287,
+          244.8340189891367
+        ],
+        "end_mm": [
+          19.905691583901323,
+          244.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        644,
+        700
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901323,
+          244.8340189891367
+        ],
+        "end_mm": [
+          0.0,
+          244.83401898913667
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        700,
+        756
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          9.905691583901325,
+          382.61901804961434
+        ],
+        "end_mm": [
+          9.905691583901323,
+          244.83401898913675
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        756,
+        812
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          4.905691583901323,
+          382.61901804961434
+        ],
+        "end_mm": [
+          4.905691583901313,
+          244.83401898913664
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        812,
+        868
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390131,
+          319.8340189891367
+        ],
+        "end_mm": [
+          19.905691583901312,
+          294.83401898913667
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        868,
+        924
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901305,
+          344.83401898913684
+        ],
+        "end_mm": [
+          25.00000000000002,
+          344.83401898913684
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        924,
+        980
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          369.8340189891368
+        ],
+        "end_mm": [
+          25.00000000000002,
+          369.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        980,
+        1036
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901305,
+          344.83401898913684
+        ],
+        "end_mm": [
+          19.90569158390131,
+          319.83401898913684
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1036,
+        1092
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.905691583901325,
+          382.6190180496141
+        ],
+        "end_mm": [
+          14.905691583901325,
+          394.83401898913667
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1092,
+        1148
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901312,
+          294.8340189891367
+        ],
+        "end_mm": [
+          25.000000000000018,
+          294.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1148,
+        1204
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          9.905691583901323,
+          394.83401898913667
+        ],
+        "end_mm": [
+          9.905691583901325,
+          382.6190180496142
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1204,
+        1260
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901312,
+          294.8340189891367
+        ],
+        "end_mm": [
+          19.90569158390132,
+          269.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1260,
+        1316
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          8.66079106243918,
+          394.83401898913667
+        ],
+        "end_mm": [
+          0.0,
+          394.83401898913667
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1512,
+        1568
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          4.905691583901323,
+          382.61901804961434
+        ],
+        "end_mm": [
+          4.905691583901323,
+          394.76695296015356
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1624,
+        1680
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390133,
+          394.8340189891369
+        ],
+        "end_mm": [
+          19.905691583901326,
+          382.6190180496141
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1680,
+        1736
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901305,
+          344.83401898913684
+        ],
+        "end_mm": [
+          0.0,
+          344.83401898913684
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1848,
+        1904
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          8.66079106243918,
+          394.83401898913667
+        ],
+        "end_mm": [
+          25.00000000000002,
+          394.8340189891366
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        1904,
+        1960
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          369.8340189891368
+        ],
+        "end_mm": [
+          0.0,
+          369.8340189891368
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2016,
+        2072
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901312,
+          294.8340189891367
+        ],
+        "end_mm": [
+          0.0,
+          294.83401898913667
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2150,
+        2206
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          269.8340189891367
+        ],
+        "end_mm": [
+          0.0,
+          269.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2206,
+        2262
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          269.8340189891367
+        ],
+        "end_mm": [
+          25.000000000000018,
+          269.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2262,
+        2318
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390131,
+          319.8340189891367
+        ],
+        "end_mm": [
+          0.0,
+          319.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2318,
+        2374
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          369.8340189891368
+        ],
+        "end_mm": [
+          19.905691583901305,
+          344.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2452,
+        2508
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.905691583901323,
+          244.8340189891367
+        ],
+        "end_mm": [
+          25.000000000000018,
+          244.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2938,
+        2994
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390131,
+          319.8340189891367
+        ],
+        "end_mm": [
+          25.00000000000002,
+          319.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        2994,
+        3050
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          19.90569158390132,
+          269.8340189891367
+        ],
+        "end_mm": [
+          19.905691583901323,
+          244.8340189891367
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3184,
+        3240
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          530.9999999999998,
+          9.930140314966566
+        ],
+        "end_mm": [
+          530.9999999999998,
+          15.930140314966556
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3386,
+        3442
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          530.9999999999998,
+          21.930140314966554
+        ],
+        "end_mm": [
+          530.9999999999998,
+          27.930140314966554
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3590,
+        3646
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          515.9999999999999,
+          21.930140314966554
+        ],
+        "end_mm": [
+          515.9999999999999,
+          27.930140314966554
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3794,
+        3850
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          458.99999999999983,
+          15.930140314966549
+        ],
+        "end_mm": [
+          458.99999999999994,
+          63.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        3924,
+        3980
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          27.930140314966543
+        ],
+        "end_mm": [
+          584.0,
+          27.930140314966557
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4054,
+        4110
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          493.9999999999999,
+          9.930140314966566
+        ],
+        "end_mm": [
+          493.9999999999999,
+          27.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4110,
+        4166
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          9.930140314966566
+        ],
+        "end_mm": [
+          479.0,
+          63.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4166,
+        4222
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          57.93014031496655
+        ],
+        "end_mm": [
+          444.00000000000006,
+          57.93014031496654
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4222,
+        4278
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0,
+          21.93014031496656
+        ],
+        "end_mm": [
+          444.00000000000006,
+          21.930140314966543
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4488,
+        4544
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          51.93014031496655
+        ],
+        "end_mm": [
+          444.00000000000006,
+          51.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4580,
+        4636
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          51.93014031496655
+        ],
+        "end_mm": [
+          584.0,
+          51.930140314966565
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4636,
+        4692
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          45.93014031496655
+        ],
+        "end_mm": [
+          444.00000000000006,
+          45.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4692,
+        4748
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          27.930140314966543
+        ],
+        "end_mm": [
+          444.00000000000006,
+          27.930140314966543
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4748,
+        4804
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0,
+          63.930140314966565
+        ],
+        "end_mm": [
+          444.00000000000006,
+          63.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4804,
+        4860
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          39.93014031496655
+        ],
+        "end_mm": [
+          444.00000000000006,
+          39.93014031496654
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4860,
+        4916
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          444.00000000000006,
+          9.930140314966566
+        ],
+        "end_mm": [
+          444.00000000000006,
+          113.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        4986,
+        5042
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          515.9999999999999,
+          9.930140314966566
+        ],
+        "end_mm": [
+          515.9999999999999,
+          15.930140314966556
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5042,
+        5098
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          479.0,
+          33.93014031496655
+        ],
+        "end_mm": [
+          444.00000000000006,
+          33.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5394,
+        5450
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.00000000000006,
+          101.93014031496656
+        ],
+        "end_mm": [
+          453.99999999999994,
+          107.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5450,
+        5506
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.00000000000017,
+          95.93014031496656
+        ],
+        "end_mm": [
+          454.00000000000006,
+          101.93014031496656
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5506,
+        5562
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0655469560992,
+          89.93014031496658
+        ],
+        "end_mm": [
+          444.00000000000006,
+          89.93014031496656
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5562,
+        5618
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0655469560992,
+          95.93014031496658
+        ],
+        "end_mm": [
+          444.00000000000006,
+          95.93014031496656
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5618,
+        5674
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          453.99999999999994,
+          107.93014031496658
+        ],
+        "end_mm": [
+          453.9999999999997,
+          113.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5674,
+        5730
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0655469560992,
+          107.9301403149666
+        ],
+        "end_mm": [
+          444.00000000000006,
+          107.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5730,
+        5786
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.00000000000017,
+          89.93014031496656
+        ],
+        "end_mm": [
+          454.00000000000017,
+          95.93014031496656
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5786,
+        5842
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0655469560992,
+          113.9301403149666
+        ],
+        "end_mm": [
+          444.00000000000006,
+          113.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5842,
+        5898
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0655469560992,
+          101.9301403149666
+        ],
+        "end_mm": [
+          444.00000000000006,
+          101.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        5972,
+        6028
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          529.9999999999999,
+          83.93014031496656
+        ],
+        "end_mm": [
+          529.9999999999999,
+          113.9301403149666
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6028,
+        6084
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0,
+          83.93014031496656
+        ],
+        "end_mm": [
+          444.00000000000006,
+          83.93014031496655
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6156,
+        6212
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          500.0000000000001,
+          83.93014031496655
+        ],
+        "end_mm": [
+          500.0000000000001,
+          113.93014031496658
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6212,
+        6268
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.0,
+          15.930140314966563
+        ],
+        "end_mm": [
+          444.00000000000006,
+          15.930140314966545
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6268,
+        6324
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          454.00000000000006,
+          83.93014031496655
+        ],
+        "end_mm": [
+          454.00000000000017,
+          89.93014031496656
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6324,
+        6380
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          546.9999999999998,
+          9.930140314966566
+        ],
+        "end_mm": [
+          546.9999999999998,
+          15.930140314966556
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6380,
+        6436
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          544.9999999999999,
+          83.93014031496656
+        ],
+        "end_mm": [
+          544.9999999999999,
+          113.9301403149666
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6436,
+        6492
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          559.9999999999998,
+          83.93014031496656
+        ],
+        "end_mm": [
+          559.9999999999998,
+          113.9301403149666
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6520,
+        6576
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          515.0,
+          83.93014031496656
+        ],
+        "end_mm": [
+          515.0,
+          113.9301403149666
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6576,
+        6632
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00000000000002,
+          400.0
+        ],
+        "end_mm": [
+          106.81894916325848,
+          400.0
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6632,
+        6688
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          106.81894916325848,
+          400.0
+        ],
+        "end_mm": [
+          106.81894916325851,
+          410.00000000000006
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6688,
+        6744
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.5
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          561.9999999999998,
+          9.930140314966566
+        ],
+        "end_mm": [
+          561.9999999999998,
+          15.930140314966556
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": [
+        6814,
+        6870
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          25.00000000000002,
+          410.00000000000006
+        ],
+        "end_mm": [
+          25.00000000000002,
+          420.0
+        ]
+      }
+    }
+  ],
+  "off_sheet_primitives": 0,
+  "skipped_endpoint_pairs": 0,
+  "missing_symbols": [],
+  "missing_boxes": [],
+  "symbols_found": 2,
+  "symbols_referenced": 2
+}

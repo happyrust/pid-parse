@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### CI 上第一次有出图门禁真跑：7 张夹具的整棵 `PaperModel` 进了金样（2026-11-08）
+
+CI 的 `test (stable)` job 在 `ubuntu-latest` 上跑，那里没有字体目录、没有
+`symbols-full`、没有验收语料。此前**没人量过**这到底意味着哪些出图门禁在
+真跑：只按代码推断「大概都跳过了」。这一条先把定论做出来，再补一道不受环境
+影响的门。
+
+**CI 覆盖定论**（`git worktree` 建的干净检出，stable 1.99.1，
+`PID_PARSE_SELF_CHECK_DIR` / `PID_ACCEPTANCE_CORPUS` / `PID_TEST_DATA_DIR`
+三个变量都指向不存在的目录，判定依据是各测试自己打出的 `skipping` 行）：
+真跑 4 条 —— 本条的 `paper_model_golden`、`refdata_archive_corpus`（4 个用例）、
+`border_template` 的两个建模段、`write_five_drawings` 的三条纯单测；
+软跳过 8 个文件 —— `paper_model`、`plot_compare`、`plot_text_sources`、
+`read_reference_plots`、`reference_plots_acceptance`、`style_witness`、
+`export_every_fixture`、`compare_five_drawings`、`template_symbol_gap`。
+逐条表与 stderr 依据写进 `AGENTS.md` 的「CI 覆盖」小节。
+
+`export_plant_backup` 单独记一笔：`backup_dir()` 在 `PID_TEST_DATA_DIR`
+之后还硬编码了 `D:\work\cad\pid-test-data` 与
+`D:\work\plant-code\cad\pid-test-data` 两个绝对根。Linux runner 上两个都不存在，
+函数返回 `None`，软跳过；本机做 CI 模拟时这两个根恰好存在（语料就在这台机器
+上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并 `panic!` 在
+`0 sheets drew furniture; 50 did when this ratchet was set` —— 因为
+`PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。这是
+「本机模拟」与「Linux runner」在同一份代码上分叉的隐患，本条的 CI 模拟把它
+记下来，但不动既有断言。
+
+**金样**：`pid-plot/tests/paper_model_golden.rs` 对 `test-file/**` 的 7 张夹具
+各建一次 `PaperModel`，序列化成 pretty JSON 后与
+`pid-plot/tests/golden/paper/*.json` 比。输入全部在仓库内（7 张 `.pid`、
+`Ref/Template Files` 的 5 个 `.igr`、`Ref/Symbols` 的 4 个 `.sym`、备份包的
+`RefData~4~681.zip` 616 个 `.sym` 与 `~682.zip` 11 个 `.igr`），
+**没有任何软跳过分支**：夹具缺失就是坏检出，直接失败。
+
+符号来源是**声明**的（`lay_out_with_symbol_roots`），不走 `lay_out_drawing`
+的自动搜索，因此不会被本机 gitignore 的 `test-file/symbols-full` 影响——带它
+生成的金样在干净检出上必然对不上。序列化前把 `\` 归一为 `/`，并把仓库根替换
+成 `<repo>`；`.pid` 自己存下的作者机绝对路径（`C:\Users\…\Temp\x.sym`）原样
+保留，那是源字节，跨平台一致。
+
+可行性读数（`cargo run -q -p pid-plot --example
+probe_paper_model_golden_size`）：7 张各建两次模型、各序列化一次，**全部逐字节
+相同**（无 `HashMap` 迭代顺序、无时间戳、无绝对路径漂移）；合计
+**4 451 569 字节（4.25 MiB）**，低于 5 MB 上限，所以上金样门禁而不是退回
+「只写清 CI 覆盖」。逐张：`d06` 106 869、`dwg-0201gp06-01` 208 972、
+`dwg-0202gp06-01` 208 181、`gongyi-guandao-1` 3 109 560、
+`jizhuzhan-flash-b` 447 958、`publish-a01` 161 848、
+`publish-dwg-0202gp06-01` 208 181。
+
+失败信息定位到具体页与具体字段：比对走 `first_difference`，打印第一个差异的
+JSON 路径与两侧值，例如把 `MM_PER_METRE` 从 1000.0 改成 1000.5 后
+`D06.pid`（golden `d06`）报 `template.extent_mm[0]: expected 593.9393939392176,
+actual 594.2363636361872`；把 `SHEET_REACH` 从 4.0 改成 0.9 报
+`primitives[66].byte_range[0]: expected 8, actual 273`。
+`PID_PLOT_BLESS=1 cargo test -p pid-plot --test paper_model_golden` 重写金样。
+
 ### 11 张参考图交付有了写出入口：过钉后落盘 `<corpus>\plot` 并记 `BUILD.txt`（2026-11-08）
 
 `验收数据\plot` 下那 11 张交付 PDF 此前没有任何代码负责写：`write_five_drawings`

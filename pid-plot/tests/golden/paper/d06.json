@@ -1,0 +1,5194 @@
+{
+  "library": [
+    "test-file/Ref/Symbols",
+    "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip"
+  ],
+  "page_mm": [
+    594.3278903340716,
+    420.5656942737827
+  ],
+  "template": {
+    "path": "<repo>/test-file/Ref/Template Files/CPECCHB-SQ-A2.igr",
+    "extent_mm": [
+      593.9393939392176,
+      419.99999999999994
+    ],
+    "offset_mm": [
+      0.3884071683306924,
+      0.5656477821598029
+    ],
+    "scale": 1.0,
+    "primitives": 116,
+    "symbols": [
+      {
+        "key": "c:/users/administrator.win-194qrump2nj/appdata/local/temp/a$c40d91a4b.sym",
+        "insertion_mm": [
+          0.3884292461654208,
+          59.6060654521174
+        ],
+        "body": "cached",
+        "library_available": false,
+        "extent_mm": [
+          [
+            0.3884365165052995,
+            59.95959595957953
+          ],
+          [
+            35.7419718700302,
+            201.37373737367912
+          ]
+        ],
+        "name_gap": "no_such_file"
+      },
+      {
+        "key": "c:/users/admini~1.win/appdata/local/temp/hqz.sym",
+        "insertion_mm": [
+          35.741971870024976,
+          413.4949494948309
+        ],
+        "body": "cached",
+        "library_available": false,
+        "extent_mm": [
+          [
+            0.3884365165000732,
+            307.30179591467186
+          ],
+          [
+            35.741971870024976,
+            413.4949494948309
+          ]
+        ],
+        "name_gap": "no_such_file"
+      },
+      {
+        "key": "c:/users/admini~1.win/appdata/local/temp/hqz.sym",
+        "insertion_mm": [
+          35.741971870024976,
+          307.4343434342558
+        ],
+        "body": "cached",
+        "library_available": false,
+        "extent_mm": [
+          [
+            0.3884365165000732,
+            201.2411898540968
+          ],
+          [
+            35.741971870024976,
+            307.4343434342558
+          ]
+        ],
+        "name_gap": "no_such_file"
+      }
+    ]
+  },
+  "primitives": [
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          201.37373737367912
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          180.16161616156418
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          180.16161616156418
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          158.94949494944925
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          158.94949494944925
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          137.7373737373343
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          137.7373737373343
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          116.52525252521936
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          116.52525252521936
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          95.31313131310445
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          95.31313131310445
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          74.1010101009895
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          74.1010101009895
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          59.95959595957953
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          59.95959595957953
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          201.37373737367912
+        ],
+        "end_mm": [
+          0.3884365165052995,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.7419718700302,
+          59.95959595957953
+        ],
+        "end_mm": [
+          35.7419718700302,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          28.67126479932521,
+          59.95959595957953
+        ],
+        "end_mm": [
+          28.67126479932521,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          7.459143587210275,
+          59.95959595957953
+        ],
+        "end_mm": [
+          7.459143587210275,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.529850657915253,
+          59.95959595957953
+        ],
+        "end_mm": [
+          14.529850657915253,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          21.60055772862023,
+          59.95959595957953
+        ],
+        "end_mm": [
+          21.60055772862023,
+          201.37373737367912
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.64733778101092,
+          127.70660192158257
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "日期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.64733778101092,
+          105.65931604338923
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "页次",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.64733778101092,
+          84.40891946585165
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "修改号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.64733778101092,
+          66.87734267005095
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "次数",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.64733778101092,
+          169.94176492910498
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "审核",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3827,
+        3942
+      ],
+      "symbol": "C:/Users/Administrator.WIN-194QRUMP2NJ/AppData/Local/Temp/A$C40D91A4B.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.647337781010904,
+          148.69136835156738
+        ],
+        "height_mm": 3.53535353535249,
+        "rotation": 1.5707963267948966,
+        "value": "修改",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          21.600557728615016,
+          413.4949494948309
+        ],
+        "end_mm": [
+          21.600557728615016,
+          307.43434343425616
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          7.459143587205056,
+          413.4949494948309
+        ],
+        "end_mm": [
+          7.459143587205056,
+          307.43434343425616
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.529850657910035,
+          413.4949494948309
+        ],
+        "end_mm": [
+          14.529850657910035,
+          307.30179591467186
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          28.671264799319996,
+          413.4949494948309
+        ],
+        "end_mm": [
+          28.671264799319996,
+          307.43434343425616
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          342.7878787877811
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          342.7878787877811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          307.43434343425616
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          307.43434343425616
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          413.4949494948309
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          413.4949494948309
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          378.141414141306
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          378.141414141306
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          325.11111111101866
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "会 签 专 业",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          360.46464646454353
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "签     署",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3998,
+        4117
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          395.8181818180684
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "日    期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          21.600557728615016,
+          307.4343434342558
+        ],
+        "end_mm": [
+          21.600557728615016,
+          201.3737373736811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          7.459143587205056,
+          307.4343434342558
+        ],
+        "end_mm": [
+          7.459143587205056,
+          201.3737373736811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          14.529850657910035,
+          307.4343434342558
+        ],
+        "end_mm": [
+          14.529850657910035,
+          201.2411898540968
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          28.671264799319996,
+          307.4343434342558
+        ],
+        "end_mm": [
+          28.671264799319996,
+          201.3737373736811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          236.727272727206
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          236.727272727206
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          201.3737373736811
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          201.3737373736811
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          307.4343434342558
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          307.4343434342558
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          272.08080808073095
+        ],
+        "end_mm": [
+          0.3884365165000732,
+          272.08080808073095
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          219.05050505044355
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "会 签 专 业",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          254.40404040396848
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "签     署",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4117,
+        4232
+      ],
+      "symbol": "C:/Users/ADMINI~1.WIN/AppData/Local/Temp/hqz.sym",
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          34.32783045588398,
+          289.7575757574934
+        ],
+        "height_mm": 4.242424242422988,
+        "rotation": 1.5707963267948966,
+        "value": "日    期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        657,
+        727
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.4328452860129,
+          35.39665311838726
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "核准",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        727,
+        797
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.53829447360766,
+          77.35508877989598
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "制图",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        965,
+        1125
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          447.24398949930315,
+          88.0808023462927
+        ],
+        "height_mm": 2.828282828281997,
+        "rotation": 0.0,
+        "value": "工程设计证书: A111017147 综甲     工程勘察证书: B111017147 综甲",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2046,
+        2116
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.56479070389764,
+          61.48771934081416
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "校对",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2116,
+        2186
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.55506183634424,
+          69.816934761457
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "设计",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2186,
+        2256
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.56479070389764,
+          52.98788741448552
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "审核",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2256,
+        2326
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          395.8518001552613,
+          44.4040300596247
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "审定",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2619,
+        2711
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          479.79598230375547,
+          101.3671490149976
+        ],
+        "height_mm": 7.777777777775497,
+        "rotation": 0.0,
+        "value": "中国石油工程建设有限公司 ",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800,
+        "paragraph": "left"
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2711,
+        2787
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          559.4213821064761,
+          101.3671490149976
+        ],
+        "height_mm": 7.777777777775497,
+        "rotation": 0.0,
+        "value": "华北分公司",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2787,
+        2857
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          346.04334497867166,
+          68.87024029505156
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "制图",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3193,
+        3263
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          346.06984120896146,
+          53.00287085596612
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "校对",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3263,
+        3333
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          346.06011234140817,
+          61.33208627660895
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "设计",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3333,
+        3403
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          346.06984120896146,
+          44.50303892963748
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "审核",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3403,
+        3473
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          346.3568506603253,
+          35.91918157477668
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "审定",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3753,
+        3827
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          357.7998950336289,
+          77.35508877989598
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "仪  控",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "bottom",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4456,
+        4528
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          502.11749063531465,
+          28.556461981046972
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "项目号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4528,
+        4598
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          449.5861319527204,
+          12.424577999030962
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "日期",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4598,
+        4668
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          562.2165249876151,
+          12.383376234422403
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "版次",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4668,
+        4738
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          449.2749294476408,
+          28.298030696711443
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "阶段",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4850,
+        4920
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          449.4014272129378,
+          20.453959977236455
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "比例",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4920,
+        4992
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          502.01443559478776,
+          20.929896289686813
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "文件号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4992,
+        5062
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          501.4079074079666,
+          12.132429886602413
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "专业",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5062,
+        5138
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          399.88338601133285,
+          4.297137294510692
+        ],
+        "height_mm": 3.535353535352498,
+        "rotation": 0.0,
+        "value": "CADD号",
+        "font": "SimSun",
+        "anchor": "center",
+        "line": "middle",
+        "width_permille": 800
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8013,
+        8129
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          398.6244739357851,
+          92.17094090670759
+        ],
+        "height_mm": 3.173863636362697,
+        "rotation": 0.0,
+        "value": "CPECC",
+        "font": "SimSun",
+        "anchor": "left",
+        "line": "top",
+        "width_permille": 1000
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        8,
+        118
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            0.38843651650235766,
+            0.565656565657636
+          ],
+          [
+            594.3278304557199,
+            0.565656565657636
+          ],
+          [
+            594.3278304557199,
+            420.5656565655339
+          ],
+          [
+            0.38843651650235766,
+            420.5656565655339
+          ],
+          [
+            0.38843651650235766,
+            0.565656565657636
+          ]
+        ],
+        "closed": false
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        273,
+        329
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.414141414140996
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          7.6363636363607
+        ],
+        "end_mm": [
+          587.2571233850133,
+          7.6363636363607
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        329,
+        385
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.414141414140996
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          7.6363636363607
+        ],
+        "end_mm": [
+          587.2571233850133,
+          413.49494949482715
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        385,
+        441
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.414141414140996
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          413.49494949482715
+        ],
+        "end_mm": [
+          35.741971870024955,
+          413.49494949482715
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        441,
+        497
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.414141414140996
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          413.49494949482715
+        ],
+        "end_mm": [
+          35.741971870024976,
+          7.636363636360685
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        797,
+        853
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.0957456628157,
+          83.99808363972662
+        ],
+        "end_mm": [
+          389.27732540528007,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        853,
+        909
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          67.03030303028243
+        ],
+        "end_mm": [
+          587.0957456628157,
+          67.03030303028243
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        909,
+        965
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          33.0909084947165
+        ],
+        "end_mm": [
+          587.2571234136659,
+          33.0909084947165
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1125,
+        1181
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          584.256804986201,
+          83.99808363972662
+        ],
+        "end_mm": [
+          399.32609493601115,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1181,
+        1237
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          67.03030303028243
+        ],
+        "end_mm": [
+          389.27732540528007,
+          67.03030303028243
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1350,
+        1406
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.060606060605749
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          112.2828282827944
+        ],
+        "end_mm": [
+          587.2571233850133,
+          7.636363636360699
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1406,
+        1462
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.060606060605749
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          7.6363636363607
+        ],
+        "end_mm": [
+          438.7722749002161,
+          7.6363636363607
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1462,
+        1518
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.060606060605749
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          7.6363636363607
+        ],
+        "end_mm": [
+          389.27732540528007,
+          7.6363636363607
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1598,
+        1654
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          16.121212121208742
+        ],
+        "end_mm": [
+          389.27732540528007,
+          16.121212121208742
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1654,
+        1710
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.3998871321992,
+          24.600650804772535
+        ],
+        "end_mm": [
+          389.4200891524589,
+          24.600650804772535
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1710,
+        1766
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          33.0909084947165
+        ],
+        "end_mm": [
+          389.27732540528007,
+          33.0909084947165
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1766,
+        1822
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          41.57575757574558
+        ],
+        "end_mm": [
+          389.27732540528007,
+          41.57575757574558
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1822,
+        1878
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          50.060606060590004
+        ],
+        "end_mm": [
+          389.27732540528007,
+          50.060606060590004
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1878,
+        1934
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          410.48944661739654,
+          0.565656565657636
+        ],
+        "end_mm": [
+          410.48944661739654,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1934,
+        1990
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          58.54545454543804
+        ],
+        "end_mm": [
+          389.27732540528007,
+          58.54545454543804
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1990,
+        2046
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          75.51515151513048
+        ],
+        "end_mm": [
+          389.27732540528007,
+          75.51515151513048
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2411,
+        2467
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          587.2571233850133,
+          112.2828282827944
+        ],
+        "end_mm": [
+          389.27732540528007,
+          112.2828282827944
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2467,
+        2523
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          112.2828282827944
+        ],
+        "end_mm": [
+          389.27732540528007,
+          0.5656565656576348
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2563,
+        2619
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          7.634447276112414
+        ],
+        "end_mm": [
+          438.7722749002161,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2857,
+        2913
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          67.03030303028243
+        ],
+        "end_mm": [
+          339.78237591034406,
+          67.03030303028243
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2913,
+        2969
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          33.0909084947165
+        ],
+        "end_mm": [
+          339.78237591034406,
+          33.0909084947165
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2969,
+        3025
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          41.57575757574558
+        ],
+        "end_mm": [
+          339.78237591034406,
+          41.57575757574558
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3025,
+        3081
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          50.060606060590004
+        ],
+        "end_mm": [
+          339.78237591034406,
+          50.060606060590004
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3081,
+        3137
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          58.54545454543804
+        ],
+        "end_mm": [
+          339.78237591034406,
+          58.54545454543804
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3137,
+        3193
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          75.51515151513048
+        ],
+        "end_mm": [
+          339.78237591034406,
+          75.51515151513048
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3473,
+        3529
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          360.9944971224606,
+          7.6363636363607
+        ],
+        "end_mm": [
+          360.9944971224606,
+          75.51515151513048
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3529,
+        3585
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          339.78237591034406,
+          7.634447276112414
+        ],
+        "end_mm": [
+          339.78237591034406,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3585,
+        3641
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          24.606060009872103
+        ],
+        "end_mm": [
+          339.78237591034406,
+          24.606060009872103
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3641,
+        3697
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.4200891524589,
+          16.115802319924484
+        ],
+        "end_mm": [
+          339.92513965752295,
+          16.115802319924484
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3697,
+        3753
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          389.27732540528007,
+          83.99808363972662
+        ],
+        "end_mm": [
+          339.78237591034406,
+          83.99808363972662
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3942,
+        3998
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 0.7070707070704999
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          35.741971870024976,
+          59.95959595957939
+        ],
+        "end_mm": [
+          35.741971870024976,
+          201.3737373736807
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4232,
+        4288
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          573.1214115750364,
+          16.121212121190553
+        ],
+        "end_mm": [
+          573.1214115750364,
+          7.636363636342507
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4288,
+        4344
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          551.9025045991029,
+          16.121212121190553
+        ],
+        "end_mm": [
+          551.9025045991029,
+          7.636363636342507
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4344,
+        4400
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          491.09497585866035,
+          7.636363636342507
+        ],
+        "end_mm": [
+          491.09497585866035,
+          33.09090849470195
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4400,
+        4456
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          459.98502294662,
+          7.636363636342507
+        ],
+        "end_mm": [
+          459.98502294662,
+          33.09090849470195
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4738,
+        4794
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          438.7722749002161,
+          33.09090849470195
+        ],
+        "end_mm": [
+          587.2571234137095,
+          33.09090849470195
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        4794,
+        4850
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          255,
+          255,
+          255
+        ],
+        "width_mm": 1.131313131312799
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          512.3031090275065,
+          33.09090849470195
+        ],
+        "end_mm": [
+          512.3031090275065,
+          7.636363636342509
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5138,
+        5194
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          594.3278304557199,
+          420.5656565655339
+        ],
+        "end_mm": [
+          594.3278304557199,
+          0.5656565655339421
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5194,
+        5547
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            404.41113482897805,
+            107.16794539751439
+          ],
+          [
+            403.58386087859856,
+            107.28629267595967
+          ],
+          [
+            402.8051712989801,
+            107.58965847146996
+          ],
+          [
+            402.66200700765535,
+            107.64549330220585
+          ],
+          [
+            402.50991261967033,
+            107.66742136133782
+          ],
+          [
+            402.3568067791946,
+            107.65430098611355
+          ],
+          [
+            402.2106607906729,
+            107.60681527591727
+          ],
+          [
+            402.07908360072867,
+            107.52743652737449
+          ],
+          [
+            401.96892564586915,
+            107.42029751666884
+          ],
+          [
+            401.8859221912708,
+            107.2909763306297
+          ],
+          [
+            401.43426302866675,
+            106.58784599553574
+          ],
+          [
+            400.83454712872395,
+            106.0058416083965
+          ],
+          [
+            404.0945624161169,
+            101.76400031487476
+          ],
+          [
+            404.1111313871627,
+            101.74719207494508
+          ],
+          [
+            404.13129403947914,
+            101.73492361201698
+          ],
+          [
+            404.1538369488942,
+            101.72793326394584
+          ],
+          [
+            404.1774034431427,
+            101.72664172227498
+          ],
+          [
+            404.2005752488089,
+            101.73112671427245
+          ],
+          [
+            404.221957845536,
+            101.74111832516641
+          ],
+          [
+            404.240264390734,
+            101.75601524209456
+          ],
+          [
+            404.2543931640489,
+            101.77492094217862
+          ],
+          [
+            404.2634938708471,
+            101.79669764686099
+          ],
+          [
+            404.2670188144549,
+            101.820034795436
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5547,
+        5900
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            400.67275811518357,
+            105.888295009497
+          ],
+          [
+            399.9339166454048,
+            105.49778054135894
+          ],
+          [
+            399.12562960150103,
+            105.28550637442537
+          ],
+          [
+            398.97698836676034,
+            105.2465278422732
+          ],
+          [
+            398.8410524323618,
+            105.17486917655049
+          ],
+          [
+            398.7248991685397,
+            105.07426121494977
+          ],
+          [
+            398.63457598031357,
+            104.94994201167596
+          ],
+          [
+            398.5747854553152,
+            104.80838412332498
+          ],
+          [
+            398.548640528206,
+            104.65695762161401
+          ],
+          [
+            398.5575024088068,
+            104.5035463778729
+          ],
+          [
+            398.60539211200387,
+            103.66922339268147
+          ],
+          [
+            398.4623053526849,
+            102.8458677911346
+          ],
+          [
+            403.5930048770043,
+            101.33033500541184
+          ],
+          [
+            403.616289091707,
+            101.32647585048987
+          ],
+          [
+            403.6398122416596,
+            101.32840176516505
+          ],
+          [
+            403.66215866198326,
+            101.33599684447692
+          ],
+          [
+            403.68198350547453,
+            101.34880400308369
+          ],
+          [
+            403.69809367789566,
+            101.36605248346875
+          ],
+          [
+            403.7095196405013,
+            101.38670424149484
+          ],
+          [
+            403.7155737585995,
+            101.40951641774099
+          ],
+          [
+            403.71589168462697,
+            101.4331161349866
+          ],
+          [
+            403.7104542852316,
+            101.45608312039715
+          ],
+          [
+            403.69958879275157,
+            101.477035180062
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        5900,
+        6253
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            398.40050744851675,
+            102.6556733988517
+          ],
+          [
+            398.03231078849564,
+            101.90546043785957
+          ],
+          [
+            397.50316445841065,
+            101.2586278253168
+          ],
+          [
+            397.4058221797957,
+            101.13972440472679
+          ],
+          [
+            397.3379676056318,
+            101.00185018886683
+          ],
+          [
+            397.3031335173397,
+            100.8521834626822
+          ],
+          [
+            397.3031335173397,
+            100.6985164765272
+          ],
+          [
+            397.3379676056318,
+            100.54884975034257
+          ],
+          [
+            397.4058221797957,
+            100.41097553448262
+          ],
+          [
+            397.50316445841065,
+            100.2920721138926
+          ],
+          [
+            398.0323107884975,
+            99.6452395013504
+          ],
+          [
+            398.4005074485205,
+            98.89502654035839
+          ],
+          [
+            403.44213837754165,
+            100.6846842755152
+          ],
+          [
+            403.46324405728654,
+            100.69524827161275
+          ],
+          [
+            403.4811426611165,
+            100.71063292994432
+          ],
+          [
+            403.4947570193125,
+            100.72991237448905
+          ],
+          [
+            403.50326779565523,
+            100.75192633408487
+          ],
+          [
+            403.5061627965316,
+            100.77534996960472
+          ],
+          [
+            403.5032677956552,
+            100.79877360512457
+          ],
+          [
+            403.4947570193125,
+            100.82078756472039
+          ],
+          [
+            403.48114266111645,
+            100.8400670092651
+          ],
+          [
+            403.4632440572865,
+            100.85545166759665
+          ],
+          [
+            403.44213837754165,
+            100.8660156636942
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6253,
+        6606
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            407.136329685438,
+            107.29097633062972
+          ],
+          [
+            407.0533262308391,
+            107.42029751666932
+          ],
+          [
+            406.94316827597896,
+            107.5274365273753
+          ],
+          [
+            406.81159108603407,
+            107.60681527591824
+          ],
+          [
+            406.6654450975116,
+            107.65430098611454
+          ],
+          [
+            406.51233925703514,
+            107.66742136133863
+          ],
+          [
+            406.3602448690495,
+            107.64549330220636
+          ],
+          [
+            406.2170805777242,
+            107.58965847146997
+          ],
+          [
+            405.43839099810526,
+            107.28629267595959
+          ],
+          [
+            404.61111704772526,
+            107.1679453975144
+          ],
+          [
+            404.75523306225216,
+            101.820034795436
+          ],
+          [
+            404.7587580058598,
+            101.7966976468612
+          ],
+          [
+            404.7678587126579,
+            101.77492094217902
+          ],
+          [
+            404.7819874859726,
+            101.75601524209512
+          ],
+          [
+            404.8002940311704,
+            101.74111832516706
+          ],
+          [
+            404.82167662789726,
+            101.73112671427315
+          ],
+          [
+            404.84484843356324,
+            101.72664172227564
+          ],
+          [
+            404.86841492781144,
+            101.72793326394645
+          ],
+          [
+            404.8909578372263,
+            101.73492361201747
+          ],
+          [
+            404.9111204895426,
+            101.7471920749454
+          ],
+          [
+            404.9276894605883,
+            101.7640003148748
+          ],
+          [
+            408.18770474798026,
+            106.00584160839767
+          ],
+          [
+            407.58798884803986,
+            106.58784599553661
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6606,
+        6959
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            410.46474946789937,
+            104.5035463778729
+          ],
+          [
+            410.47361134850007,
+            104.65695762161408
+          ],
+          [
+            410.4474664213908,
+            104.80838412332515
+          ],
+          [
+            410.3876758963923,
+            104.94994201167619
+          ],
+          [
+            410.297352708166,
+            105.07426121495001
+          ],
+          [
+            410.1811994443438,
+            105.17486917655069
+          ],
+          [
+            410.045263509945,
+            105.24652784227332
+          ],
+          [
+            409.89662227520427,
+            105.28550637442537
+          ],
+          [
+            409.08833523129994,
+            105.49778054135832
+          ],
+          [
+            408.34949376152065,
+            105.8882950094961
+          ],
+          [
+            405.32266308395,
+            101.47703518005959
+          ],
+          [
+            405.3117975914701,
+            101.45608312039435
+          ],
+          [
+            405.30636019207515,
+            101.43311613498345
+          ],
+          [
+            405.306678118103,
+            101.40951641773755
+          ],
+          [
+            405.31273223620155,
+            101.38670424149122
+          ],
+          [
+            405.32415819880765,
+            101.36605248346507
+          ],
+          [
+            405.3402683712293,
+            101.34880400308005
+          ],
+          [
+            405.36009321472096,
+            101.33599684447346
+          ],
+          [
+            405.38243963504493,
+            101.32840176516186
+          ],
+          [
+            405.405962784998,
+            101.326475850487
+          ],
+          [
+            405.42924699970087,
+            101.3303350054094
+          ],
+          [
+            410.559946524022,
+            102.84586779113378
+          ],
+          [
+            410.41685976470256,
+            103.66922339268102
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        6959,
+        7312
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            411.5190874182946,
+            101.25862782531685
+          ],
+          [
+            410.9899410882093,
+            101.90546043785854
+          ],
+          [
+            410.62174442818747,
+            102.6556733988496
+          ],
+          [
+            405.58011349916893,
+            100.86601566369477
+          ],
+          [
+            405.55900781942404,
+            100.85545166759722
+          ],
+          [
+            405.54110921559413,
+            100.84006700926567
+          ],
+          [
+            405.52749485739815,
+            100.82078756472097
+          ],
+          [
+            405.51898408105546,
+            100.79877360512519
+          ],
+          [
+            405.5160890801791,
+            100.77534996960537
+          ],
+          [
+            405.51898408105546,
+            100.75192633408554
+          ],
+          [
+            405.5274948573982,
+            100.72991237448977
+          ],
+          [
+            405.5411092155942,
+            100.71063292994509
+          ],
+          [
+            405.5590078194241,
+            100.69524827161354
+          ],
+          [
+            405.58011349916893,
+            100.684684275516
+          ],
+          [
+            410.6217444281875,
+            98.89502654035698
+          ],
+          [
+            410.98994108820904,
+            99.64523950134955
+          ],
+          [
+            411.5190874182946,
+            100.29207211389253
+          ],
+          [
+            411.6164296969096,
+            100.41097553448255
+          ],
+          [
+            411.6842842710735,
+            100.54884975034251
+          ],
+          [
+            411.7191183593656,
+            100.69851647652716
+          ],
+          [
+            411.7191183593656,
+            100.85218346268218
+          ],
+          [
+            411.6842842710735,
+            101.00185018886681
+          ],
+          [
+            411.6164296969097,
+            101.13972440472678
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        7312,
+        8013
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "fill",
+        "chain_mm": [
+          [
+            410.4647494678994,
+            97.04715356133595
+          ],
+          [
+            410.4168597647014,
+            97.88147654652705
+          ],
+          [
+            410.5599465240194,
+            98.70483214807385
+          ],
+          [
+            404.53838037835175,
+            100.48351376266343
+          ],
+          [
+            404.5203228061233,
+            100.48701428475046
+          ],
+          [
+            404.50192906888293,
+            100.48701428475046
+          ],
+          [
+            404.48387149665456,
+            100.48351376266342
+          ],
+          [
+            398.4623053526831,
+            98.70483214807452
+          ],
+          [
+            398.60539211200364,
+            97.8814765465285
+          ],
+          [
+            398.55750240880855,
+            97.04715356133752
+          ],
+          [
+            398.54864052820756,
+            96.89374231759662
+          ],
+          [
+            398.5747854553165,
+            96.7423158158858
+          ],
+          [
+            398.63457598031465,
+            96.60075792753491
+          ],
+          [
+            398.7248991685405,
+            96.47643872426114
+          ],
+          [
+            398.8410524323623,
+            96.37583076266037
+          ],
+          [
+            398.97698836676057,
+            96.30417209693755
+          ],
+          [
+            399.12562960150103,
+            96.2651935647852
+          ],
+          [
+            399.9803813240828,
+            96.03444846757424
+          ],
+          [
+            400.75445761254497,
+            95.60473960475635
+          ],
+          [
+            401.4023377547156,
+            95.00133664774961
+          ],
+          [
+            401.88592219127077,
+            94.25972360858079
+          ],
+          [
+            401.96892564586955,
+            94.13040242254135
+          ],
+          [
+            402.0790836007297,
+            94.02326341183553
+          ],
+          [
+            402.21066079067447,
+            93.9438846632927
+          ],
+          [
+            402.35680677919675,
+            93.8963989530965
+          ],
+          [
+            402.50991261967306,
+            93.88327857787246
+          ],
+          [
+            402.66200700765853,
+            93.90520663700474
+          ],
+          [
+            402.8051712989837,
+            93.96104146774101
+          ],
+          [
+            403.6323085337024,
+            94.27677521963327
+          ],
+          [
+            404.5111259383539,
+            94.38412407348697
+          ],
+          [
+            405.3899433430054,
+            94.27677521963327
+          ],
+          [
+            406.2170805777242,
+            93.96104146774104
+          ],
+          [
+            406.36024486904915,
+            93.90520663700502
+          ],
+          [
+            406.5123392570344,
+            93.88327857787299
+          ],
+          [
+            406.6654450975105,
+            93.8963989530972
+          ],
+          [
+            406.81159108603237,
+            93.94388466329353
+          ],
+          [
+            406.9431682759768,
+            94.02326341183638
+          ],
+          [
+            407.0533262308366,
+            94.13040242254219
+          ],
+          [
+            407.1363296854351,
+            94.25972360858151
+          ],
+          [
+            407.6199141219902,
+            95.00133664775016
+          ],
+          [
+            408.26779426416067,
+            95.60473960475689
+          ],
+          [
+            409.0418705526226,
+            96.0344484675748
+          ],
+          [
+            409.89662227520427,
+            96.26519356478589
+          ],
+          [
+            410.0452635099447,
+            96.30417209693785
+          ],
+          [
+            410.1811994443431,
+            96.37583076266023
+          ],
+          [
+            410.29735270816514,
+            96.47643872426056
+          ],
+          [
+            410.3876758963914,
+            96.60075792753392
+          ],
+          [
+            410.44746642139,
+            96.74231581588448
+          ],
+          [
+            410.4736113484996,
+            96.89374231759511
+          ]
+        ],
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      },
+      "furniture": true
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          115.64989893700101,
+          254.99954976211504
+        ],
+        "end_mm": [
+          176.70989893700101,
+          267.21154976211506
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          176.70989893700101,
+          267.21154976211506
+        ],
+        "end_mm": [
+          237.769898937001,
+          254.99954976211504
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          115.64989893700101,
+          184.3675497621151
+        ],
+        "end_mm": [
+          237.769898937001,
+          184.3675497621151
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          237.769898937001,
+          184.3675497621151
+        ],
+        "end_mm": [
+          237.769898937001,
+          254.99954976211504
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          237.769898937001,
+          254.99954976211504
+        ],
+        "end_mm": [
+          115.64989893700101,
+          254.99954976211504
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        252,
+        373
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment/Vessels/Tanks/Cone Roof Parametric Tank.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          115.64989893700101,
+          254.99954976211504
+        ],
+        "end_mm": [
+          115.64989893700101,
+          184.3675497621151
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        373,
+        500
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment Components/Nozzles/Flanged Nozzle with blind.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          237.76989893700167,
+          214.5834734372002
+        ],
+        "end_mm": [
+          240.30989893700166,
+          214.5834734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        373,
+        500
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment Components/Nozzles/Flanged Nozzle with blind.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          240.30989893700166,
+          214.5834734372002
+        ],
+        "end_mm": [
+          240.30989893700166,
+          212.67847343720024
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        373,
+        500
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment Components/Nozzles/Flanged Nozzle with blind.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          241.57989893700167,
+          212.67847343720024
+        ],
+        "end_mm": [
+          241.57989893700167,
+          216.4884734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        373,
+        500
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Equipment Components/Nozzles/Flanged Nozzle with blind.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          0,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          240.30989893700166,
+          212.67847343720024
+        ],
+        "end_mm": [
+          240.30989893700166,
+          216.4884734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "circle",
+        "center_mm": [
+          292.43871398849944,
+          214.58347343720018
+        ],
+        "radius_mm": 1.2691893950534952
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          293.57391149396403,
+          215.15107218993248
+        ],
+        "end_mm": [
+          296.24871398849945,
+          216.48847343720018
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          291.30351648303485,
+          215.15107218993248
+        ],
+        "end_mm": [
+          288.6287139884995,
+          216.48847343720018
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          296.24871398849945,
+          216.48847343720018
+        ],
+        "end_mm": [
+          296.24871398849945,
+          212.6784734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          288.6287139884995,
+          212.6784734372002
+        ],
+        "end_mm": [
+          291.30351648303485,
+          214.0158746844679
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          296.24871398849945,
+          212.6784734372002
+        ],
+        "end_mm": [
+          293.57391149396403,
+          214.0158746844679
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        500,
+        627
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Piping/Valves/2 Way Common/Ball Valve Type 1.sym",
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          288.6287139884995,
+          216.48847343720018
+        ],
+        "end_mm": [
+          288.6287139884995,
+          212.6784734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "circle",
+        "center_mm": [
+          321.65952062873544,
+          214.58347343720018
+        ],
+        "radius_mm": 1.5875000036743254
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          323.0794237977342,
+          215.29342502169956
+        ],
+        "end_mm": [
+          325.4695206287354,
+          216.48847343720018
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          320.2396174597367,
+          215.29342502169956
+        ],
+        "end_mm": [
+          317.84952062873543,
+          216.48847343720018
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          317.84952062873543,
+          212.6784734372002
+        ],
+        "end_mm": [
+          320.2396174597367,
+          213.8735218527008
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          325.4695206287354,
+          212.6784734372002
+        ],
+        "end_mm": [
+          323.0794237977342,
+          213.8735218527008
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          325.4695206287354,
+          216.48847343720018
+        ],
+        "end_mm": [
+          325.4695206287354,
+          212.6784734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1955,
+        2082
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/In-Line/Valves/2 Way Common/2 Way Ball Type 1.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          317.84952062873543,
+          216.48847343720018
+        ],
+        "end_mm": [
+          317.84952062873543,
+          212.6784734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          321.65952062873544,
+          226.0134734372002
+        ],
+        "end_mm": [
+          319.1195206287354,
+          226.0134734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          324.1995206287354,
+          228.5534734372002
+        ],
+        "end_mm": [
+          319.1195206287354,
+          228.5534734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          324.1995206287354,
+          223.4734734372002
+        ],
+        "end_mm": [
+          324.1995206287354,
+          228.5534734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          319.1195206287354,
+          223.4734734372002
+        ],
+        "end_mm": [
+          324.1995206287354,
+          223.4734734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          319.1195206287354,
+          228.5534734372002
+        ],
+        "end_mm": [
+          319.1195206287354,
+          223.4734734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          319.1195206287354,
+          226.0134734372002
+        ],
+        "end_mm": [
+          324.1995206287354,
+          226.0134734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2082,
+        2209
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Actuators/Dual Action Cyl Act.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.35
+      },
+      "shape": {
+        "kind": "line",
+        "start_mm": [
+          321.65952062873544,
+          214.58347343720018
+        ],
+        "end_mm": [
+          321.65952062873544,
+          226.0134734372002
+        ]
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3511,
+        3638
+      ],
+      "symbol": "//MM-128/PID_SQProject/SQPlant/Ref/Symbols/Instrumentation/Off-Line/Without Implied Components/Pressure/PT-Pressure Transmitter.sym",
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.18000000000000002
+      },
+      "shape": {
+        "kind": "circle",
+        "center_mm": [
+          301.7181671750449,
+          241.50498934522557
+        ],
+        "radius_mm": 6.350000014697302
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        737,
+        823
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          169.9434720455891,
+          219.77522086271927
+        ],
+        "height_mm": 3.52778,
+        "rotation": 0.0,
+        "value": "TK 264",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "half_ascender"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1759,
+        1845
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          292.438713988499,
+          223.69989278019747
+        ],
+        "height_mm": 2.469446,
+        "rotation": 0.0,
+        "value": "  BV01",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "middle"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3638,
+        3716
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          301.7181671750449,
+          244.16044516340742
+        ],
+        "height_mm": 2.469446,
+        "rotation": 0.0,
+        "value": "PT",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "middle"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3716,
+        3794
+      ],
+      "symbol": null,
+      "shape": {
+        "kind": "text",
+        "origin_mm": [
+          301.7181671750449,
+          238.84953352704375
+        ],
+        "height_mm": 2.469446,
+        "rotation": 0.0,
+        "value": "  ",
+        "font": "Arial Narrow",
+        "anchor": "center",
+        "line": "middle"
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        1411,
+        1473
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            241.57989893700167,
+            214.5834734372002
+          ],
+          [
+            288.6287139884995,
+            214.58347343720018
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2369,
+        2431
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            296.24871398849945,
+            214.58347343720018
+          ],
+          [
+            317.84952062873543,
+            214.58347343720018
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        2623,
+        2701
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          128,
+          128,
+          0
+        ],
+        "width_mm": 0.7
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            325.4695206287354,
+            214.58347343720018
+          ],
+          [
+            377.426996717522,
+            214.58347343720018
+          ],
+          [
+            377.426996717522,
+            285.4598022949536
+          ]
+        ],
+        "closed": false
+      }
+    },
+    {
+      "confidence": "decoded",
+      "stream_path": "/Sheet6",
+      "byte_range": [
+        3433,
+        3511
+      ],
+      "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          128,
+          0
+        ],
+        "width_mm": 0.18000000000000002,
+        "dash_mm": [
+          1.9049999999999998,
+          1.27
+        ],
+        "dash_fit": {
+          "ratio": 1.1666666269302368,
+          "signed_mm": [
+            -1.9049999999999998,
+            -1.27
+          ]
+        }
+      },
+      "shape": {
+        "kind": "polyline",
+        "points_mm": [
+          [
+            321.65952062873544,
+            228.5534734372002
+          ],
+          [
+            321.65952062873544,
+            241.50498934522557
+          ],
+          [
+            308.068169092968,
+            241.50498934522557
+          ]
+        ],
+        "closed": false
+      }
+    }
+  ],
+  "off_sheet_primitives": 0,
+  "skipped_endpoint_pairs": 0,
+  "missing_symbols": [
+    "equipment/vessels/tanks/cone roof parametric tank.sym"
+  ],
+  "missing_boxes": [],
+  "symbols_found": 5,
+  "symbols_referenced": 6
+}
