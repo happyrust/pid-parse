@@ -5333,6 +5333,44 @@ mod tests {
             .all(|row| row.emitted <= row.decoded));
     }
 
+    /// A no-op family that decoded a record still gets a row, flagged
+    /// `audit_only`, with the record counted as decoded and none as emitted —
+    /// so an audit-only family's records are never an unaccounted skip.
+    #[test]
+    fn an_audit_only_family_gets_a_flagged_row_instead_of_a_silent_skip() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_dependency_objects: vec![crate::model::DecodedDependencyObjectRecord {
+                    byte_start: 200,
+                    byte_end: 250,
+                    type_code: 0x00FA,
+                    type_flags: 0,
+                    bytes_to_follow: 44,
+                    oid: 77,
+                    parent_ref: 6,
+                    group_kind_word: 2,
+                    sub_type_word: 1,
+                    raw_reference_payload: vec![0u8; 26],
+                }],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert!(geometry.entities.is_empty());
+        let account = geometry
+            .emitter_account("/Sheet6", "DependencyObject")
+            .expect("an audit-only family that decoded a record must still account for it");
+        assert!(account.audit_only);
+        assert_eq!(account.decoded, 1);
+        assert_eq!(account.emitted, 0);
+        assert_eq!(account.out_of_range, 0);
+        assert_eq!(account.shape_rejected, 0);
+    }
+
     /// A stream whose families decoded nothing carries no rows at all: "no
     /// records" stays distinguishable from "all records skipped".
     #[test]
