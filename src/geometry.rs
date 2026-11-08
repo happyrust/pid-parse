@@ -5,7 +5,9 @@
 //! points because they carry source byte ranges, but they are still not
 //! line / text / symbol geometry.
 
-use crate::model::{PidDocument, SheetRecordKind, SheetStream};
+use crate::model::{
+    PidDocument, SheetRecordFamily, SheetRecordKind, SheetStream, SHEET_RECORD_FAMILIES,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -86,6 +88,17 @@ pub struct NormalizedPidGeometry {
     /// rotation, scale and insertion, exactly like a library body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbol_definitions: Vec<PidSymbolDefinition>,
+    /// What the geometry emitters did with each record family's decoded
+    /// records, per Sheet stream (appendix A.1's last three rows).
+    ///
+    /// The parse layer's own conservation account: for every emitting family
+    /// on every stream, `decoded = emitted + out_of_range + shape_rejected`.
+    /// A row whose `decoded` and `emitted` are both zero is absent. Empty for a
+    /// document whose records all emitted, which is why the field skips
+    /// serialization when empty — a consumer that never reads it sees the same
+    /// JSON it always did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emitter_accounts: Vec<PidEmitterAccount>,
 }
 
 /// Which embedded symbol body a placement draws: the definition cache
@@ -450,10 +463,59 @@ pub struct PidSkippedGraphicRecords {
     pub count: usize,
 }
 
+/// One row of what the geometry emitters did with one record family's decoded
+/// records in one Sheet stream.
+///
+/// The emitters are the last step of the parse layer: a decoded record either
+/// becomes an entity or is skipped, and this row is where the difference is
+/// written down. It exists for the export ledger
+/// (`.kiro/specs/pdf-export-ledger/`, appendix A.1's last three rows) and for
+/// the family-level conservation equation
+/// `decoded = emitted + out_of_range + shape_rejected`, which is what lets a
+/// page that draws less than its records say be told from one whose records
+/// never decoded.
+///
+/// Only rows with something to say are kept: a family with no decoded records
+/// and no emitted entity in this stream is absent rather than zero-filled, so a
+/// reader can tell "nothing was there" from "everything was skipped".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidEmitterAccount {
+    /// Full CFB path of the Sheet stream the records sit in.
+    pub stream_path: String,
+    /// The record family's registry name, as
+    /// [`SheetRecordFamily`](crate::model::SheetRecordFamily)'s `name` states
+    /// it.
+    pub family: String,
+    /// Whether the family registers a deliberate no-op emitter (audit-only).
+    ///
+    /// An audit-only family's decoded records are all
+    /// `record_audit_only_family` in the ledger, never an unaccounted skip.
+    pub audit_only: bool,
+    /// Decoded records on this stream for this family, from the family's own
+    /// `record_count`.
+    pub decoded: usize,
+    /// Entities the family's emitter appended for this stream.
+    pub emitted: usize,
+    /// Records skipped because their byte range fell outside the stream.
+    pub out_of_range: usize,
+    /// Records the emitter refused on shape (unequal vertex counts, a ring
+    /// under three points, a curve sampled to under two).
+    pub shape_rejected: usize,
+}
+
 impl NormalizedPidGeometry {
     /// True when no source-backed entities were produced.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
+    }
+
+    /// The emitter account for one `(stream, family)`, if this geometry
+    /// carries one.
+    #[must_use]
+    pub fn emitter_account(&self, stream_path: &str, family: &str) -> Option<&PidEmitterAccount> {
+        self.emitter_accounts
+            .iter()
+            .find(|row| row.stream_path == stream_path && row.family == family)
     }
 
     /// The embedded body a placement names, if the drawing carries it.
@@ -951,6 +1013,9 @@ fn infer_page_dimensions(doc: &PidDocument) -> Option<(f64, f64)> {
 pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     let mut warnings = Vec::new();
     let mut entities = Vec::new();
+    // What each emitter did with each family's decoded records, per stream.
+    // Filled by the emission loop below; see [`PidEmitterAccount`].
+    let mut emitter_accounts: Vec<PidEmitterAccount> = Vec::new();
     let page_frame = decoded_page_frame(doc);
     let page_dims = page_frame
         .map(PageFrame::dimensions_mm)
@@ -1427,8 +1492,36 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         // should pick the right entity by `confidence` + `record_kind`.
         // Audit-only families are registered as explicit no-op
         // emitters, making the emission policy visible in one table.
+        //
+        // Each emitter also says what it skipped, and this loop is the only
+        // place that can pair that with the family's decoded count: the count
+        // lives in the registry (`SHEET_RECORD_FAMILIES`), not on the emitter.
+        // The three numbers become one `PidEmitterAccount` row, which is the
+        // parse layer's conservation equation — `decoded = emitted +
+        // out_of_range + shape_rejected` — and, in the export ledger, the
+        // `record_emitter_*` reason codes. Rows with nothing to say are left
+        // out rather than zero-filled, so "no records" and "all records
+        // skipped" stay distinguishable.
         for emitter in EMITTERS {
-            emitter.emit(&ctx, sheet, &mut entities);
+            let before = entities.len();
+            let skips = emitter.emit(&ctx, sheet, &mut entities);
+            let emitted = entities.len().saturating_sub(before);
+            let decoded = match (&sheet.geometry, registry_family(emitter.family())) {
+                (Some(geometry), Some(family)) => (family.record_count)(geometry),
+                _ => 0,
+            };
+            if decoded == 0 && emitted == 0 {
+                continue;
+            }
+            emitter_accounts.push(PidEmitterAccount {
+                stream_path: sheet.path.clone(),
+                family: emitter.family().to_string(),
+                audit_only: emitter.is_no_op(),
+                decoded,
+                emitted,
+                out_of_range: skips.out_of_range,
+                shape_rejected: skips.shape_rejected,
+            });
         }
     }
 
@@ -1489,7 +1582,20 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         refused_graphic_records,
         skipped_graphic_records,
         symbol_definitions: embedded_symbol_definitions(doc),
+        emitter_accounts,
     }
+}
+
+/// The registry row for one family name.
+///
+/// The emitters and the registry are two parallel lists keyed by the same
+/// string — the emitter's `family()` and the family's `name` — and this is the
+/// one place that pairs them, so the emission loop reads a family's decoded
+/// count from the registry rather than keeping a second copy of it.
+fn registry_family(name: &str) -> Option<&'static SheetRecordFamily> {
+    SHEET_RECORD_FAMILIES
+        .iter()
+        .find(|family| family.name == name)
 }
 
 /// Every symbol body the drawing's definition caches carry, as the
@@ -2129,6 +2235,38 @@ impl<'a> ExpressionIndex<'a> {
     }
 }
 
+/// What an emitter skipped while walking one family's decoded records.
+///
+/// Returned by [`GeometryEmitter::emit`] so the pass can fill a
+/// [`PidEmitterAccount`] without every adapter keeping its own counter. The two
+/// numbers are the two ways a decoded record can fail to become an entity:
+/// its byte range lies outside the stream, or its shape is one the emitter
+/// refuses to draw. Everything else a family decodes emits.
+///
+/// Private on purpose: the account a consumer reads is
+/// [`PidEmitterAccount`], and this is the pass's own bookkeeping between one
+/// emitter and the loop around it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EmitSkips {
+    /// Records whose byte range fell outside the stream (`source_range(..)`
+    /// returned `None`).
+    out_of_range: usize,
+    /// Records the emitter refused on shape.
+    shape_rejected: usize,
+}
+
+impl EmitSkips {
+    /// Record one out-of-range skip.
+    fn out_of_range(&mut self) {
+        self.out_of_range = self.out_of_range.saturating_add(1);
+    }
+
+    /// Record one shape-rejected skip.
+    fn shape_rejected(&mut self) {
+        self.shape_rejected = self.shape_rejected.saturating_add(1);
+    }
+}
+
 /// Per-family emission seam (RFC §3.2, L6 counterpart of the parser-side
 /// `PsmRecordDecoder`): one adapter per PSM record family turns that
 /// family's decoded records on a sheet into zero or more
@@ -2144,11 +2282,17 @@ impl<'a> ExpressionIndex<'a> {
 ///   [`EMITTERS`] table rather than implied by absence. Per ADR-0001 /
 ///   CONTEXT.md, promoting an audit-only family to emission is an
 ///   evidence-gated decision, never a refactor side effect.
+/// - An emitter that skips a decoded record says so in its returned
+///   [`EmitSkips`]: the pass turns that into a [`PidEmitterAccount`] row, and
+///   the export ledger turns the row into `record_emitter_out_of_range` or
+///   `record_emitter_shape_rejected`. A skip nobody counts is a record that
+///   silently left the drawing.
 trait GeometryEmitter {
-    /// The [`crate::model::sheet_families::SheetRecordFamily::name`]
+    /// The [`SheetRecordFamily`](crate::model::SheetRecordFamily)'s `name`
     /// this emitter serves.
-    // Read only by the registry policy test via `emitter_families`.
-    #[allow(dead_code)]
+    ///
+    /// Read by the pass to look the family's decoded count up in the registry,
+    /// and by the registry policy test through [`emitter_families`].
     fn family(&self) -> &'static str;
 
     /// Whether this emitter is a deliberate no-op (audit-only family).
@@ -2159,15 +2303,20 @@ trait GeometryEmitter {
     /// tested against the emitters themselves rather than against a
     /// second hand-written copy of the same claim — `igBoundary2d`
     /// drifted exactly that way when fills landed.
-    // Read only by the registry policy test via `emitter_families`.
-    #[allow(dead_code)]
     fn is_no_op(&self) -> bool {
         false
     }
 
     /// Append this family's entities for `sheet` onto `out`. `ctx`
     /// carries document-level lookups shared by the whole pass.
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>);
+    ///
+    /// Returns what the walk skipped, so the pass can account for it.
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips;
 }
 
 /// Document-level context shared by every [`GeometryEmitter`] during
@@ -2317,9 +2466,15 @@ impl GeometryEmitter for GLine2dEmitter {
         "GLine2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2327,6 +2482,7 @@ impl GeometryEmitter for GLine2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             let (ax, ay) = record.endpoint_a();
@@ -2367,6 +2523,7 @@ impl GeometryEmitter for GLine2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2399,9 +2556,15 @@ impl GeometryEmitter for IgSymbol2dEmitter {
         "igSymbol2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igsymbols.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2409,6 +2572,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             let (rotation, mut scale) = decompose_placement([
@@ -2475,6 +2639,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2487,9 +2652,15 @@ impl GeometryEmitter for IgTextBoxEmitter {
         "igTextBox"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igtextboxes.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2497,6 +2668,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2547,6 +2719,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2559,9 +2732,15 @@ impl GeometryEmitter for IgArc2dEmitter {
         "igArc2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igarcs.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2569,6 +2748,7 @@ impl GeometryEmitter for IgArc2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2617,6 +2797,7 @@ impl GeometryEmitter for IgArc2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2630,9 +2811,15 @@ impl GeometryEmitter for IgCircle2dEmitter {
         "igCircle2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igcircles.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2640,6 +2827,7 @@ impl GeometryEmitter for IgCircle2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2676,6 +2864,7 @@ impl GeometryEmitter for IgCircle2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2688,9 +2877,15 @@ impl GeometryEmitter for IgPoint2dEmitter {
         "igPoint2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igpoints.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2698,6 +2893,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2734,6 +2930,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2746,9 +2943,15 @@ impl GeometryEmitter for IgLineString2dEmitter {
         "igLineString2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_iglinestrings.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2756,9 +2959,13 @@ impl GeometryEmitter for IgLineString2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             if record.vertex_xs.len() != record.vertex_ys.len() {
+                // A polyline whose x and y lists disagree is not a chain of
+                // points; the pair has no reading, so nothing is drawn.
+                skips.shape_rejected();
                 continue;
             }
             let points: Vec<PidPoint> = record
@@ -2774,6 +2981,9 @@ impl GeometryEmitter for IgLineString2dEmitter {
                 // reference PDFs, `probe_real5_linestring_refusals`). Emit
                 // the point as evidence rather than a zero-length polyline.
                 let Some(position) = points.first().copied() else {
+                    // Zero total length with no vertices at all: there is no
+                    // position to anchor the annotation to.
+                    skips.shape_rejected();
                     continue;
                 };
                 out.push(PidGraphicEntity {
@@ -2836,6 +3046,7 @@ impl GeometryEmitter for IgLineString2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2848,9 +3059,15 @@ impl GeometryEmitter for IgLine2dEmitter {
         "igLine2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_iglines.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2858,6 +3075,7 @@ impl GeometryEmitter for IgLine2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2901,6 +3119,7 @@ impl GeometryEmitter for IgLine2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -2929,9 +3148,15 @@ impl GeometryEmitter for JStyleOverrideEmitter {
         "JStyleOverride"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -2939,6 +3164,7 @@ impl GeometryEmitter for JStyleOverrideEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             out.push(PidGraphicEntity {
@@ -2980,6 +3206,7 @@ impl GeometryEmitter for JStyleOverrideEmitter {
                 confidence: PidGeometryConfidence::ProbeOnly,
             });
         }
+        skips
     }
 }
 
@@ -3010,9 +3237,15 @@ impl GeometryEmitter for IgBoundary2dEmitter {
         "igBoundary2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igboundaries.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -3020,6 +3253,7 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             // The segments chain end-to-start, so their starts are the ring's
@@ -3033,6 +3267,9 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 })
                 .collect();
             if points.len() < 3 {
+                // A boundary needs three segments to enclose anything; a
+                // shorter one is a run, not a fill ring.
+                skips.shape_rejected();
                 continue;
             }
             out.push(PidGraphicEntity {
@@ -3066,6 +3303,7 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -3086,7 +3324,13 @@ impl GeometryEmitter for IgSmartFrame2dEmitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3104,7 +3348,13 @@ impl GeometryEmitter for DependencyObjectEmitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3122,7 +3372,13 @@ impl GeometryEmitter for SubRecord0x0010Emitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3145,9 +3401,15 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
         "igBspCurve2d"
     }
 
-    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
         let Some(geometry) = &sheet.geometry else {
-            return;
+            return skips;
         };
         for (index, record) in geometry.decoded_igbspcurves.iter().enumerate() {
             let Some(byte_range) = source_range(
@@ -3155,6 +3417,7 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
                 record.byte_end.saturating_sub(record.byte_start),
                 sheet.size,
             ) else {
+                skips.out_of_range();
                 continue;
             };
             let points: Vec<PidPoint> = crate::bspline::sample(
@@ -3167,6 +3430,8 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
             .map(|(x, y)| PidPoint { x, y })
             .collect();
             if points.len() < 2 {
+                // A B-spline needs two control points before it is a curve.
+                skips.shape_rejected();
                 continue;
             }
             out.push(PidGraphicEntity {
@@ -3201,6 +3466,7 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
                 confidence: PidGeometryConfidence::Decoded,
             });
         }
+        skips
     }
 }
 
@@ -3220,7 +3486,13 @@ impl GeometryEmitter for IgRectangle2dEmitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3243,7 +3515,13 @@ impl GeometryEmitter for IgDimensionEmitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3261,7 +3539,13 @@ impl GeometryEmitter for AttributeFragmentEmitter {
         true
     }
 
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
     }
 }
 
@@ -3333,9 +3617,124 @@ fn source_range(start: usize, len: usize, stream_size: u64) -> Option<PidByteRan
 mod tests {
     use super::*;
     use crate::model::{
-        DecodedJStyleOverrideRecord, SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord,
-        SheetGeometry, SheetObjectGeometryHint, SheetStream, SheetText,
+        DecodedIgBoundary2dRecord, DecodedIgBoundary2dSegment, DecodedIgBspCurve2dRecord,
+        DecodedIgLine2dRecord, DecodedIgLineString2dRecord, DecodedJStyleOverrideRecord,
+        SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord, SheetGeometry,
+        SheetObjectGeometryHint, SheetStream, SheetText,
     };
+
+    /// One sheet stream carrying exactly the records a test wants to walk.
+    fn sheet_stream_with(geometry: SheetGeometry, size: u64) -> SheetStream {
+        SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(geometry),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        }
+    }
+
+    /// One `igLine2d` record whose byte range is `byte_start..byte_end`.
+    fn ig_line(byte_start: usize, byte_end: usize) -> DecodedIgLine2dRecord {
+        DecodedIgLine2dRecord {
+            byte_start,
+            byte_end,
+            type_code: 0x0018,
+            type_flags: 0,
+            bytes_to_follow: 50,
+            oid: 700,
+            parent_ref: 6,
+            sheet_layer_ref: 12,
+            aux_hi: 8,
+            sub_type_word: 0x0010,
+            index: 1,
+            start_x: 0.1,
+            start_y: 0.1,
+            end_x: 0.4,
+            end_y: 0.1,
+        }
+    }
+
+    /// One `igLineString2d` record with the given vertex lists.
+    fn ig_line_string(vertex_xs: Vec<f64>, vertex_ys: Vec<f64>) -> DecodedIgLineString2dRecord {
+        DecodedIgLineString2dRecord {
+            byte_start: 16,
+            byte_end: 120,
+            type_code: 0x0084,
+            type_flags: 0,
+            bytes_to_follow: 98,
+            oid: 701,
+            parent_ref: 6,
+            sheet_layer_ref: 12,
+            sub_type_word: 0x0010,
+            index: 1,
+            form: 1,
+            scope: 2,
+            vertex_xs,
+            vertex_ys,
+        }
+    }
+
+    /// One `igBoundary2d` ring with the given number of segments.
+    fn ig_boundary(segments: usize) -> DecodedIgBoundary2dRecord {
+        DecodedIgBoundary2dRecord {
+            byte_start: 16,
+            byte_end: 194,
+            type_code: 0x0013,
+            type_flags: 0,
+            bytes_to_follow: 172,
+            oid: 900,
+            parent_ref: 6,
+            sheet_layer_ref: 12,
+            sub_type_word: 0x0010,
+            index: 1,
+            segment_count: u32::try_from(segments).unwrap_or(u32::MAX),
+            sub_header_tail: [2, 1],
+            segments: (0..segments)
+                .map(|index| {
+                    let along = index as f64 * 0.1;
+                    DecodedIgBoundary2dSegment {
+                        tag_offset: 28,
+                        start_x: along,
+                        start_y: 0.1,
+                        end_x: along + 0.1,
+                        end_y: 0.1,
+                    }
+                })
+                .collect(),
+            anchor_x: 0.25,
+            anchor_y: 0.1,
+            trailer_flag: 1,
+            member_refs: Vec::new(),
+            closed_loop: true,
+        }
+    }
+
+    /// One `igBspCurve2d` record holding `poles` control points.
+    fn ig_bsp_curve(poles: usize) -> DecodedIgBspCurve2dRecord {
+        DecodedIgBspCurve2dRecord {
+            byte_start: 16,
+            byte_end: 200,
+            oid: 702,
+            parent_ref: 6,
+            sheet_layer_ref: 12,
+            sub_type_word: 0x0010,
+            index: 1,
+            pole_xs: (0..poles).map(|index| index as f64 * 0.1).collect(),
+            pole_ys: vec![0.1; poles],
+            weights: Vec::new(),
+            knots: Vec::new(),
+            trailing: -1.0,
+            flags: [4, 1, 1, 0],
+        }
+    }
 
     #[test]
     fn normalized_geometry_reports_empty_sheet_inputs() {
@@ -4387,6 +4786,7 @@ mod tests {
             refused_graphic_records: Vec::new(),
             skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
+            emitter_accounts: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");
@@ -4765,5 +5165,319 @@ mod tests {
             context.page_transform,
             PidPageTransform::Unavailable { .. }
         ));
+    }
+
+    // ---------------------------------------------------------------------
+    // The emitter account: every decoded record either emits or is counted
+    // as one of the two skips. These tests walk one skip branch each, so the
+    // accounting cannot drift into "some records just vanish".
+    // ---------------------------------------------------------------------
+
+    /// A byte range past the end of the stream is one `out_of_range`, not a
+    /// silent loss.
+    #[test]
+    fn a_record_whose_byte_range_leaves_the_stream_counts_as_out_of_range() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                // 40..96 sits inside a 100-byte stream; 90..146 does not.
+                decoded_iglines: vec![ig_line(40, 96), ig_line(90, 146)],
+                ..SheetGeometry::default()
+            },
+            100,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let account = geometry
+            .emitter_account("/Sheet6", "igLine2d")
+            .expect("the igLine2d emitter must account for its stream");
+        assert_eq!(account.decoded, 2);
+        assert_eq!(account.emitted, 1);
+        assert_eq!(account.out_of_range, 1);
+        assert_eq!(account.shape_rejected, 0);
+        assert!(!account.audit_only);
+    }
+
+    /// Vertex lists that disagree in length are a shape refusal.
+    #[test]
+    fn a_polyline_with_unequal_vertex_lists_counts_as_shape_rejected() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_iglinestrings: vec![
+                    ig_line_string(vec![0.1, 0.2, 0.3], vec![0.1, 0.1]),
+                    ig_line_string(vec![0.1, 0.2], vec![0.1, 0.2, 0.3]),
+                ],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert!(geometry.entities.is_empty());
+        let account = geometry
+            .emitter_account("/Sheet6", "igLineString2d")
+            .expect("the igLineString2d emitter must account for its stream");
+        assert_eq!(account.decoded, 2);
+        assert_eq!(account.emitted, 0);
+        assert_eq!(account.out_of_range, 0);
+        assert_eq!(account.shape_rejected, 2);
+    }
+
+    /// A polyline whose vertices all coincide is a point, not a stroke; one
+    /// with no vertices at all has no anchor, so that one is refused.
+    #[test]
+    fn a_collapsed_polyline_emits_a_point_but_an_empty_one_is_shape_rejected() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_iglinestrings: vec![
+                    ig_line_string(vec![0.25], vec![0.25]),
+                    ig_line_string(Vec::new(), Vec::new()),
+                ],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        assert!(matches!(
+            geometry.entities[0].kind,
+            PidGraphicKind::Point { .. }
+        ));
+        let account = geometry
+            .emitter_account("/Sheet6", "igLineString2d")
+            .expect("the igLineString2d emitter must account for its stream");
+        assert_eq!(account.decoded, 2);
+        assert_eq!(account.emitted, 1);
+        assert_eq!(account.out_of_range, 0);
+        assert_eq!(account.shape_rejected, 1);
+    }
+
+    /// A boundary under three segments encloses nothing.
+    #[test]
+    fn a_boundary_under_three_segments_counts_as_shape_rejected() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igboundaries: vec![ig_boundary(2), ig_boundary(3)],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let account = geometry
+            .emitter_account("/Sheet6", "igBoundary2d")
+            .expect("the igBoundary2d emitter must account for its stream");
+        assert_eq!(account.decoded, 2);
+        assert_eq!(account.emitted, 1);
+        assert_eq!(account.out_of_range, 0);
+        assert_eq!(account.shape_rejected, 1);
+    }
+
+    /// A curve that samples to under two points is not a curve.
+    #[test]
+    fn a_curve_sampling_to_under_two_points_counts_as_shape_rejected() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igbspcurves: vec![ig_bsp_curve(0), ig_bsp_curve(1), ig_bsp_curve(4)],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let account = geometry
+            .emitter_account("/Sheet6", "igBspCurve2d")
+            .expect("the igBspCurve2d emitter must account for its stream");
+        assert_eq!(account.decoded, 3);
+        assert_eq!(account.emitted, 1);
+        assert_eq!(account.out_of_range, 0);
+        assert_eq!(account.shape_rejected, 2);
+    }
+
+    /// Every emitting family's row never claims more entities than it decoded,
+    /// and no audit-only family's row claims any.
+    #[test]
+    fn an_emitting_family_never_claims_more_entities_than_it_decoded() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igboundaries: vec![ig_boundary(4)],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        let account = geometry
+            .emitter_account("/Sheet6", "igBoundary2d")
+            .expect("the igBoundary2d emitter must account for its stream");
+        assert!(!account.audit_only);
+        assert!(geometry
+            .emitter_accounts
+            .iter()
+            .filter(|row| row.decoded > 0)
+            .all(|row| row.emitted <= row.decoded));
+    }
+
+    /// A stream whose families decoded nothing carries no rows at all: "no
+    /// records" stays distinguishable from "all records skipped".
+    #[test]
+    fn a_stream_with_no_family_records_carries_no_emitter_rows() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams
+            .push(sheet_stream_with(SheetGeometry::default(), 4096));
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert!(geometry.emitter_accounts.is_empty());
+        assert!(geometry.emitter_account("/Sheet6", "igLine2d").is_none());
+    }
+
+    /// The emitter account is empty for every document that emits nothing
+    /// new, so it does not perturb the serialized geometry of the corpus.
+    #[test]
+    fn an_empty_emitter_account_does_not_serialize() {
+        let geometry = NormalizedPidGeometry {
+            page_dimensions_mm: None,
+            entities: Vec::new(),
+            warnings: Vec::new(),
+            dropped_graphic_records: Vec::new(),
+            refused_graphic_records: Vec::new(),
+            skipped_graphic_records: Vec::new(),
+            symbol_definitions: Vec::new(),
+            emitter_accounts: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&geometry).expect("an empty geometry serializes");
+
+        assert!(
+            !json.contains("emitter_accounts"),
+            "an empty account must not appear in the JSON, got {json}"
+        );
+    }
+
+    /// The registry is the only source of a family's decoded count, so every
+    /// emitter in [`EMITTERS`] must name a family the registry carries — a
+    /// typo would silently zero the account's `decoded`.
+    #[test]
+    fn every_emitter_names_a_registry_family() {
+        for emitter in EMITTERS {
+            assert!(
+                registry_family(emitter.family()).is_some(),
+                "emitter family {:?} is not in SHEET_RECORD_FAMILIES",
+                emitter.family()
+            );
+        }
+    }
+
+    /// Feature: pdf-export-ledger, Property 7: 发射器族级守恒
+    ///
+    /// For every family on every stream, `decoded = emitted + out_of_range +
+    /// shape_rejected`: no decoded record leaves the account unmentioned. The
+    /// generator varies the two things a skip depends on — how many records a
+    /// family carries and whether their byte ranges land inside the stream — so
+    /// the property covers the emitting, the all-skipped and the empty cases
+    /// alike.
+    #[test]
+    fn property_7_emitter_accounts_conserve_every_decoded_record() {
+        use proptest::prelude::*;
+
+        fn geometry_with(
+            lines: Vec<DecodedIgLine2dRecord>,
+            strings: Vec<DecodedIgLineString2dRecord>,
+            boundaries: Vec<DecodedIgBoundary2dRecord>,
+            curves: Vec<DecodedIgBspCurve2dRecord>,
+        ) -> SheetGeometry {
+            SheetGeometry {
+                decoded_iglines: lines,
+                decoded_iglinestrings: strings,
+                decoded_igboundaries: boundaries,
+                decoded_igbspcurves: curves,
+                ..SheetGeometry::default()
+            }
+        }
+
+        proptest!(ProptestConfig::with_cases(256), |(
+            // `in_stream` = how many of each family's records sit inside a
+            // 4096-byte stream; the rest are pushed past its end.
+            line_counts in (0usize..4, 0usize..4),
+            string_vertices in proptest::collection::vec(
+                proptest::collection::vec(0usize..4, 0..3),
+                0..4,
+            ),
+            string_pairs in proptest::collection::vec(any::<bool>(), 0..4),
+            boundary_segments in proptest::collection::vec(0usize..4, 0..4),
+            curve_poles in proptest::collection::vec(0usize..4, 0..4),
+        )| {
+            let (lines_in, lines_out) = line_counts;
+            let mut lines = Vec::new();
+            for _ in 0..lines_in {
+                lines.push(ig_line(40, 96));
+            }
+            for _ in 0..lines_out {
+                lines.push(ig_line(4000, 4100));
+            }
+
+            // A polyline is refused on shape when its x and y lists disagree;
+            // `string_pairs` decides that per record.
+            let mut strings = Vec::new();
+            for (index, vertices) in string_vertices.iter().enumerate() {
+                let matched = string_pairs.get(index).copied().unwrap_or(false);
+                let ys: Vec<usize> = if matched {
+                    vertices.clone()
+                } else {
+                    // One vertex longer, so the two lists disagree by exactly
+                    // one and the record is refused on shape.
+                    (0..vertices.len() + 1).collect()
+                };
+                strings.push(ig_line_string(
+                    vertices.iter().map(|value| *value as f64 * 0.1).collect(),
+                    ys.iter().map(|value| *value as f64 * 0.1).collect(),
+                ));
+            }
+
+            let boundaries: Vec<_> = boundary_segments
+                .iter()
+                .map(|segments| ig_boundary(*segments))
+                .collect();
+            let curves: Vec<_> = curve_poles.iter().map(|poles| ig_bsp_curve(*poles)).collect();
+
+            let mut doc = PidDocument::default();
+            doc.sheet_streams
+                .push(sheet_stream_with(geometry_with(lines, strings, boundaries, curves), 4096));
+
+            let geometry = build_normalized_geometry(&doc);
+
+            for account in &geometry.emitter_accounts {
+                prop_assert_eq!(
+                    account.decoded,
+                    account.emitted + account.out_of_range + account.shape_rejected,
+                    "family {} on {} broke the conservation equation",
+                    account.family,
+                    account.stream_path
+                );
+                // A row exists only when the family had something to say.
+                prop_assert!(account.decoded > 0 || account.emitted > 0);
+            }
+
+            // Every entity the pass produced belongs to an emitting family,
+            // so the emitted total across rows covers the whole entity list.
+            let emitted: usize = geometry.emitter_accounts.iter().map(|row| row.emitted).sum();
+            prop_assert_eq!(emitted, geometry.entities.len());
+        });
     }
 }
