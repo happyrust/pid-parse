@@ -36,3 +36,8 @@ fontcull-write-fonts = "0.44.3"
 # The parser crate already depends on `sha2` for its backup pipeline; this is
 # the same 0.11 line, so the lock file keeps one copy.
 sha2 = "0.11"
+# The ledger's property tests check rules over generated inputs: the writer's
+# verdict priority (Property 3), the assembly's outcome composition (Properties
+# 1, 2, 4), symbol-body conservation (Property 6) and the gate's classification
+# (Properties 9–11). Same library the design names for both crates.
+proptest = "1"

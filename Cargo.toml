@@ -259,6 +259,13 @@ required-features = ["backup"]
 
 [dev-dependencies]
 pretty_assertions = "1"
+# The export ledger's property tests (`.kiro/specs/pdf-export-ledger/`) check
+# rules over generated inputs rather than hand-picked ones: a record family's
+# conservation (Property 7) needs decoded counts, byte ranges past the stream
+# end and shapes the emitter refuses, all in combinations a person would not
+# enumerate. `proptest` is the library the design names; its regression seeds
+# are committed under `proptest-regressions/`.
+proptest = "1"
 # Benchmarks live in `benches/` and gate themselves on the local
 # `test-file/` fixture; see `benches/pid_pipeline.rs`. Keep criterion
 # `default-features = false` so benches compile on a plain stable
