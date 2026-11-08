@@ -297,8 +297,11 @@ fn five_drawings_hold_the_ratchet() {
     // writer: raising `pen_width_mm`'s thin/mid boundary to 0.40 moved 5 877
     // strokes off the reference's pen and this gate stayed green, because the
     // PDF on disk had been written by the previous build. The stored plot is
-    // still the deliverable — `write_five_drawings` writes it — but what this
-    // gate measures is the writer that would write it.
+    // still what a reader opens, but what this gate measures is the writer
+    // that would write it. `write_five_drawings` refreshes only the five
+    // pages it names, under the self-check corpus; the eleven acceptance
+    // deliveries under `验收数据/plot` are written by the acceptance gate
+    // (`reference_plots_acceptance`, after every page has passed its pins).
     let models: Vec<PaperModel> = BASELINES
         .iter()
         .map(|baseline| {

@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### 11 张参考图交付有了写出入口：过钉后落盘 `<corpus>\plot` 并记 `BUILD.txt`（2026-11-08）
+
+`验收数据\plot` 下那 11 张交付 PDF 此前没有任何代码负责写：`write_five_drawings`
+只写自检目录的 5 张，`compare_five_drawings` 只写 `edge-*.txt`，
+`reference_plots_acceptance` 在内存里写页、逐项断言，既不读也不写交付目录。
+所以门禁全绿也看不出交付已经落后画法代码 29 个提交。
+
+`eleven_reference_plots_hold_their_readings` 现在每页过钉后把
+`write_plot` 刚写出的字节收进 `delivered`，循环结束后统一交给
+`deliver_plots`：`create_dir_all(<corpus>/plot)` 后逐张写
+`<name>.pdf`，再写 `BUILD.txt`（`HEAD` / `plot_src` / `written_unix` /
+`pages` 四个字段，`plot_src` 看 `pid-plot/src` 是否干净）。落盘只在
+**11 页全部过钉之后**发生，任一页失败则一张都不写——交付永远是「这次
+门禁验过的那份字节」，不会新旧混在一起。`PID_ACCEPTANCE_DELIVER=0`
+短路落盘，供第二个检出跑同一语料时使用。
+
+实测：11 张交付 `LastWriteTime` 全部为本次运行；`BUILD.txt` 的
+`HEAD` = `git rev-parse HEAD`、`pages: 11`；同一 HEAD 连跑两次（含
+`cargo test -p pid-plot` 全量里那一次）11 张 SHA-256 逐张相同；
+`DELIVER=0` 时 11 张的 hash 与 mtime 全未变、`BUILD.txt` 未被改写；
+把 A2 那页（循环最后一页）的 `min_coverage` 临时抬到 1.01 后门禁红、
+交付目录 11 张的 hash / mtime 与 `BUILD.txt` 全未变。
+
+`pid-plot/tests/plot_compare.rs:300` 的注释与 `AGENTS.md` 的门禁表同步
+改正：`write_five_drawings` 只刷新它点名的 5 张，11 张验收交付由验收门
+禁写。
+
 ### 笔宽配对沿参考图的网格折线认出同一笔：曲线弦与短斜线不再漏配（2026-11-07）
 
 参考图出图器（Amyuni 4.5.2.9，150 dpi）把每个顶点放在 1/150 in 网格上：

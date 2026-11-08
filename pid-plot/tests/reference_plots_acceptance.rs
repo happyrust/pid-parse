@@ -522,6 +522,50 @@ fn report_dir(corpus: &std::path::Path) -> PathBuf {
         .map_or_else(|| corpus.join("plot/acceptance"), PathBuf::from)
 }
 
+/// Run `git` and return its trimmed stdout, or `None` if it cannot run or exits
+/// non-zero. Only stamps `BUILD.txt`; a missing git never fails the gate.
+fn git_line(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Write the just-gated page bytes as the delivery under `<corpus>/plot`, plus a
+/// `BUILD.txt` naming the commit and whether `pid-plot/src` was clean. Every page
+/// has passed its pins by the time this runs, so the delivery is exactly the
+/// bytes the gate verified, never a mix of old and new. `PID_ACCEPTANCE_DELIVER=0`
+/// skips it, e.g. a second checkout running the gate against the same corpus.
+fn deliver_plots(corpus: &std::path::Path, delivered: &[(&str, Vec<u8>)]) {
+    if std::env::var("PID_ACCEPTANCE_DELIVER").ok().as_deref() == Some("0") {
+        return;
+    }
+    let plot_dir = corpus.join("plot");
+    std::fs::create_dir_all(&plot_dir).expect("create delivery dir");
+    for (name, bytes) in delivered {
+        std::fs::write(plot_dir.join(format!("{name}.pdf")), bytes).expect("write delivery pdf");
+    }
+    let head = git_line(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
+    let tree = match git_line(&["rev-parse", "--show-toplevel"]) {
+        Some(root) => match git_line(&["-C", &root, "status", "--porcelain", "--", "pid-plot/src"])
+        {
+            Some(status) if status.is_empty() => "clean",
+            Some(_) => "dirty",
+            None => "unknown",
+        },
+        None => "unknown",
+    };
+    let written_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let build = format!(
+        "HEAD: {head}\nplot_src: {tree}\nwritten_unix: {written_unix}\npages: {}\n",
+        delivered.len()
+    );
+    std::fs::write(plot_dir.join("BUILD.txt"), build).expect("write BUILD.txt");
+}
+
 /// A page that matches no surveyed sheet gets no masks at all.
 #[test]
 fn only_the_surveyed_sheets_carry_furniture_masks() {
@@ -578,6 +622,11 @@ fn eleven_reference_plots_hold_their_readings() {
         })
         .collect();
 
+    // D1/S1: collect each page's gated bytes, then write them as the delivery
+    // only after all eleven pass, so the delivery can never drift from what the
+    // gate verified (see `deliver_plots`).
+    let mut delivered: Vec<(&str, Vec<u8>)> = Vec::new();
+
     for (pin, model) in PINS.iter().zip(&models) {
         let name = pin.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
@@ -598,6 +647,7 @@ fn eleven_reference_plots_hold_their_readings() {
         );
 
         let our_bytes = write_plot(model, &fonts).expect("write ours");
+        delivered.push((name, our_bytes.clone()));
         let ours = read_plot(&our_bytes).expect("read ours");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
@@ -773,4 +823,6 @@ fn eleven_reference_plots_hold_their_readings() {
             floor.min_text_matched
         );
     }
+
+    deliver_plots(&corpus, &delivered);
 }
