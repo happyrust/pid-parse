@@ -302,6 +302,15 @@ pub struct PrimitiveAccount {
     /// Those the writer drew.
     pub on_page: u64,
     /// The rest, by reason.
+    ///
+    /// A.5's write-layer codes live here, and so does A.4's `off_sheet`: a
+    /// primitive the final `retain` removed is a primitive-layer drop as much
+    /// as one the writer refused, so it is filed under
+    /// [`DropReason::OffSheet`] as well as counted in [`Self::off_sheet`].
+    /// The two fields answer different questions — one is the reason table,
+    /// the other the remainder equation's input — and the primitive equation
+    /// reads this map once, never both:
+    /// `laid_out = on_page + Σ dropped + unattributed`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dropped: BTreeMap<DropReason, u64>,
     /// Primitives that reached the page but not whole (A.6).
@@ -431,7 +440,9 @@ impl ExportLedger {
     ///
     /// 1. the layout layer already dropped it → that reason;
     /// 2. at least one of its primitives reached the page → `on_page`, and a
-    ///    partial-on-page count when that primitive is marked;
+    ///    partial-on-page count when the entity reached it incompletely —
+    ///    either one of its drawn primitives carries an A.6 mark, or one of its
+    ///    primitives did not reach the page at all (design deviation I2);
     /// 3. it has primitives but none reached the page → the appendix's first
     ///    reason among theirs, `off_sheet` included;
     /// 4. it has no primitive at all → a remainder, because the layout layer
@@ -1005,6 +1016,14 @@ fn entity_outcome(
                 partial = true;
             }
         } else if let Some(reason) = fate.reason() {
+            // Design deviation I2: an entity is partially on the page when one
+            // of its page primitives carries an A.6 mark *or one of them did
+            // not reach the page at all*. This is the second half of that
+            // sentence — the writer dropped a primitive the entity claimed
+            // while another of its primitives was drawn. The reason is still
+            // kept for step 4 below, which files an entity that reached the
+            // page nowhere under the first of its primitives' reasons.
+            partial = true;
             first_reason = Some(match first_reason {
                 Some(held) => held.min(reason),
                 None => reason,
@@ -1695,7 +1714,18 @@ mod tests {
     ///
     /// *For any* assembled account, summing `cross[kind][confidence][outcome]`
     /// over kinds and confidences gives that outcome's entity count, all of
-    /// them together give `total`, and `partial ≤ on_page`.
+    /// them together give `total`, `partial ≤ on_page`, and `partial` equals
+    /// the number of entities design deviation I2 calls partially on the page:
+    ///
+    /// > 实体已上页，且它的页面图元里至少一个带附录 A.6 的标记，或至少一个
+    /// > 没有上页（含被 `off_sheet` 移除的）。
+    ///
+    /// The generator therefore produces every shape that sentence ranges over —
+    /// an entity whose primitives all reached the page, one whose drawn
+    /// primitive carries a mark, one with a primitive the writer dropped, one
+    /// with a primitive the final `retain` removed, one whose every primitive
+    /// was dropped, and one that claimed nothing — and the expected count below
+    /// is written from those inputs, never read back out of the assembly.
     #[test]
     fn cross_counts_agree_with_the_outcome_totals() {
         use proptest::prelude::*;
@@ -1713,14 +1743,19 @@ mod tests {
         ];
         static REASONS: [DropReason; 2] = [DropReason::LayerHidden, DropReason::SymbolMissing];
 
+        // One claim's shape: 0 drawn whole, 1 drawn with an A.6 mark, 2 drawn
+        // whole but the writer dropped another of the entity's primitives,
+        // 3 a primitive the writer dropped, 4 a primitive `retain` removed.
+        // (2 and 3 are the same primitive in the writer's ledger; the code is
+        // separate only so both halves of the I2 sentence are generated.)
         let strategy = prop::collection::vec(
             (
                 prop::sample::select(&KINDS[..]),
                 prop::sample::select(&CONFIDENCES[..]),
                 prop::option::of(prop::sample::select(&REASONS[..])),
-                0usize..3,
+                prop::collection::vec(0u8..5, 0..4),
             ),
-            0..10,
+            0..8,
         );
         let mut runner = proptest::test_runner::TestRunner::new(proptest::test_runner::Config {
             cases: 256,
@@ -1730,24 +1765,65 @@ mod tests {
             .run(&strategy, |entities| {
                 let mut ledger = LayoutLedger::default();
                 ledger.entity_totals.drawing = u64::try_from(entities.len()).unwrap_or(u64::MAX);
-                for (kind, confidence, dropped, claimed) in &entities {
+                let mut fates: Vec<PrimitiveFate> = Vec::new();
+                // I2's own count, taken from these inputs.
+                let mut expected_on_page = 0u64;
+                let mut expected_partial = 0u64;
+                for (kind, confidence, dropped, claims) in &entities {
                     let mut record = an_entity(*dropped);
                     record.kind = kind.clone();
                     record.confidence = *confidence;
                     ledger.entities.push(record);
-                    for _ in 0..*claimed {
-                        let origin = u32::try_from(ledger.entities.len() - 1).unwrap_or(u32::MAX);
+                    let origin = u32::try_from(ledger.entities.len() - 1).unwrap_or(u32::MAX);
+                    let mut any_on_page = false;
+                    let mut partial = false;
+                    for claim in claims {
+                        if *claim == 4 {
+                            ledger.off_sheet.push(origin);
+                            partial = true;
+                            continue;
+                        }
+                        let fate = match claim {
+                            1 => PrimitiveFate {
+                                outcome: PrimitiveOutcome::OnPage,
+                                segments: SegmentTally::default(),
+                                segments_dropped: false,
+                                text: Some(TextMarks {
+                                    condensed: true,
+                                    clipped_at_floor: false,
+                                }),
+                            },
+                            3 => a_fate(PrimitiveOutcome::Dropped(DropReason::ChainEmpty)),
+                            _ => a_fate(PrimitiveOutcome::OnPage),
+                        };
                         ledger.primitive_origin.push(origin);
+                        if fate.is_on_page() {
+                            any_on_page = true;
+                            if fate.segments_dropped
+                                || fate
+                                    .text
+                                    .is_some_and(|marks| marks.condensed || marks.clipped_at_floor)
+                            {
+                                partial = true;
+                            }
+                        } else {
+                            // A primitive of an entity that may still have
+                            // reached the page: I2's second clause.
+                            partial = true;
+                        }
+                        fates.push(fate);
+                    }
+                    if dropped.is_none() && any_on_page {
+                        expected_on_page = expected_on_page.saturating_add(1);
+                        if partial {
+                            expected_partial = expected_partial.saturating_add(1);
+                        }
                     }
                 }
                 let primitives: Vec<PaperPrimitive> = ledger
                     .primitive_origin
                     .iter()
                     .map(|_| a_line([10.0, 10.0], [20.0, 10.0]))
-                    .collect();
-                let fates = primitives
-                    .iter()
-                    .map(|_| a_fate(PrimitiveOutcome::OnPage))
                     .collect();
                 let model = a_model(ledger, primitives, Some([841.0, 594.0]));
                 let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
@@ -1773,11 +1849,19 @@ mod tests {
                     by_outcome.get("unattributed").copied().unwrap_or(0),
                     account.entities.unattributed
                 );
+                let cross_total: u64 = by_outcome.values().copied().fold(0u64, u64::saturating_add);
+                prop_assert_eq!(cross_total, account.entities.total);
+                prop_assert_eq!(account.entities.on_page, expected_on_page);
                 prop_assert!(
                     account.entities.partial <= account.entities.on_page,
                     "partial {} exceeds on_page {}",
                     account.entities.partial,
                     account.entities.on_page
+                );
+                prop_assert_eq!(
+                    account.entities.partial,
+                    expected_partial,
+                    "I2's partial count, taken from the generated fates"
                 );
                 Ok(())
             })
@@ -1787,11 +1871,26 @@ mod tests {
     /// // Feature: pdf-export-ledger, Property 4: 写出层守恒
     ///
     /// *For any* page model and write verdicts, each domain balances its
-    /// primitive layer (`laid_out = off_sheet + on_page + Σ A.5 reasons +
-    /// unattributed`) and its segment layer (`total = written + Σ segment
-    /// reasons + unattributed`), both remainders are zero, and a primitive
-    /// carries `segments_dropped` exactly when it is on the page with at least
-    /// one dropped window.
+    /// primitive layer and its segment layer, both remainders are zero, and a
+    /// primitive carries `segments_dropped` exactly when it is on the page with
+    /// at least one dropped window.
+    ///
+    /// The primitive equation is the one `assemble` actually computes:
+    ///
+    /// ```text
+    /// laid_out = on_page + Σ primitives.dropped + unattributed
+    /// ```
+    ///
+    /// Two facts make it what it is:
+    ///
+    /// - `laid_out` is what the layout produced *before* the final `retain`:
+    ///   the survivors `PaperModel::primitives` holds plus the primitives the
+    ///   `retain` removed, which `assemble` adds back from `ledger.off_sheet`;
+    /// - A.4's `off_sheet` is a primitive-layer drop as well as a remainder
+    ///   input, so it is already inside `primitives.dropped`. Adding
+    ///   `off_sheet` again on the right-hand side counts those primitives
+    ///   twice — which is what this test used to do while its generator never
+    ///   produced one, so the double count could never show.
     #[test]
     fn write_layer_is_conserved() {
         use proptest::prelude::*;
@@ -1802,6 +1901,8 @@ mod tests {
             PrimitiveOutcome::Dropped(DropReason::ChainEmpty),
             PrimitiveOutcome::Dropped(DropReason::PenWidthInvalid),
         ];
+        // `outcome`, the three segment buckets, and whether the final `retain`
+        // removed this primitive before the page was written.
         let strategy = prop::collection::vec(
             (
                 prop::sample::select(&OUTCOMES[..]),
@@ -1810,6 +1911,7 @@ mod tests {
                 0u64..3,
                 0u64..3,
                 0u64..3,
+                prop::bool::ANY,
             ),
             0..12,
         );
@@ -1822,7 +1924,16 @@ mod tests {
                 let mut ledger = LayoutLedger::default();
                 let mut primitives = Vec::new();
                 let mut fates = Vec::new();
-                for (outcome, total, written, non_finite, too_short, _on_edge) in &rows {
+                let mut expected_off_sheet = 0u64;
+                for (outcome, total, written, non_finite, too_short, _on_edge, removed) in &rows {
+                    if *removed {
+                        // A primitive the `retain` took reaches no page and has
+                        // no fate: `primitive_origin` is rebuilt from the
+                        // survivors, so this index never appears in the model.
+                        ledger.off_sheet.push(0);
+                        expected_off_sheet = expected_off_sheet.saturating_add(1);
+                        continue;
+                    }
                     // A verdict's own numbers always add up — a chain of `n`
                     // points walks `n - 1` windows and each is either written or
                     // dropped for one of the three segment reasons. The
@@ -1857,6 +1968,7 @@ mod tests {
                 ledger.primitive_origin = vec![0; primitives.len()];
                 ledger.entities.push(an_entity(None));
                 ledger.entity_totals.drawing = 1;
+                let survivors = u64::try_from(primitives.len()).unwrap_or(u64::MAX);
                 let model = a_model(ledger, primitives, Some([841.0, 594.0]));
                 let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
                 let account = &assembled.drawing;
@@ -1869,10 +1981,30 @@ mod tests {
                     .fold(0u64, u64::saturating_add);
                 prop_assert_eq!(
                     account.primitives.laid_out,
+                    survivors.saturating_add(expected_off_sheet),
+                    "`laid_out` is what the layout produced before the retain"
+                );
+                prop_assert_eq!(
+                    account.primitives.off_sheet,
+                    expected_off_sheet,
+                    "one `off_sheet` record per primitive the retain removed"
+                );
+                prop_assert_eq!(
                     account
                         .primitives
-                        .off_sheet
-                        .saturating_add(account.primitives.on_page)
+                        .dropped
+                        .get(&DropReason::OffSheet)
+                        .copied()
+                        .unwrap_or(0),
+                    expected_off_sheet,
+                    "A.4's off_sheet is filed under the primitive layer's drops"
+                );
+                // The equation, with `off_sheet` counted once: inside `dropped`.
+                prop_assert_eq!(
+                    account.primitives.laid_out,
+                    account
+                        .primitives
+                        .on_page
                         .saturating_add(dropped)
                         .saturating_add(account.primitives.unattributed)
                 );
@@ -2000,6 +2132,106 @@ mod tests {
     }
 
     #[test]
+    fn an_entity_whose_second_primitive_was_dropped_is_partial() {
+        // Design deviation I2's second clause, at its smallest: one entity, two
+        // primitives, the first drawn and the second refused by the writer. The
+        // entity is on the page (one primitive reached it) and partial (one did
+        // not). Before the fix this read `on_page 1 / partial 0`.
+        let mut ledger = LayoutLedger::default();
+        ledger.entities.push(an_entity(None));
+        ledger.entity_totals.drawing = 1;
+        ledger.primitive_origin = vec![0, 0];
+        let model = a_model(
+            ledger,
+            vec![
+                a_line([10.0, 10.0], [20.0, 10.0]),
+                a_line([30.0, 10.0], [40.0, 10.0]),
+            ],
+            Some([841.0, 594.0]),
+        );
+        let fates = vec![
+            a_fate(PrimitiveOutcome::OnPage),
+            a_fate(PrimitiveOutcome::Dropped(DropReason::ChainEmpty)),
+        ];
+        let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
+        assert_eq!(assembled.drawing.entities.on_page, 1);
+        assert_eq!(
+            assembled.drawing.entities.partial, 1,
+            "one primitive reached the page and one did not"
+        );
+        // The entity's outcome is still `on_page`: the drop is not its fate.
+        assert!(
+            !assembled
+                .drawing
+                .entities
+                .dropped
+                .contains_key(&DropReason::ChainEmpty)
+        );
+        assert!(assembled.conservation_breaches().is_empty());
+    }
+
+    #[test]
+    fn an_entity_whose_second_primitive_left_the_sheet_is_partial() {
+        // The same clause's other half, which already held: a primitive the
+        // final `retain` removed is one that did not reach the page either.
+        let mut ledger = LayoutLedger::default();
+        ledger.entities.push(an_entity(None));
+        ledger.entity_totals.drawing = 1;
+        // One survivor on the page, one removed by the retain.
+        ledger.primitive_origin = vec![0];
+        ledger.off_sheet = vec![0];
+        let model = a_model(
+            ledger,
+            vec![a_line([10.0, 10.0], [20.0, 10.0])],
+            Some([841.0, 594.0]),
+        );
+        let assembled = ExportLedger::assemble(
+            &model,
+            &a_write_ledger(vec![a_fate(PrimitiveOutcome::OnPage)]),
+        );
+        assert_eq!(assembled.drawing.entities.on_page, 1);
+        assert_eq!(assembled.drawing.entities.partial, 1);
+        assert!(assembled.conservation_breaches().is_empty());
+    }
+
+    #[test]
+    fn an_entity_whose_every_primitive_dropped_is_not_partial() {
+        // `partial` counts entities *on the page* that reached it incompletely.
+        // An entity none of whose primitives reached the page has a drop
+        // reason instead, and must not be counted twice.
+        let mut ledger = LayoutLedger::default();
+        ledger.entities.push(an_entity(None));
+        ledger.entity_totals.drawing = 1;
+        ledger.primitive_origin = vec![0, 0];
+        let model = a_model(
+            ledger,
+            vec![
+                a_line([10.0, 10.0], [20.0, 10.0]),
+                a_line([30.0, 10.0], [40.0, 10.0]),
+            ],
+            Some([841.0, 594.0]),
+        );
+        let fates = vec![
+            a_fate(PrimitiveOutcome::Dropped(DropReason::ChainEmpty)),
+            a_fate(PrimitiveOutcome::Dropped(DropReason::PenWidthInvalid)),
+        ];
+        let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
+        assert_eq!(assembled.drawing.entities.on_page, 0);
+        assert_eq!(assembled.drawing.entities.partial, 0);
+        assert_eq!(
+            assembled
+                .drawing
+                .entities
+                .dropped
+                .get(&DropReason::PenWidthInvalid)
+                .copied(),
+            Some(1),
+            "the appendix's first reason among the entity's primitives: pen \
+             before chain, because that is A.5's row order"
+        );
+    }
+
+    #[test]
     fn both_domains_serialize_every_remainder_even_at_zero() {
         let model = a_model(LayoutLedger::default(), Vec::new(), Some([841.0, 594.0]));
         let assembled = ExportLedger::assemble(&model, &a_write_ledger(Vec::new()));
@@ -2109,6 +2341,63 @@ mod tests {
         let mismatches = assembled.cross_check(&model, None, None);
         assert_eq!(mismatches.len(), 1, "{mismatches:?}");
         assert!(mismatches[0].starts_with("8.7"), "{mismatches:?}");
+    }
+
+    #[test]
+    fn cross_check_8_3_counts_the_symbol_missing_entities_against_the_boxes() {
+        // 8.3 is the one cross-check whose two sides come from different
+        // producers: the ledger counts entities the layout layer refused as
+        // `symbol_missing`, the model carries one 30 mm box per symbol the
+        // library did not draw. They agree only when every refusal left a box.
+        let mut ledger = LayoutLedger::default();
+        ledger
+            .entities
+            .push(an_entity(Some(DropReason::SymbolMissing)));
+        ledger.entity_totals.drawing = 1;
+        let mut model = a_model(ledger, Vec::new(), Some([841.0, 594.0]));
+        model.missing_boxes = vec![crate::model::MissingSymbolBox {
+            path: r"piping\valve.sym".to_string(),
+            min_mm: [10.0, 10.0],
+            max_mm: [40.0, 40.0],
+        }];
+        let assembled = ExportLedger::assemble(&model, &a_write_ledger(Vec::new()));
+        assert!(
+            assembled.cross_check(&model, None, None).is_empty(),
+            "one refusal, one box: the check agrees"
+        );
+
+        // A refusal with no box: the ledger counted a symbol the page never
+        // marked, so a reader looking at the page cannot find it.
+        model.missing_boxes.clear();
+        let mismatches = assembled.cross_check(&model, None, None);
+        assert_eq!(mismatches.len(), 1, "{mismatches:?}");
+        assert!(mismatches[0].starts_with("8.3"), "{mismatches:?}");
+        assert!(
+            mismatches[0].contains("symbol_missing 1") && mismatches[0].contains("missing_boxes 0"),
+            "the mismatch names both sides: {mismatches:?}"
+        );
+
+        // And the other way round: a box for a symbol the ledger never refused
+        // as missing.
+        model.missing_boxes = vec![
+            crate::model::MissingSymbolBox {
+                path: r"piping\valve.sym".to_string(),
+                min_mm: [10.0, 10.0],
+                max_mm: [40.0, 40.0],
+            },
+            crate::model::MissingSymbolBox {
+                path: r"piping\pump.sym".to_string(),
+                min_mm: [50.0, 10.0],
+                max_mm: [80.0, 40.0],
+            },
+        ];
+        let mismatches = assembled.cross_check(&model, None, None);
+        assert_eq!(mismatches.len(), 1, "{mismatches:?}");
+        assert!(mismatches[0].starts_with("8.3"), "{mismatches:?}");
+        assert!(
+            mismatches[0].contains("symbol_missing 1") && mismatches[0].contains("missing_boxes 2"),
+            "the mismatch names both sides: {mismatches:?}"
+        );
     }
 
     #[test]

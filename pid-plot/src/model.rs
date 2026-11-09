@@ -6433,9 +6433,12 @@ mod tests {
     // ---------------------------------------------------------------------
 
     use crate::ledger::{
-        Asymmetry, LayoutLedger, LedgerDomain, LedgerRecorder, PartialMark, TemplateTrace,
+        Asymmetry, EntityLayout, ExportLedger, LayoutLedger, LedgerDomain, LedgerRecorder,
+        PartialMark, TemplateTrace,
     };
-    use crate::write::{PrimitiveOutcome, primitive_verdict};
+    use crate::write::{
+        PrimitiveFate, PrimitiveOutcome, SegmentTally, TextMarks, WriteLedger, primitive_verdict,
+    };
     use pid_parse::SheetRecordKind;
     use pid_parse::style_link::{DocumentStyleTable, ResolvedLineStyle};
     use pid_parse::symbol_library::SymbolLibrary;
@@ -7366,6 +7369,57 @@ mod tests {
         assert_eq!(DropReason::all().len(), 43, "the appendix's 43 rows");
     }
 
+    /// The marks a one-primitive page's ledger records for one text run.
+    ///
+    /// The two font marks are not produced by any predicate the test can call
+    /// directly: only a real write, with a face, knows that a run had to be
+    /// condensed or that the page clip took its tail. So the case builds the
+    /// writer's own observation (`TextMarks`) and reads the *ledger's* answer
+    /// back out of `assemble` — the number the gate and the baseline carry —
+    /// rather than asserting a boolean it just wrote.
+    fn marks_for_a_text_run(marks: TextMarks) -> std::collections::BTreeMap<PartialMark, u64> {
+        let mut recorder = LedgerRecorder::new();
+        let index = recorder.begin(
+            LedgerDomain::Drawing,
+            &entity(PidGraphicKind::Unknown {
+                note: String::new(),
+            }),
+        );
+        recorder.finish(index, EntityLayout::default().into(), 0);
+        let mut ledger = recorder.into_ledger();
+        ledger.entity_totals.drawing = 1;
+        ledger.primitive_origin = vec![0];
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([841.0, 594.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![write_label([10.0, 10.0], Some(2.5), "PT-101")],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger,
+        };
+        let fate = PrimitiveFate {
+            outcome: PrimitiveOutcome::OnPage,
+            segments: SegmentTally::default(),
+            segments_dropped: false,
+            text: Some(marks),
+        };
+        let assembled = ExportLedger::assemble(
+            &model,
+            &WriteLedger {
+                fonts_measured: true,
+                fates: vec![fate],
+                mismatches: Vec::new(),
+            },
+        );
+        assembled.drawing.primitives.marks.clone()
+    }
+
     /// The three counted-not-dropped tables, each covered by name.
     ///
     /// `PartialMark` and `Asymmetry` are the two appendix tables that are
@@ -7375,16 +7429,42 @@ mod tests {
         match mark {
             PartialMark::TextCondensed => {
                 // A run the sheet had no room for at the width the drawing
-                // set: condensed along its own direction until it fitted.
-                let audit_condensed = true;
-                assert!(audit_condensed, "the audit counts a condensed run");
+                // set: condensed along its own direction until it fitted. The
+                // writer reports it on the fate; the ledger counts it.
+                let marks = marks_for_a_text_run(TextMarks {
+                    condensed: true,
+                    clipped_at_floor: false,
+                });
+                assert_eq!(
+                    marks.get(&PartialMark::TextCondensed).copied(),
+                    Some(1),
+                    "the ledger counts the condensed run: {marks:?}"
+                );
+                assert_eq!(
+                    marks.get(&PartialMark::TextClippedAtFloor).copied(),
+                    None,
+                    "condensing is not clipping: {marks:?}"
+                );
                 "text_condensed"
             }
             PartialMark::TextClippedAtFloor => {
                 // Condensed to `MIN_CONDENSE` and still over the edge, so the
-                // page clip takes the tail.
-                let audit_clipped = true;
-                assert!(audit_clipped, "the audit counts a clipped run");
+                // page clip takes the tail. The writer sets both facts; the
+                // ledger carries both marks.
+                let marks = marks_for_a_text_run(TextMarks {
+                    condensed: true,
+                    clipped_at_floor: true,
+                });
+                assert_eq!(
+                    marks.get(&PartialMark::TextClippedAtFloor).copied(),
+                    Some(1),
+                    "the ledger counts the clipped run: {marks:?}"
+                );
+                assert_eq!(
+                    marks.get(&PartialMark::TextCondensed).copied(),
+                    Some(1),
+                    "a clipped run was condensed first: {marks:?}"
+                );
                 "text_clipped_at_floor"
             }
             PartialMark::PastTheEdge => {
