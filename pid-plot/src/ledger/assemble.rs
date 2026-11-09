@@ -806,7 +806,15 @@ fn assemble_domain(
         if record.domain != domain {
             continue;
         }
-        let outcome = entity_outcome(index, record, write, &claimed, &removed, &mut account);
+        let outcome = entity_outcome(
+            index,
+            record,
+            write,
+            &claimed,
+            &removed,
+            past_the_edge,
+            &mut account,
+        );
         let entry = cross
             .entry(record.kind.clone())
             .or_default()
@@ -980,12 +988,18 @@ fn assemble_domain(
 }
 
 /// One entity's outcome, counted into `account` (requirement 1).
+///
+/// `past_the_edge` is the primitive-level A.6 mark, already resolved by
+/// [`assemble_domain`]'s caller; the entity-level partial count reads the same
+/// set so the two layers can never disagree about a primitive that reaches
+/// past the sheet.
 fn entity_outcome(
     index: usize,
     record: &EntityRecord,
     write: &WriteLedger,
     claimed: &BTreeMap<usize, Vec<usize>>,
     removed: &BTreeMap<usize, u64>,
+    past_the_edge: &BTreeSet<usize>,
     account: &mut DomainAccount,
 ) -> EntityVerdict {
     // 1. the layout layer already answered.
@@ -1012,7 +1026,17 @@ fn entity_outcome(
         };
         if fate.is_on_page() {
             any_on_page = true;
-            if fate.segments_dropped || fate.text.is_some_and(partially_marked) {
+            // I2's first clause: one of its page primitives carries an appendix
+            // A.6 mark. A.6 has four rows — `TextCondensed`,
+            // `TextClippedAtFloor`, `PastTheEdge`, `SegmentsDropped` — and all
+            // four must be read here, not only the two text ones. Reading just
+            // the text pair left an entity whose drawn primitive ran past the
+            // sheet at `partial 0` while that primitive was marked
+            // `PastTheEdge` at the primitive layer.
+            if fate.segments_dropped
+                || fate.text.is_some_and(partially_marked)
+                || past_the_edge.contains(primitive_index)
+            {
                 partial = true;
             }
         } else if let Some(reason) = fate.reason() {
@@ -1743,17 +1767,23 @@ mod tests {
         ];
         static REASONS: [DropReason; 2] = [DropReason::LayerHidden, DropReason::SymbolMissing];
 
-        // One claim's shape: 0 drawn whole, 1 drawn with an A.6 mark, 2 drawn
-        // whole but the writer dropped another of the entity's primitives,
-        // 3 a primitive the writer dropped, 4 a primitive `retain` removed.
+        // One claim's shape: 0 drawn whole, 1 drawn with a text A.6 mark,
+        // 2 drawn whole but the writer dropped another of the entity's
+        // primitives, 3 a primitive the writer dropped, 4 a primitive `retain`
+        // removed, 5 drawn but reaching past the sheet (A.6's `PastTheEdge`).
         // (2 and 3 are the same primitive in the writer's ledger; the code is
         // separate only so both halves of the I2 sentence are generated.)
+        //
+        // Code 5 exists because A.6 has four rows and the generator used to
+        // produce only the two text ones: an entity whose drawn primitive ran
+        // past the page counted `partial 0` here while the primitive layer
+        // marked it, and this property could not see the disagreement.
         let strategy = prop::collection::vec(
             (
                 prop::sample::select(&KINDS[..]),
                 prop::sample::select(&CONFIDENCES[..]),
                 prop::option::of(prop::sample::select(&REASONS[..])),
-                prop::collection::vec(0u8..5, 0..4),
+                prop::collection::vec(0u8..6, 0..4),
             ),
             0..8,
         );
@@ -1766,6 +1796,10 @@ mod tests {
                 let mut ledger = LayoutLedger::default();
                 ledger.entity_totals.drawing = u64::try_from(entities.len()).unwrap_or(u64::MAX);
                 let mut fates: Vec<PrimitiveFate> = Vec::new();
+                // Whether each fate's primitive is drawn past the sheet edge —
+                // A.6's `PastTheEdge`, which lives in the page model rather
+                // than in the writer's verdict.
+                let mut past_flags: Vec<bool> = Vec::new();
                 // I2's own count, taken from these inputs.
                 let mut expected_on_page = 0u64;
                 let mut expected_partial = 0u64;
@@ -1797,12 +1831,17 @@ mod tests {
                             _ => a_fate(PrimitiveOutcome::OnPage),
                         };
                         ledger.primitive_origin.push(origin);
+                        past_flags.push(*claim == 5);
                         if fate.is_on_page() {
                             any_on_page = true;
+                            // A.6's four rows, read straight off the generated
+                            // inputs: the text pair, `segments_dropped`, and —
+                            // for code 5 — the page model's `PastTheEdge`.
                             if fate.segments_dropped
                                 || fate
                                     .text
                                     .is_some_and(|marks| marks.condensed || marks.clipped_at_floor)
+                                || *claim == 5
                             {
                                 partial = true;
                             }
@@ -1820,10 +1859,18 @@ mod tests {
                         }
                     }
                 }
-                let primitives: Vec<PaperPrimitive> = ledger
-                    .primitive_origin
+                let primitives: Vec<PaperPrimitive> = past_flags
                     .iter()
-                    .map(|_| a_line([10.0, 10.0], [20.0, 10.0]))
+                    .map(|past| {
+                        if *past {
+                            // 0.9 mm past the 841 mm edge: more than the
+                            // ledger's 0.5 mm slack, so `primitives_past_the_edge`
+                            // counts it.
+                            a_line([800.0, 20.0], [841.9, 20.0])
+                        } else {
+                            a_line([10.0, 10.0], [20.0, 10.0])
+                        }
+                    })
                     .collect();
                 let model = a_model(ledger, primitives, Some([841.0, 594.0]));
                 let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
@@ -2192,6 +2239,54 @@ mod tests {
         assert_eq!(assembled.drawing.entities.on_page, 1);
         assert_eq!(assembled.drawing.entities.partial, 1);
         assert!(assembled.conservation_breaches().is_empty());
+    }
+
+    #[test]
+    fn an_entity_whose_primitive_went_past_the_edge_is_partial() {
+        // I2's first clause, smallest form: one entity, two primitives, both
+        // drawn, the second reaching 0.9 mm past the 841 mm edge. That
+        // primitive carries A.6's `PastTheEdge` mark, so the entity reached the
+        // page incompletely and must count as partial. Before the fix this read
+        // `on_page 1 / partial 0` against a primitive layer that already said
+        // `partial 1, marks {PastTheEdge: 1}` — and no gate reported it.
+        let mut ledger = LayoutLedger::default();
+        ledger.entities.push(an_entity(None));
+        ledger.entity_totals.drawing = 1;
+        ledger.primitive_origin = vec![0, 0];
+        let model = a_model(
+            ledger,
+            vec![
+                a_line([10.0, 10.0], [20.0, 10.0]),
+                a_line([800.0, 20.0], [841.9, 20.0]),
+            ],
+            Some([841.0, 594.0]),
+        );
+        let fates = vec![
+            a_fate(PrimitiveOutcome::OnPage),
+            a_fate(PrimitiveOutcome::OnPage),
+        ];
+        let assembled = ExportLedger::assemble(&model, &a_write_ledger(fates));
+
+        // The primitive layer said so first; the entity layer must agree.
+        assert_eq!(
+            assembled
+                .drawing
+                .primitives
+                .marks
+                .get(&PartialMark::PastTheEdge)
+                .copied(),
+            Some(1),
+            "one primitive ran past the sheet by more than the 0.5 mm slack"
+        );
+        assert_eq!(assembled.drawing.primitives.partial, 1);
+        assert_eq!(assembled.drawing.entities.on_page, 1);
+        assert_eq!(
+            assembled.drawing.entities.partial, 1,
+            "a drawn primitive carrying an A.6 mark makes the entity partial"
+        );
+        // Neither the conservation check nor the cross-check could see this.
+        assert!(assembled.conservation_breaches().is_empty());
+        assert!(assembled.cross_check(&model, None, None).is_empty());
     }
 
     #[test]
