@@ -52,9 +52,9 @@ pub mod layout;
 pub mod reason;
 
 pub use assemble::{
-    BodyAccount, CorpusDescriptor, DomainAccount, EntityAccount, ExportLedger, PageAccount,
-    PageSizeSource, ParseAccount, PrimitiveAccount, RecordItem, SegmentAccount, SuspectSite,
-    TemplateFact, TemplateSourceKind,
+    BodyAccount, CorpusDescriptor, DomainAccount, EntityAccount, ExportLedger, LedgerSummary,
+    PageAccount, PageSizeSource, ParseAccount, PrimitiveAccount, RecordItem, SegmentAccount,
+    SuspectSite, TemplateFact, TemplateSourceKind,
 };
 pub use layout::{
     BodyItemLayout, BodyTally, Confidence, EntityKind, EntityLayout, EntityOutcome, EntityRecord,

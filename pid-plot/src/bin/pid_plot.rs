@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::ledger::ExportLedger;
 use pid_plot::model::lay_out_drawing;
 use pid_plot::write::{PlotFont, write_plot_audited};
 
@@ -63,6 +64,10 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // The page's account, joined from the layout half on the model and the
+    // write half the writer just produced. Assembled before `pdf` is moved so
+    // the summary describes the same write the file does.
+    let ledger = ExportLedger::assemble(&model, &written.ledger);
     let pdf = written.pdf;
     let audit = written.audit;
     if let Some(parent) = PathBuf::from(&out).parent()
@@ -101,6 +106,11 @@ fn main() -> ExitCode {
         "text_condensed {} smallest_condense {:.3}",
         audit.runs_condensed, audit.smallest_condense
     );
+    // The ledger's own summary (requirement 14.3): what the page's entities
+    // did, how much of the export was deliberately not drawn, and how much
+    // nothing accounts for. `unattributed` is printed even at zero — that is
+    // the number a reader has to see to know the page balanced.
+    println!("{}", ledger.summary());
     ExitCode::SUCCESS
 }
 
