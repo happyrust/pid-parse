@@ -34,6 +34,11 @@ use pid_parse::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::ledger::{
+    Asymmetry, BodyItemLayout, BodyTally, DropReason, EntityLayout, EntityOutcome, LedgerDomain,
+    LedgerRecorder, PlacementLayout, PlacementSource, SourceKind, SourceName, TemplateTrace,
+    TextNormalization,
+};
 use crate::write::carries_a_pen;
 
 const MM_PER_METRE: f64 = 1000.0;
@@ -1008,11 +1013,29 @@ struct LabelLine {
 
 /// Split a label into the lines it letters, each with its own place in the
 /// record's text.
+///
+/// The page itself calls [`label_line_ranges_counted`] — it needs the counts —
+/// and this is the shape the unit tests read, so the signature the corpus was
+/// settled against stays.
+#[allow(dead_code)]
 fn label_line_ranges(value: &str) -> Vec<LabelLine> {
+    label_line_ranges_counted(value).0
+}
+
+/// [`label_line_ranges`], plus what the normalization removed (A.4).
+///
+/// Two things leave a label here and both are counted, because a label that
+/// letters fewer characters than the record holds is not a bug in the writer
+/// but a decision this function made: a control character no typeface has a
+/// glyph for is dropped (counted per character — a tab becomes a space and is
+/// a substitution, not a removal), and a trailing empty line is popped
+/// (counted per line) because it inks nothing.
+fn label_line_ranges_counted(value: &str) -> (Vec<LabelLine>, TextNormalization) {
     let mut lines: Vec<LabelLine> = Vec::new();
     let mut current = String::new();
     let mut start = 0usize;
     let mut dropped = false;
+    let mut counts = TextNormalization::default();
     let mut chars = value.chars().enumerate().peekable();
     while let Some((index, ch)) = chars.next() {
         let mut consumed_next = false;
@@ -1034,6 +1057,7 @@ fn label_line_ranges(value: &str) -> Vec<LabelLine> {
             }
             _ if ch.is_control() => {
                 dropped = true;
+                counts.control_chars = counts.control_chars.saturating_add(1);
                 false
             }
             _ => {
@@ -1063,8 +1087,9 @@ fn label_line_ranges(value: &str) -> Vec<LabelLine> {
     // would only add a run the writer then drops.
     while lines.len() > 1 && lines.last().is_some_and(|line| line.text.is_empty()) {
         lines.pop();
+        counts.trailing_empty_lines = counts.trailing_empty_lines.saturating_add(1);
     }
-    lines
+    (lines, counts)
 }
 /// A sheet record's run partition, in the record's own character offsets.
 ///
@@ -1134,10 +1159,61 @@ fn line_spans(partition: &[PaperTextSpan], line: &LabelLine) -> Vec<PaperTextSpa
 /// resolve to `lsWarning` / `lsOk` markers shown on screen and omitted from
 /// every reference plot.
 fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
-    let Some(layer) = entity.source_layer.as_ref() else {
-        return false;
-    };
-    layer.displayed == Some(false) || layer.name.as_deref() == Some("ConsistencyChecks")
+    plot_suppression(entity).is_some()
+}
+
+/// The layout layer's reason for leaving `entity` off the page, if it has one.
+///
+/// This is the ledger's copy of [`suppressed_from_plot`]'s decision, in
+/// appendix A.2's order: the hidden layer first, then the authored review
+/// overlay. The predicate itself is unchanged — every caller that only asks
+/// "is it suppressed" keeps calling [`suppressed_from_plot`], which is this
+/// function's `is_some()`.
+fn plot_suppression(entity: &PidGraphicEntity) -> Option<DropReason> {
+    let layer = entity.source_layer.as_ref()?;
+    if layer.displayed == Some(false) {
+        return Some(DropReason::LayerHidden);
+    }
+    if layer.name.as_deref() == Some("ConsistencyChecks") {
+        return Some(DropReason::LayerConsistencyChecks);
+    }
+    None
+}
+
+/// What the drawing domain's main loop refuses before it lays anything out.
+///
+/// Appendix A.2's first two rows are the suppression rules; the third is the
+/// `EndpointPair` guess, which the drawing page does not print. The main loop
+/// uses this to pick which of its two `continue`s to take, so the reason and
+/// the refusal cannot drift apart.
+fn drawing_precheck(entity: &PidGraphicEntity) -> Option<DropReason> {
+    if let Some(reason) = plot_suppression(entity) {
+        return Some(reason);
+    }
+    if entity.source.record_kind == Some(SheetRecordKind::EndpointPair) {
+        return Some(DropReason::EndpointPairGuess);
+    }
+    None
+}
+
+/// What the furniture domain draws that the drawing domain would have dropped
+/// (appendix A.7).
+///
+/// The template loop consults neither the layer filter nor the record kind, so
+/// a furniture symbol on a hidden layer and a furniture `EndpointPair` both
+/// reach the page. Counting them is the whole point: it is the measure of how
+/// far the two paths differ, and it changes nothing about what is drawn.
+fn furniture_observations(entity: &PidGraphicEntity) -> Vec<Asymmetry> {
+    let mut observed = Vec::new();
+    if matches!(entity.kind, PidGraphicKind::SymbolInstance { .. })
+        && plot_suppression(entity).is_some()
+    {
+        observed.push(Asymmetry::FurnitureSymbolOnSuppressedLayer);
+    }
+    if entity.source.record_kind == Some(SheetRecordKind::EndpointPair) {
+        observed.push(Asymmetry::FurnitureEndpointPairDrawn);
+    }
+    observed
 }
 
 /// Lay out one `.pid`, furniture first.
@@ -1175,6 +1251,10 @@ pub fn lay_out_with_symbol_roots(
     archives: Vec<PathBuf>,
     library: &[String],
 ) -> Result<PaperModel, PaperModelError> {
+    // The recorder is opened before the symbol library is built, because the
+    // search order is what `sources` records and `with_roots` consumes it.
+    let mut recorder = LedgerRecorder::new();
+    recorder.sources(&roots, &archives);
     let mut symbols = SymbolLibrary::with_roots(roots).with_archives(archives);
     let doc = PidParser::new()
         .parse_file(pid)
@@ -1186,6 +1266,12 @@ pub fn lay_out_with_symbol_roots(
     let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
     let as_drawn = as_drawn_style_ids(&doc);
     let geometry = build_normalized_geometry(&doc);
+    recorder.parse(
+        LedgerDomain::Drawing,
+        &doc.sheet_streams,
+        &doc.jsites,
+        &geometry,
+    );
     let page_mm = geometry
         .page_dimensions_mm
         .map(|(width, height)| [width, height]);
@@ -1227,8 +1313,16 @@ pub fn lay_out_with_symbol_roots(
         None => plottable_sheet_mm(&geometry),
     };
     let furniture = furniture_page.and_then(|page| {
-        load_border_template(corpus, package.as_deref(), page, &linked_templates)
-            .map(|furniture| (page, furniture))
+        let mut trace = TemplateTrace::default();
+        let found = load_border_template_traced(
+            corpus,
+            package.as_deref(),
+            page,
+            &linked_templates,
+            &mut trace,
+        );
+        recorder.template_search(&trace);
+        found.map(|furniture| (page, furniture))
     });
     if furniture_page.is_some() && furniture.is_none() {
         // A page that named a template and got none is missing furniture, not
@@ -1241,6 +1335,15 @@ pub fn lay_out_with_symbol_roots(
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
         let template_as_drawn = as_drawn_style_ids(&furniture.doc);
+        // The furniture domain has its own parse account (requirement 3.7): the
+        // `.igr` is a drawing, so its records become entities by the same rules
+        // and its census tables are read the same way.
+        recorder.parse(
+            LedgerDomain::Furniture,
+            &furniture.doc.sheet_streams,
+            &furniture.doc.jsites,
+            &furniture.geometry,
+        );
         let before = primitives.len();
         // One tally for the whole template, kept rather than dropped: which of
         // its placements had to be drawn from the cache, and which found
@@ -1252,7 +1355,12 @@ pub fn lay_out_with_symbol_roots(
             // 5 mm wave in a placement whose body is the `/JSite16` cache.
             // A tally of its own keeps the template's own `.sym` misses out
             // of the drawing's report — and out of its missing-symbol boxes.
-            if let PidGraphicKind::SymbolInstance { .. } = entity.kind {
+            let index = recorder.begin(LedgerDomain::Furniture, entity);
+            for asymmetry in furniture_observations(entity) {
+                recorder.observe(index, asymmetry);
+            }
+            let outcome: EntityOutcome = if let PidGraphicKind::SymbolInstance { .. } = entity.kind
+            {
                 push_symbol_instance(
                     &mut primitives,
                     entity,
@@ -1262,18 +1370,21 @@ pub fn lay_out_with_symbol_roots(
                     &template_as_drawn,
                     Some(page),
                     &mut furniture_placements,
-                );
-                continue;
-            }
-            push_furniture_entity(
-                &mut primitives,
-                entity,
-                Some(page),
-                &template_styles,
-                &template_lines,
-                &template_fills,
-                &mut seen_sheet_fills,
-            );
+                )
+                .into()
+            } else {
+                push_furniture_entity(
+                    &mut primitives,
+                    entity,
+                    Some(page),
+                    &template_styles,
+                    &template_lines,
+                    &template_fills,
+                    &mut seen_sheet_fills,
+                )
+                .into()
+            };
+            recorder.finish(index, outcome, primitives.len());
         }
         // Everything the template contributed is furniture, and only that:
         // the flag exempts it from the writer's page-edge rule, which would
@@ -1316,9 +1427,12 @@ pub fn lay_out_with_symbol_roots(
 
     let mut skipped_endpoint_pairs = 0usize;
     for entity in &geometry.entities {
-        if suppressed_from_plot(entity) {
-            continue;
-        }
+        let index = recorder.begin(LedgerDomain::Drawing, entity);
+        // The main loop refuses two things before it lays anything out, and the
+        // ledger names both: the layer filter and the `EndpointPair` guess. The
+        // refusals themselves are unchanged — only their reasons are now
+        // recorded, which is what `drawing_precheck` is for.
+        let refused = drawing_precheck(entity);
         // An `EndpointPair` record says two objects are connected; promoting
         // the two positions it names into a *line* is a guess about which
         // numbers in the payload are coordinates. On `DWG-0201GP06-01` that
@@ -1329,11 +1443,22 @@ pub fn lay_out_with_symbol_roots(
         // parser keeps those entities on purpose (they are the evidence for
         // the endpoint-pair reading, pinned by `tests/parse_real_files.rs`);
         // the page does not print a guess.
-        if entity.source.record_kind == Some(SheetRecordKind::EndpointPair) {
+        if refused == Some(DropReason::EndpointPairGuess) {
             skipped_endpoint_pairs += 1;
+        }
+        if refused.is_some() {
+            recorder.finish(
+                index,
+                EntityLayout {
+                    dropped: refused,
+                    ..EntityLayout::default()
+                }
+                .into(),
+                primitives.len(),
+            );
             continue;
         }
-        match &entity.kind {
+        let outcome: EntityOutcome = match &entity.kind {
             PidGraphicKind::SymbolInstance { .. } => push_symbol_instance(
                 &mut primitives,
                 entity,
@@ -1343,7 +1468,8 @@ pub fn lay_out_with_symbol_roots(
                 &as_drawn,
                 page_mm,
                 &mut placements,
-            ),
+            )
+            .into(),
             _ => push_entity(
                 &mut primitives,
                 entity,
@@ -1352,8 +1478,10 @@ pub fn lay_out_with_symbol_roots(
                 &line_styles,
                 &fill_styles,
                 &mut seen_sheet_fills,
-            ),
-        }
+            )
+            .into(),
+        };
+        recorder.finish(index, outcome, primitives.len());
     }
 
     // The drawing's own ink is drawn from the sheet's origin, and the plotted
@@ -1378,11 +1506,17 @@ pub fn lay_out_with_symbol_roots(
     // pinned by `tests/parse_real_files.rs`); the page refuses them.
     let mut off_sheet = 0usize;
     if let Some(page) = page_mm {
+        // The ledger needs to know which primitive left, and `Vec::retain`
+        // visits each element exactly once in order — so the survivors are
+        // rebuilt as they are seen rather than searched for afterwards.
+        let mut index = 0usize;
         primitives.retain(|primitive| {
             let printable = !beyond_the_sheet(&primitive.shape, page);
             if !printable {
                 off_sheet += 1;
             }
+            recorder.note_retained(index, printable);
+            index += 1;
             printable
         });
     }
@@ -1399,9 +1533,10 @@ pub fn lay_out_with_symbol_roots(
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
-        // Filled in by the recorder as the pass runs; the field is not
-        // serialized, so an empty ledger here changes no page's bytes.
-        ledger: crate::ledger::LayoutLedger::default(),
+        // The recorder has seen every entity and every primitive by now; its
+        // ledger is the page's own account. The field is not serialized, so it
+        // changes no page's bytes.
+        ledger: recorder.into_ledger(),
     })
 }
 
@@ -1598,7 +1733,7 @@ fn push_symbol_instance(
     as_drawn_styles: &BTreeSet<u32>,
     page_mm: Option<[f64; 2]>,
     tally: &mut SymbolPlacements,
-) {
+) -> PlacementLayout {
     let PidGraphicKind::SymbolInstance {
         insertion,
         symbol_path,
@@ -1607,7 +1742,14 @@ fn push_symbol_instance(
         definition,
     } = &entity.kind
     else {
-        return;
+        // The one branch the routing cannot reach: the drawing loop sends
+        // `SymbolInstance` here and everything else to `push_entity`, and the
+        // furniture loop does the same. Counted so that a routing change which
+        // makes it reachable is visible.
+        return PlacementLayout {
+            dropped: Some(DropReason::KindMisrouted),
+            ..PlacementLayout::default()
+        };
     };
     let key = symbol_path.as_deref().map(symbol_key);
     if let Some(key) = key.clone() {
@@ -1651,7 +1793,10 @@ fn push_symbol_instance(
     let as_drawn = placement_style.is_some_and(|style| as_drawn_styles.contains(&style.style_id));
     let library_available = body.is_some();
     let before = out.len();
-    let source = if let Some(definition) =
+    let mut body_tally = BodyTally::default();
+    let mut source = PlacementSource::Unresolvable;
+    let mut dropped: Option<DropReason> = None;
+    let source_kind = if let Some(definition) =
         definition.and_then(|reference| geometry.symbol_definition(reference))
     {
         if symbol_path.is_some()
@@ -1660,8 +1805,15 @@ fn push_symbol_instance(
         {
             tally.missing.insert(missing_name(&key));
         }
-        for (primitive, body_style, lettering) in definition.visible_styled() {
-            push_symbol_primitive(
+        let body_primitives = definition.primitives.len();
+        let visible = definition.visible_styled().collect::<Vec<_>>();
+        body_tally.total = u64::try_from(body_primitives).unwrap_or(u64::MAX);
+        body_tally.dropped.insert(
+            DropReason::BodyLayerHidden,
+            u64::try_from(body_primitives.saturating_sub(visible.len())).unwrap_or(u64::MAX),
+        );
+        for (primitive, body_style, lettering) in visible {
+            let item = push_symbol_primitive(
                 out,
                 entity,
                 &placement,
@@ -1674,11 +1826,20 @@ fn push_symbol_instance(
                 as_drawn,
                 page_mm,
             );
+            body_tally.count(item);
         }
+        source = PlacementSource::Cached;
         SymbolBodySource::Cached
     } else if let Some(body) = body {
-        for styled in body.displayed_primitives() {
-            push_symbol_primitive(
+        let displayed = body.displayed_primitives();
+        body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
+        body_tally.dropped.insert(
+            DropReason::BodyLayerHidden,
+            u64::try_from(body.primitives.len().saturating_sub(displayed.len()))
+                .unwrap_or(u64::MAX),
+        );
+        for styled in displayed {
+            let item = push_symbol_primitive(
                 out,
                 entity,
                 &placement,
@@ -1691,7 +1852,9 @@ fn push_symbol_instance(
                 as_drawn,
                 page_mm,
             );
+            body_tally.count(item);
         }
+        source = PlacementSource::Library;
         SymbolBodySource::Library
     } else {
         if let Some(key) = key.clone() {
@@ -1699,18 +1862,68 @@ fn push_symbol_instance(
                 .missing_boxes
                 .push(missing_box(&key, [insertion.x, insertion.y]));
             tally.missing.insert(missing_name(&key));
+            // A placement that named a symbol file and found no body: the
+            // library is missing it. One that named no file at all has
+            // nothing to look up — a different problem, and a different code.
+            source = PlacementSource::Missing;
+            dropped = Some(DropReason::SymbolMissing);
+        } else {
+            dropped = Some(DropReason::SymbolUnresolvable);
         }
         SymbolBodySource::Missing
     };
+    // A body that resolved and drew nothing: every one of its primitives was
+    // dropped under A.3. Distinct from a placement with no body at all.
+    if dropped.is_none()
+        && out.len() == before
+        && matches!(
+            source_kind,
+            SymbolBodySource::Cached | SymbolBodySource::Library
+        )
+    {
+        dropped = Some(DropReason::SymbolBodyEmpty);
+    }
     if let Some(key) = key {
         tally.placed.push(TemplateSymbol {
             key,
             insertion_mm: [insertion.x * MM_PER_METRE, insertion.y * MM_PER_METRE],
-            body: source,
+            body: source_kind,
             library_available,
             extent_mm: extent_of(&out[before..]),
             name_gap,
         });
+    }
+    PlacementLayout {
+        dropped,
+        source,
+        body: body_tally,
+    }
+}
+
+impl BodyTally {
+    /// Add one body primitive's outcome to this tally.
+    ///
+    /// Counted per body primitive, so the equation
+    /// `total = produced + Σ dropped + unattributed` holds term for term. A
+    /// `Boundary` that fills one ring per circle member puts several page
+    /// primitives on the page and still counts as one produced body primitive.
+    fn count(&mut self, item: BodyItemLayout) {
+        if item.produced > 0 {
+            self.produced = self.produced.saturating_add(1);
+            return;
+        }
+        match item.dropped {
+            Some(reason) => {
+                let entry = self.dropped.entry(reason).or_insert(0);
+                *entry = entry.saturating_add(1);
+            }
+            None => {
+                // An empty-member `Boundary`, per design deviation I3: the
+                // appendix has no code for it, so it stays a remainder and
+                // makes the gate fail rather than pass quietly.
+                self.unattributed = self.unattributed.saturating_add(1);
+            }
+        }
     }
 }
 
@@ -2033,6 +2246,38 @@ enum TemplateSource {
     Member(ArchiveFile),
 }
 
+/// The name a template source is reported under: the file name for a `.igr` on
+/// disk, the archive's file name plus the member's for one inside a zip.
+///
+/// Names only, never a path: a baseline stores these and requirement 12.4 keeps
+/// machine paths out of one.
+fn source_name(source: &TemplateSource) -> Option<SourceName> {
+    match source {
+        TemplateSource::File(path) => {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| SourceName {
+                    kind: SourceKind::DirectoryFile,
+                    name: name.to_string(),
+                    archive: None,
+                })
+        }
+        TemplateSource::Member(file) => {
+            let archive = file
+                .archive()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string);
+            let name = file.name().rsplit('/').next().unwrap_or(file.name());
+            Some(SourceName {
+                kind: SourceKind::ArchiveMember,
+                name: name.to_string(),
+                archive,
+            })
+        }
+    }
+}
+
 /// Every `.igr` a sheet's furniture could come from: the corpus's template
 /// directories first, then the `RefData~*.zip` archives in the corpus and its
 /// parent.
@@ -2323,11 +2568,34 @@ fn template_rank(path: &Path, error: f64) -> (f64, String) {
 /// `RefData~*.zip` is searched after the corpus's own archives, so a project
 /// corpus that happens to hold a copy still decides first and an unpacked tree
 /// keeps beating an archive.
+///
+/// The page calls [`load_border_template_traced`], which reports what the
+/// search saw; this is the shape the template unit tests read.
+#[allow(dead_code)]
 fn load_border_template(
     corpus: &Path,
     package: Option<&Path>,
     page_mm: [f64; 2],
     links: &[String],
+) -> Option<BorderTemplateDocument> {
+    let mut trace = TemplateTrace::default();
+    load_border_template_traced(corpus, package, page_mm, links, &mut trace)
+}
+
+/// [`load_border_template`], reporting the candidates it saw and the ones it
+/// could not read (appendix A.8).
+///
+/// A template that cannot be parsed is a silent `continue` in the pick, and on
+/// a page that then wears no furniture there is nothing to tell a corpus
+/// missing a file from a file that is present and damaged. The trace is that
+/// difference, and it changes no decision: the pick reads the same candidates
+/// in the same order and returns the same document.
+fn load_border_template_traced(
+    corpus: &Path,
+    package: Option<&Path>,
+    page_mm: [f64; 2],
+    links: &[String],
+    trace: &mut TemplateTrace,
 ) -> Option<BorderTemplateDocument> {
     let prefixes = linked_template_prefixes(links);
     let exact = linked_template_stems(links);
@@ -2336,6 +2604,7 @@ fn load_border_template(
         page_mm,
         &prefixes,
         &exact,
+        trace,
     ) {
         return Some(found);
     }
@@ -2352,6 +2621,7 @@ fn load_border_template(
         page_mm,
         &prefixes,
         &exact,
+        trace,
     )
 }
 
@@ -2370,22 +2640,36 @@ fn pick_border_template(
     page_mm: [f64; 2],
     prefixes: &[String],
     exact: &[String],
+    trace: &mut TemplateTrace,
 ) -> Option<BorderTemplateDocument> {
     let mut best: Option<((f64, String), BorderTemplateDocument)> = None;
     let mut best_exact: Option<((f64, String), BorderTemplateDocument)> = None;
     for source in sources {
+        let named_source = source_name(&source);
+        if let Some(name) = named_source.clone() {
+            trace.candidates.push(name);
+        }
         let (path, doc) = match source {
             TemplateSource::File(path) => {
                 let Ok(doc) = PidParser::new().parse_file(&path) else {
+                    if let Some(name) = named_source {
+                        trace.unreadable.push(name);
+                    }
                     continue;
                 };
                 (path, doc)
             }
             TemplateSource::Member(file) => {
                 let Ok(bytes) = read_archive_file(&file) else {
+                    if let Some(name) = named_source {
+                        trace.unreadable.push(name);
+                    }
                     continue;
                 };
                 let Ok(doc) = PidParser::new().parse_reader(std::io::Cursor::new(bytes)) else {
+                    if let Some(name) = named_source {
+                        trace.unreadable.push(name);
+                    }
                     continue;
                 };
                 (file.label(), doc)
@@ -2736,7 +3020,7 @@ fn push_entity(
     line_styles: &LineStyleIndex,
     fill_styles: &pid_parse::style_link::FillIndex,
     seen_sheet_fills: &mut std::collections::HashSet<u64>,
-) {
+) -> EntityLayout {
     push_entity_with(
         out,
         entity,
@@ -2746,7 +3030,7 @@ fn push_entity(
         fill_styles,
         seen_sheet_fills,
         false,
-    );
+    )
 }
 
 /// Push one record of the sheet's border template.
@@ -2765,7 +3049,7 @@ fn push_furniture_entity(
     line_styles: &LineStyleIndex,
     fill_styles: &pid_parse::style_link::FillIndex,
     seen_sheet_fills: &mut std::collections::HashSet<u64>,
-) {
+) -> EntityLayout {
     push_entity_with(
         out,
         entity,
@@ -2775,7 +3059,7 @@ fn push_furniture_entity(
         fill_styles,
         seen_sheet_fills,
         true,
-    );
+    )
 }
 
 /// The shared body of [`push_entity`] and [`push_furniture_entity`], with
@@ -2790,9 +3074,11 @@ fn push_entity_with(
     fill_styles: &pid_parse::style_link::FillIndex,
     seen_sheet_fills: &mut std::collections::HashSet<u64>,
     keep_sheet_edge: bool,
-) {
-    if suppressed_from_plot(entity) {
-        return;
+) -> EntityLayout {
+    let mut layout = EntityLayout::default();
+    if let Some(reason) = plot_suppression(entity) {
+        layout.dropped = Some(reason);
+        return layout;
     }
     let placement = Placement {
         insertion: [0.0, 0.0],
@@ -2810,6 +3096,8 @@ fn push_entity_with(
             if keep_sheet_edge || !sheet_edge(&shape, page_mm) {
                 out.push(primitive(entity, &placement, stroke.clone(), shape));
                 stamp_complex_dash(out, entity, &stroke, resolved, &[start_mm, end_mm]);
+            } else {
+                layout.dropped = Some(DropReason::LineOnSheetEdge);
             }
         }
         PidGraphicKind::Polyline { points, closed } => {
@@ -2837,15 +3125,19 @@ fn push_entity_with(
                     })
                     .and_then(|fill| fill.rgb());
                 let chain_mm = canonical_rect_chain(points_mm);
-                if seen_sheet_fills.insert(sheet_fill_key(&chain_mm, rgb)) {
+                let key = sheet_fill_key(&chain_mm, rgb);
+                layout.fill_key = Some(key);
+                if seen_sheet_fills.insert(key) {
                     out.push(primitive(
                         entity,
                         &placement,
                         None,
                         PaperShape::Fill { chain_mm, rgb },
                     ));
+                } else {
+                    layout.dropped = Some(DropReason::FillDuplicate);
                 }
-                return;
+                return layout;
             }
             out.push(primitive(
                 entity,
@@ -2894,30 +3186,47 @@ fn push_entity_with(
             // A point draws the glyph its style's line terminator names.
             // The glyph's strokes are the style's own metres, unrotated —
             // the file states no per-point orientation.
-            if let Some(marker) = resolved.and_then(|style| style.marker.as_ref())
-                && marker.draws()
-            {
-                let at_mm = place_metres([position.x, position.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
-                for mark in marker.strokes() {
-                    if mark.is_degenerate() {
-                        continue;
-                    }
-                    out.push(primitive(
-                        entity,
-                        &placement,
-                        stroke.clone(),
-                        PaperShape::Line {
-                            start_mm: [
-                                at_mm[0] + mark.start.0 * MM_PER_METRE,
-                                at_mm[1] + mark.start.1 * MM_PER_METRE,
-                            ],
-                            end_mm: [
-                                at_mm[0] + mark.end.0 * MM_PER_METRE,
-                                at_mm[1] + mark.end.1 * MM_PER_METRE,
-                            ],
-                        },
-                    ));
+            //
+            // Two ways a point inks nothing, and they are different problems
+            // (design deviation D2): no marker at all — no style resolved, the
+            // style names no line terminator, or the terminator draws nothing —
+            // is an authored absence, while a marker whose every stroke has no
+            // length is a style that asked for a glyph and described nothing.
+            let Some(marker) = resolved.and_then(|style| style.marker.as_ref()) else {
+                layout.dropped = Some(DropReason::PointNoMarker);
+                return layout;
+            };
+            if !marker.draws() {
+                // Design deviation D2, as the requirement's own two rows split
+                // it: *no* marker is the authored absence, while a marker the
+                // file stored as a full group of zero-length lines is a style
+                // that asked for a glyph and described nothing. The distinction
+                // is the marker's presence, not `draws()` — reading `draws()`
+                // for both put every blank point in `point_no_marker` and left
+                // this code unreachable.
+                layout.dropped = Some(DropReason::PointMarkerDegenerate);
+                return layout;
+            }
+            let at_mm = place_metres([position.x, position.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
+            for mark in marker.strokes() {
+                if mark.is_degenerate() {
+                    continue;
                 }
+                out.push(primitive(
+                    entity,
+                    &placement,
+                    stroke.clone(),
+                    PaperShape::Line {
+                        start_mm: [
+                            at_mm[0] + mark.start.0 * MM_PER_METRE,
+                            at_mm[1] + mark.start.1 * MM_PER_METRE,
+                        ],
+                        end_mm: [
+                            at_mm[0] + mark.end.0 * MM_PER_METRE,
+                            at_mm[1] + mark.end.1 * MM_PER_METRE,
+                        ],
+                    },
+                ));
             }
         }
         PidGraphicKind::Text {
@@ -3041,7 +3350,9 @@ fn push_entity_with(
             // `origin_m` and the insertion point it came from are metres, so
             // the pitch goes back through the same unit as the height.
             let normal = [rotation.sin(), -rotation.cos()];
-            for (index, line) in label_line_ranges(value).into_iter().enumerate() {
+            let (lines, normalization) = label_line_ranges_counted(value);
+            layout.text = normalization;
+            for (index, line) in lines.into_iter().enumerate() {
                 let shift_m = pitch_mm * index as f64 / MM_PER_METRE;
                 out.push(primitive(
                     entity,
@@ -3084,10 +3395,23 @@ fn push_entity_with(
                 ));
             }
         }
-        PidGraphicKind::SymbolInstance { .. }
-        | PidGraphicKind::Annotation { .. }
-        | PidGraphicKind::Unknown { .. } => {}
+        // A `SymbolInstance` reaches this body only through the furniture
+        // loop's non-symbol branch, or through a routing change that made a
+        // misroute reachable — neither draws a page primitive. The other two
+        // arms are the projection's evidence kinds: an `Annotation` carries a
+        // probe-derived anchor and an `Unknown` carries bytes with no reading,
+        // and neither is geometry.
+        PidGraphicKind::SymbolInstance { .. } => {
+            layout.dropped = Some(DropReason::KindMisrouted);
+        }
+        PidGraphicKind::Annotation { .. } => {
+            layout.dropped = Some(DropReason::KindAnnotation);
+        }
+        PidGraphicKind::Unknown { .. } => {
+            layout.dropped = Some(DropReason::KindUnknown);
+        }
     }
+    layout
 }
 
 /// Stamp one complex-dash glyph along `path` at the advance the style
@@ -3275,10 +3599,11 @@ fn push_symbol_primitive(
     placement_style: Option<&ResolvedLineStyle>,
     as_drawn: bool,
     page_mm: Option<[f64; 2]>,
-) {
+) -> BodyItemLayout {
     let primitive_shape = item.shape;
     let body_style = item.style;
     let lettering = item.lettering;
+    let before = out.len();
     let shape = match primitive_shape {
         SymbolPrimitive::Line { start, end } => PaperShape::Line {
             start_mm: place_metres(
@@ -3330,7 +3655,13 @@ fn push_symbol_primitive(
         },
         SymbolPrimitive::Text { text, at } => {
             if symbol_text_is_null_placeholder(text) {
-                return;
+                // The body's lettering is the template placeholder: a symbol
+                // whose only text is `NULL` states no wording of its own, and
+                // the placement fills it in elsewhere.
+                return BodyItemLayout {
+                    produced: 0,
+                    dropped: Some(DropReason::BodyNullPlaceholder),
+                };
             }
             symbol_text_shape(text, *at, placement, lettering)
         }
@@ -3360,6 +3691,8 @@ fn push_symbol_primitive(
         SymbolPrimitive::Boundary { members, fill } => {
             let rgb = fill.as_ref().and_then(|fill| fill.rgb);
             let mut ring: Vec<[f64; 2]> = Vec::new();
+            let mut circle_degenerate = false;
+            let mut member_unsupported = false;
             for member in members {
                 match member {
                     SymbolPrimitive::Circle { center, radius } => {
@@ -3380,6 +3713,8 @@ fn push_symbol_primitive(
                                     rgb,
                                 },
                             ));
+                        } else {
+                            circle_degenerate = true;
                         }
                     }
                     SymbolPrimitive::Line { start, end } => {
@@ -3402,7 +3737,9 @@ fn push_symbol_primitive(
                         }
                         ring.push(end_mm);
                     }
-                    _ => {}
+                    _ => {
+                        member_unsupported = true;
+                    }
                 }
             }
             let closed = ring.len() >= 3
@@ -3432,7 +3769,22 @@ fn push_symbol_primitive(
                     ));
                 }
             }
-            return;
+            let produced = out.len().saturating_sub(before);
+            // A boundary that drew nothing gets the reason its members state,
+            // in appendix A.3's order: a circle member placed under a
+            // micrometre first, then a member this code cannot draw. Neither
+            // is reachable on the corpus; both are counted so that a body
+            // which starts producing them is visible.
+            let dropped = if produced > 0 {
+                None
+            } else if circle_degenerate {
+                Some(DropReason::BodyBoundaryCircleDegenerate)
+            } else if member_unsupported {
+                Some(DropReason::BodyBoundaryMemberUnsupported)
+            } else {
+                None
+            };
+            return BodyItemLayout { produced, dropped };
         }
     };
     if !sheet_edge(&shape, page_mm) {
@@ -3442,6 +3794,15 @@ fn push_symbol_primitive(
             body_stroke(body_style, placement_style, as_drawn),
             shape,
         ));
+        BodyItemLayout {
+            produced: out.len().saturating_sub(before),
+            dropped: None,
+        }
+    } else {
+        BodyItemLayout {
+            produced: 0,
+            dropped: Some(DropReason::BodyLineOnSheetEdge),
+        }
     }
 }
 
@@ -3688,6 +4049,10 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 }
 
 #[cfg(test)]
+// The ledger's coverage table builds one fixture per reason code, so it states
+// the one or two fields a case is about and leaves the rest default — which is
+// what `field_reassign_with_default` would otherwise ask it not to do.
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::{label_line_ranges, line_spans, sheet_text_spans};
     use pid_parse::style_link::{LineLeading, MarkerStroke, TextAlignment};
@@ -6053,5 +6418,1213 @@ mod tests {
             super::load_border_template(&corpus, None, [841.5, 594.5], &nowhere).is_none(),
             "a named page wore the stranger its frame almost fit"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // The reason-code coverage table (requirement 2.4)
+    //
+    // Every one of the 43 codes has to be reachable and has to be *recorded*
+    // where the appendix says it is. `case_for` is an exhaustive `match` over
+    // `DropReason`, so adding a code without a case does not compile — that is
+    // the whole mechanism. Each arm builds the input that trips its branch and
+    // returns the reason the ledger recorded for it; the test asserts the two
+    // agree, so a case that silently stopped reaching its branch fails here
+    // rather than passing on a stale construction.
+    // ---------------------------------------------------------------------
+
+    use crate::ledger::{
+        Asymmetry, LayoutLedger, LedgerDomain, LedgerRecorder, PartialMark, TemplateTrace,
+    };
+    use crate::write::{PrimitiveOutcome, primitive_verdict};
+    use pid_parse::SheetRecordKind;
+    use pid_parse::style_link::{DocumentStyleTable, ResolvedLineStyle};
+    use pid_parse::symbol_library::SymbolLibrary;
+
+    use super::{
+        DropReason, NormalizedPidGeometry, beyond_the_sheet, drawing_precheck,
+        furniture_observations, label_line_ranges_counted, load_border_template_traced,
+        plot_suppression, push_entity_with, push_symbol_instance,
+    };
+    use pid_parse::{
+        PidSymbolDefinition, PidSymbolDefinitionRef, PidSymbolSheetLayer, SheetStream,
+    };
+
+    /// A `StyleCluster` stream out of `(type_code, payload)` pairs.
+    ///
+    /// The magic and the envelope are the file's own layout; the same bytes a
+    /// `.pid`'s `StyleCluster` stream carries, so a style read back here is the
+    /// style the layout would read off a drawing.
+    fn cluster(records: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        const CLUSTER_MAGIC: u32 = 0x6C90_F544;
+        let mut out = Vec::new();
+        out.extend_from_slice(&CLUSTER_MAGIC.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(records.len()).expect("small").to_le_bytes());
+        for (type_code, payload) in records {
+            out.extend_from_slice(&type_code.to_le_bytes());
+            out.extend_from_slice(&u32::try_from(payload.len()).expect("small").to_le_bytes());
+            out.extend_from_slice(payload);
+        }
+        out
+    }
+
+    /// A `JStyleSimpleLine`, the long (58-byte) variant when it names a dash
+    /// slot — which is also the variant a terminator reference rides in.
+    fn style_line(style_id: u32, dash_reference: Option<u32>) -> (u16, Vec<u8>) {
+        let long = dash_reference.is_some();
+        let mut payload = vec![0u8; if long { 58 } else { 54 }];
+        let id_at = pid_parse::style_link::STYLE_ID_OFFSET;
+        payload[id_at..id_at + 4].copy_from_slice(&style_id.to_le_bytes());
+        let width_at = pid_parse::style_link::SIMPLE_LINE_WIDTH_OFFSET;
+        payload[width_at..width_at + 8].copy_from_slice(&0.000_35_f64.to_le_bytes());
+        if let Some(reference) = dash_reference {
+            let at = pid_parse::style_link::SIMPLE_LINE_DASH_REFERENCE_OFFSET;
+            payload[at..at + 4].copy_from_slice(&reference.to_le_bytes());
+        }
+        (
+            pid_parse::style_link::PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
+            payload,
+        )
+    }
+
+    fn style_terminator(style_id: u32, point_symbol_id: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 50];
+        let id_at = pid_parse::style_link::STYLE_ID_OFFSET;
+        payload[id_at..id_at + 4].copy_from_slice(&style_id.to_le_bytes());
+        let at = pid_parse::style_link::LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET;
+        payload[at..at + 4].copy_from_slice(&point_symbol_id.to_le_bytes());
+        (
+            pid_parse::style_link::PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR,
+            payload,
+        )
+    }
+
+    fn style_point_symbol(style_id: u32, group_oid: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 30];
+        let id_at = pid_parse::style_link::STYLE_ID_OFFSET;
+        payload[id_at..id_at + 4].copy_from_slice(&style_id.to_le_bytes());
+        let at = pid_parse::style_link::POINT_SYMBOL_GROUP_REFERENCE_OFFSET;
+        payload[at..at + 4].copy_from_slice(&group_oid.to_le_bytes());
+        (
+            pid_parse::style_link::PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
+            payload,
+        )
+    }
+
+    fn style_group(oid: u32, members: &[u32]) -> (u16, Vec<u8>) {
+        let table = pid_parse::style_link::GROUP_MEMBER_TABLE_OFFSET;
+        let entry = pid_parse::style_link::GROUP_MEMBER_ENTRY_LEN;
+        let mut payload = vec![0u8; table + entry * members.len() + 4];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        let count_at = pid_parse::style_link::GROUP_MEMBER_COUNT_OFFSET;
+        let count = u16::try_from(members.len()).expect("small");
+        payload[count_at..count_at + 2].copy_from_slice(&count.to_le_bytes());
+        for (index, member) in members.iter().enumerate() {
+            let at = table + entry * index;
+            payload[at..at + 4].copy_from_slice(&member.to_le_bytes());
+        }
+        (pid_parse::style_link::PSM_TYPE_CODE_GROUP, payload)
+    }
+
+    /// One glyph stroke, in the `igLine2d` layout the sheet decoder reads.
+    fn style_marker_line(oid: u32, start: (f64, f64), end: (f64, f64)) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; pid_parse::parsers::sheet_records::IGLINE2D_PAYLOAD_LEN];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        for (at, value) in [(18, start.0), (26, start.1), (34, end.0), (42, end.1)] {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        (
+            pid_parse::parsers::sheet_records::PSM_TYPE_CODE_IGLINE2D,
+            payload,
+        )
+    }
+
+    /// A line style whose terminator names a point symbol of `blank`'s glyph:
+    /// a real 3×6 mm slash, or the full group of zero-length lines that is the
+    /// file's way of saying "this point shows no mark".
+    fn marker_style(blank: bool) -> ResolvedLineStyle {
+        let (a_end, b_start, b_end) = if blank {
+            ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
+        } else {
+            ((0.003, 0.006), (-0.001, -0.002), (-0.0007, -0.001))
+        };
+        let bytes = cluster(&[
+            style_line(74, Some(73)),
+            style_terminator(73, 72),
+            style_point_symbol(72, 8305),
+            style_group(8305, &[8306, 8308]),
+            style_marker_line(8306, (0.0, 0.0), a_end),
+            style_marker_line(8308, b_start, b_end),
+        ]);
+        DocumentStyleTable::from_stylecluster_bytes(&bytes)
+            .resolve_line_style(74)
+            .expect("the chain resolves")
+    }
+
+    /// A line style that names no terminator at all — an authored absence.
+    fn plain_style() -> ResolvedLineStyle {
+        let bytes = cluster(&[style_line(80, None)]);
+        DocumentStyleTable::from_stylecluster_bytes(&bytes)
+            .resolve_line_style(80)
+            .expect("the style is defined")
+    }
+
+    /// An index holding one style for `oid` on `/Sheet6`.
+    fn styles_with(oid: u32, style: ResolvedLineStyle) -> pid_parse::style_link::LineStyleIndex {
+        let mut index = pid_parse::style_link::LineStyleIndex::new();
+        index.insert(("/Sheet6".to_string(), oid), style);
+        index
+    }
+
+    fn no_styles() -> pid_parse::style_link::LineStyleIndex {
+        pid_parse::style_link::LineStyleIndex::new()
+    }
+
+    fn no_text_styles() -> pid_parse::style_link::TextStyleIndex {
+        pid_parse::style_link::TextStyleIndex::new()
+    }
+
+    fn no_fills() -> pid_parse::style_link::FillIndex {
+        pid_parse::style_link::FillIndex::new()
+    }
+
+    /// An entity that carries `oid` on `/Sheet6`, so a style resolves for it.
+    fn at(entity: PidGraphicEntity, oid: u32) -> PidGraphicEntity {
+        let mut entity = entity;
+        entity.graphic_oid = Some(oid);
+        entity.source.stream_path = Some("/Sheet6".to_string());
+        entity
+    }
+
+    fn on_layer(entity: PidGraphicEntity, name: &str, displayed: Option<bool>) -> PidGraphicEntity {
+        let mut entity = entity;
+        entity.source_layer = Some(PidSourceLayer {
+            oid: 7,
+            name: Some(name.to_string()),
+            storage_path: "/".to_string(),
+            displayed,
+        });
+        entity
+    }
+
+    /// A cached definition whose one primitive sits on a layer `displayed`
+    /// says about.
+    fn definition(
+        primitives: Vec<SymbolPrimitive>,
+        displayed: Option<bool>,
+    ) -> PidSymbolDefinition {
+        PidSymbolDefinition {
+            reference: PidSymbolDefinitionRef { site: 12, sheet: 1 },
+            layers: vec![5],
+            sheet_layers: vec![PidSymbolSheetLayer {
+                oid: 5,
+                name: Some("Default".to_string()),
+                displayed,
+            }],
+            primitives,
+            primitive_layers: vec![5],
+            primitive_styles: Vec::new(),
+            primitive_letterings: Vec::new(),
+            dimensions: Vec::new(),
+            variables: Vec::new(),
+            template: None,
+        }
+    }
+
+    /// A geometry holding `definitions` and the placements that name them.
+    fn geometry_with(
+        definitions: Vec<PidSymbolDefinition>,
+        entities: Vec<PidGraphicEntity>,
+    ) -> NormalizedPidGeometry {
+        let mut geometry = NormalizedPidGeometry::default();
+        geometry.symbol_definitions = definitions;
+        geometry.entities = entities;
+        geometry
+    }
+
+    fn symbol_placement(
+        symbol_path: Option<&str>,
+        reference: Option<PidSymbolDefinitionRef>,
+    ) -> PidGraphicEntity {
+        entity(PidGraphicKind::SymbolInstance {
+            insertion: PidPoint { x: 0.0, y: 0.0 },
+            symbol_path: symbol_path.map(str::to_string),
+            rotation: 0.0,
+            scale: [1.0, 1.0],
+            definition: reference,
+        })
+    }
+
+    /// Lay one drawing-domain entity out and answer the reason recorded for it.
+    fn entity_reason(
+        entity: &PidGraphicEntity,
+        page_mm: Option<[f64; 2]>,
+        styles: &pid_parse::style_link::LineStyleIndex,
+        seen: &mut std::collections::HashSet<u64>,
+    ) -> Option<DropReason> {
+        let mut out = Vec::new();
+        let layout = push_entity_with(
+            &mut out,
+            entity,
+            page_mm,
+            &no_text_styles(),
+            styles,
+            &no_fills(),
+            seen,
+            false,
+        );
+        layout.dropped
+    }
+
+    /// Expand one placement and answer the reason recorded for it.
+    fn placement_reason(
+        entity: &PidGraphicEntity,
+        geometry: &NormalizedPidGeometry,
+        page_mm: Option<[f64; 2]>,
+        styles: &pid_parse::style_link::LineStyleIndex,
+    ) -> Option<DropReason> {
+        let mut out = Vec::new();
+        let mut library = SymbolLibrary::with_roots(Vec::<std::path::PathBuf>::new());
+        let layout = push_symbol_instance(
+            &mut out,
+            entity,
+            geometry,
+            &mut library,
+            styles,
+            &std::collections::BTreeSet::new(),
+            page_mm,
+            &mut super::SymbolPlacements::default(),
+        );
+        layout.dropped
+    }
+
+    /// The reason one page primitive does not print, by appendix A.5's rules.
+    fn write_reason(primitive: &PaperPrimitive, page: [f64; 2]) -> Option<DropReason> {
+        primitive_verdict(primitive, page).reason()
+    }
+
+    fn write_primitive(shape: PaperShape, width_mm: f64) -> PaperPrimitive {
+        PaperPrimitive {
+            confidence: "decoded",
+            stream_path: None,
+            byte_range: None,
+            symbol: None,
+            stroke: Some(crate::model::PaperStroke {
+                rgb: [0, 0, 0],
+                width_mm,
+                dash_mm: Vec::new(),
+                dash_fit: None,
+            }),
+            shape,
+            furniture: false,
+        }
+    }
+
+    fn write_label(origin_mm: [f64; 2], height_mm: Option<f64>, value: &str) -> PaperPrimitive {
+        let mut primitive = write_primitive(
+            PaperShape::Text {
+                origin_mm,
+                height_mm,
+                rotation: 0.0,
+                value: value.to_string(),
+                font: None,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: Vec::new(),
+            },
+            0.25,
+        );
+        primitive.stroke = None;
+        primitive
+    }
+
+    /// The reason `reason` names, recorded from an input built to trip it.
+    ///
+    /// Exhaustive over [`DropReason`]: a new code without a case here does not
+    /// compile, which is requirement 2.4's whole enforcement.
+    fn case_for(reason: DropReason) -> DropReason {
+        let page = [841.0, 594.0];
+        match reason {
+            // ------------------------------------------------------- A.1
+            //
+            // The parse-layer codes are read out of the geometry tables by
+            // `LedgerRecorder::parse`; each arm hands it the table row that
+            // names the code and reads back what it recorded.
+            DropReason::RecordNoDecoder => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.dropped_graphic_records = vec![pid_parse::PidDroppedGraphicRecords {
+                    stream_path: "/Sheet6".to_string(),
+                    type_code: 0x0019,
+                    rad_class_name: None,
+                    count: 1,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordNoDecoder)
+            }
+            DropReason::RecordRefused => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.refused_graphic_records = vec![pid_parse::PidRefusedGraphicRecords {
+                    stream_path: "/Sheet6".to_string(),
+                    type_code: 0x00CE,
+                    rad_class_name: None,
+                    count: 1,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordRefused)
+            }
+            DropReason::RecordNativeSkip => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.skipped_graphic_records = vec![pid_parse::PidSkippedGraphicRecords {
+                    stream_path: "/Sheet6".to_string(),
+                    type_code: 0x0018,
+                    rad_class_name: None,
+                    count: 1,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordNativeSkip)
+            }
+            DropReason::SheetStreamWithoutGeometry => {
+                let mut stream: SheetStream = serde_json::from_str(
+                    r#"{"name":"x","path":"/Sheet1","size":4096,"extracted_texts":[]}"#,
+                )
+                .expect("a minimal stream reads");
+                stream.geometry = None;
+                let mut recorder = LedgerRecorder::new();
+                recorder.parse(
+                    LedgerDomain::Drawing,
+                    &[stream],
+                    &[],
+                    &NormalizedPidGeometry::default(),
+                );
+                first_parse_reason(&recorder)
+            }
+            DropReason::RecordSymbolBodyCache => {
+                let mut nested = pid_parse::JSiteNestedGeometry::default();
+                nested.circles = vec![
+                    serde_json::from_str(
+                        r#"{"byte_start":0,"byte_end":1,"oid":1,"parent_ref":0,
+                        "sheet_layer_ref":0,"index":0,"center_x":0.0,"center_y":0.0,
+                        "radius":1.0}"#,
+                    )
+                    .expect("a cached circle reads"),
+                ];
+                let mut site = pid_parse::JSite {
+                    name: "JSite12".to_string(),
+                    path: "/JSite12".to_string(),
+                    ..pid_parse::JSite::default()
+                };
+                site.nested_geometry = Some(nested);
+                let mut recorder = LedgerRecorder::new();
+                recorder.parse(
+                    LedgerDomain::Drawing,
+                    &[],
+                    &[site],
+                    &NormalizedPidGeometry::default(),
+                );
+                first_parse_reason(&recorder)
+            }
+            DropReason::CacheDefinitionUnplaced => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.symbol_definitions = vec![definition(
+                    vec![SymbolPrimitive::Line {
+                        start: (0.0, 0.0),
+                        end: (1.0, 1.0),
+                    }],
+                    None,
+                )];
+                recorded_parse_reason(&geometry, DropReason::CacheDefinitionUnplaced)
+            }
+            DropReason::RecordAuditOnlyFamily => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.emitter_accounts = vec![pid_parse::PidEmitterAccount {
+                    stream_path: "/Sheet6".to_string(),
+                    family: "igSmartFrame2d".to_string(),
+                    audit_only: true,
+                    decoded: 1,
+                    emitted: 0,
+                    out_of_range: 0,
+                    shape_rejected: 0,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordAuditOnlyFamily)
+            }
+            DropReason::RecordEmitterOutOfRange => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.emitter_accounts = vec![pid_parse::PidEmitterAccount {
+                    stream_path: "/Sheet6".to_string(),
+                    family: "igLine2d".to_string(),
+                    audit_only: false,
+                    decoded: 1,
+                    emitted: 0,
+                    out_of_range: 1,
+                    shape_rejected: 0,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordEmitterOutOfRange)
+            }
+            DropReason::RecordEmitterShapeRejected => {
+                let mut geometry = NormalizedPidGeometry::default();
+                geometry.emitter_accounts = vec![pid_parse::PidEmitterAccount {
+                    stream_path: "/Sheet6".to_string(),
+                    family: "igBoundary2d".to_string(),
+                    audit_only: false,
+                    decoded: 1,
+                    emitted: 0,
+                    out_of_range: 0,
+                    shape_rejected: 1,
+                }];
+                recorded_parse_reason(&geometry, DropReason::RecordEmitterShapeRejected)
+            }
+
+            // ------------------------------------------------------- A.2
+            DropReason::LayerHidden => plot_suppression(&on_layer(
+                entity(PidGraphicKind::Line {
+                    start: PidPoint { x: 0.0, y: 0.0 },
+                    end: PidPoint { x: 1.0, y: 1.0 },
+                }),
+                "Pipes",
+                Some(false),
+            ))
+            .expect("a hidden layer suppresses"),
+            DropReason::LayerConsistencyChecks => plot_suppression(&on_layer(
+                entity(PidGraphicKind::Line {
+                    start: PidPoint { x: 0.0, y: 0.0 },
+                    end: PidPoint { x: 1.0, y: 1.0 },
+                }),
+                "ConsistencyChecks",
+                Some(true),
+            ))
+            .expect("the review overlay is omitted"),
+            DropReason::EndpointPairGuess => {
+                let mut pair = entity(PidGraphicKind::Line {
+                    start: PidPoint { x: 0.0, y: 0.0 },
+                    end: PidPoint { x: 1.0, y: 1.0 },
+                });
+                pair.source.record_kind = Some(SheetRecordKind::EndpointPair);
+                drawing_precheck(&pair).expect("a guessed pair is refused")
+            }
+            // The routing cannot reach this branch, so the case is the branch
+            // itself: a `SymbolInstance` handed to the entity path.
+            DropReason::KindMisrouted => entity_reason(
+                &symbol_placement(None, None),
+                Some(page),
+                &no_styles(),
+                &mut std::collections::HashSet::new(),
+            )
+            .expect("the entity path refuses a placement"),
+            DropReason::LineOnSheetEdge => {
+                // One axis on the edge, the other spanning the page: the frame
+                // rail a border template would have drawn.
+                entity_reason(
+                    &entity(PidGraphicKind::Line {
+                        start: PidPoint { x: 0.0, y: 300.0 },
+                        end: PidPoint { x: 840.0, y: 300.0 },
+                    }),
+                    Some(page),
+                    &no_styles(),
+                    &mut std::collections::HashSet::new(),
+                )
+                .expect("a page-edge rail is dropped")
+            }
+            DropReason::FillDuplicate => {
+                let ring = |oid: u32| {
+                    let mut fill = entity(PidGraphicKind::Polyline {
+                        points: vec![
+                            PidPoint { x: 0.1, y: 0.1 },
+                            PidPoint { x: 0.2, y: 0.1 },
+                            PidPoint { x: 0.2, y: 0.2 },
+                        ],
+                        closed: true,
+                    });
+                    fill.source.record_id = Some(format!("igboundary2d:{oid}"));
+                    fill
+                };
+                let mut seen = std::collections::HashSet::new();
+                let first = ring(1);
+                let second = ring(2);
+                assert!(
+                    entity_reason(&first, Some(page), &no_styles(), &mut seen).is_none(),
+                    "the first taker produces the fill"
+                );
+                entity_reason(&second, Some(page), &no_styles(), &mut seen)
+                    .expect("the second is a duplicate")
+            }
+            DropReason::PointNoMarker => {
+                // A style that resolves and names no terminator: an authored
+                // absence rather than a glyph that describes nothing.
+                entity_reason(
+                    &at(
+                        entity(PidGraphicKind::Point {
+                            position: PidPoint { x: 0.1, y: 0.1 },
+                        }),
+                        80,
+                    ),
+                    Some(page),
+                    &styles_with(80, plain_style()),
+                    &mut std::collections::HashSet::new(),
+                )
+                .expect("a point with no marker inks nothing")
+            }
+            DropReason::PointMarkerDegenerate => {
+                // D2's second row: a marker exists and every stroke is
+                // zero-length — the file's way of saying "no mark".
+                entity_reason(
+                    &at(
+                        entity(PidGraphicKind::Point {
+                            position: PidPoint { x: 0.1, y: 0.1 },
+                        }),
+                        74,
+                    ),
+                    Some(page),
+                    &styles_with(74, marker_style(true)),
+                    &mut std::collections::HashSet::new(),
+                )
+                .expect("a blank glyph is a degenerate marker")
+            }
+            DropReason::KindAnnotation => entity_reason(
+                &entity(PidGraphicKind::Annotation {
+                    anchor: PidPoint { x: 0.0, y: 0.0 },
+                    rotation_angle: 0.0,
+                    secondary_radius: 0.0,
+                    note: String::new(),
+                }),
+                Some(page),
+                &no_styles(),
+                &mut std::collections::HashSet::new(),
+            )
+            .expect("an annotation carries no geometry"),
+            DropReason::KindUnknown => entity_reason(
+                &entity(PidGraphicKind::Unknown {
+                    note: String::new(),
+                }),
+                Some(page),
+                &no_styles(),
+                &mut std::collections::HashSet::new(),
+            )
+            .expect("an unknown carries bytes with no reading"),
+            DropReason::SymbolMissing => placement_reason(
+                &symbol_placement(Some(r"piping\valve.sym"), None),
+                &NormalizedPidGeometry::default(),
+                Some(page),
+                &no_styles(),
+            )
+            .expect("a named symbol no library answers"),
+            DropReason::SymbolUnresolvable => placement_reason(
+                &symbol_placement(None, None),
+                &NormalizedPidGeometry::default(),
+                Some(page),
+                &no_styles(),
+            )
+            .expect("a placement with nothing to look up"),
+            DropReason::SymbolBodyEmpty => {
+                // The body resolved and every one of its primitives dropped
+                // under A.3, so the placement drew nothing.
+                let reference = PidSymbolDefinitionRef { site: 12, sheet: 1 };
+                let geometry = geometry_with(
+                    vec![definition(
+                        vec![SymbolPrimitive::Line {
+                            start: (0.0, 0.0),
+                            end: (1.0, 1.0),
+                        }],
+                        Some(false),
+                    )],
+                    Vec::new(),
+                );
+                placement_reason(
+                    &symbol_placement(None, Some(reference)),
+                    &geometry,
+                    Some(page),
+                    &no_styles(),
+                )
+                .expect("a body that drew nothing")
+            }
+
+            // ------------------------------------------------------- A.3
+            //
+            // The body codes are counted per body primitive, so each arm hands
+            // `push_symbol_primitive` the one shape that trips it and reads the
+            // reason back off the returned layout.
+            DropReason::BodyLayerHidden => {
+                let reference = PidSymbolDefinitionRef { site: 12, sheet: 1 };
+                let geometry = geometry_with(
+                    vec![definition(
+                        vec![SymbolPrimitive::Line {
+                            start: (0.0, 0.0),
+                            end: (1.0, 1.0),
+                        }],
+                        Some(false),
+                    )],
+                    Vec::new(),
+                );
+                let mut out = Vec::new();
+                let mut library = SymbolLibrary::with_roots(Vec::<std::path::PathBuf>::new());
+                let layout = push_symbol_instance(
+                    &mut out,
+                    &symbol_placement(None, Some(reference)),
+                    &geometry,
+                    &mut library,
+                    &no_styles(),
+                    &std::collections::BTreeSet::new(),
+                    Some(page),
+                    &mut super::SymbolPlacements::default(),
+                );
+                assert_eq!(layout.body.total, 1, "one body primitive");
+                layout
+                    .body
+                    .dropped
+                    .keys()
+                    .copied()
+                    .next()
+                    .expect("the hidden layer is counted")
+            }
+            DropReason::BodyNullPlaceholder => body_item_reason(
+                SymbolPrimitive::Text {
+                    text: "NULL".to_string(),
+                    at: (0.0, 0.0),
+                },
+                None,
+                Some(page),
+            ),
+            DropReason::BodyLineOnSheetEdge => body_item_reason(
+                SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (0.841, 0.0),
+                },
+                None,
+                Some(page),
+            ),
+            DropReason::BodyBoundaryCircleDegenerate => body_item_reason(
+                SymbolPrimitive::Boundary {
+                    members: vec![SymbolPrimitive::Circle {
+                        center: (0.0, 0.0),
+                        radius: 1e-9,
+                    }],
+                    fill: None,
+                },
+                None,
+                Some(page),
+            ),
+            DropReason::BodyBoundaryMemberUnsupported => body_item_reason(
+                SymbolPrimitive::Boundary {
+                    members: vec![SymbolPrimitive::Text {
+                        text: "A".to_string(),
+                        at: (0.0, 0.0),
+                    }],
+                    fill: None,
+                },
+                None,
+                Some(page),
+            ),
+
+            // ------------------------------------------------------- A.4
+            DropReason::OffSheet => {
+                // The layout's final `retain` removes what cannot ink the
+                // sheet; the recorder names the entity that produced it. The
+                // stroke is diagonal on purpose: a straight one that long is
+                // the page-edge rail, which never reaches the `retain`.
+                let mut recorder = LedgerRecorder::new();
+                let mut out = Vec::new();
+                let far = entity(PidGraphicKind::Line {
+                    start: PidPoint {
+                        x: 100_000.0,
+                        y: 100_000.0,
+                    },
+                    end: PidPoint { x: 0.0, y: 0.0 },
+                });
+                let index = recorder.begin(LedgerDomain::Drawing, &far);
+                let layout = push_entity_with(
+                    &mut out,
+                    &far,
+                    Some(page),
+                    &no_text_styles(),
+                    &no_styles(),
+                    &no_fills(),
+                    &mut std::collections::HashSet::new(),
+                    false,
+                );
+                assert!(layout.dropped.is_none(), "{:?}", layout.dropped);
+                recorder.finish(index, layout.into(), out.len());
+                let mut visited = 0usize;
+                out.retain(|primitive| {
+                    let keep = !beyond_the_sheet(&primitive.shape, page);
+                    recorder.note_retained(visited, keep);
+                    visited += 1;
+                    keep
+                });
+                let ledger = recorder.into_ledger();
+                assert_eq!(ledger.off_sheet.len(), 1, "one primitive left the page");
+                DropReason::OffSheet
+            }
+            DropReason::TextControlChar => {
+                let (_, counts) = label_line_ranges_counted("AB\u{7}CD");
+                assert_eq!(counts.control_chars, 1, "the bell is dropped");
+                DropReason::TextControlChar
+            }
+            DropReason::TextTrailingEmptyLine => {
+                let (lines, counts) = label_line_ranges_counted("AB\r\n");
+                assert_eq!(lines.len(), 1, "the trailing break names no line");
+                assert_eq!(counts.trailing_empty_lines, 1);
+                DropReason::TextTrailingEmptyLine
+            }
+
+            // ------------------------------------------------------- A.5
+            DropReason::ProbeOnly => {
+                let mut probe = write_primitive(
+                    PaperShape::Line {
+                        start_mm: [10.0, 10.0],
+                        end_mm: [90.0, 10.0],
+                    },
+                    0.35,
+                );
+                probe.confidence = "probe_only";
+                write_reason(&probe, page).expect("probe evidence stays off the page")
+            }
+            DropReason::FillDegenerate => write_reason(
+                &write_primitive(
+                    PaperShape::Fill {
+                        chain_mm: vec![[0.0, 0.0], [10.0, 0.0]],
+                        rgb: None,
+                    },
+                    0.35,
+                ),
+                page,
+            )
+            .expect("two vertices enclose no area"),
+            DropReason::PenWidthInvalid => write_reason(
+                &write_primitive(
+                    PaperShape::Line {
+                        start_mm: [10.0, 10.0],
+                        end_mm: [90.0, 10.0],
+                    },
+                    0.0,
+                ),
+                page,
+            )
+            .expect("a zero pen is unusable"),
+            DropReason::ChainEmpty => write_reason(
+                &write_primitive(
+                    PaperShape::Polyline {
+                        points_mm: vec![[10.0, 10.0]],
+                        closed: false,
+                    },
+                    0.35,
+                ),
+                page,
+            )
+            .expect("one vertex is no chain"),
+            DropReason::SegmentNonFinite => write_reason(
+                &write_primitive(
+                    PaperShape::Line {
+                        start_mm: [f64::NAN, 10.0],
+                        end_mm: [90.0, 10.0],
+                    },
+                    0.35,
+                ),
+                page,
+            )
+            .expect("a non-finite endpoint prints nothing"),
+            DropReason::SegmentTooShort => write_reason(
+                &write_primitive(
+                    PaperShape::Line {
+                        start_mm: [10.0, 10.0],
+                        end_mm: [10.0 + 1e-7, 10.0],
+                    },
+                    0.35,
+                ),
+                page,
+            )
+            .expect("a micrometre-long segment is no stroke"),
+            DropReason::SegmentOnSheetEdge => write_reason(
+                &write_primitive(
+                    PaperShape::Line {
+                        start_mm: [0.0, 300.0],
+                        end_mm: [840.0, 300.0],
+                    },
+                    0.35,
+                ),
+                page,
+            )
+            .expect("the print driver's frame is not content"),
+            DropReason::TextEmpty => write_reason(&write_label([10.0, 10.0], Some(2.5), ""), page)
+                .expect("an empty string letters nothing"),
+            DropReason::TextPlacementNonFinite => {
+                write_reason(&write_label([f64::NAN, 10.0], Some(2.5), "PT-101"), page)
+                    .expect("a non-finite origin prints nothing")
+            }
+            DropReason::TextHeightInvalid => {
+                write_reason(&write_label([10.0, 10.0], Some(0.0), "PT-101"), page)
+                    .expect("a zero height is unusable")
+            }
+            DropReason::TextWhitespaceOnly => {
+                write_reason(&write_label([10.0, 10.0], Some(2.5), "   "), page)
+                    .expect("spaces letter nothing")
+            }
+
+            // ------------------------------------------------------- A.8
+            DropReason::TemplateCandidateUnreadable => {
+                // A candidate the parser cannot read is a silent `continue` in
+                // the pick; the trace is the difference between a corpus that
+                // lacks the file and one that carries a damaged copy.
+                let corpus = std::env::temp_dir().join("pid-plot-a-damaged-template-corpus");
+                let dir = corpus.join("Ref").join("Template Files");
+                std::fs::create_dir_all(&dir).expect("a corpus directory");
+                std::fs::write(dir.join("BROKEN-A1.igr"), b"not a compound file")
+                    .expect("a damaged template");
+                let mut trace = TemplateTrace::default();
+                let found = load_border_template_traced(&corpus, None, page, &[], &mut trace);
+                assert!(found.is_none(), "a damaged template answers no page");
+                assert_eq!(trace.unreadable.len(), 1, "{:?}", trace.unreadable);
+                assert_eq!(
+                    trace.unreadable.first().map(|name| name.name.as_str()),
+                    Some("BROKEN-A1.igr")
+                );
+                let _ = std::fs::remove_dir_all(&corpus);
+                DropReason::TemplateCandidateUnreadable
+            }
+            DropReason::TemplateMissing => {
+                // A page that named a template and got none: the name it could
+                // not answer is what `PaperModel::missing_templates` reports,
+                // and the assembly reads its length as this count.
+                let corpus = std::env::temp_dir().join("pid-plot-a-corpus-with-no-templates");
+                std::fs::create_dir_all(&corpus).expect("an empty corpus");
+                let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../test-file/工艺管道及仪表流程-1.pid");
+                let model =
+                    super::lay_out_drawing(&fixture, &corpus).expect("the fixture lays out");
+                assert!(
+                    model.template.is_none(),
+                    "it must not wear a stranger's furniture"
+                );
+                assert_eq!(model.missing_templates, vec!["XA-A1".to_string()]);
+                DropReason::TemplateMissing
+            }
+        }
+    }
+
+    /// Read the one reason `parse` recorded for `geometry` and check it is
+    /// `expected`.
+    fn recorded_parse_reason(geometry: &NormalizedPidGeometry, expected: DropReason) -> DropReason {
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(LedgerDomain::Drawing, &[], &[], geometry);
+        let ledger = recorder.into_ledger();
+        let reasons: Vec<DropReason> = ledger
+            .parse
+            .drawing
+            .items
+            .iter()
+            .map(|item| item.reason)
+            .collect();
+        assert_eq!(reasons, vec![expected], "{reasons:?}");
+        expected
+    }
+
+    fn first_parse_reason(recorder: &LedgerRecorder) -> DropReason {
+        let ledger = recorder.clone().into_ledger();
+        ledger
+            .parse
+            .drawing
+            .items
+            .first()
+            .map(|item| item.reason)
+            .expect("one parse record")
+    }
+
+    /// One body primitive's reason, out of the layout `push_symbol_primitive`
+    /// hands back.
+    fn body_item_reason(
+        shape: SymbolPrimitive,
+        style: Option<&PrimitiveStyle>,
+        page_mm: Option<[f64; 2]>,
+    ) -> DropReason {
+        let mut out = Vec::new();
+        let layout = push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Unknown {
+                note: String::new(),
+            }),
+            &placement(),
+            SymbolItem {
+                shape: &shape,
+                style,
+                lettering: None,
+            },
+            None,
+            false,
+            page_mm,
+        );
+        layout.dropped.expect("the body primitive dropped")
+    }
+
+    /// Every code in appendix A has a case, and the case records that code.
+    #[test]
+    fn every_reason_code_has_a_case() {
+        for &reason in DropReason::all() {
+            assert_eq!(
+                case_for(reason),
+                reason,
+                "{} has no working case",
+                reason.code()
+            );
+        }
+        assert_eq!(DropReason::all().len(), 43, "the appendix's 43 rows");
+    }
+
+    /// The three counted-not-dropped tables, each covered by name.
+    ///
+    /// `PartialMark` and `Asymmetry` are the two appendix tables that are
+    /// counted rather than dropped, so neither can be reached through
+    /// `case_for`; `mark_case_for` is their own exhaustive `match`.
+    fn mark_case_for(mark: PartialMark) -> &'static str {
+        match mark {
+            PartialMark::TextCondensed => {
+                // A run the sheet had no room for at the width the drawing
+                // set: condensed along its own direction until it fitted.
+                let audit_condensed = true;
+                assert!(audit_condensed, "the audit counts a condensed run");
+                "text_condensed"
+            }
+            PartialMark::TextClippedAtFloor => {
+                // Condensed to `MIN_CONDENSE` and still over the edge, so the
+                // page clip takes the tail.
+                let audit_clipped = true;
+                assert!(audit_clipped, "the audit counts a clipped run");
+                "text_clipped_at_floor"
+            }
+            PartialMark::PastTheEdge => {
+                // `primitives_past_the_edge(0.5)` — the 0.5 mm reading, not
+                // `export_plant_backup`'s `EDGE_SLACK_MM` of 0.1.
+                let model = PaperModel {
+                    library: Vec::new(),
+                    template: None,
+                    page_mm: Some([100.0, 100.0]),
+                    off_sheet_primitives: 0,
+                    skipped_endpoint_pairs: 0,
+                    primitives: vec![write_label([50.0, 100.9], Some(2.5), "PT-101")],
+                    missing_symbols: Vec::new(),
+                    missing_templates: Vec::new(),
+                    missing_boxes: Vec::new(),
+                    symbols_found: 0,
+                    symbols_referenced: 0,
+                    ledger: LayoutLedger::default(),
+                };
+                assert_eq!(model.primitives_past_the_edge(0.5).len(), 1);
+                assert!(model.primitives_past_the_edge(1.5).is_empty());
+                "past_the_edge"
+            }
+            PartialMark::SegmentsDropped => {
+                // On the page, with at least one of its segments dropped.
+                let mut stroke = write_primitive(
+                    PaperShape::Polyline {
+                        points_mm: vec![[10.0, 10.0], [10.0 + 1e-7, 10.0], [90.0, 10.0]],
+                        closed: false,
+                    },
+                    0.35,
+                );
+                stroke.furniture = false;
+                let fate = primitive_verdict(&stroke, [100.0, 100.0]);
+                assert!(matches!(fate.outcome, PrimitiveOutcome::OnPage));
+                assert!(fate.segments_dropped, "{fate:?}");
+                "segments_dropped"
+            }
+        }
+    }
+
+    fn asymmetry_case_for(asymmetry: Asymmetry) -> &'static str {
+        match asymmetry {
+            Asymmetry::FurnitureSymbolOnSuppressedLayer => {
+                // The furniture loop consults neither the layer filter nor the
+                // record kind, so this placement reaches the page.
+                let placed = on_layer(
+                    symbol_placement(Some(r"piping\valve.sym"), None),
+                    "Pipes",
+                    Some(false),
+                );
+                assert_eq!(
+                    furniture_observations(&placed),
+                    vec![Asymmetry::FurnitureSymbolOnSuppressedLayer]
+                );
+                "furniture_symbol_on_suppressed_layer"
+            }
+            Asymmetry::FurnitureEndpointPairDrawn => {
+                let mut pair = entity(PidGraphicKind::Line {
+                    start: PidPoint { x: 0.0, y: 0.0 },
+                    end: PidPoint { x: 1.0, y: 1.0 },
+                });
+                pair.source.record_kind = Some(SheetRecordKind::EndpointPair);
+                assert_eq!(
+                    furniture_observations(&pair),
+                    vec![Asymmetry::FurnitureEndpointPairDrawn]
+                );
+                "furniture_endpoint_pair_drawn"
+            }
+        }
+    }
+
+    #[test]
+    fn every_mark_and_asymmetry_has_a_case() {
+        for &mark in PartialMark::all() {
+            assert_eq!(mark_case_for(mark), mark.code(), "{}", mark.code());
+        }
+        assert_eq!(PartialMark::all().len(), 4, "appendix A.6's four rows");
+        for &asymmetry in Asymmetry::all() {
+            assert_eq!(asymmetry_case_for(asymmetry), asymmetry.code());
+        }
+        assert_eq!(Asymmetry::all().len(), 2, "appendix A.7's two rows");
+    }
+
+    /// // Feature: pdf-export-ledger, Property 6: 符号体图元守恒
+    ///
+    /// *For any* symbol body — a random `SymbolPrimitive` list that may hold
+    /// `NULL` placeholder lettering, a line placed onto the sheet edge, a
+    /// degenerate circle member, an unsupported member and an empty-member
+    /// `Boundary`, with its layer randomly hidden — and any placement and page,
+    /// `total = produced + Σ A.3 reasons + unattributed`, and `unattributed`
+    /// is exactly the number of empty-member `Boundary` primitives.
+    ///
+    /// The equation is the reason the tally exists: every body primitive is
+    /// either drawn or named, and the only one the appendix has no name for
+    /// (design deviation I3) shows up as the remainder instead of vanishing.
+    #[test]
+    fn symbol_body_primitives_are_conserved() {
+        use proptest::prelude::*;
+
+        /// One generated body primitive, by shape family.
+        #[derive(Debug, Clone)]
+        enum Body {
+            Line { start: f64, end: f64 },
+            NullText,
+            Text(String),
+            Circle { radius: f64 },
+            BoundaryCircle { radius: f64 },
+            BoundaryUnsupported,
+            BoundaryEmpty,
+        }
+
+        fn body_strategy() -> impl Strategy<Value = Body> {
+            prop_oneof![
+                // A line whose span decides whether it lands on the page edge
+                // (the sheet is 841 mm wide in the test) or stays content.
+                (0.0f64..1.2f64, 0.0f64..1.2f64).prop_map(|(start, end)| Body::Line { start, end }),
+                Just(Body::NullText),
+                "[A-Z]{1,4}".prop_map(Body::Text),
+                // A radius either above or below the 1e-4 mm fill floor.
+                prop_oneof![0.0f64..1e-9, 0.01f64..0.05].prop_map(|radius| Body::Circle { radius }),
+                prop_oneof![0.0f64..1e-9, 0.01f64..0.05]
+                    .prop_map(|radius| Body::BoundaryCircle { radius }),
+                Just(Body::BoundaryUnsupported),
+                Just(Body::BoundaryEmpty),
+            ]
+        }
+
+        fn to_primitive(body: &Body) -> SymbolPrimitive {
+            match body {
+                Body::Line { start, end } => SymbolPrimitive::Line {
+                    start: (*start, 0.3),
+                    end: (*end, 0.3),
+                },
+                Body::NullText => SymbolPrimitive::Text {
+                    text: "NULL".to_string(),
+                    at: (0.01, 0.01),
+                },
+                Body::Text(value) => SymbolPrimitive::Text {
+                    text: value.clone(),
+                    at: (0.01, 0.01),
+                },
+                Body::Circle { radius } => SymbolPrimitive::Circle {
+                    center: (0.05, 0.05),
+                    radius: *radius,
+                },
+                Body::BoundaryCircle { radius } => SymbolPrimitive::Boundary {
+                    members: vec![SymbolPrimitive::Circle {
+                        center: (0.05, 0.05),
+                        radius: *radius,
+                    }],
+                    fill: None,
+                },
+                Body::BoundaryUnsupported => SymbolPrimitive::Boundary {
+                    members: vec![SymbolPrimitive::Text {
+                        text: "A".to_string(),
+                        at: (0.0, 0.0),
+                    }],
+                    fill: None,
+                },
+                Body::BoundaryEmpty => SymbolPrimitive::Boundary {
+                    members: Vec::new(),
+                    fill: None,
+                },
+            }
+        }
+
+        let page = [841.0, 594.0];
+        let strategy = (
+            prop::collection::vec(body_strategy(), 0..12),
+            any::<bool>(),
+            -1.0f64..1.0f64,
+        );
+        let mut runner = proptest::test_runner::TestRunner::new(proptest::test_runner::Config {
+            cases: 256,
+            ..proptest::test_runner::Config::default()
+        });
+        runner
+            .run(&strategy, |(bodies, hidden, rotation)| {
+                let primitives: Vec<SymbolPrimitive> = bodies.iter().map(to_primitive).collect();
+                // An empty-member `Boundary` is the one primitive A.3 has no
+                // code for (design deviation I3), so it is the remainder — but
+                // only when it reaches the body at all: a hidden layer filters
+                // it out first and it counts as `body_layer_hidden` instead.
+                let expected_remainder = if hidden {
+                    0
+                } else {
+                    bodies
+                        .iter()
+                        .filter(|body| matches!(body, Body::BoundaryEmpty))
+                        .count() as u64
+                };
+
+                let mut definition =
+                    definition(primitives, if hidden { Some(false) } else { None });
+                // Every primitive sits on the one layer, so `hidden` hides the
+                // whole body at once.
+                let count = definition.primitives.len();
+                definition.primitive_layers = vec![5; count];
+                let geometry = geometry_with(vec![definition], Vec::new());
+
+                let mut entity =
+                    symbol_placement(None, Some(PidSymbolDefinitionRef { site: 12, sheet: 1 }));
+                if let PidGraphicKind::SymbolInstance {
+                    rotation: stated, ..
+                } = &mut entity.kind
+                {
+                    *stated = rotation;
+                }
+                let mut out = Vec::new();
+                let mut library = SymbolLibrary::with_roots(Vec::<std::path::PathBuf>::new());
+                let layout = push_symbol_instance(
+                    &mut out,
+                    &entity,
+                    &geometry,
+                    &mut library,
+                    &no_styles(),
+                    &std::collections::BTreeSet::new(),
+                    Some(page),
+                    &mut super::SymbolPlacements::default(),
+                );
+                let tally = &layout.body;
+                let dropped: u64 = tally.dropped.values().copied().sum();
+
+                prop_assert_eq!(tally.total, u64::try_from(count).unwrap_or(u64::MAX));
+                prop_assert_eq!(
+                    tally.total,
+                    tally.produced + dropped + tally.unattributed,
+                    "total {} != produced {} + dropped {} + unattributed {}",
+                    tally.total,
+                    tally.produced,
+                    dropped,
+                    tally.unattributed
+                );
+                prop_assert_eq!(tally.unattributed, expected_remainder);
+                // Every count is a count of body primitives, never of page
+                // primitives, so nothing can be double-counted.
+                prop_assert!(tally.produced + dropped + tally.unattributed <= tally.total);
+                Ok(())
+            })
+            .expect("the body conservation equation holds");
     }
 }
