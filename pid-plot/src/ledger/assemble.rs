@@ -1508,32 +1508,271 @@ mod tests {
         assert!(!left.same_corpus(&other));
     }
 
+    /// The only kinds a baseline field may be built from: a count, a flag, a
+    /// name, a page coordinate pair, one of the payload-free enums this module
+    /// and `ledger` declare, or a list/map/option of those.
+    ///
+    /// This is the whole point of [`the_ledger_carries_no_floating_point_field`]:
+    /// the trait has no `f64` / `f32` impl, so a float field fails to compile.
+    /// A map's key needs no impl — `f64` is not `Ord`, so it cannot be one.
+    trait BaselineValue {}
+    impl BaselineValue for u16 {}
+    impl BaselineValue for u32 {}
+    impl BaselineValue for u64 {}
+    impl BaselineValue for usize {}
+    impl BaselineValue for bool {}
+    impl BaselineValue for String {}
+    impl BaselineValue for [usize; 2] {}
+    impl BaselineValue for DropReason {}
+    impl BaselineValue for PartialMark {}
+    impl BaselineValue for Asymmetry {}
+    impl BaselineValue for EntityKind {}
+    impl BaselineValue for Confidence {}
+    impl BaselineValue for PlacementSource {}
+    impl BaselineValue for SourceKind {}
+    impl BaselineValue for PageSizeSource {}
+    impl BaselineValue for TemplateSourceKind {}
+    impl BaselineValue for TextNormalization {}
+    impl BaselineValue for SourceName {}
+    impl BaselineValue for TemplateFact {}
+    impl BaselineValue for RecordItem {}
+    impl BaselineValue for SuspectSite {}
+    impl<T: BaselineValue> BaselineValue for Option<T> {}
+    impl<T: BaselineValue> BaselineValue for Vec<T> {}
+    impl<K, V: BaselineValue> BaselineValue for BTreeMap<K, V> {}
+
+    /// Accepts a field the baseline may hold; refuses every other type.
+    fn baseline_value<T: BaselineValue>(_: &T) {}
+
     #[test]
     fn the_ledger_carries_no_floating_point_field() {
-        // Requirement 12.2: counts are integers. A float in this module would
-        // make a baseline compare platform-dependent, which is the one thing
-        // the ledger must never be. The check is textual because the property
-        // is about the type declarations themselves.
-        let source = include_str!("assemble.rs");
-        let declarations = source
-            .lines()
-            .filter(|line| line.trim_start().starts_with("pub "))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            !declarations.contains("f64") && !declarations.contains("f32"),
-            "no public field of the assembled ledger may be a float"
-        );
+        // Requirement 12.2: counts are integers. A float anywhere in this
+        // module would make a baseline compare platform-dependent, which is
+        // the one thing the ledger must never be.
+        //
+        // Asserted at the type level, not by scanning source text: each struct
+        // is destructured field by field (so a new field has to be declared
+        // here before it compiles at all) and every field is handed to
+        // `baseline_value`, whose bound admits only the kinds listed on
+        // `BaselineValue`. A `f64` field is a compile error. The earlier form
+        // filtered `pub ` lines out of `include_str!("assemble.rs")`, which a
+        // comment or a reflow could defeat in either direction.
+        let ledger = ExportLedger {
+            page: PageAccount::default(),
+            fonts_measured: false,
+            drawing: DomainAccount::default(),
+            furniture: DomainAccount::default(),
+        };
+        let ExportLedger {
+            page,
+            fonts_measured,
+            drawing,
+            furniture,
+        } = &ledger;
+        baseline_value(fonts_measured);
+
+        let PageAccount {
+            size_source,
+            template,
+            missing_templates,
+            dropped,
+            suspect_sites,
+        } = page;
+        baseline_value(size_source);
+        baseline_value(template);
+        baseline_value(missing_templates);
+        baseline_value(dropped);
+        baseline_value(suspect_sites);
+
+        for domain in [drawing, furniture] {
+            let DomainAccount {
+                parse,
+                entities,
+                bodies,
+                text,
+                primitives,
+                segments,
+                asymmetry,
+                suspect_sites,
+            } = domain;
+            let ParseAccount {
+                items,
+                unattributed,
+            } = parse;
+            baseline_value(items);
+            baseline_value(unattributed);
+            let EntityAccount {
+                total,
+                on_page,
+                partial,
+                dropped,
+                fill_duplicate_first_taken_by_furniture,
+                cross,
+                unattributed,
+            } = entities;
+            for count in [
+                total,
+                on_page,
+                partial,
+                fill_duplicate_first_taken_by_furniture,
+                unattributed,
+            ] {
+                baseline_value(count);
+            }
+            baseline_value(dropped);
+            baseline_value(cross);
+            let BodyAccount {
+                placements,
+                total,
+                produced,
+                dropped,
+                unattributed,
+            } = bodies;
+            baseline_value(placements);
+            for count in [total, produced, unattributed] {
+                baseline_value(count);
+            }
+            baseline_value(dropped);
+            let PrimitiveAccount {
+                laid_out,
+                off_sheet,
+                on_page,
+                dropped,
+                partial,
+                marks,
+                unattributed,
+            } = primitives;
+            for count in [laid_out, off_sheet, on_page, partial, unattributed] {
+                baseline_value(count);
+            }
+            baseline_value(dropped);
+            baseline_value(marks);
+            let SegmentAccount {
+                total,
+                written,
+                dropped,
+                unattributed,
+            } = segments;
+            for count in [total, written, unattributed] {
+                baseline_value(count);
+            }
+            baseline_value(dropped);
+            baseline_value(asymmetry);
+            baseline_value(suspect_sites);
+            let TextNormalization {
+                control_chars,
+                trailing_empty_lines,
+            } = text;
+            baseline_value(control_chars);
+            baseline_value(trailing_empty_lines);
+        }
+
+        let item = a_record_item(None);
+        let RecordItem {
+            reason,
+            stream,
+            type_code,
+            family,
+            count,
+            bytes,
+            body_primitives,
+        } = &item;
+        baseline_value(reason);
+        baseline_value(stream);
+        baseline_value(type_code);
+        baseline_value(family);
+        baseline_value(count);
+        baseline_value(bytes);
+        baseline_value(body_primitives);
+
+        let fact = TemplateFact {
+            name: "CPE-SQ-A1.igr".to_string(),
+            source: TemplateSourceKind::DirectoryFile,
+            archive: None,
+        };
+        let TemplateFact {
+            name,
+            source,
+            archive,
+        } = &fact;
+        baseline_value(name);
+        baseline_value(source);
+        baseline_value(archive);
+
+        let source = SourceName {
+            kind: SourceKind::Directory,
+            name: "Symbols".to_string(),
+            archive: None,
+        };
+        let SourceName {
+            kind,
+            name,
+            archive,
+        } = &source;
+        baseline_value(kind);
+        baseline_value(name);
+        baseline_value(archive);
+
+        let site = SuspectSite {
+            reason: DropReason::TemplateMissing,
+            stream: Some("/Sheet6".to_string()),
+            oid: Some(7),
+            bytes: Some([10, 42]),
+            type_code: Some(0x0018),
+            family: Some("igLine2d".to_string()),
+            name: Some("CPE-SQ-A1.igr".to_string()),
+            count: 1,
+        };
+        let SuspectSite {
+            reason,
+            stream,
+            oid,
+            bytes,
+            type_code,
+            family,
+            name,
+            count,
+        } = &site;
+        for field in [stream, family, name] {
+            baseline_value(field);
+        }
+        baseline_value(oid);
+        baseline_value(bytes);
+        baseline_value(type_code);
+        baseline_value(count);
+        baseline_value(reason);
+
+        let descriptor = CorpusDescriptor::default();
+        let CorpusDescriptor {
+            symbol_sources,
+            template_sources,
+            font_faces,
+        } = &descriptor;
+        baseline_value(symbol_sources);
+        baseline_value(template_sources);
+        baseline_value(font_faces);
+
+        let summary = LedgerSummary::default();
+        let LedgerSummary {
+            entities,
+            on_page,
+            intentional,
+            suspect,
+            unattributed,
+        } = &summary;
+        for count in [entities, on_page, intentional, suspect, unattributed] {
+            baseline_value(count);
+        }
     }
 
     // ---------------------------------------------------------------- fixtures
 
-    use super::super::layout::{EntityRecord, Site};
+    use super::super::layout::{EntityRecord, Site, SourceKind};
     use super::super::reason::LedgerDomain;
     use crate::model::{PaperModel, PaperPrimitive, PaperShape, PaperStroke};
     use crate::write::{PrimitiveFate, PrimitiveOutcome, SegmentTally, TextMarks, WriteLedger};
 
-    /// A page primitive with no ink past the sheet.
+    /// A page primitive; the caller decides whether it runs past the sheet.
     fn a_line(start: [f64; 2], end: [f64; 2]) -> PaperPrimitive {
         PaperPrimitive {
             confidence: "decoded",
@@ -1744,12 +1983,29 @@ mod tests {
     /// > 实体已上页，且它的页面图元里至少一个带附录 A.6 的标记，或至少一个
     /// > 没有上页（含被 `off_sheet` 移除的）。
     ///
-    /// The generator therefore produces every shape that sentence ranges over —
-    /// an entity whose primitives all reached the page, one whose drawn
-    /// primitive carries a mark, one with a primitive the writer dropped, one
-    /// with a primitive the final `retain` removed, one whose every primitive
-    /// was dropped, and one that claimed nothing — and the expected count below
-    /// is written from those inputs, never read back out of the assembly.
+    /// The generator therefore produces every shape that sentence ranges over,
+    /// written as a fixed table of eight claim codes so no shape can go missing:
+    ///
+    /// | code | shape |
+    /// |---|---|
+    /// | 0 | drawn whole, no mark |
+    /// | 1 | drawn, `TextCondensed` |
+    /// | 2 | drawn, `TextClippedAtFloor` |
+    /// | 3 | the writer dropped this primitive |
+    /// | 4 | the final `retain` removed it (`off_sheet`) |
+    /// | 5 | drawn 0.9 mm past the sheet (`PastTheEdge`) |
+    /// | 6 | drawn, `SegmentsDropped` |
+    /// | 7 | the entity claimed no primitive at all (a remainder) |
+    ///
+    /// Codes 0–6 are claims, code 7 is an entity shape. One fixed entity claims
+    /// a primitive of every claim shape 0–6 and one fixed entity claims
+    /// nothing, so every code appears in every case; the random tail adds
+    /// mixtures. Before this table the generator produced only codes 0–5 and
+    /// never set `segments_dropped`, so A.6's fourth row had no test that could
+    /// see it at the entity layer.
+    ///
+    /// The expected count below is written from those inputs — the claim codes
+    /// themselves — never read back out of the assembly.
     #[test]
     fn cross_counts_agree_with_the_outcome_totals() {
         use proptest::prelude::*;
@@ -1767,23 +2023,23 @@ mod tests {
         ];
         static REASONS: [DropReason; 2] = [DropReason::LayerHidden, DropReason::SymbolMissing];
 
-        // One claim's shape: 0 drawn whole, 1 drawn with a text A.6 mark,
-        // 2 drawn whole but the writer dropped another of the entity's
-        // primitives, 3 a primitive the writer dropped, 4 a primitive `retain`
-        // removed, 5 drawn but reaching past the sheet (A.6's `PastTheEdge`).
-        // (2 and 3 are the same primitive in the writer's ledger; the code is
-        // separate only so both halves of the I2 sentence are generated.)
+        // One claim's shape, the fixed table this property ranges over:
+        // 0 drawn whole, 1 `TextCondensed`, 2 `TextClippedAtFloor`, 3 a
+        // primitive the writer dropped, 4 a primitive `retain` removed, 5 drawn
+        // past the sheet (`PastTheEdge`), 6 `SegmentsDropped`, 7 an entity that
+        // claimed no primitive at all (a remainder).
         //
-        // Code 5 exists because A.6 has four rows and the generator used to
-        // produce only the two text ones: an entity whose drawn primitive ran
-        // past the page counted `partial 0` here while the primitive layer
-        // marked it, and this property could not see the disagreement.
+        // 6 and 7 were the two the generator never produced: without 6, A.6's
+        // `SegmentsDropped` row had no entity-layer test at all — deleting the
+        // `fate.segments_dropped` half of `entity_outcome`'s partial test left
+        // every test green.
+        const CLAIM_CODES: u8 = 8;
         let strategy = prop::collection::vec(
             (
                 prop::sample::select(&KINDS[..]),
                 prop::sample::select(&CONFIDENCES[..]),
                 prop::option::of(prop::sample::select(&REASONS[..])),
-                prop::collection::vec(0u8..6, 0..4),
+                prop::collection::vec(0u8..7, 0..4),
             ),
             0..8,
         );
@@ -1792,7 +2048,21 @@ mod tests {
             ..proptest::test_runner::Config::default()
         });
         runner
-            .run(&strategy, |entities| {
+            .run(&strategy, |random| {
+                // Every claim code in every case, so coverage never depends on
+                // a random draw: one entity claims one primitive of each shape
+                // 0–6, and one claims nothing (7).
+                let mut entities = vec![
+                    (
+                        EntityKind::Line,
+                        Confidence::Decoded,
+                        None,
+                        vec![0u8, 1, 2, 3, 4, 5, 6],
+                    ),
+                    (EntityKind::Line, Confidence::Decoded, None, Vec::new()),
+                ];
+                entities.extend(random);
+
                 let mut ledger = LayoutLedger::default();
                 ledger.entity_totals.drawing = u64::try_from(entities.len()).unwrap_or(u64::MAX);
                 let mut fates: Vec<PrimitiveFate> = Vec::new();
@@ -1803,15 +2073,23 @@ mod tests {
                 // I2's own count, taken from these inputs.
                 let mut expected_on_page = 0u64;
                 let mut expected_partial = 0u64;
+                // Which claim codes this case actually produced.
+                let mut seen = [false; CLAIM_CODES as usize];
                 for (kind, confidence, dropped, claims) in &entities {
                     let mut record = an_entity(*dropped);
                     record.kind = kind.clone();
                     record.confidence = *confidence;
                     ledger.entities.push(record);
                     let origin = u32::try_from(ledger.entities.len() - 1).unwrap_or(u32::MAX);
+                    if claims.is_empty() {
+                        // Code 7: the entity claimed nothing, so no primitive
+                        // can reach the page and it ends up a remainder.
+                        seen[7] = true;
+                    }
                     let mut any_on_page = false;
                     let mut partial = false;
                     for claim in claims {
+                        seen[usize::from(*claim)] = true;
                         if *claim == 4 {
                             ledger.off_sheet.push(origin);
                             partial = true;
@@ -1827,22 +2105,38 @@ mod tests {
                                     clipped_at_floor: false,
                                 }),
                             },
+                            2 => PrimitiveFate {
+                                outcome: PrimitiveOutcome::OnPage,
+                                segments: SegmentTally::default(),
+                                segments_dropped: false,
+                                text: Some(TextMarks {
+                                    condensed: false,
+                                    clipped_at_floor: true,
+                                }),
+                            },
                             3 => a_fate(PrimitiveOutcome::Dropped(DropReason::ChainEmpty)),
+                            6 => PrimitiveFate {
+                                outcome: PrimitiveOutcome::OnPage,
+                                segments: SegmentTally {
+                                    total: 2,
+                                    written: 1,
+                                    non_finite: 0,
+                                    too_short: 0,
+                                    on_sheet_edge: 1,
+                                },
+                                segments_dropped: true,
+                                text: None,
+                            },
                             _ => a_fate(PrimitiveOutcome::OnPage),
                         };
                         ledger.primitive_origin.push(origin);
                         past_flags.push(*claim == 5);
                         if fate.is_on_page() {
                             any_on_page = true;
-                            // A.6's four rows, read straight off the generated
-                            // inputs: the text pair, `segments_dropped`, and —
-                            // for code 5 — the page model's `PastTheEdge`.
-                            if fate.segments_dropped
-                                || fate
-                                    .text
-                                    .is_some_and(|marks| marks.condensed || marks.clipped_at_floor)
-                                || *claim == 5
-                            {
+                            // A.6's four rows, read straight off the claim
+                            // code: the text pair, `PastTheEdge` (5) and
+                            // `SegmentsDropped` (6).
+                            if matches!(*claim, 1 | 2 | 5 | 6) {
                                 partial = true;
                             }
                         } else {
@@ -1858,6 +2152,11 @@ mod tests {
                             expected_partial = expected_partial.saturating_add(1);
                         }
                     }
+                }
+                // The table is a contract: a shape that stops being generated
+                // is a shape this property stopped checking.
+                for (code, produced) in seen.iter().enumerate() {
+                    prop_assert!(*produced, "claim code {} was not generated", code);
                 }
                 let primitives: Vec<PaperPrimitive> = past_flags
                     .iter()
@@ -2175,6 +2474,57 @@ mod tests {
         );
         assert_eq!(assembled.drawing.segments.total, 3);
         assert_eq!(assembled.drawing.segments.written, 2);
+        assert!(assembled.conservation_breaches().is_empty());
+    }
+
+    #[test]
+    fn an_entity_with_a_dropped_segment_is_partial() {
+        // A.6's fourth row at the entity layer, smallest form: one entity, one
+        // primitive, drawn, but the writer dropped one of its strokes. The
+        // entity is on the page (its primitive reached it) and partial (that
+        // primitive carries `SegmentsDropped`).
+        //
+        // Before this test the entity layer read `partial 0` here — the
+        // primitive layer said `partial 1, marks {SegmentsDropped: 1}` — and
+        // deleting the `fate.segments_dropped` half of `entity_outcome` left
+        // the whole suite green, because the property generator never set it.
+        let mut ledger = LayoutLedger::default();
+        ledger.entities.push(an_entity(None));
+        ledger.entity_totals.drawing = 1;
+        ledger.primitive_origin = vec![0];
+        let model = a_model(
+            ledger,
+            vec![a_line([10.0, 10.0], [20.0, 10.0])],
+            Some([841.0, 594.0]),
+        );
+        let fate = PrimitiveFate {
+            outcome: PrimitiveOutcome::OnPage,
+            segments: SegmentTally {
+                total: 2,
+                written: 1,
+                non_finite: 0,
+                too_short: 0,
+                on_sheet_edge: 1,
+            },
+            segments_dropped: true,
+            text: None,
+        };
+        let assembled = ExportLedger::assemble(&model, &a_write_ledger(vec![fate]));
+        assert_eq!(assembled.drawing.entities.on_page, 1);
+        assert_eq!(
+            assembled.drawing.entities.partial, 1,
+            "a drawn primitive carrying A.6's SegmentsDropped mark makes the entity partial"
+        );
+        assert_eq!(
+            assembled
+                .drawing
+                .primitives
+                .marks
+                .get(&PartialMark::SegmentsDropped)
+                .copied(),
+            Some(1),
+            "the primitive layer agrees"
+        );
         assert!(assembled.conservation_breaches().is_empty());
     }
 
