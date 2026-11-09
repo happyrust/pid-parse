@@ -151,3 +151,81 @@ cargo test --locked -p pid-parse --test publish_diff_accepted_baseline
 刷新只在**合法**改变输出时做，且必须在同一个改动里同时更新基线与
 `tests/publish_diff_accepted_baseline.rs` 里的计数断言；diff 里要能看出
 哪一项是新增的已接受差异、为什么。**不要**为了让门禁变绿而往基线里加条目。
+
+## 出图记账基线（`export-ledger-*.json`）
+
+`pid-plot` 的出图记账（`.kiro/specs/pdf-export-ledger/`）给每一页记一本账：
+页上的每条图形记录、实体、页面图元、笔画段，要么上了页，要么归到一个有名字的
+丢弃原因并计数。两份基线把这个账逐页钉住：
+
+| 文件 | 语料 | 页数 | 门禁 |
+|---|---|---:|---|
+| `export-ledger-fixtures.json` | 仓库 `test-file/` 的 7 张夹具 + `test-file/symbols` + `test-file/Ref/Symbols` + `test-file/backup-test/*_p/RefData~*.zip` | 7 | `pid-plot/tests/export_ledger_fixtures.rs`（**CI 与本机都真跑**） |
+| `export-ledger-backup.json` | 备份包语料 `backup-plant-data/**/*.pid`（53 张），模板与符号来自包内 `RefData~*.zip`，字型来自 `PID_PLOT_FONTS` | 53 | `pid-plot/tests/export_plant_backup.rs` 的账本段（无备份时软跳过） |
+
+页键是**相对语料根的路径**（`/` 分隔，可含中文），文件头记 `schema`、
+`corpus`、`CorpusDescriptor`（符号来源、模板来源、字型键名）与 `fonts_measured`。
+基线只含原因码、计数、流路径、类型码（`0xNNNN`）、oid、字节范围、模板文件名与
+页路径 —— **不含图面文字内容，也不含本机绝对路径**（门禁会扫描仓库根、
+`CARGO_MANIFEST_DIR`、用户主目录与盘符路径）。
+
+### 比对规则
+
+比对的单位是**计数项**（页、账域、层、原因或标记、键），不是总数。
+
+| 档 | 数量 | 规则 |
+|---|---:|---|
+| 可疑（`Suspect_Drop`） | 22 | **只许降**：升高即失败并列出页、原因码、基线值、当前值与多出的来源；降低也失败，并提示把基线降到新值（与 `missing_docs` 棘轮同一约定） |
+| 有意（`Intentional_Drop`） | 21 | **精确钉住**：任何变化（升或降）都失败（`run_gate` 里用精确比较，不是「只许降」） |
+
+另外：
+
+- **段总数与已写数不比。** 它们照写进基线供人读，但一条弧展平成几段取决于
+  `kurbo` 的浮点算术，跨平台可能在末位不同（设计偏差 I4）。
+- **上页数、部分上页数与交叉计数**（按种类 / 置信度 / 结局）精确钉住。
+- **字体部分分开处理。** 只有字型不同时只跳过两个字体标记
+  （`text_condensed`、`text_clipped_at_floor`）；符号或模板部分不同时跳过整页
+  计数比对，打印以 `export-ledger:` 开头的醒目段落（逐项差异 + 应设的变量），
+  但未归因与核对照常执行，未归因大于 0 仍失败。
+- **未归因必须为 0。** 任何一页任何一层（解析、排版、符号体、写出、段）的
+  `unattributed` 大于 0 即失败。
+
+### 两道门禁的调用命令
+
+```powershell
+# 夹具门禁：7 张夹具，无字体需求，CI 与本机都真跑
+cargo test --locked -p pid-plot --test export_ledger_fixtures
+
+# 备份门禁：53 张备份，需要备份语料与字型
+$env:PID_PARSE_SELF_CHECK_DIR = 'D:\work\plant-code\cad\pid-test-data'
+$env:PID_PLOT_FONTS = 'D:\work\cad\PID自研软件验证\fonts'
+cargo test --locked -p pid-plot --test export_plant_backup
+```
+
+`export_plant_backup` 的账本段复用同一次运行的 `PaperModel` 与写出结果，
+不重复排版、不重复写出。备份目录不在时整个测试照旧软跳过。
+
+### 重写方法与拒绝条件
+
+设 `UPDATE_EXPORT_LEDGER=1` 重写对应基线：
+
+```powershell
+$env:UPDATE_EXPORT_LEDGER = '1'
+cargo test --locked -p pid-plot --test export_ledger_fixtures     # 写 7 页
+# 或（备份语料下）
+cargo test --locked -p pid-plot --test export_plant_backup         # 写 53 页
+Remove-Item Env:UPDATE_EXPORT_LEDGER
+```
+
+重写**只许可疑项不升**（Property 11）：若重写会让某页某可疑项高于原基线，
+拒绝写入并失败，列出这些计数，文件保持原样。以下情形同样拒绝：
+
+- 基线文件读不出、解析失败或 `schema` 不同 → 提示删除后重建；
+- 语料描述的符号或模板部分与旧基线不同；
+- 有失败页、未归因大于 0 或核对不符。
+
+重写两次逐字节相同（`serde_json::to_string_pretty` + 末尾换行 + `std::fs::write`，
+映射一律 `BTreeMap`，不含浮点数）。
+
+**不要为了让门禁变绿而放宽规则。** 可疑项降低是改进，但降基线必须是一次显式的
+`UPDATE_EXPORT_LEDGER=1` 重写，好让降幅留在 git 历史里。

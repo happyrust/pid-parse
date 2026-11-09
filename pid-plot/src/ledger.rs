@@ -56,6 +56,10 @@ pub use assemble::{
     PageAccount, PageSizeSource, ParseAccount, PrimitiveAccount, RecordItem, SegmentAccount,
     SuspectSite, TemplateFact, TemplateSourceKind,
 };
+pub use baseline::{
+    GateInput, GateReport, LedgerBaseline, LedgerCorpus, SCHEMA as EXPORT_LEDGER_SCHEMA,
+    descriptor_for, run_gate,
+};
 pub use layout::{
     BodyItemLayout, BodyTally, Confidence, EntityKind, EntityLayout, EntityOutcome, EntityRecord,
     LayoutLedger, LedgerRecorder, PageSources, ParseCounts, ParseRecord, PlacementAccount,

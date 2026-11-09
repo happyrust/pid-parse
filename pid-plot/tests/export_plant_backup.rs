@@ -93,11 +93,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::ledger::ExportLedger;
+use pid_plot::ledger::baseline::{GateInput, LedgerCorpus, descriptor_for, run_gate};
 use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
 };
 use pid_plot::read::read_plot;
-use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_plot_audited};
+use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_ledger, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
 fn corpus_dir() -> PathBuf {
@@ -1323,6 +1325,7 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut condensed = 0usize;
     let mut smallest_condense = 1.0f64;
     let mut past_the_edge: Vec<String> = Vec::new();
+    let mut ledger_pages: Vec<(String, ExportLedger)> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
         assert_eq!(
@@ -1378,6 +1381,38 @@ fn every_backup_drawing_exports_a_readable_page() {
             write_plot_audited(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         let pdf = written.pdf;
         let audit = written.audit;
+        // The write layer's account of this page, and the joined account the
+        // baseline stores. `mismatches` is the writer's own check that the
+        // verdicts it reached up front are the ones it acted on, so an empty
+        // list is the evidence that the account describes the bytes below.
+        assert!(
+            written.ledger.mismatches.is_empty(),
+            "{name}: the writer's verdicts disagreed with what it wrote: {:?}",
+            written.ledger.mismatches
+        );
+        let ledger = ExportLedger::assemble(model, &written.ledger);
+        // Requirement 5.5/5.6 on real corpus: the face-free account reaches the
+        // same verdicts as the written one, except for the two marks that need
+        // a typeface to measure.
+        let no_font = write_ledger(model).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let no_font_ledger = ExportLedger::assemble(model, &no_font);
+        assert!(
+            same_account_without_font_marks(&ledger, &no_font_ledger),
+            "{name}: the face-free account differs from the written one beyond the two font marks"
+        );
+        let cross = ledger.cross_check(model, Some(&audit), None);
+        assert!(
+            cross.is_empty(),
+            "{name}: the ledger disagrees with the counts the code already keeps: {cross:#?}"
+        );
+        let page_key = path
+            .strip_prefix(&backup)
+            .unwrap_or(path)
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        ledger_pages.push((page_key, ledger));
         clipped_at_floor += audit.runs_clipped_at_the_condensation_floor;
         deepest_clip_mm = deepest_clip_mm.max(audit.deepest_clip_mm);
         condensed += audit.runs_condensed;
@@ -1470,6 +1505,69 @@ fn every_backup_drawing_exports_a_readable_page() {
         derived,
         prepared.len()
     );
+
+    // The ledger gate over the whole package. Its baseline is taken from this
+    // very corpus (see the module docs' `Two corpora, two variables`), so a
+    // page whose account moved fails here rather than on the next release. The
+    // faces are named, so a machine that embeds a different set of typefaces
+    // is told that rather than made to look like a regression.
+    ledger_pages.sort_by(|left, right| left.0.cmp(&right.0));
+    let ledgers: Vec<&pid_plot::ledger::LayoutLedger> =
+        models.iter().map(|(_, model)| &model.ledger).collect();
+    let font_faces: Vec<String> = prepared.iter().map(|face| face.key.clone()).collect();
+    let descriptor = descriptor_for(&ledgers, font_faces);
+    let baseline_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("docs")
+        .join("baselines")
+        .join("export-ledger-backup.json");
+    let update = std::env::var("UPDATE_EXPORT_LEDGER").is_ok_and(|value| value == "1");
+    let report = run_gate(GateInput {
+        corpus: LedgerCorpus::Backup,
+        baseline_path: &baseline_path,
+        descriptor,
+        pages: ledger_pages,
+        failures: Vec::new(),
+        breaches: Vec::new(),
+        update,
+        hint: "备份基线取法：PID_PARSE_SELF_CHECK_DIR 指向含 RefData~*.zip 的包目录、PID_PLOT_FONTS 给出字型，再跑 cargo test -p pid-plot --test export_plant_backup（详见 docs/baselines/README.md）",
+    });
+    let rendered = report.render();
+    eprintln!("{rendered}");
+    assert!(report.passed(), "{rendered}");
+}
+
+/// Whether two accounts agree once the two marks that need a typeface are
+/// dropped.
+///
+/// `write_ledger` reads no face, so it cannot measure condensing or clipping:
+/// its account carries neither `text_condensed` nor `text_clipped_at_floor`,
+/// and its `fonts_measured` is `false`. Everything else — every drop, every
+/// on-page count, every segment reason, every remainder — has to be identical,
+/// which is what requirement 5.6 asks of the face-free path.
+fn same_account_without_font_marks(written: &ExportLedger, face_free: &ExportLedger) -> bool {
+    if written.page != face_free.page
+        || written.drawing.parse != face_free.drawing.parse
+        || written.drawing.entities != face_free.drawing.entities
+        || written.drawing.bodies != face_free.drawing.bodies
+        || written.drawing.text != face_free.drawing.text
+        || written.drawing.segments != face_free.drawing.segments
+        || written.drawing.asymmetry != face_free.drawing.asymmetry
+        || written.furniture != face_free.furniture
+    {
+        return false;
+    }
+    let mut written_primitives = written.drawing.primitives.clone();
+    let mut face_free_primitives = face_free.drawing.primitives.clone();
+    for account in [&mut written_primitives, &mut face_free_primitives] {
+        account
+            .marks
+            .remove(&pid_plot::ledger::PartialMark::TextCondensed);
+        account
+            .marks
+            .remove(&pid_plot::ledger::PartialMark::TextClippedAtFloor);
+    }
+    written_primitives == face_free_primitives
 }
 
 /// `D04` pins `0` refused `igSymbol2d` (`0x00CE`) records directly, not

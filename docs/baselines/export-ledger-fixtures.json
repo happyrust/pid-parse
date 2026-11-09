@@ -1,0 +1,1969 @@
+{
+  "schema": "pid-plot.export-ledger/1",
+  "corpus": "fixtures",
+  "descriptor": {
+    "symbol_sources": [
+      {
+        "kind": "directory",
+        "name": "symbols"
+      },
+      {
+        "kind": "directory",
+        "name": "Symbols"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~681.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~684.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~685.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~804.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~809.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~681.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~684.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~685.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~804.zip"
+      },
+      {
+        "kind": "archive",
+        "name": "RefData~4~809.zip"
+      }
+    ],
+    "template_sources": [
+      {
+        "kind": "directory_file",
+        "name": "CPE-SQ-A0.igr"
+      },
+      {
+        "kind": "directory_file",
+        "name": "CPE-SQ-A1.igr"
+      },
+      {
+        "kind": "directory_file",
+        "name": "CPE-SQ-A2.igr"
+      },
+      {
+        "kind": "directory_file",
+        "name": "CPECCHB-SQ-A2.igr"
+      },
+      {
+        "kind": "directory_file",
+        "name": "XA-A1.igr"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A0-W - New.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A0-W.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A1-W - New.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A1-W.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A2-W - New.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A2-W.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A3-W - New.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "A3-W.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "CPECCHBA2.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "XIONGANA2.igr",
+        "archive": "RefData~4~682.zip"
+      },
+      {
+        "kind": "archive_member",
+        "name": "qsmcqtaz13A2.igr",
+        "archive": "RefData~4~682.zip"
+      }
+    ]
+  },
+  "fonts_measured": false,
+  "pages": {
+    "D06.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "CPECCHB-SQ-A2.igr",
+          "source": "directory_file"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite145",
+              "count": 45
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite151",
+              "count": 6
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite145",
+              "count": 2,
+              "body_primitives": 6
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite151",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 3
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 21
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 20
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 101,
+          "on_page": 13,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 2,
+            "layer_consistency_checks": 10,
+            "point_no_marker": 64,
+            "kind_unknown": 11,
+            "text_whitespace_only": 1
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "polyline": {
+              "decoded": {
+                "layer_hidden": 2,
+                "on_page": 4
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 10
+              },
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 3,
+                "text_whitespace_only": 1
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 6
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 11
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 6
+          },
+          "total": 40,
+          "produced": 32,
+          "dropped": {
+            "body_layer_hidden": 8
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 40,
+          "off_sheet": 0,
+          "on_page": 39,
+          "dropped": {
+            "text_whitespace_only": 1
+          },
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 91,
+          "written": 91,
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_no_decoder",
+              "stream": "/Sheet6",
+              "type_code": "0x0021",
+              "count": 3
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite16",
+              "count": 31
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite16",
+              "count": 1,
+              "body_primitives": 0
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 153,
+          "on_page": 77,
+          "partial": 0,
+          "dropped": {
+            "point_no_marker": 64,
+            "kind_unknown": 12
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 42
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "on_page": 8
+              }
+            },
+            "point": {
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 24
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 3
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 12
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 3
+          },
+          "total": 42,
+          "produced": 42,
+          "dropped": {
+            "body_layer_hidden": 0
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 116,
+          "off_sheet": 0,
+          "on_page": 116,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 76,
+          "written": 76,
+          "unattributed": 0
+        },
+        "suspect_sites": [
+          {
+            "reason": "record_no_decoder",
+            "stream": "/Sheet6",
+            "type_code": "0x0021",
+            "count": 3
+          }
+        ]
+      }
+    },
+    "DWG-0201GP06-01.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "XIONGANA2.igr",
+          "source": "archive_member",
+          "archive": "RefData~4~682.zip"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6",
+              "type_code": "0x003D",
+              "count": 5
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite329",
+              "count": 108
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite396",
+              "count": 12
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite329",
+              "count": 3,
+              "body_primitives": 12
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite396",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 34
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 136
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 161
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 422,
+          "on_page": 120,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 11,
+            "layer_consistency_checks": 64,
+            "endpoint_pair_guess": 59,
+            "point_no_marker": 128,
+            "kind_unknown": 29,
+            "text_empty": 2,
+            "text_whitespace_only": 9
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 24
+              },
+              "inferred": {
+                "endpoint_pair_guess": 49
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "layer_hidden": 10,
+                "on_page": 29
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 64,
+                "point_no_marker": 11
+              },
+              "inferred": {
+                "point_no_marker": 117
+              }
+            },
+            "text": {
+              "decoded": {
+                "layer_hidden": 1,
+                "on_page": 47,
+                "text_empty": 2,
+                "text_whitespace_only": 9
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 20
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "endpoint_pair_guess": 10,
+                "kind_unknown": 29
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 20
+          },
+          "total": 113,
+          "produced": 82,
+          "dropped": {
+            "body_layer_hidden": 31
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 193,
+          "off_sheet": 0,
+          "on_page": 182,
+          "dropped": {
+            "text_empty": 2,
+            "text_whitespace_only": 9
+          },
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 302,
+          "written": 302,
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite19",
+              "count": 170
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite19",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 3
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 35,
+          "on_page": 4,
+          "partial": 1,
+          "dropped": {
+            "point_no_marker": 22,
+            "kind_unknown": 9
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "point": {
+              "inferred": {
+                "point_no_marker": 22
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 3
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 1
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 9
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 1
+          },
+          "total": 170,
+          "produced": 162,
+          "dropped": {
+            "body_layer_hidden": 0,
+            "body_line_on_sheet_edge": 8
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 165,
+          "off_sheet": 0,
+          "on_page": 165,
+          "partial": 2,
+          "marks": {
+            "segments_dropped": 2
+          },
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 135,
+          "written": 133,
+          "dropped": {
+            "segment_too_short": 2
+          },
+          "unattributed": 0
+        }
+      }
+    },
+    "DWG-0202GP06-01.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "CPECCHBA2.igr",
+          "source": "archive_member",
+          "archive": "RefData~4~682.zip"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6615",
+              "type_code": "0x0018",
+              "count": 4
+            },
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6615",
+              "type_code": "0x0020",
+              "count": 1
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite793",
+              "count": 77
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite793",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 26
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 84
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 104
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 340,
+          "on_page": 128,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 20,
+            "layer_consistency_checks": 27,
+            "endpoint_pair_guess": 26,
+            "point_no_marker": 80,
+            "kind_unknown": 49,
+            "text_whitespace_only": 10
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 42
+              },
+              "inferred": {
+                "endpoint_pair_guess": 3
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "layer_hidden": 12,
+                "on_page": 21
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 27,
+                "point_no_marker": 4
+              },
+              "inferred": {
+                "point_no_marker": 76
+              },
+              "probe_only": {
+                "layer_hidden": 4
+              }
+            },
+            "text": {
+              "decoded": {
+                "layer_hidden": 4,
+                "on_page": 42,
+                "text_whitespace_only": 10
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 23
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "endpoint_pair_guess": 23,
+                "kind_unknown": 49
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 23
+          },
+          "total": 146,
+          "produced": 120,
+          "dropped": {
+            "body_layer_hidden": 26
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 239,
+          "off_sheet": 0,
+          "on_page": 229,
+          "dropped": {
+            "text_whitespace_only": 10
+          },
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 318,
+          "written": 318,
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite139",
+              "count": 32
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite139",
+              "count": 1,
+              "body_primitives": 0
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 158,
+          "on_page": 71,
+          "partial": 0,
+          "dropped": {
+            "fill_duplicate": 7,
+            "point_no_marker": 64,
+            "kind_unknown": 16
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 45
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "fill_duplicate": 7,
+                "on_page": 7
+              }
+            },
+            "point": {
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 17
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 2
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 16
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 2
+          },
+          "total": 32,
+          "produced": 32,
+          "dropped": {
+            "body_layer_hidden": 0
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 101,
+          "off_sheet": 0,
+          "on_page": 101,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 68,
+          "written": 68,
+          "unattributed": 0
+        }
+      }
+    },
+    "export-test/publish-data/A01/A01.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "CPE-SQ-A2.igr",
+          "source": "directory_file"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_no_decoder",
+              "stream": "/JSite204/Sheet6",
+              "type_code": "0x007B",
+              "count": 1
+            },
+            {
+              "reason": "record_native_skip",
+              "stream": "/JSite204/Sheet6",
+              "type_code": "0x0018",
+              "count": 4
+            },
+            {
+              "reason": "sheet_stream_without_geometry",
+              "stream": "/JSite204/Sheet22",
+              "count": 1,
+              "bytes": 8
+            },
+            {
+              "reason": "sheet_stream_without_geometry",
+              "stream": "/JSite204/Sheet32",
+              "count": 1,
+              "bytes": 8
+            },
+            {
+              "reason": "sheet_stream_without_geometry",
+              "stream": "/JSite204/Sheet41",
+              "count": 1,
+              "bytes": 8
+            },
+            {
+              "reason": "sheet_stream_without_geometry",
+              "stream": "/JSite204/Sheet51",
+              "count": 1,
+              "bytes": 8
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite121",
+              "count": 11
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite39",
+              "count": 18
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite121",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite204",
+              "count": 2,
+              "body_primitives": 0
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite39",
+              "count": 2,
+              "body_primitives": 11
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/JSite204/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 4
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/JSite204/Sheet6",
+              "family": "igRectangle2d",
+              "count": 2
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/JSite204/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 8
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 7
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 264,
+          "on_page": 98,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 2,
+            "layer_consistency_checks": 3,
+            "line_on_sheet_edge": 8,
+            "point_no_marker": 133,
+            "kind_unknown": 20
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "line_on_sheet_edge": 8,
+                "on_page": 68
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "layer_hidden": 2,
+                "on_page": 1
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 3,
+                "point_no_marker": 1
+              },
+              "inferred": {
+                "point_no_marker": 132
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 27
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 2
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 20
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 2
+          },
+          "total": 14,
+          "produced": 8,
+          "dropped": {
+            "body_layer_hidden": 6
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 104,
+          "off_sheet": 0,
+          "on_page": 104,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 140,
+          "written": 140,
+          "unattributed": 0
+        },
+        "suspect_sites": [
+          {
+            "reason": "record_no_decoder",
+            "stream": "/JSite204/Sheet6",
+            "type_code": "0x007B",
+            "count": 1
+          },
+          {
+            "reason": "sheet_stream_without_geometry",
+            "stream": "/JSite204/Sheet22",
+            "count": 1
+          },
+          {
+            "reason": "sheet_stream_without_geometry",
+            "stream": "/JSite204/Sheet32",
+            "count": 1
+          },
+          {
+            "reason": "sheet_stream_without_geometry",
+            "stream": "/JSite204/Sheet41",
+            "count": 1
+          },
+          {
+            "reason": "sheet_stream_without_geometry",
+            "stream": "/JSite204/Sheet51",
+            "count": 1
+          }
+        ]
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite16",
+              "count": 2
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite16",
+              "count": 1,
+              "body_primitives": 0
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 254,
+          "on_page": 174,
+          "partial": 0,
+          "dropped": {
+            "point_no_marker": 64,
+            "kind_unknown": 16
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 104
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "on_page": 17
+              }
+            },
+            "arc": {
+              "decoded": {
+                "on_page": 18
+              }
+            },
+            "point": {
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 34
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 1
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 16
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 1
+          },
+          "total": 2,
+          "produced": 2,
+          "dropped": {
+            "body_layer_hidden": 0
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 175,
+          "off_sheet": 0,
+          "on_page": 175,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 171,
+          "written": 171,
+          "unattributed": 0
+        }
+      }
+    },
+    "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "CPECCHBA2.igr",
+          "source": "archive_member",
+          "archive": "RefData~4~682.zip"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6615",
+              "type_code": "0x0018",
+              "count": 4
+            },
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6615",
+              "type_code": "0x0020",
+              "count": 1
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite793",
+              "count": 77
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite793",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 26
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 84
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 104
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 340,
+          "on_page": 128,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 20,
+            "layer_consistency_checks": 27,
+            "endpoint_pair_guess": 26,
+            "point_no_marker": 80,
+            "kind_unknown": 49,
+            "text_whitespace_only": 10
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 42
+              },
+              "inferred": {
+                "endpoint_pair_guess": 3
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "layer_hidden": 12,
+                "on_page": 21
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 27,
+                "point_no_marker": 4
+              },
+              "inferred": {
+                "point_no_marker": 76
+              },
+              "probe_only": {
+                "layer_hidden": 4
+              }
+            },
+            "text": {
+              "decoded": {
+                "layer_hidden": 4,
+                "on_page": 42,
+                "text_whitespace_only": 10
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 23
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "endpoint_pair_guess": 23,
+                "kind_unknown": 49
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 23
+          },
+          "total": 146,
+          "produced": 120,
+          "dropped": {
+            "body_layer_hidden": 26
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 239,
+          "off_sheet": 0,
+          "on_page": 229,
+          "dropped": {
+            "text_whitespace_only": 10
+          },
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 318,
+          "written": 318,
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite139",
+              "count": 32
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite139",
+              "count": 1,
+              "body_primitives": 0
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 158,
+          "on_page": 71,
+          "partial": 0,
+          "dropped": {
+            "fill_duplicate": 7,
+            "point_no_marker": 64,
+            "kind_unknown": 16
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 45
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "fill_duplicate": 7,
+                "on_page": 7
+              }
+            },
+            "point": {
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 17
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 2
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 16
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 2
+          },
+          "total": 32,
+          "produced": 32,
+          "dropped": {
+            "body_layer_hidden": 0
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 101,
+          "off_sheet": 0,
+          "on_page": 101,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 68,
+          "written": 68,
+          "unattributed": 0
+        }
+      }
+    },
+    "工艺管道及仪表流程-1.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "XA-A1.igr",
+          "source": "directory_file"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6",
+              "type_code": "0x004D",
+              "count": 1
+            },
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6",
+              "type_code": "0x00CE",
+              "count": 27
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite6963",
+              "count": 4
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite7559",
+              "count": 47
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite6963",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite7559",
+              "count": 2,
+              "body_primitives": 4
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 24
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 125
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 306
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 532,
+          "on_page": 347,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 16,
+            "layer_consistency_checks": 34,
+            "point_no_marker": 71,
+            "kind_unknown": 59,
+            "segment_too_short": 3,
+            "text_whitespace_only": 2
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 218
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "on_page": 59,
+                "segment_too_short": 3
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 34,
+                "point_no_marker": 2
+              },
+              "inferred": {
+                "point_no_marker": 64
+              },
+              "probe_only": {
+                "point_no_marker": 5
+              }
+            },
+            "text": {
+              "decoded": {
+                "layer_hidden": 16,
+                "on_page": 39,
+                "text_whitespace_only": 2
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 31
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 59
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 31
+          },
+          "total": 181,
+          "produced": 157,
+          "dropped": {
+            "body_layer_hidden": 24
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 478,
+          "off_sheet": 0,
+          "on_page": 473,
+          "dropped": {
+            "segment_too_short": 3,
+            "text_whitespace_only": 2
+          },
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 641,
+          "written": 638,
+          "dropped": {
+            "segment_too_short": 3
+          },
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_no_decoder",
+              "stream": "/Sheet6",
+              "type_code": "0x007E",
+              "count": 2
+            },
+            {
+              "reason": "record_refused",
+              "stream": "/Sheet6",
+              "type_code": "0x0013",
+              "count": 2
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 11
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 5100,
+          "on_page": 5000,
+          "partial": 0,
+          "dropped": {
+            "point_no_marker": 84,
+            "kind_unknown": 16
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 4878
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "on_page": 25
+              }
+            },
+            "point": {
+              "decoded": {
+                "point_no_marker": 20
+              },
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 97
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 16
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "total": 0,
+          "produced": 0,
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 5000,
+          "off_sheet": 0,
+          "on_page": 5000,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 6990,
+          "written": 6990,
+          "unattributed": 0
+        },
+        "suspect_sites": [
+          {
+            "reason": "record_no_decoder",
+            "stream": "/Sheet6",
+            "type_code": "0x007E",
+            "count": 2
+          },
+          {
+            "reason": "record_refused",
+            "stream": "/Sheet6",
+            "type_code": "0x0013",
+            "count": 2
+          }
+        ]
+      }
+    },
+    "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid": {
+      "page": {
+        "size_source": "declared",
+        "template": {
+          "name": "CPE-SQ-A1.igr",
+          "source": "directory_file"
+        }
+      },
+      "fonts_measured": false,
+      "drawing": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_native_skip",
+              "stream": "/Sheet6",
+              "type_code": "0x003D",
+              "count": 1
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite2895",
+              "count": 171
+            },
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite2897",
+              "count": 11
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite2895",
+              "count": 3,
+              "body_primitives": 11
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite2897",
+              "count": 1,
+              "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "AttributeFragment",
+              "count": 101
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "DependencyObject",
+              "count": 377
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "SubRecord0x0010",
+              "count": 392
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igSmartFrame2d",
+              "count": 1
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 770,
+          "on_page": 340,
+          "partial": 0,
+          "dropped": {
+            "layer_hidden": 80,
+            "layer_consistency_checks": 153,
+            "fill_duplicate": 4,
+            "point_no_marker": 82,
+            "kind_unknown": 111
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 56
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "fill_duplicate": 4,
+                "layer_hidden": 71,
+                "on_page": 88
+              }
+            },
+            "arc": {
+              "decoded": {
+                "on_page": 4
+              }
+            },
+            "circle": {
+              "decoded": {
+                "on_page": 1
+              }
+            },
+            "point": {
+              "decoded": {
+                "layer_consistency_checks": 153,
+                "point_no_marker": 16
+              },
+              "inferred": {
+                "point_no_marker": 64
+              },
+              "probe_only": {
+                "layer_hidden": 3,
+                "point_no_marker": 2
+              }
+            },
+            "text": {
+              "decoded": {
+                "layer_hidden": 6,
+                "on_page": 126
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 65
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 111
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 65
+          },
+          "total": 452,
+          "produced": 325,
+          "dropped": {
+            "body_layer_hidden": 127
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 602,
+          "off_sheet": 0,
+          "on_page": 602,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 1061,
+          "written": 1061,
+          "unattributed": 0
+        }
+      },
+      "furniture": {
+        "parse": {
+          "items": [
+            {
+              "reason": "record_symbol_body_cache",
+              "stream": "/JSite16",
+              "count": 2
+            },
+            {
+              "reason": "cache_definition_unplaced",
+              "stream": "/JSite16",
+              "count": 1,
+              "body_primitives": 0
+            }
+          ],
+          "unattributed": 0
+        },
+        "entities": {
+          "total": 254,
+          "on_page": 174,
+          "partial": 0,
+          "dropped": {
+            "point_no_marker": 64,
+            "kind_unknown": 16
+          },
+          "fill_duplicate_first_taken_by_furniture": 0,
+          "cross": {
+            "line": {
+              "decoded": {
+                "on_page": 104
+              }
+            },
+            "polyline": {
+              "decoded": {
+                "on_page": 17
+              }
+            },
+            "arc": {
+              "decoded": {
+                "on_page": 18
+              }
+            },
+            "point": {
+              "inferred": {
+                "point_no_marker": 64
+              }
+            },
+            "text": {
+              "decoded": {
+                "on_page": 34
+              }
+            },
+            "symbol_instance": {
+              "decoded": {
+                "on_page": 1
+              }
+            },
+            "unknown": {
+              "probe_only": {
+                "kind_unknown": 16
+              }
+            }
+          },
+          "unattributed": 0
+        },
+        "bodies": {
+          "placements": {
+            "cached": 1
+          },
+          "total": 2,
+          "produced": 2,
+          "dropped": {
+            "body_layer_hidden": 0
+          },
+          "unattributed": 0
+        },
+        "text": {
+          "control_chars": 0,
+          "trailing_empty_lines": 0
+        },
+        "primitives": {
+          "laid_out": 175,
+          "off_sheet": 0,
+          "on_page": 175,
+          "partial": 0,
+          "unattributed": 0
+        },
+        "segments": {
+          "total": 171,
+          "written": 171,
+          "unattributed": 0
+        }
+      }
+    }
+  }
+}

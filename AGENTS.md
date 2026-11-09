@@ -70,7 +70,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF and reads back, and none names a symbol no library carries — the 熊安 fixture's own `Xa …` symbols and its `XA-A1.igr` are committed under `test-file/Ref` | every `test-file/**/*.pid` |
-| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, exactly one primitive past its page (the sideways `N井场` run whose first glyph is clipped), known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen) | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, exactly one primitive past its page (the sideways `N井场` run whose first glyph is clipped), known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen). **Also carries the export-ledger gate** for this corpus: each page's `ExportLedger` is assembled from the same `PaperModel` and write result, `cross_check` must find nothing, the face-free account must match the written one except for the two font marks, and every page is compared against `docs/baselines/export-ledger-backup.json` (suspect counts may only fall, intentional counts are pinned exactly) | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/export_ledger_fixtures.rs` | 7 张仓库夹具的出图记账门禁：每页 `assemble` 后五层（解析 / 排版 / 符号体 / 写出 / 段）未归因全为 0，`cross_check`（8.1–8.7）无不符，同一页排两遍、两次序列化逐字节相同，序列化结果不含仓库根 / `CARGO_MANIFEST_DIR` / 主目录 / 盘符路径，最后与 `docs/baselines/export-ledger-fixtures.json` 逐页比对（可疑项只许降、有意项精确钉）。**没有字体需求，也没有任何软跳过分支**：7 张夹具、`test-file/symbols`、`test-file/Ref/Symbols`、`test-file/Ref/Template Files` 与 `test-file/backup-test/*_p/RefData~*.zip` 全部已入库，所以本机与 CI 都真跑。`UPDATE_EXPORT_LEDGER=1` 重写基线（可疑项会升高则拒绝写入） | 全部在仓库内（`test-file/**`），CI 上真跑 |
 | `pid-plot/tests/border_template.rs` | A0/A1/A2 sheets draw the frame, title block and sign-off column their linked `.igr` carries: both frames and 12 furniture labels on the `CPE-SQ` pages with the company name and `会 签 专 业` read back, and the A2 CCHB case on its own 35.354/7.071 mm insets, 116 strokes and 36 cells; a page with no same-size template draws none (pinned by `model.rs`'s extent unit test, no longer by an A2 negative) | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` + `CPECCHB-SQ-A2.igr` (soft-skips when absent) |
 | `pid-plot/tests/style_witness.rs` | The plant backup draws only style vocabulary a reference plot has exercised: the eleven acceptance pages' 10 pen widths / 2 dash patterns / 4 faces / 3 templates are pinned, every unexercised entry is pinned with its drawing-vs-furniture split (3 of the 4 unexercised widths are `CPECCHB-SQ-A1` furniture, `0.5000 mm` is also `D04`'s own ink, the 2 unexercised dash patterns are the drawing's own ink), and the four widths the open band boundaries cannot settle are pinned — `0.3000 mm` inside `(0.25, 0.35)`, `0.5000 mm` inside `(0.35, 0.70)`, `0.7500 mm` and `0.7999 mm` inside `(0.70, 1.06)` | `PID_ACCEPTANCE_CORPUS` (default `验收数据`; no fallback to the five-sheet corpus) and `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings — copied to a directory with no `Ref` and no archive in reach — draw nothing | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
@@ -82,7 +83,7 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 ### CI 覆盖：pid-plot 的测试文件哪些真跑、哪些软跳过
 
 `pid-plot/tests/` 下 13 个既有测试文件，加上本 mission 新增的
-`paper_model_golden.rs`，共 14 个。下表是**实测**定论，不是推断：用
+`paper_model_golden.rs` 与 `export_ledger_fixtures.rs`，共 15 个。下表是**实测**定论，不是推断：用
 `git worktree add --detach … <HEAD>` 建一个模拟 CI 的干净检出（无
 `test-file/symbols-full`、无 `test-file/fonts`、无 `PID_PLOT_FONTS`，且
 `PID_PARSE_SELF_CHECK_DIR` / `PID_ACCEPTANCE_CORPUS` / `PID_TEST_DATA_DIR`
@@ -111,11 +112,13 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 | `compare_five_drawings.rs` | **软跳过** | 两个用例都跳过，但打的字不一样：`five_drawings_write_compare_reports` 打 `skipping plot compare; …\plot/I井场 … .pdf is absent`，`survey_margin_text_once` 打的是 `skip survey`（`compare_five_drawings.rs:83-85` 的 `eprintln!` 后紧跟 `return`）。按关键字 `skipping` 抓会漏掉后一条，模式要写成 `skipping\|skip survey\|is absent\|no font directory` |
 | `template_symbol_gap.rs` | **软跳过** | `skipping template symbol gap; …集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent` |
 | `export_plant_backup.rs` | **软跳过（需临时打掉 `export_plant_backup.rs:121-122` 的两个硬编码绝对根才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None`，两条用例各打印一行 `skipping the D04 refusal pin; no backup-plant-data directory is present` 与 `skipping the backup export; no backup-plant-data directory is present` 并 `ok`。本机模拟时这两个根恰好存在（语料在这台机器上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并**失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1287`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，行为才与 Linux runner 一致。`style_witness.rs:108-109` 有同样的两个绝对根，同样处理后软跳过 |
+| `export_ledger_fixtures.rs` | **真跑** | 无任何 `skipping` 行；7 行 `<page>: 未发现可归属缺陷` 逐页打印，末行 `export-ledger: 7 页全部通过（可疑项 12 个，未归因 0）`。全部输入都在仓库内（`test-file/**`），`write_ledger` 不读字型，所以干净检出与 CI 上同样真跑。`docs/baselines/export-ledger-fixtures.json` 已入库，因此不带 `UPDATE_EXPORT_LEDGER` 时直接比对 |
 
-**结论**：**真跑 2 个 + 混合 3 个 + 软跳过 9 个 = 14 个**测试文件。
+**结论**：**真跑 3 个 + 混合 3 个 + 软跳过 9 个 = 15 个**测试文件。
 
-真跑的两个文件是 `paper_model_golden`（7 页整棵模型）与
-`refdata_archive_corpus`（4 个用例）。混合的三个文件各有一半用例真跑：
+真跑的三个文件是 `paper_model_golden`（7 页整棵模型）、
+`refdata_archive_corpus`（4 个用例）与 `export_ledger_fixtures`（7 页的
+五层守恒 + 交叉核对 + 确定性与路径扫描 + 基线比对）。混合的三个文件各有一半用例真跑：
 `border_template` 真跑两条 A2 建模段（A0/A1 软跳过）、`write_five_drawings`
 真跑三条纯单测（落盘那条跳过）、`reference_plots_acceptance` 真跑
 `only_the_surveyed_sheets_carry_furniture_masks`（`eleven_reference_plots`
