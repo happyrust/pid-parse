@@ -3529,9 +3529,12 @@ const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
 /// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every `igBspCurve2d`
 /// (PSM `0x005D`): the curve sampled span by span through
 /// [`crate::bspline::sample`]. The record is a leaf -- nothing else draws it
-/// -- so unlike a rectangle it has to be emitted to be seen. None sits in a
-/// top-level `Sheet*` stream on the corpus; the one the corpus has is in a
-/// symbol body, and reaches the drawing through
+/// -- so unlike a rectangle it has to be emitted to be seen. One top-level
+/// `Sheet*` stream of the corpora holds any: `XA-A1.igr`'s, with 23 of them,
+/// the bowls of an outlined wordmark, each drawn with the style its `index`
+/// names like the lines and arcs it joins
+/// ([`crate::style_link::line_styles_for_document`]). The drawings' own are
+/// in symbol bodies, and reach the page through
 /// [`NormalizedPidGeometry::symbol_definitions`].
 struct IgBspCurve2dEmitter;
 

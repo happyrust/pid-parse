@@ -3041,10 +3041,10 @@ pub fn text_styles_for_file(path: &Path) -> Result<TextStyleIndex, PidError> {
 
 /// Resolve the line style of every drawable record in one parsed `.pid`.
 ///
-/// Walks each `Sheet*`, takes the six families that carry an `index` —
+/// Walks each `Sheet*`, takes the seven families that carry an `index` —
 /// `igLine2d`, `igPoint2d`, `igLineString2d`, `igArc2d`, `igCircle2d`,
-/// `igEllipticalArc2d` — plus the symbol placements, and resolves each
-/// against the `StyleCluster` of that sheet's own storage.
+/// `igEllipticalArc2d`, `igBspCurve2d` — plus the symbol placements, and
+/// resolves each against the `StyleCluster` of that sheet's own storage.
 ///
 /// Records whose index resolves to something with no line symbology are left
 /// out rather than defaulted, so a caller can tell "this record asks for a
@@ -3084,6 +3084,12 @@ pub fn line_styles_for_document(doc: &PidDocument) -> LineStyleIndex {
             .chain(
                 sheet
                     .decoded_igellipticalarcs
+                    .iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                sheet
+                    .decoded_igbspcurves
                     .iter()
                     .map(|record| (record.oid, record.index)),
             )

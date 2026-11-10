@@ -432,3 +432,72 @@ fn the_xa_templates_sheet_level_arcs_close_the_counters_of_its_b() {
         );
     }
 }
+
+/// Every stroke of the template's outlined wordmark draws with the pen its
+/// style names: the lines, the two elliptical arcs of the `B`'s counters, and
+/// the B-splines of every letter's bowls.
+///
+/// `XA-A1.igr`'s `/Sheet6` keeps 23 `igBspCurve2d` records on its own chain
+/// — oid 1014, the two outer bowls of the `B`, is one — and across the 71
+/// pages the export is recorded on it is the only sheet that keeps any. The
+/// family's records carry the same style reference at payload `+14` the
+/// lines and arcs do, and a symbol body's B-spline is drawn with it; the
+/// line-style index did not list the family, so the bowls printed with the
+/// default pen, twice the width of the strokes they join.
+#[test]
+fn the_xa_templates_wordmark_draws_every_stroke_with_the_pen_it_names() {
+    use pid_parse::parsers::sheet_records::decode_igbspcurves;
+
+    if !std::path::Path::new(XA_TEMPLATE).exists() {
+        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
+        return;
+    }
+    let package = PidParser::new()
+        .parse_package(XA_TEMPLATE)
+        .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));
+    let styles = pid_parse::style_link::line_styles_for_document(&package.parsed);
+    let pen = |oid: u32| {
+        styles
+            .get(&("/Sheet6".to_string(), oid))
+            .map(|style| (style.symbology.width_mm(), style.symbology.rgb()))
+    };
+    // A line of the `B`: the lower edge of its lower counter.
+    let line = pen(1010).expect("the letter's lines resolve their style");
+    assert!(
+        (line.0 - 0.25).abs() < 1e-9,
+        "style 11 states a 0.25 mm pen, read {} mm",
+        line.0
+    );
+    for (oid, what) in [
+        (1012, "the upper counter's arc"),
+        (1013, "the lower counter's arc"),
+    ] {
+        assert_eq!(
+            pen(oid),
+            Some(line),
+            "oid {oid}, {what}, draws with the pen of the letter's lines"
+        );
+    }
+
+    let data = package
+        .streams
+        .get("/Sheet6")
+        .unwrap_or_else(|| panic!("{XA_TEMPLATE} has a /Sheet6"))
+        .data
+        .as_slice();
+    let curves = decode_igbspcurves(data);
+    assert_eq!(curves.len(), 23, "the sheet's own B-splines");
+    assert!(
+        curves.iter().any(|curve| curve.oid == 1014),
+        "the B's outer bowls are one of them"
+    );
+    for curve in &curves {
+        assert_eq!(curve.index, 11, "oid {} names style 11", curve.oid);
+        assert_eq!(
+            pen(curve.oid),
+            Some(line),
+            "oid {}, a B-spline, draws with the pen of the letter's lines",
+            curve.oid
+        );
+    }
+}

@@ -146207,6 +146207,14 @@
         53234
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -146547,6 +146555,14 @@
         53602
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -146855,6 +146871,14 @@
         55234
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -147355,6 +147379,14 @@
         55650
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -147727,6 +147759,14 @@
         59524
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -148387,6 +148427,14 @@
         60244
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -148791,6 +148839,14 @@
         60612
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -149099,6 +149155,14 @@
         60932
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -149343,6 +149407,14 @@
         63156
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -149811,6 +149883,14 @@
         63548
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -150151,6 +150231,14 @@
         64876
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -150619,6 +150707,14 @@
         65268
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -150959,6 +151055,14 @@
         68468
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -151459,6 +151563,14 @@
         68884
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -151831,6 +151943,14 @@
         71732
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -152235,6 +152355,14 @@
         72100
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -152543,6 +152671,14 @@
         72420
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -152787,6 +152923,14 @@
         74108
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -153287,6 +153431,14 @@
         74524
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -153659,6 +153811,14 @@
         75124
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -154127,6 +154287,14 @@
         75516
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -154467,6 +154635,14 @@
         77108
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
@@ -154839,6 +155015,14 @@
         77452
       ],
       "symbol": null,
+      "stroke": {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "width_mm": 0.25
+      },
       "shape": {
         "kind": "polyline",
         "points_mm": [
