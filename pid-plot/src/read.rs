@@ -11,6 +11,12 @@
 //! Colour is the one thing [`read_plot`] does not read that way: a path painted
 //! in the paper's own white is read like any other, though it prints nothing.
 //! [`read_plot_painted`] reads the ink and the paper-coloured paint apart.
+//!
+//! Three more things a page prints are in no [`PlotInk`] at all: a stroke
+//! that runs along the sheet is left out of the segments, a segment carries
+//! no cap and no join, and none carries its colour. [`read_plot_pens`] reads
+//! those — the sheet edges with their widths, the caps and joins the inked
+//! strokes end and turn with, and the colours the page inks in.
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -19,8 +25,9 @@ use hayro::hayro_interpret::{
     BlendMode, ClipPath, Context, Device, GlyphDrawMode, Image, InterpreterCache,
     InterpreterSettings, Paint, PathDrawMode, SoftMask, TransformExt, interpret_page,
 };
-use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, flatten};
+use kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape, flatten};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Chord height at which a curve becomes a run of straight segments.
 pub const CHORD_MM: f64 = 0.05;
@@ -153,6 +160,144 @@ fn read_painted_with_faces(
     pdf_bytes: &[u8],
     painted: Painted,
 ) -> Result<(PlotInk, Vec<String>), PlotReadError> {
+    let device = interpret(pdf_bytes, painted)?;
+    let [width_pt, height_pt] = device.page_pt;
+    let (spans, faces) = cluster_spans(device.glyphs, height_pt);
+    Ok((
+        PlotInk {
+            page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
+            segments: device.segments,
+            spans,
+        },
+        faces,
+    ))
+}
+
+/// How a stroked path ends: the PDF line cap (`J`) in force when it is
+/// stroked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineCap {
+    /// The stroke stops at its end point (`0 J`, the default).
+    Butt,
+    /// Half a pen's width of round past each end point (`1 J`).
+    Round,
+    /// Half a pen's width of square past each end point (`2 J`).
+    Square,
+}
+
+/// How a stroked path turns a corner: the PDF line join (`j`) in force when
+/// it is stroked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineJoin {
+    /// The outer edges meet in a point (`0 j`, the default).
+    Miter,
+    /// The corner is a disc of the pen's width (`1 j`).
+    Round,
+    /// The corner is cut straight across (`2 j`).
+    Bevel,
+}
+
+/// One straight stroke [`read_plot`] leaves out of a page's ink because it
+/// runs along the sheet ([`sheet_edge_mm`]): a frame line, on these plots.
+///
+/// The comparison built on [`read_plot`] drops these on both pages, so it
+/// says nothing about whether a frame line is there, where it lies, how wide
+/// it prints or whether it prints at all. They are listed here to be
+/// compared on their own.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SheetEdge {
+    /// Start, paper millimetres, y up. The part inside the clip in force.
+    pub start_mm: [f64; 2],
+    /// End, paper millimetres, y up.
+    pub end_mm: [f64; 2],
+    /// Stroke width in millimetres; 0 for the outline of a fill.
+    pub width_mm: f64,
+    /// Whether it is painted in the paper's own colour, and so prints
+    /// nothing.
+    pub paper: bool,
+}
+
+/// The inked strokes of a page that share one cap and one join.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StrokeEnds {
+    /// The cap those strokes end with.
+    pub cap: LineCap,
+    /// The join they turn their corners with.
+    pub join: LineJoin,
+    /// Stroked paths: one for every `S` that printed something.
+    pub paths: usize,
+    /// What those paths print, millimetres: every dash piece inside its
+    /// clip, a stroke along the sheet included.
+    pub length_mm: f64,
+    /// The same, piece by piece in drawing order: where each lies and how
+    /// wide it is. A stroke along the sheet is one piece, dashed or not.
+    pub strokes: Vec<InkSegment>,
+}
+
+/// One colour a page prints in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct InkColour {
+    /// The colour at eight bits a channel, alpha last; `None` for a pattern.
+    pub rgba: Option<[u8; 4]>,
+    /// Paths stroked or filled in it.
+    pub paths: usize,
+    /// Glyphs lettered in it.
+    pub glyphs: usize,
+}
+
+/// What a page's pens state that a [`PlotInk`] does not carry: the strokes
+/// left out as sheet edges, how the strokes end and join, and the colours
+/// the page inks in.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PlotPens {
+    /// Page width and height in millimetres.
+    pub page_mm: [f64; 2],
+    /// Every stroke [`read_plot`] leaves out as a sheet edge, in drawing
+    /// order, whatever it is painted in.
+    pub sheet_edges: Vec<SheetEdge>,
+    /// The inked strokes by cap and join, ascending. A stroke painted in the
+    /// paper's colour has no end to show and is in none of them.
+    pub ends: Vec<StrokeEnds>,
+    /// The colours the page inks in, ascending. The paper's own colour is
+    /// not one of them.
+    pub inks: Vec<InkColour>,
+}
+
+/// Read the first page of a PDF for what its pens state: see [`PlotPens`].
+pub fn read_plot_pens(pdf_bytes: &[u8]) -> Result<PlotPens, PlotReadError> {
+    let device = interpret(pdf_bytes, Painted::All)?;
+    let [width_pt, height_pt] = device.page_pt;
+    Ok(PlotPens {
+        page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
+        sheet_edges: device.edges,
+        ends: device
+            .ends
+            .into_iter()
+            .map(|((cap, join), tally)| StrokeEnds {
+                cap,
+                join,
+                paths: tally.paths,
+                length_mm: tally.length_pt * MM_PER_PT,
+                strokes: tally.strokes,
+            })
+            .collect(),
+        inks: device
+            .inks
+            .into_iter()
+            .map(|(rgba, (paths, glyphs))| InkColour {
+                rgba,
+                paths,
+                glyphs,
+            })
+            .collect(),
+    })
+}
+
+/// Run the first page of a PDF through an [`InkDevice`] that keeps the
+/// segments and glyphs `painted` names.
+fn interpret(pdf_bytes: &[u8], painted: Painted) -> Result<InkDevice, PlotReadError> {
     let pdf = Pdf::new(pdf_bytes.to_vec()).map_err(|_| PlotReadError::InvalidPdf)?;
     let pages = pdf.pages();
     let page = pages.first().ok_or(PlotReadError::NoPage)?;
@@ -180,17 +325,12 @@ fn read_painted_with_faces(
         segments: Vec::new(),
         glyphs: Vec::new(),
         clips: Vec::new(),
+        edges: Vec::new(),
+        ends: BTreeMap::new(),
+        inks: BTreeMap::new(),
     };
     interpret_page(page, &mut ctx, &mut device);
-    let (spans, faces) = cluster_spans(device.glyphs, height_pt);
-    Ok((
-        PlotInk {
-            page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
-            segments: device.segments,
-            spans,
-        },
-        faces,
-    ))
+    Ok(device)
 }
 
 struct RawGlyph {
@@ -232,6 +372,32 @@ struct InkDevice {
     /// glyph's origin is not its ink, and no reference label starts outside
     /// its clip.
     clips: Vec<Rect>,
+    /// Every stroke left out of `segments` as a sheet edge, whatever it is
+    /// painted in and whatever `painted` keeps.
+    edges: Vec<SheetEdge>,
+    /// Inked stroked paths by cap and join.
+    ends: BTreeMap<(LineCap, LineJoin), EndsTally>,
+    /// The colours the page inks in: paths and glyphs under each.
+    inks: BTreeMap<Option<[u8; 4]>, (usize, usize)>,
+}
+
+/// The inked stroked paths under one cap and join.
+#[derive(Default)]
+struct EndsTally {
+    /// How many paths.
+    paths: usize,
+    /// The length they print, points.
+    length_pt: f64,
+    /// What they print, piece by piece.
+    strokes: Vec<InkSegment>,
+}
+
+/// The colour of `paint` at eight bits a channel, or `None` for a pattern.
+fn rgba_of(paint: &Paint<'_>) -> Option<[u8; 4]> {
+    match paint {
+        Paint::Color(colour) => Some(colour.to_rgba().to_rgba8()),
+        Paint::Pattern(_) => None,
+    }
 }
 
 impl InkDevice {
@@ -244,18 +410,40 @@ impl InkDevice {
         }
     }
 
-    fn push_segment(&mut self, start: Point, end: Point, width_pt: f64) {
+    /// The part of `start` → `end` that prints: finite, and inside the clip
+    /// in force.
+    fn printed(&self, start: Point, end: Point) -> Option<(Point, Point)> {
         if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite()
         {
-            return;
+            return None;
         }
-        let (start, end) = match self.clips.last() {
-            Some(clip) => match clip_segment(*clip, start, end) {
-                Some(piece) => piece,
-                None => return,
-            },
-            None => (start, end),
-        };
+        match self.clips.last() {
+            Some(clip) => clip_segment(*clip, start, end),
+            None => Some((start, end)),
+        }
+    }
+
+    /// The part of a stroke along the sheet that prints.
+    ///
+    /// A sheet edge can lie on its clip's own edge: the A2 reference strokes
+    /// its left sheet edge at `x 0.48` pt under a clip that starts at
+    /// `x 0.48`. Half of the pen is then inside the clip and prints, so the
+    /// centre line is held to the clip grown by half the stroke's width
+    /// rather than to the clip itself, which would keep or drop the edge on
+    /// the last bit of a coordinate.
+    fn printed_edge(&self, start: Point, end: Point, width_pt: f64) -> Option<(Point, Point)> {
+        if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite()
+        {
+            return None;
+        }
+        let half = width_pt.abs() / 2.0;
+        match self.clips.last() {
+            Some(clip) => clip_segment(clip.inflate(half, half), start, end),
+            None => Some((start, end)),
+        }
+    }
+
+    fn push_segment(&mut self, start: Point, end: Point, width_pt: f64) {
         self.segments.push(InkSegment {
             start_mm: view_pt_to_paper_mm(start.x, start.y, self.page_pt[1]),
             end_mm: view_pt_to_paper_mm(end.x, end.y, self.page_pt[1]),
@@ -312,11 +500,12 @@ impl<'a> Device<'a> for InkDevice {
         paint: &Paint<'a>,
         draw_mode: &PathDrawMode,
     ) {
-        if !self.keeps(paint) {
-            return;
-        }
+        // The segments are this reading's; the sheet edges, the stroke ends
+        // and the ink colours are the page's, whatever the reading keeps.
+        let kept = self.keeps(paint);
+        let paper = paints_paper(paint);
         let scale = transform_scale(transform);
-        let (width_pt, dash_pt, offset_pt) = match draw_mode {
+        let (width_pt, dash_pt, offset_pt, ends) = match draw_mode {
             PathDrawMode::Stroke(stroke) => (
                 f64::from(stroke.line_width) * scale,
                 stroke
@@ -325,8 +514,20 @@ impl<'a> Device<'a> for InkDevice {
                     .map(|entry| f64::from(*entry) * scale)
                     .collect::<Vec<f64>>(),
                 f64::from(stroke.dash_offset) * scale,
+                Some((
+                    match stroke.line_cap {
+                        Cap::Butt => LineCap::Butt,
+                        Cap::Round => LineCap::Round,
+                        Cap::Square => LineCap::Square,
+                    },
+                    match stroke.line_join {
+                        Join::Miter => LineJoin::Miter,
+                        Join::Round => LineJoin::Round,
+                        Join::Bevel => LineJoin::Bevel,
+                    },
+                )),
             ),
-            PathDrawMode::Fill(_) => (0.0, Vec::new(), 0.0),
+            PathDrawMode::Fill(_) => (0.0, Vec::new(), 0.0, None),
         };
         let mut dash = DashWalk::new(&dash_pt, offset_pt);
         let flat = transform * path.clone();
@@ -334,17 +535,44 @@ impl<'a> Device<'a> for InkDevice {
         let mut current: Option<Point> = None;
         let page_w = self.page_pt[0];
         let page_h = self.page_pt[1];
-        let run = |device: &mut Self, from: Point, to: Point, dash: &mut DashWalk| {
+        // What this path prints: its length in points, and each piece.
+        let mut printed_pt = 0.0;
+        let mut printed: Vec<InkSegment> = Vec::new();
+        let piece = |piece_start: Point, piece_end: Point| InkSegment {
+            start_mm: view_pt_to_paper_mm(piece_start.x, piece_start.y, page_h),
+            end_mm: view_pt_to_paper_mm(piece_end.x, piece_end.y, page_h),
+            width_mm: width_pt.abs() * MM_PER_PT,
+        };
+        let mut run = |device: &mut Self, from: Point, to: Point, dash: &mut DashWalk| {
             let pieces = dash.split([from.x, from.y], [to.x, to.y]);
             if is_sheet_edge(from, to, page_w, page_h) {
+                // Listed whole, a dashed one too: what is asked of a stroke
+                // this long is where it lies and how wide it is.
+                if let Some((edge_start, edge_end)) = device.printed_edge(from, to, width_pt) {
+                    printed_pt += (edge_end - edge_start).hypot();
+                    let edge = piece(edge_start, edge_end);
+                    device.edges.push(SheetEdge {
+                        start_mm: edge.start_mm,
+                        end_mm: edge.end_mm,
+                        width_mm: edge.width_mm,
+                        paper,
+                    });
+                    printed.push(edge);
+                }
                 return;
             }
             for (piece_start, piece_end) in pieces {
-                device.push_segment(
+                let Some((piece_start, piece_end)) = device.printed(
                     Point::new(piece_start[0], piece_start[1]),
                     Point::new(piece_end[0], piece_end[1]),
-                    width_pt,
-                );
+                ) else {
+                    continue;
+                };
+                printed_pt += (piece_end - piece_start).hypot();
+                printed.push(piece(piece_start, piece_end));
+                if kept {
+                    device.push_segment(piece_start, piece_end, width_pt);
+                }
             }
         };
         flatten(flat, CHORD_MM * PT_PER_MM, |element| match element {
@@ -369,6 +597,18 @@ impl<'a> Device<'a> for InkDevice {
             }
             PathEl::QuadTo(_, _) | PathEl::CurveTo(_, _, _) => {}
         });
+        // A path that prints nothing — every piece outside its clip, or
+        // painted in the paper's colour — states no ink and shows no end.
+        if paper || printed_pt <= 0.0 {
+            return;
+        }
+        self.inks.entry(rgba_of(paint)).or_default().0 += 1;
+        if let Some(ends) = ends {
+            let tally = self.ends.entry(ends).or_default();
+            tally.paths += 1;
+            tally.length_pt += printed_pt;
+            tally.strokes.append(&mut printed);
+        }
     }
 
     fn draw_glyph(
@@ -379,15 +619,20 @@ impl<'a> Device<'a> for InkDevice {
         paint: &Paint<'a>,
         _: &GlyphDrawMode,
     ) {
-        if !self.keeps(paint) {
-            return;
-        }
         let text = match glyph.as_unicode() {
             Some(BfString::Char(ch)) => ch.to_string(),
             Some(BfString::String(text)) => text,
             None => return,
         };
         if text.chars().all(char::is_control) {
+            return;
+        }
+        // A glyph that draws a character states the colour it is lettered
+        // in; a space draws nothing in any colour.
+        if !paints_paper(paint) && !text.chars().all(char::is_whitespace) {
+            self.inks.entry(rgba_of(paint)).or_default().1 += 1;
+        }
+        if !self.keeps(paint) {
             return;
         }
         let placed = transform * glyph_transform;
@@ -774,8 +1019,8 @@ mod tests {
     use kurbo::{Point, Rect};
 
     use super::{
-        DashWalk, Painted, clip_segment, read_plot, read_plot_painted, sheet_edge_mm,
-        view_pt_to_paper_mm,
+        DashWalk, InkColour, LineCap, LineJoin, Painted, clip_segment, read_plot,
+        read_plot_painted, read_plot_pens, sheet_edge_mm, view_pt_to_paper_mm,
     };
 
     /// Pattern used by the sheet pen: 7 mm on, 1.75 off, 0.35 on, 1.75 off.
@@ -971,6 +1216,154 @@ mod tests {
         assert!(
             rows.iter().all(|y| [30.0, 50.0, 80.0, 85.0].contains(y)),
             "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_stroke_along_the_sheet_is_left_out_of_the_ink_and_listed_as_an_edge() {
+        // A 100 pt page. Three strokes run more than nine tenths of it: a
+        // thin black one along the bottom, a 3.84 pt one up the right side —
+        // the A2 reference's inner frame is stroked `3.84 w` — and a white
+        // one along the top. A fourth stops at half the page.
+        let content = "0.48 w 0 G 2 5 m 98 5 l S \
+            3.84 w 95 2 m 95 98 l S \
+            0.48 w 1 G 2 95 m 98 95 l S \
+            0 G 10 50 m 60 50 l S";
+        let pdf = one_page_pdf(content, 100.0);
+        let mm = 25.4 / 72.0;
+
+        // The ink is the short stroke alone, as it always was.
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.segments.len(), 1, "{:?}", ink.segments);
+        assert!((ink.segments[0].start_mm[1] - 50.0 * mm).abs() < 1e-9);
+
+        // The three long ones are the page's sheet edges, in drawing order,
+        // each with the width it is stroked at and whether it prints.
+        let pens = read_plot_pens(&pdf).expect("read");
+        let edges: Vec<(f64, f64, bool)> = pens
+            .sheet_edges
+            .iter()
+            .map(|edge| {
+                (
+                    (edge.end_mm[0] - edge.start_mm[0]).hypot(edge.end_mm[1] - edge.start_mm[1]),
+                    edge.width_mm,
+                    edge.paper,
+                )
+            })
+            .collect();
+        assert_eq!(edges.len(), 3, "{edges:?}");
+        for (edge, (width_pt, paper)) in
+            edges
+                .iter()
+                .zip([(0.48, false), (3.84, false), (0.48, true)])
+        {
+            assert!((edge.0 - 96.0 * mm).abs() < 1e-6, "{edges:?}");
+            assert!((edge.1 - width_pt * mm).abs() < 1e-6, "{edges:?}");
+            assert_eq!(edge.2, paper, "{edges:?}");
+        }
+        // Where: the second one runs up the page at x 95 pt.
+        let up = &pens.sheet_edges[1];
+        assert!((up.start_mm[0] - 95.0 * mm).abs() < 1e-9, "{up:?}");
+        assert!((up.start_mm[1] - 2.0 * mm).abs() < 1e-9, "{up:?}");
+        assert!((up.end_mm[1] - 98.0 * mm).abs() < 1e-9, "{up:?}");
+        // Read as ink or as paper, the page lists the same edges: they are
+        // the page's, not a reading's.
+        assert!(
+            read_plot_painted(&pdf, Painted::Inked)
+                .expect("read")
+                .segments
+                .len()
+                == 1
+        );
+    }
+
+    #[test]
+    fn an_edge_outside_its_clip_is_not_an_edge() {
+        // The same bottom stroke under a clip that stops short of it.
+        let content = "q 0 100 100 -90 re W n 0.48 w 2 5 m 98 5 l S Q";
+        let pens = read_plot_pens(&one_page_pdf(content, 100.0)).expect("read");
+        assert!(pens.sheet_edges.is_empty(), "{:?}", pens.sheet_edges);
+        assert!(pens.ends.is_empty(), "{:?}", pens.ends);
+        assert!(pens.inks.is_empty(), "{:?}", pens.inks);
+    }
+
+    #[test]
+    fn an_edge_on_its_clips_own_edge_prints_half_its_pen_and_is_an_edge() {
+        // The A2 reference clips at `x 0.48` pt and strokes its left sheet
+        // edge at `x 0.48` with a 0.48 pt pen: the centre line is on the
+        // clip's edge — a hair outside it once the coordinates are floats —
+        // and half the pen prints. A stroke a whole pen outside prints
+        // nothing.
+        let clip = "q 0.48 100 99.52 -100 re W n 0.48 w";
+        let on_the_edge = format!("{clip} 0.47 98 m 0.47 2 l S Q");
+        let pens = read_plot_pens(&one_page_pdf(&on_the_edge, 100.0)).expect("read");
+        assert_eq!(pens.sheet_edges.len(), 1, "{:?}", pens.sheet_edges);
+        let outside = format!("{clip} 0 98 m 0 2 l S Q");
+        let pens = read_plot_pens(&one_page_pdf(&outside, 100.0)).expect("read");
+        assert!(pens.sheet_edges.is_empty(), "{:?}", pens.sheet_edges);
+    }
+
+    #[test]
+    fn the_caps_and_joins_are_tallied_over_what_prints() {
+        // The reference plots stroke their first paths before they state a
+        // cap — butt ends, mitred corners, PDF's defaults — and every later
+        // one under `1 j 1 J`. Two paths under the defaults, then two under
+        // round ends, one of them white; then a filled triangle.
+        let content = "0.48 w 0 G 10 10 m 60 10 l S \
+            10 20 m 40 20 l 40 30 l S \
+            1 j 1 J 10 40 m 30 40 l S \
+            1 G 10 50 m 90 50 l S \
+            0 g 10 60 m 20 60 l 20 70 l h f";
+        let pens = read_plot_pens(&one_page_pdf(content, 100.0)).expect("read");
+        let mm = 25.4 / 72.0;
+        assert_eq!(pens.ends.len(), 2, "{:?}", pens.ends);
+        let butt = &pens.ends[0];
+        assert_eq!((butt.cap, butt.join), (LineCap::Butt, LineJoin::Miter));
+        assert_eq!(butt.paths, 2);
+        assert!(
+            (butt.length_mm - (50.0 + 30.0 + 10.0) * mm).abs() < 1e-6,
+            "{butt:?}"
+        );
+        // Piece by piece, in drawing order: the line, then the two legs of
+        // the corner.
+        assert_eq!(butt.strokes.len(), 3, "{butt:?}");
+        assert!((butt.strokes[0].end_mm[0] - 60.0 * mm).abs() < 1e-9);
+        assert!((butt.strokes[2].start_mm[0] - 40.0 * mm).abs() < 1e-9);
+        assert!((butt.strokes[2].end_mm[1] - 30.0 * mm).abs() < 1e-9);
+        let round = &pens.ends[1];
+        assert_eq!((round.cap, round.join), (LineCap::Round, LineJoin::Round));
+        // The white stroke has no end to show: one path, 20 pt.
+        assert_eq!(round.paths, 1);
+        assert!((round.length_mm - 20.0 * mm).abs() < 1e-6, "{round:?}");
+        assert_eq!(round.strokes.len(), 1, "{round:?}");
+        assert!((round.strokes[0].start_mm[1] - 40.0 * mm).abs() < 1e-9);
+        // A width is a single-precision number in the page.
+        assert!((round.strokes[0].width_mm - 0.48 * mm).abs() < 1e-6);
+        // One ink: three black strokes and a black fill. The white stroke
+        // states none.
+        assert_eq!(
+            pens.inks,
+            vec![InkColour {
+                rgba: Some([0, 0, 0, 255]),
+                paths: 4,
+                glyphs: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_ink_is_a_second_colour() {
+        // Every reference plot inks in black alone; a page that strokes one
+        // path in grey says so.
+        let content = "0.48 w 0 G 10 10 m 60 10 l S 0.5 G 10 20 m 60 20 l S";
+        let pens = read_plot_pens(&one_page_pdf(content, 100.0)).expect("read");
+        let colours: Vec<Option<[u8; 4]>> = pens.inks.iter().map(|ink| ink.rgba).collect();
+        assert_eq!(colours.len(), 2, "{colours:?}");
+        assert_eq!(colours[0], Some([0, 0, 0, 255]));
+        assert!(
+            pens.inks.iter().all(|ink| ink.paths == 1),
+            "{:?}",
+            pens.inks
         );
     }
 
