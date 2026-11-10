@@ -83,8 +83,11 @@ pub struct MapProperty {
     /// `IObject` `Name`: the attribute (`Description`), dotted when it is
     /// reached through a relationship (`ProcessDesign.Max.Temperature`).
     pub name: String,
-    /// `IMapObject` `ToolOID` (`SPMP_Vessel_Description`). Two properties
-    /// of one item type share it when one attribute is published two ways.
+    /// `IMapObject` `ToolOID` (`SPMP_Vessel_Description`). Not a key: two
+    /// blocks carry the same one where the map lists an attribute of an
+    /// item type twice (`SPMP_Vessel_EquipmentType`), and where two item
+    /// types share one (`SPMP_PipeRun_ProcessDesign.Max.Temperature`, on
+    /// `PipeRun` and on `DuctRun`).
     pub tool_oid: String,
     /// `UID1` of the first `MapClassMapProperties` rel that names this
     /// property: the [`MapClass`] that owns it. Empty when none does.
@@ -1071,15 +1074,41 @@ mod tests {
             )]
         );
 
-        // A tool id is not a key: ten pairs of properties share one.
-        let mut tool_oids: Vec<&str> = map
-            .properties
-            .iter()
-            .map(|property| property.tool_oid.as_str())
+        // A tool id is not a key: ten are carried by two blocks each. Nine
+        // are an attribute the map lists twice for one item type, the
+        // tenth is on two item types.
+        let mut blocks_of = BTreeMap::<&str, Vec<&str>>::new();
+        for property in &map.properties {
+            blocks_of
+                .entry(property.tool_oid.as_str())
+                .or_default()
+                .push(item_type(property));
+        }
+        assert_eq!(blocks_of.len(), 1_808);
+        let shared: Vec<(&str, Vec<&str>)> = blocks_of
+            .into_iter()
+            .filter(|(_, item_types)| item_types.len() > 1)
             .collect();
-        tool_oids.sort_unstable();
-        tool_oids.dedup();
-        assert_eq!(tool_oids.len(), 1_808);
+        let listed_twice =
+            |tool_oid: &'static str, owner: &'static str| (tool_oid, vec![owner, owner]);
+        assert_eq!(
+            shared,
+            [
+                listed_twice("SPMP_DuctNozzle_NozzleType", "DuctNozzle"),
+                listed_twice("SPMP_EquipComponent_EquipmentType", "EquipComponent"),
+                listed_twice("SPMP_EquipmentOther_EquipmentType", "EquipmentOther"),
+                listed_twice("SPMP_Equipment_EquipmentType", "Equipment"),
+                listed_twice("SPMP_Exchanger_EquipmentType", "Exchanger"),
+                listed_twice("SPMP_Mechanical_EquipmentType", "Mechanical"),
+                listed_twice("SPMP_Nozzle_NozzleType", "Nozzle"),
+                (
+                    "SPMP_PipeRun_ProcessDesign.Max.Temperature",
+                    vec!["PipeRun", "DuctRun"]
+                ),
+                listed_twice("SPMP_PipingComp_PipingCompType", "PipingComp"),
+                listed_twice("SPMP_Vessel_EquipmentType", "Vessel"),
+            ]
+        );
 
         // An equipment type sits under its subclass, the subclass under its
         // class, and the class under nothing.

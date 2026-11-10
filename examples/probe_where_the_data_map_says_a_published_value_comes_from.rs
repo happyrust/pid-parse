@@ -57,13 +57,14 @@ struct Tally {
     stated: usize,
 }
 
-/// Values counted three ways: all of them, and the ones the map names by
-/// either rule.
+/// Values counted four ways: all of them, the ones the map names by each
+/// rule, and the ones it names by neither.
 #[derive(Default, Clone, Copy)]
 struct Named {
     values: usize,
     by_item_type: usize,
     by_rel: usize,
+    by_neither: usize,
 }
 
 impl Named {
@@ -71,6 +72,7 @@ impl Named {
         self.values += values;
         self.by_item_type += if by_item_type { values } else { 0 };
         self.by_rel += if by_rel { values } else { 0 };
+        self.by_neither += if by_item_type || by_rel { 0 } else { values };
     }
 }
 
@@ -562,15 +564,16 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     }
 
     println!();
+    let count = arguments.references.len();
     println!(
-        "{} references: {} non-empty values; the map names {} ({}) by the item type's publish class, {} ({}) by the class the rel names; it names {} of them neither way",
-        arguments.references.len(),
+        "{count} {}: {} non-empty values; the map names {} ({}) by the item type's publish class, {} ({}) by the class the rel names; it names {} of them neither way",
+        if count == 1 { "reference" } else { "references" },
         all.values,
         all.by_item_type,
         percent(all.by_item_type, all.values),
         all.by_rel,
         percent(all.by_rel, all.values),
-        all.values - all.by_item_type
+        all.by_neither
     );
     if arguments.ours.is_some() {
         println!(
@@ -581,13 +584,13 @@ fn run(arguments: &Arguments) -> Result<(), String> {
             percent(stated.by_item_type, stated.values)
         );
         println!(
-            "not stated: {}, of which the map names {} ({}) by the item type's publish class, {} ({}) by the class the rel names; not named {}",
+            "not stated: {}, of which the map names {} ({}) by the item type's publish class, {} ({}) by the class the rel names; named by neither {}",
             not_stated.values,
             not_stated.by_item_type,
             percent(not_stated.by_item_type, not_stated.values),
             not_stated.by_rel,
             percent(not_stated.by_rel, not_stated.values),
-            not_stated.values - not_stated.by_item_type
+            not_stated.by_neither
         );
     }
 

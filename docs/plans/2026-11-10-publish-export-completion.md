@@ -128,7 +128,8 @@ Q1–Q6 仍未答复。这一阶段做两件不依赖答复的事：处理一个
 | `ba5a83f` test(publish): pin which findings the DWG fixture prints, not how many | ⑤（③ 的测试注释） | `("missing value", 17)` 换成逐行钉：`DWG_VALUES_NOT_STATED` 17 行、`DWG_EXP_OBJECT_AND_REL_FINDINGS` 18 行，原样比对。`5 fluid codes missing` 的原因、缺的那个 `PIDBranchPoint` 是未决的 stockpile 规则、整包那 4 个 `PIDBranchPoint` 同理，都写在钉旁边。`…reads_its_own_packages_exp_dump` 改名 `the_dwg_fixture_publishes_against_its_packages_later_dump` |
 | `0569645` docs(publish): name the cell the strict exp read stopped on, and the samples behind three rules | ② ⑨ | 拦住旧读法的是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`（0.05），不是 `SLOPE`：代码注释、测试、CHANGELOG、分析页四处改对，CHANGELOG 加一句更正。三条规则各自的样本量写进代码注释与分析页 §3.2 |
 | `28a8e29` feat(backup): read the class and property maps of SPPIDDataMap.xml | S6 | 见下 |
-| 本提交 | ③ ⑧ ⑩ | 分析页 §3.4、§3.6、§6 与本计划的 Q1、Q6、S8、S12、S15、S16 |
+| `8f256a2` docs(publish): record the stockpile OPC as an open rule, what the 87.5 % counts, and the third phase | ③ ⑧ ⑩ | 分析页 §3.4、§3.6、§6 与本计划的 Q1、Q6、S8、S12、S15、S16 |
+| 本提交 | S6 的收尾 | 探针把「两种算法都叫不出名字」的值单独数：原来用总数减第一种算法的数，两种算法点到的值不同时这个数就名不副实。11 份与 7 份参考上数字没变（5 755 与 4 488），所以两种算法在这些参考上点到的是同一批值。`MapProperty::tool_oid` 的注释改对，单测把共用 `ToolOID` 的 10 个逐个钉住（见下第 6 条） |
 
 **① 的复现与证明。** 把 DWG 包那份 dump 的 `T_PLANTITEM.ITEMTAG` 列头改成数据库字符集（873 / 1）：改前的二进制退出 0，管线从 6 条变 0 条、关系从 133 条变 127 条，一行报错都没有。审查只指出了「整列不是 AL16UTF16」这一种；同样静默的还有格子一级的，例如 `T_CONNECTOR.STARTOBJECT` 里出现一个小数，少一条连接关系。19 份各坏一处的 dump（10 份改字符集、9 份放一个小数）里，改前 11 份退出 0（4 份输出变了），改后 19 份全部退出 1、一个文件不写、报错点名表与列。单测 `every_followed_column_is_refused_when_its_cells_were_not_read` 把 16 张表里被跟的 66 个列逐个弄坏，改前的读法放过其中 24 个。真实数据不受影响的证明有两层：两份 Oracle dump（DWG 包、53 张那个库）里被跟的列没有一个不是 AL16UTF16、被跟的格没有一个没读出来（`target/publish-audit/review2/followed-census-*.txt`）；整张对照矩阵 30 次运行、253 个文件逐字节相同，退出码与标准输出也相同。第三个包 `TEST02_p` 的 `Export.dmp` 是 SQL Server 的 MTF，不走这个读法，它在矩阵里的输出同样没变。
 
@@ -154,7 +155,7 @@ Q1–Q6 仍未答复。这一阶段做两件不依赖答复的事：处理一个
 
 **矩阵。** `51521ef` 之后与 S6 之后各跑一遍（`audit.py` + `compare_runs.py`，30 次运行）：253 个文件逐字节相同，退出码与标准输出相同。这一阶段没有一个输出文件变过。`tests/publish_completeness.rs` 的 17 个钉没有动。
 
-**门禁结果。** 表里前六个提交各跑一遍全量，每次都是：`fmt` 与 `clippy` 通过；15 个 `publish_*` 文件 116 过 / 2 ignored，`parser_panic_safety` 3 过；`--no-default-features --lib` 937 过；wasm32 通过；`missing documentation` 0 = 基线 0；`publish_*` 文件打印的 skip 行 21 行（分布在 5 个文件里），逐次相同。`--lib` / `--all-targets` 的通过数依次是 1 420 / 1 838、1 424 / 1 842、1 426 / 1 844、1 426 / 1 844、1 426 / 1 844、1 432 / 1 850，都是 0 败、3 ignored。`28a8e29` 那一次的 `--all-targets` 第一遍在 `tests/plant_backup_census.rs` 里中止（`memory allocation of 1572864 bytes failed`，机器上当时有别的构建在跑）；这条用例单独跑通过，峰值提交内存 2.6 GB，同一份暂存改动整步重跑是上面的 1 850。本提交只改文档，它的门禁结果写在交回的报告里。
+**门禁结果。** 表里前六个提交各跑一遍全量，每次都是：`fmt` 与 `clippy` 通过；15 个 `publish_*` 文件 116 过 / 2 ignored，`parser_panic_safety` 3 过；`--no-default-features --lib` 937 过；wasm32 通过；`missing documentation` 0 = 基线 0；`publish_*` 文件打印的 skip 行 21 行（分布在 5 个文件里），逐次相同。`--lib` / `--all-targets` 的通过数依次是 1 420 / 1 838、1 424 / 1 842、1 426 / 1 844、1 426 / 1 844、1 426 / 1 844、1 432 / 1 850，都是 0 败、3 ignored。`28a8e29` 那一次的 `--all-targets` 第一遍在 `tests/plant_backup_census.rs` 里中止（`memory allocation of 1572864 bytes failed`，机器上当时有别的构建在跑）；这条用例单独跑通过，峰值提交内存 2.6 GB，同一份暂存改动整步重跑是上面的 1 850。只改文档的 `8f256a2` 同样是 1 432 / 1 850，其余各项相同。本提交的门禁结果写在交回的报告里。
 
 #### S6：数据映射读全
 
@@ -177,7 +178,7 @@ Q1–Q6 仍未答复。这一阶段做两件不依赖答复的事：处理一个
    - 映射给这四条链各点了一个名字（`ConstructionStatus`、`EqType0`、`PipingComponentType1`、`ProcessEqCompType1`），其余各级（`ConstructionStatus2`、`EqType1–5`、`PipingComponentType2/3`、`ProcessEqCompType2`）没点；仪表的 `InstrumentType` / `InstrumentType3` 与图纸的 `DocCategory` / `DocType` 一个都没点。
 
    所以各级的值跟的是**目标枚举在 schema 一侧的层级**，这份映射里没有。S8 的规则不能只从 `MapEnumMapEnum` 推出来，要么从参考里量（每个下级值配哪个上级值），要么读 schema 文件或 `EFAdapter.dll`。
-6. **`ToolOID` 不是键。** 1 818 个属性只有 1 808 个不同的 `ToolOID`，10 对属性共用一个；`DataMap` 按 `UID` 关联。
+6. **`ToolOID` 不是键。** 1 818 个属性只有 1 808 个不同的 `ToolOID`，10 对属性共用一个：9 对是同一个物项类型把同一个属性列了两次（例如 `Nozzle.NozzleType`，一次发成 `ProcessEqCompType1`，一次按 `EnumToStringConv` 发成 `ProcEqpCompTypeDescription`），1 对是 `PipeRun` 与 `DuctRun` 共用 `SPMP_PipeRun_ProcessDesign.Max.Temperature`。`DataMap` 按 `UID` 关联。
 7. **库属性落到表和列，要靠 dump 自己的数据字典。** 映射只有物项类型名与属性名。dump 里的 `ITEM` / `ITEMATTRIBUTIONS` / `UNIQUEATTS` / `ENTITIES` / `ATTRIBUTES` 五张表把它们接到 `T_表.列`：694 条属性关系里 572 条接得上；119 条属于字典里没有同名物项类型的映射类（`InstrumentInline` 92、`DuctNozzle` 17、`InstrumentCtrlSysFunc` 10）；3 条的物项类型没有同名属性（`InstrLoop.TagPrefix`、`Instrument.TagPrefix`、`PipingComp.IsFlowDirectional`）。这一步现在只在探针里，没有进库。
 
 **探针**：`examples/probe_where_the_data_map_says_a_published_value_comes_from.rs`。对参考的每个 `(类, 接口, 属性)` 给出映射里的来源、换算与值表；`--ours` 按我方写没写出来分开；`--dump` 再给出表和列。它复现了审查者的两组数：
