@@ -108,6 +108,7 @@ pub struct GateInput<'a> {
 /// What the gate decided, and the lines it wants printed.
 pub struct GateReport {
     passed: bool,
+    counts_compared: bool,
     lines: Vec<String>,
 }
 
@@ -116,6 +117,20 @@ impl GateReport {
     #[must_use]
     pub fn passed(&self) -> bool {
         self.passed
+    }
+
+    /// Whether this run's counts were compared with the baseline's, key by key.
+    ///
+    /// `false` whenever the comparison did not happen: the corpus descriptor
+    /// differs (requirement 13.7 skips the counts and still passes), the
+    /// baseline is missing, unreadable or of another schema, or the run
+    /// rewrote the baseline instead of reading it. [`passed`](Self::passed)
+    /// alone cannot tell a page that matched its baseline from a page nobody
+    /// compared, so a gate over a corpus that is wholly committed asserts
+    /// this as well.
+    #[must_use]
+    pub fn counts_compared(&self) -> bool {
+        self.counts_compared
     }
 
     /// The report, one line per fact, ready to print.
@@ -262,6 +277,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
                 }
                 GateReport {
                     passed: false,
+                    counts_compared: false,
                     lines,
                 }
             }
@@ -278,6 +294,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
                     lines.push(format!("提示: {}", input.hint));
                     GateReport {
                         passed: true,
+                        counts_compared: false,
                         lines,
                     }
                 }
@@ -288,6 +305,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
                     ));
                     GateReport {
                         passed: false,
+                        counts_compared: false,
                         lines,
                     }
                 }
@@ -305,6 +323,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
             lines.push(format!("提示: {}", input.hint));
             return GateReport {
                 passed: false,
+                counts_compared: false,
                 lines,
             };
         }
@@ -316,6 +335,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
             lines.push(format!("提示: {}", input.hint));
             return GateReport {
                 passed: false,
+                counts_compared: false,
                 lines,
             };
         }
@@ -329,6 +349,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
         lines.push(format!("提示: {}", input.hint));
         return GateReport {
             passed: false,
+            counts_compared: false,
             lines,
         };
     }
@@ -370,6 +391,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
         }
         return GateReport {
             passed: !failed,
+            counts_compared: false,
             lines,
         };
     }
@@ -502,6 +524,7 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport {
     }
     GateReport {
         passed: !failed,
+        counts_compared: true,
         lines,
     }
 }
@@ -1075,6 +1098,10 @@ mod tests {
     /// asks for the baseline to be lowered; an intentional change is an account
     /// change; no change passes. Every page's verdict line is one of the two
     /// allowed shapes.
+    ///
+    /// Each of those verdicts comes out of a key-by-key comparison, and the
+    /// report says so whether the comparison passed or failed; the rewrite
+    /// that pinned the baseline compared nothing.
     #[test]
     fn gate_classifies_rise_fall_and_hold() {
         let path = temp_path("classify");
@@ -1088,6 +1115,7 @@ mod tests {
             true,
         ));
         assert!(report.passed(), "{}", report.render());
+        assert!(!report.counts_compared(), "{}", report.render());
 
         // Hold: the same account passes.
         let report = run_gate(an_input(
@@ -1097,6 +1125,7 @@ mod tests {
             false,
         ));
         assert!(report.passed(), "{}", report.render());
+        assert!(report.counts_compared(), "{}", report.render());
         assert!(
             report.render().contains("page.pid: 未发现可归属缺陷"),
             "{}",
@@ -1111,6 +1140,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(report.counts_compared(), "{}", report.render());
         let text = report.render();
         assert!(text.contains("page.pid: 缺陷"), "{text}");
         assert!(text.contains("baseline=2 current=5"), "{text}");
@@ -1123,6 +1153,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(report.counts_compared(), "{}", report.render());
         let text = report.render();
         assert!(text.contains("基线待降"), "{text}");
         assert!(text.contains("UPDATE_EXPORT_LEDGER=1"), "{text}");
@@ -1136,6 +1167,7 @@ mod tests {
                 false,
             ));
             assert!(!report.passed());
+            assert!(report.counts_compared(), "{}", report.render());
             let text = report.render();
             assert!(text.contains("有意项变化"), "{text}");
             assert!(!text.contains("基线待降"), "{text}");
@@ -1149,6 +1181,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(report.counts_compared(), "{}", report.render());
         assert!(report.render().contains("未归因"), "{}", report.render());
     }
 
@@ -1156,6 +1189,9 @@ mod tests {
     ///
     /// A rewrite that would raise a suspect count is refused, and the file is
     /// left as it was.
+    ///
+    /// Written or refused, a rewrite is not a comparison: the refusal looks
+    /// only at the suspect counts that would rise, never at every key.
     #[test]
     fn rewrite_refuses_any_suspect_rise() {
         let path = temp_path("refuse");
@@ -1167,6 +1203,7 @@ mod tests {
             true,
         ));
         assert!(report.passed(), "{}", report.render());
+        assert!(!report.counts_compared(), "{}", report.render());
         let before = std::fs::read(&path).unwrap();
 
         let report = run_gate(an_input(
@@ -1176,6 +1213,7 @@ mod tests {
             true,
         ));
         assert!(!report.passed());
+        assert!(!report.counts_compared(), "{}", report.render());
         let text = report.render();
         assert!(text.contains("拒绝写入"), "{text}");
         assert!(text.contains("baseline=2 current=5"), "{text}");
@@ -1193,6 +1231,7 @@ mod tests {
             true,
         ));
         assert!(report.passed(), "{}", report.render());
+        assert!(!report.counts_compared(), "{}", report.render());
         let after: LedgerBaseline =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let pinned = after.pages.get("page.pid").unwrap();
@@ -1259,6 +1298,9 @@ mod tests {
             false,
         ));
         assert!(report.passed(), "{}", report.render());
+        // That pass is not agreement with the baseline, and the report keeps
+        // the two apart for a caller that has to know which one it got.
+        assert!(!report.counts_compared(), "{}", report.render());
         let text = report.render();
         assert!(
             text.contains("export-ledger: corpus descriptor differs"),
@@ -1274,6 +1316,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(!report.counts_compared(), "{}", report.render());
     }
 
     #[test]
@@ -1325,11 +1368,15 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        // Other faces skip two keys, not the comparison.
+        assert!(report.counts_compared(), "{}", report.render());
         let text = report.render();
         assert!(text.contains("past_the_edge"), "{text}");
         assert!(!text.contains("text_condensed"), "{text}");
     }
 
+    /// A baseline that cannot be read as this schema fails the gate, and none
+    /// of the three ways it can fail to be read is a comparison.
     #[test]
     fn baseline_missing_or_corrupt_or_schema_mismatch_fails() {
         let path = temp_path("broken");
@@ -1342,6 +1389,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(!report.counts_compared(), "{}", report.render());
         assert!(report.render().contains("基线缺失"), "{}", report.render());
 
         // Corrupt.
@@ -1353,6 +1401,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(!report.counts_compared(), "{}", report.render());
         assert!(
             report.render().contains("基线读不出"),
             "{}",
@@ -1378,6 +1427,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(!report.counts_compared(), "{}", report.render());
         assert!(
             report.render().contains("schema 不同"),
             "{}",
@@ -1423,6 +1473,7 @@ mod tests {
             false,
         ));
         assert!(!report.passed());
+        assert!(report.counts_compared(), "{}", report.render());
         assert!(report.render().contains("新入账页"), "{}", report.render());
     }
 
