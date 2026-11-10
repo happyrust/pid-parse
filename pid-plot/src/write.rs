@@ -92,10 +92,11 @@ fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     }
 }
 
-/// The four pens the reference plotter used, in paper millimetres.
+/// The pens the reference plotter used, in paper millimetres.
 ///
 /// Half, one, two and three times the mid pen: `0.169 / 0.339 / 0.678 /
-/// 1.017`. Three pens were all the five-drawing corpus ever showed. The A2
+/// 1.017` — and a fifth at four times it, [`PEN_HEAVY_MM`].
+/// Three pens were all the five-drawing corpus ever showed. The A2
 /// reference plot added on 2026-11-02 prints a fourth: its
 /// `CPECCHB-SQ-A2.igr` title block declares 1.0606 / 1.1313 / 1.4141 mm
 /// rules, and the plot prints every one of them at `1.02` — the wide pen,
@@ -104,6 +105,14 @@ const PEN_THIN_MM: f64 = 0.169;
 const PEN_MID_MM: f64 = 0.339;
 const PEN_THICK_MM: f64 = 0.678;
 const PEN_WIDE_MM: f64 = 1.017;
+/// The fifth pen, eight device units: `3.84 w`.
+///
+/// Only the A2 reference prints it, and only on the four lines of the
+/// `CPECCHB-SQ-A2.igr` frame, which declare 1.4141 mm. They run the length of
+/// the sheet, so the reader leaves them out as sheet edges and the pen
+/// pairing that found the other four never saw them; `reference_plots_ink`
+/// holds the sheet edges to their widths and does.
+const PEN_HEAVY_MM: f64 = 1.355;
 
 /// The pen a stroke with no resolved style falls back to.
 ///
@@ -134,6 +143,12 @@ const STROKE_MM: f64 = PEN_MID_MM;
 /// 0.70 mm stroke on the same sheet prints thick. 0.85 mm is a choice inside
 /// that interval.
 ///
+/// The wide/heavy boundary sits inside `(1.1313, 1.4141)`: the same title
+/// block's 1.0606 and 1.1313 mm rules print wide (`2.88 w`) and its 1.4141 mm
+/// frame prints heavy (`3.84 w`, [`PEN_HEAVY_MM`]). 1.27 mm is a choice
+/// inside that interval, and those four frame lines are all the evidence
+/// there is for the fifth pen.
+///
 /// A width that is not finite or not positive falls back to the mid pen, which
 /// is what an unresolved style draws with.
 #[must_use]
@@ -147,8 +162,10 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
         PEN_MID_MM
     } else if declared_mm <= 0.85 {
         PEN_THICK_MM
-    } else {
+    } else if declared_mm <= 1.27 {
         PEN_WIDE_MM
+    } else {
+        PEN_HEAVY_MM
     }
 }
 
@@ -370,11 +387,28 @@ pub fn write_plot_audited(
             audit: &mut audit,
             ledger: &mut ledger,
         };
+        // Whether the page has started stroking round-ended; see
+        // [`starts_round_ends`]. One page, so the two layers share it.
+        let mut round_ends = false;
         push_layer(
-            &mut ops, model, &fonts, "decoded", "Decoded", page, &mut sink,
+            &mut ops,
+            model,
+            &fonts,
+            "decoded",
+            "Decoded",
+            page,
+            &mut sink,
+            &mut round_ends,
         )?;
         push_layer(
-            &mut ops, model, &fonts, "inferred", "Inferred", page, &mut sink,
+            &mut ops,
+            model,
+            &fonts,
+            "inferred",
+            "Inferred",
+            page,
+            &mut sink,
+            &mut round_ends,
         )?;
     }
 
@@ -746,6 +780,43 @@ struct WriteSink<'a> {
     ledger: &'a mut WriteLedger,
 }
 
+/// Whether a stroke of `primitive` is where its page starts stroking
+/// round-ended and round-joined.
+///
+/// The reference plots state no cap for the page. They state `1 j 1 J` with
+/// the first pen wider than one device unit and never take it back, so a
+/// path stroked before that pen is under PDF's defaults — butt ends, mitred
+/// corners — and every path after it is round, a one-unit one included. What
+/// comes before it is the border template wherever the reference draws one
+/// first: the two `CPE-SQ` templates are one-unit rules throughout (28 paths,
+/// butt-ended on six of the eleven sheets), and the `CPECCHB-SQ-A2` template
+/// strokes its sheet outline and then its 1.4141 mm frame, `3.84 w`, with the
+/// statement in front of it. The drawing itself starts on a wide pen on every
+/// one of the eleven, so it is round from its first stroke.
+///
+/// So: a template's stroke on a pen wider than the thin one, or any stroke of
+/// the drawing. `I井场` is the one sheet this does not reproduce — its
+/// reference draws one valve of the drawing before the template, which makes
+/// the template round as well, and nothing decoded so far says what puts that
+/// valve first.
+fn starts_round_ends(primitive: &crate::model::PaperPrimitive) -> bool {
+    if matches!(
+        primitive.shape,
+        PaperShape::Fill { .. } | PaperShape::Text { .. }
+    ) {
+        return false;
+    }
+    if !primitive.furniture {
+        return true;
+    }
+    let declared_mm = primitive
+        .stroke
+        .as_ref()
+        .map_or(STROKE_MM, |pen| pen.width_mm);
+    pen_width_mm(declared_mm) > PEN_THIN_MM
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_layer(
     ops: &mut Vec<Op>,
     model: &PaperModel,
@@ -754,6 +825,7 @@ fn push_layer(
     property: &str,
     page: [f64; 2],
     sink: &mut WriteSink<'_>,
+    round_ends: &mut bool,
 ) -> Result<(), PlotWriteError> {
     // The index is kept because the ledger's `fates` is indexed by the model's
     // own primitive order, not by this layer's filtered view.
@@ -780,11 +852,22 @@ fn push_layer(
         vec![Object::Real(0.0), Object::Real(0.0), Object::Real(0.0)],
     ));
     ops.push(Op::new("w", vec![Object::Real(STROKE_MM * PT_PER_MM)]));
-    ops.push(Op::new("J", vec![Object::Int(0)]));
-    ops.push(Op::new("j", vec![Object::Int(0)]));
+    // The cap and join the page is under when this layer opens: PDF's
+    // defaults until a stroke has started the round ends.
+    let ends = i64::from(*round_ends);
+    ops.push(Op::new("J", vec![Object::Int(ends)]));
+    ops.push(Op::new("j", vec![Object::Int(ends)]));
 
     for (index, primitive) in &primitives {
+        let before = ops.len();
         let painted = paint_primitive(ops, primitive, page);
+        if painted.wrote_path && !*round_ends && starts_round_ends(primitive) {
+            // Stated in the layer's own state, ahead of the stroke's `q`, so
+            // it holds for this stroke and for every one after it.
+            ops.insert(before, Op::new("j", vec![Object::Int(1)]));
+            ops.insert(before, Op::new("J", vec![Object::Int(1)]));
+            *round_ends = true;
+        }
         // A label is observed by its run, not by a path: `paint_primitive`
         // deliberately writes nothing for one, so recording it here would file
         // a correct page as a mismatch.
@@ -2921,8 +3004,10 @@ mod tests {
         }
     }
     #[test]
-    fn declared_widths_snap_onto_the_four_plot_pens() {
-        use super::{PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm};
+    fn declared_widths_snap_onto_the_five_plot_pens() {
+        use super::{
+            PEN_HEAVY_MM, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm,
+        };
         // The I drawing's own ladder: 0.13 / 0.18 / 0.35 / 0.70 mm.
         for thin in [0.13, 0.18, 0.25, 0.30] {
             assert_eq!(pen_width_mm(thin), PEN_THIN_MM, "{thin} mm");
@@ -2933,22 +3018,130 @@ mod tests {
         for thick in [0.70, 0.85] {
             assert_eq!(pen_width_mm(thick), PEN_THICK_MM, "{thick} mm");
         }
-        // The CCHB A2 title block's heavy rails, and anything above them,
-        // print on the wide pen.
-        for wide in [1.0, 1.0606, 1.1313, 1.4141, 2.0] {
+        // The CCHB A2 title block's 1.0606 and 1.1313 mm rules print on the
+        // wide pen …
+        for wide in [1.0, 1.0606, 1.1313, 1.27] {
             assert_eq!(pen_width_mm(wide), PEN_WIDE_MM, "{wide} mm");
+        }
+        // … and its 1.4141 mm frame, and anything above it, on the heavy one:
+        // the A2 reference strokes the frame's four lines `3.84 w`.
+        for heavy in [1.28, 1.4141, 2.0] {
+            assert_eq!(pen_width_mm(heavy), PEN_HEAVY_MM, "{heavy} mm");
         }
         // A width that is not a width draws the fallback pen.
         for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert_eq!(pen_width_mm(nonsense), PEN_MID_MM, "{nonsense}");
         }
-        // 0.169 / 0.339 / 0.678 / 1.017 mm are 0.48 / 0.96 / 1.92 / 2.88 pt,
-        // the only four widths the reference pages carry.
+        // 0.169 / 0.339 / 0.678 / 1.017 / 1.355 mm are 0.48 / 0.96 / 1.92 /
+        // 2.88 / 3.84 pt — one, two, four, six and eight device units — the
+        // only five widths the reference pages carry.
         let points = |mm: f64| mm * 72.0 / 25.4;
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
         assert!((points(PEN_WIDE_MM) - 2.88).abs() < 0.005);
+        assert!((points(PEN_HEAVY_MM) - 3.84).abs() < 0.005);
+    }
+
+    /// A page of straight strokes in drawing order: whether each is the
+    /// template's, the width it declares, and where it runs.
+    fn stroked_page(strokes: &[(bool, f64, [f64; 2], [f64; 2])]) -> PaperModel {
+        let mut model = one_page(
+            primitive(
+                "decoded",
+                PaperShape::Line {
+                    start_mm: [0.0, 0.0],
+                    end_mm: [1.0, 0.0],
+                },
+            ),
+            [200.0, 100.0],
+        );
+        model.primitives = strokes
+            .iter()
+            .map(|(furniture, width_mm, start_mm, end_mm)| {
+                let mut stroke = primitive(
+                    "decoded",
+                    PaperShape::Line {
+                        start_mm: *start_mm,
+                        end_mm: *end_mm,
+                    },
+                );
+                stroke.furniture = *furniture;
+                stroke.stroke = Some(crate::model::PaperStroke {
+                    rgb: [0, 0, 0],
+                    width_mm: *width_mm,
+                    dash_mm: Vec::new(),
+                    dash_fit: None,
+                });
+                stroke
+            })
+            .collect();
+        model
+    }
+
+    /// The reference plots do not state a cap for the page. They state
+    /// `1 j 1 J` with the first pen wider than one device unit and never take
+    /// it back, so what a one-unit stroke ends with depends on where it is
+    /// drawn: the `CPE-SQ` templates are all one-unit rules and are drawn
+    /// first, butt-ended and mitred (28 paths on six of the eleven sheets);
+    /// the A2 template's 1.4141 mm frame is its second path, and everything
+    /// after it is round. The drawing itself starts on a wide pen on every
+    /// one of the eleven, and is round throughout.
+    #[test]
+    fn a_page_strokes_round_from_the_templates_first_wide_pen_and_through_the_drawing() {
+        use crate::read::{LineCap, LineJoin, read_plot_pens};
+        let ends =
+            |strokes: &[(bool, f64, [f64; 2], [f64; 2])]| -> Vec<(LineCap, LineJoin, usize)> {
+                let pdf = write_plot(&stroked_page(strokes), &inter_font()).expect("write");
+                read_plot_pens(&pdf)
+                    .expect("read")
+                    .ends
+                    .iter()
+                    .map(|ends| (ends.cap, ends.join, ends.paths))
+                    .collect()
+            };
+        let butt = |paths| (LineCap::Butt, LineJoin::Miter, paths);
+        let round = |paths| (LineCap::Round, LineJoin::Round, paths);
+        let (template, drawing) = (true, false);
+
+        // A template of one-unit rules, then the drawing — its first stroke
+        // a thin one here, which is round all the same.
+        assert_eq!(
+            ends(&[
+                (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
+                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+                (drawing, 0.18, [10.0, 30.0], [60.0, 30.0]),
+                (drawing, 0.70, [10.0, 40.0], [60.0, 40.0]),
+            ]),
+            vec![butt(2), round(2)]
+        );
+        // A template whose second rule is a heavy one: the rule after it is
+        // round though it is thin.
+        assert_eq!(
+            ends(&[
+                (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
+                (template, 1.4141, [10.0, 20.0], [60.0, 20.0]),
+                (template, 0.25, [10.0, 30.0], [60.0, 30.0]),
+                (drawing, 0.18, [10.0, 40.0], [60.0, 40.0]),
+            ]),
+            vec![butt(1), round(3)]
+        );
+        // No template: round from the first stroke.
+        assert_eq!(
+            ends(&[
+                (drawing, 0.18, [10.0, 10.0], [60.0, 10.0]),
+                (drawing, 0.35, [10.0, 20.0], [60.0, 20.0]),
+            ]),
+            vec![round(2)]
+        );
+        // A template of thin rules alone never states a cap.
+        assert_eq!(
+            ends(&[
+                (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
+                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+            ]),
+            vec![butt(2)]
+        );
     }
 
     #[test]
@@ -2963,7 +3156,8 @@ mod tests {
             assert!(carries_a_pen(pen), "{pen} mm is a pen");
             assert!(pen_width_mm(pen) >= super::PEN_THIN_MM, "{pen} mm");
         }
-        assert!((pen_width_mm(WIDEST_PEN_MM) - super::PEN_WIDE_MM).abs() < 1e-9);
+        assert!((pen_width_mm(WIDEST_PEN_MM) - super::PEN_HEAVY_MM).abs() < 1e-9);
+        assert!((pen_width_mm(1.1313) - super::PEN_WIDE_MM).abs() < 1e-9);
         assert!((pen_width_mm(0.70) - super::PEN_THICK_MM).abs() < 1e-9);
         // `BandAid` is the 10 mm band SmartPlant paints over a flagged object;
         // its size is the mark's, not a pen's.
