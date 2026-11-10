@@ -8,11 +8,10 @@
 //! cleanly when the file is missing so CI workers without the
 //! TEST02 backup do not fail.
 
-use std::path::PathBuf;
 use std::process::Command;
 
 mod common;
-use common::{normalize_a01_synthetic_slots, A01SyntheticMaskOptions};
+use common::{normalize_a01_synthetic_slots, A01SyntheticMaskOptions, Scratch};
 
 fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_pid_publish_xml")
@@ -23,25 +22,13 @@ const LEGACY_SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Expor
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
 
-/// Allocate a unique sub-directory under the OS temp dir so two
-/// concurrent test runs do not collide. Tests are responsible for
-/// cleaning up; we deliberately avoid `tempfile` to keep the
-/// dependency surface small (the workspace already runs other
-/// integration tests through bare `std::env::temp_dir()`).
-fn unique_tmp_dir(label: &str) -> PathBuf {
-    let mut p = std::env::temp_dir();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    p.push(format!(
-        "pid-parse-publish-xml-cli-{}-{}-{}",
-        std::process::id(),
-        label,
-        nanos
-    ));
-    std::fs::create_dir_all(&p).expect("create temp dir");
-    p
+/// A sub-directory of this test's own under the OS temp dir, so two
+/// concurrent test runs do not collide. The directory lasts as long as
+/// the returned guard: it is removed when the test ends, whether the test
+/// passed or an assertion failed. We deliberately avoid `tempfile` to
+/// keep the dependency surface small.
+fn unique_tmp_dir(label: &str) -> Scratch {
+    Scratch::new(&format!("publish-xml-cli-{label}"))
 }
 
 /// True when the real MDF fixture is on disk. Returns false (and
@@ -254,10 +241,6 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
         meta_xml, meta_xml_2,
         "two invocations must produce byte-identical _Meta.xml"
     );
-
-    // Best-effort cleanup; ignore failures because the temp dir is
-    // self-disposing across reboots.
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -289,8 +272,6 @@ fn cli_data_only_invocation_does_not_write_meta_file() {
         !bogus_meta_path.exists(),
         "_Meta.xml must NOT be written when --meta-out is omitted"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // -----------------------------------------------------------------
@@ -484,8 +465,6 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
         stderr.contains("clean ("),
         "stderr should announce the clean verdict; got:\n{stderr}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -536,8 +515,6 @@ fn cli_diff_against_a_truncated_reference_is_refused_and_exits_one() {
         assert!(stream.contains("A01_Data_cut.xml"), "{stream}");
         assert!(!stream.contains("is clean"), "{stream}");
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -658,7 +635,6 @@ fn cli_default_style_matches_a01_reference_delivery_contract() {
         xml, xml2,
         "repeated CLI emits for the same A01 input must stay byte-identical"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -719,7 +695,6 @@ fn cli_style_dwg_drops_itemtag_on_pipeline_iobject() {
         !iobject_line.contains("ItemTag="),
         "DWG-style PIDPipeline IObject must drop ItemTag; got:\n{iobject_line}",
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -752,7 +727,6 @@ fn cli_style_case_insensitive_accepts_uppercase_dwg() {
         out.status.success(),
         "uppercase --style DWG should exit 0; got {out:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -950,6 +924,4 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
         report.contains("PIDRepresentation"),
         "report should list PIDRepresentation as MATCH; got:\n{report}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }

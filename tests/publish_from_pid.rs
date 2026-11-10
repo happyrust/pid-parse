@@ -24,6 +24,9 @@ use pid_parse::publish::{
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
+mod common;
+use common::Scratch;
+
 const DEFAULT_CORPUS: &str = r"D:\work\cad\PID自研软件验证";
 const CORPUS_ENV: &str = "PID_PARSE_SELF_CHECK_DIR";
 
@@ -304,15 +307,6 @@ fn the_pid_alone_export_matches_the_reference_wherever_it_says_anything() {
 
 const CLI: &str = env!("CARGO_BIN_EXE_pid_publish_xml");
 
-/// A directory of this process's own under the system temp dir.
-fn unique_out_dir(label: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!("pid-parse-{label}-{}-{nanos}", std::process::id()))
-}
-
 #[test]
 fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
     let Some(drawings) = corpus() else {
@@ -320,11 +314,11 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
         return;
     };
     let (stem, pid, _) = &drawings[0];
-    let out_dir = unique_out_dir("out-dir");
+    let out_dir = Scratch::unmade("out-dir");
     let output = Command::new(CLI)
         .arg(pid)
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn pid_publish_xml --out-dir");
@@ -354,7 +348,6 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
         drawing.representations.len()
     );
     assert_eq!(report["files"]["data"], format!("{stem}_Data.xml"));
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -596,11 +589,11 @@ fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
 #[test]
 fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
     for value in ["dwg", "a01"] {
-        let out_dir = unique_out_dir("style-refused");
+        let out_dir = Scratch::unmade("style-refused");
         let output = Command::new(CLI)
             .arg("test-file/D06.pid")
             .arg("--out-dir")
-            .arg(&out_dir)
+            .arg(out_dir.path())
             .args(["--style", value])
             .output()
             .expect("spawn pid_publish_xml <file.pid> --style");
@@ -625,11 +618,11 @@ fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
         eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
-    let out_dir = unique_out_dir("style-refused-package");
+    let out_dir = Scratch::unmade("style-refused-package");
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--style", "dwg"])
         .output()
         .expect("spawn pid_publish_xml <backup-dir> --style");
@@ -651,10 +644,10 @@ fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
 
 #[test]
 fn out_dir_is_refused_beside_out_and_for_a_database_input() {
-    let out_dir = unique_out_dir("refused");
+    let out_dir = Scratch::unmade("refused");
     let beside_out = Command::new(CLI)
         .args(["drawing.pid", "--out-dir"])
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--out", "drawing_Data.xml"])
         .output()
         .expect("spawn pid_publish_xml --out-dir --out");
@@ -663,7 +656,7 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
 
     let database = Command::new(CLI)
         .args(["Export.mdf", "--drawing", "X", "--out-dir"])
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .output()
         .expect("spawn pid_publish_xml <mdf> --out-dir");
     assert_eq!(database.status.code(), Some(2));
@@ -795,8 +788,7 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         return;
     }
     let bytes = std::fs::read(&pid).expect("read D06.pid");
-    let package = unique_out_dir("mini-package");
-    std::fs::create_dir_all(&package).expect("mini package dir");
+    let package = Scratch::new("mini-package");
     std::fs::write(package.join("Manifest.txt"), "BackupType<<|>>2\n").expect("manifest");
     std::fs::write(
         package.join("PlantData~2~1.zip"),
@@ -811,17 +803,17 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         ),
     )
     .expect("template zip");
-    let out = unique_out_dir("mini-out");
+    let out = Scratch::unmade("mini-out");
     let missing_out = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .output()
         .expect("spawn directory without --out-dir");
     assert_eq!(missing_out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&missing_out.stderr).contains("--out-dir"));
     let output = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn mini backup");
@@ -864,13 +856,13 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     // G4: the package gate takes a reference DIRECTORY of <Name>_Data.xml
     // files, scores every written drawing and exits non-zero when one is
     // not clean.
-    let gate_out = unique_out_dir("mini-gate");
+    let gate_out = Scratch::unmade("mini-gate");
     let gated = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(&gate_out)
+        .arg(gate_out.path())
         .arg("--diff-against")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn gated mini backup");
@@ -887,14 +879,14 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
 
     // A reference directory without the drawing's file is reported as
     // unpaired, never as clean.
-    let empty = unique_out_dir("mini-gate-empty");
-    std::fs::create_dir_all(&empty).expect("empty reference dir");
+    let empty = Scratch::new("mini-gate-empty");
+    let unpaired_out = Scratch::unmade("mini-gate-unpaired");
     let unpaired = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-unpaired"))
+        .arg(unpaired_out.path())
         .arg("--diff-against")
-        .arg(&empty)
+        .arg(empty.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn unpaired mini backup");
@@ -904,18 +896,18 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     assert!(stdout.contains("no reference"), "{stdout}");
 
     // One drifting drawing makes the gate exit 1 and names the drawing.
-    let drift = unique_out_dir("mini-gate-drift");
-    std::fs::create_dir_all(&drift).expect("drift reference dir");
+    let drift = Scratch::new("mini-gate-drift");
     let reference = std::fs::read_to_string(out.join("D06_Data.xml")).expect("D06 data xml");
     let mutated = reference.replacen("<IObject UID=\"", "<IObject UID=\"ZZZ", 1);
     assert_ne!(mutated, reference);
     std::fs::write(drift.join("D06_Data.xml"), mutated).expect("drifted reference");
+    let dirty_out = Scratch::unmade("mini-gate-dirty");
     let dirty = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-dirty"))
+        .arg(dirty_out.path())
         .arg("--diff-against")
-        .arg(&drift)
+        .arg(drift.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn dirty mini backup");
@@ -926,8 +918,7 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     // A reference that states another `<Container DocUID>` is another
     // revision of the same name, not a document full of differences: the
     // gate says so once, prints no finding, and still exits 1.
-    let other = unique_out_dir("mini-gate-revision");
-    std::fs::create_dir_all(&other).expect("other-revision reference dir");
+    let other = Scratch::new("mini-gate-revision");
     let own_uid = reference
         .split_once("DocUID=\"")
         .map(|(_, rest)| rest.split('"').next().unwrap_or_default().to_string())
@@ -940,12 +931,13 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     );
     assert_ne!(foreign, reference);
     std::fs::write(other.join("D06_Data.xml"), &foreign).expect("other-revision reference");
+    let mismatch_out = Scratch::unmade("mini-gate-mismatch");
     let mismatch = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-mismatch"))
+        .arg(mismatch_out.path())
         .arg("--diff-against")
-        .arg(&other)
+        .arg(other.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn other-revision mini backup");
@@ -968,12 +960,12 @@ fn backup_directory_publishes_the_whole_package() {
         eprintln!("skip: D:\\work\\cad\\pid-test-data is not a backup package");
         return;
     }
-    let out = unique_out_dir("sqplant");
+    let out = Scratch::unmade("sqplant");
     let started = std::time::Instant::now();
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn backup directory");
@@ -1150,11 +1142,11 @@ fn backup_directory_publishes_the_whole_package() {
         eprintln!("skip: I井场 is not in the corpus");
         return;
     };
-    let single = unique_out_dir("ijingchang-single");
+    let single = Scratch::unmade("ijingchang-single");
     let single_run = Command::new(CLI)
         .arg(pid)
         .arg("--out-dir")
-        .arg(&single)
+        .arg(single.path())
         .arg("--oracle-exp")
         .arg(package.join("Export.dmp"))
         .arg("--datamap")
@@ -1198,11 +1190,11 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
         eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
-    let out = unique_out_dir("test02-mtf");
+    let out = Scratch::unmade("test02-mtf");
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "TEST02"])
         .output()
         .expect("spawn MTF backup directory");
@@ -1270,13 +1262,13 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
     assert!(!meta.contains("Template"), "{meta}");
     assert!(meta.contains(r#"IFile FilePath="""#), "{meta}");
 
-    let gate_out = unique_out_dir("test02-mtf-gate");
+    let gate_out = Scratch::unmade("test02-mtf-gate");
     let gated = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&gate_out)
+        .arg(gate_out.path())
         .arg("--diff-against")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "TEST02"])
         .output()
         .expect("spawn gated MTF backup directory");
@@ -1303,8 +1295,6 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
         !stdout.lines().any(|line| line.starts_with("  ")),
         "a clean gate prints no finding line:\n{stdout}"
     );
-
-    let _ = std::fs::remove_dir_all(&out);
 }
 
 // ---------------------------------------------------------------------
@@ -1356,11 +1346,11 @@ fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
         eprintln!("skip: {A01_DIR} fixture is missing");
         return;
     }
-    let out_dir = unique_out_dir("meta-gate");
+    let out_dir = Scratch::unmade("meta-gate");
     let output = Command::new(CLI)
         .arg(a01_fixture("A01.pid"))
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--plant", "TEST02"])
         .arg("--diff-against")
         .arg(a01_fixture("A01_Data.xml"))
@@ -1378,7 +1368,6 @@ fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
     assert!(!stdout.contains("value Container"), "stdout:\n{stdout}");
     // The _Data.xml side still has its registered findings, so exit 1.
     assert_eq!(output.status.code(), Some(1), "{stdout}\n{stderr}");
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1387,19 +1376,17 @@ fn meta_gate_names_a_drifted_container_attribute() {
         eprintln!("skip: {A01_DIR} fixture is missing");
         return;
     }
-    let reference = unique_out_dir("meta-gate-attr");
+    let reference = Scratch::unmade("meta-gate-attr");
     let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
     let drifted = meta.replacen("ToolSignature=\"AAAD\"", "ToolSignature=\"BBBB\"", 1);
     assert_ne!(drifted, meta);
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-attr-out");
+    let out_dir = Scratch::unmade("meta-gate-attr-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["ToolSignature", "AAAD", "BBBB"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1432,16 +1419,14 @@ fn meta_gate_names_a_drifted_block_order() {
         &meta[dv_open..dv_close],
         &meta[dr_close..],
     );
-    let reference = unique_out_dir("meta-gate-order");
+    let reference = Scratch::unmade("meta-gate-order");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-order-out");
+    let out_dir = Scratch::unmade("meta-gate-order-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["block-order", "DocumentVersion", "DocumentRevision"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1455,16 +1440,14 @@ fn meta_gate_names_a_drifted_def_uid_and_wiring() {
     // (a) RevisedDocument relabelled as VersionedDoc.
     let drifted = meta.replacen("DefUID=\"RevisedDocument\"", "DefUID=\"VersionedDoc\"", 1);
     assert_ne!(drifted, meta);
-    let reference = unique_out_dir("meta-gate-defuid");
+    let reference = Scratch::unmade("meta-gate-defuid");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-defuid-out");
+    let out_dir = Scratch::unmade("meta-gate-defuid-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["VersionedDoc", "RevisedDocument"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 
     // (b) FileComposition's UID1 / UID2 ends swapped.
     let drifted = meta.replacen(
@@ -1473,16 +1456,14 @@ fn meta_gate_names_a_drifted_def_uid_and_wiring() {
         1,
     );
     assert_ne!(drifted, meta);
-    let reference = unique_out_dir("meta-gate-wiring");
+    let reference = Scratch::unmade("meta-gate-wiring");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-wiring-out");
+    let out_dir = Scratch::unmade("meta-gate-wiring-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["FileComposition", "is not the registered"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1517,19 +1498,16 @@ fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
     }
     // Only the `_Data.xml` is staged: the run writes a meta document, but
     // there is no `<Name>_Meta.xml` beside the reference to score it against.
-    let reference = unique_out_dir("meta-gate-no-sibling");
-    std::fs::create_dir_all(&reference).expect("reference dir");
+    let reference = Scratch::new("meta-gate-no-sibling");
     let data = reference.join("A01_Data.xml");
     std::fs::copy(a01_fixture("A01_Data.xml"), &data).expect("copy data xml");
-    let out_dir = unique_out_dir("meta-gate-no-sibling-out");
+    let out_dir = Scratch::unmade("meta-gate-no-sibling-out");
     let (_, combined) = run_meta_gate(&data, &out_dir);
     assert!(
         combined.contains("Meta diff not run: no sibling <Name>_Meta.xml beside"),
         "{combined}"
     );
     assert!(!combined.contains("Meta diff against"), "{combined}");
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 // ---------------------------------------------------------------------
@@ -1671,11 +1649,11 @@ fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
 
 #[test]
 fn the_dwg_package_publishes_every_drawing_it_lists() {
-    let out_dir = unique_out_dir("dwg-package");
+    let out_dir = Scratch::unmade("dwg-package");
     let output = Command::new(CLI)
         .arg(repo_path(DWG_PACKAGE))
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .output()
         .expect("spawn pid_publish_xml <DWG package>");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1713,5 +1691,4 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
     let data = std::fs::read_to_string(out_dir.join("DWG-0202GP06-01_Data.xml")).expect("data");
     assert_eq!(data.matches("<PIDBranchPoint>").count(), 4, "{data}");
     assert!(!data.contains("<IOffpageConnector"), "{data}");
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
