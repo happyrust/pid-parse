@@ -63,22 +63,52 @@
 //!
 //! # Two corpora, two variables
 //!
-//! Where the templates and the faces are read from depends on the corpus, and
-//! the two kinds of corpus need different variables:
+//! The drawings are laid out against a corpus — where their templates, their
+//! symbols and their faces are read from — and a corpus is one of two kinds:
 //!
-//! - **A share**, the default (`D:\work\cad\PID自研软件验证`): templates come
-//!   from `<share>/Ref/Template Files`, faces from `<share>/fonts`. Naming
-//!   `PID_PARSE_SELF_CHECK_DIR` is all it takes.
-//! - **A backup package** (`D:\work\cad\pid-test-data`, or the copy at
-//!   `D:\work\plant-code\cad\pid-test-data`): the `.igr` templates come out of
-//!   the package's own `RefData~4~682.zip`, which also holds `A0-W - New.igr`
-//!   and `A1-W - New.igr` — a share's `Ref/Template Files` holds the five
-//!   `CPE*` files and neither of those two. A backup writes no `fonts/` into
-//!   its package: the first directory has none, so the share's faces have to
-//!   be named a second time, while the second keeps a `fonts/` beside its
-//!   archives and needs no second variable. Setting both suits either, and
-//!   with no face in reach the gate refuses to pass rather than reporting the
-//!   written-page pins unread:
+//! - **A backup package** (`D:\work\plant-code\cad\pid-test-data`, or the copy
+//!   at `D:\work\cad\pid-test-data`): the `.igr` templates come out of the
+//!   package's own `RefData~4~682.zip`, which also holds `A0-W - New.igr` and
+//!   `A1-W - New.igr`.
+//! - **A share** (`D:\work\cad\PID自研软件验证`): templates come from
+//!   `<share>/Ref/Template Files`, which holds the five `CPE*` files and
+//!   neither of those two, and faces from `<share>/fonts`.
+//!
+//! `PID_PARSE_SELF_CHECK_DIR` names the corpus, and a run that sets it reads
+//! that directory, whichever kind it is. A run that leaves it unset reads the
+//! package the backup was shelled out of, when the `backup-plant-data` it
+//! found sits in one — the directory above it holds `RefData~*.zip` — and the
+//! share otherwise ([`corpus_for`]). The first line a run prints names the
+//! corpus and says which of the three it was ([`describe_sources`]).
+//!
+//! A package in reach is the default because the corpus decides what the
+//! ledger gate at the end compares. Its baseline,
+//! `docs/baselines/export-ledger-backup.json`, names a package's
+//! `RefData~*.zip` archives as the sources of its symbols and templates, so
+//! only a package run has its 53 pages' counts compared with it, page by page.
+//! A share reads both from directories; the gate then reports
+//! `count comparison skipped` — which a passing run shows only under
+//! `--nocapture` — and passes on the unattributed and cross-check rules alone.
+//! That is what the ledger's requirement 13.7 asks for counts taken from
+//! another corpus, so where the default is the package, a share is a corpus a
+//! run asks for by name:
+//!
+//! ```text
+//! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\PID自研软件验证 \
+//!   cargo test -p pid-plot --test export_plant_backup --locked
+//! ```
+//!
+//! Every other pin in this file holds in either corpus.
+//!
+//! The second variable is for the faces. A backup writes no `fonts/` into its
+//! package: `D:\work\plant-code\cad\pid-test-data` keeps one beside its
+//! archives, `D:\work\cad\pid-test-data` does not. `PID_PLOT_FONTS` is a
+//! `;`-separated list like `PATH`, read before `<corpus>/fonts` and the
+//! repository's `test-file/fonts` (see [`pid_plot::fonts::font_dirs`]). A
+//! package picked by default is searched for `<share>/fonts` after those, so
+//! on a machine that has the share the default takes no variable at all
+//! ([`face_dirs`]). A named corpus is searched as named, so a package named
+//! without a `fonts/` of its own takes both variables:
 //!
 //! ```text
 //! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\pid-test-data \
@@ -86,18 +116,13 @@
 //!   cargo test -p pid-plot --test export_plant_backup --locked
 //! ```
 //!
-//! `PID_PLOT_FONTS` is a `;`-separated list like `PATH`, read before
-//! `<corpus>/fonts` and the repository's `test-file/fonts` (see
-//! [`pid_plot::fonts::font_dirs`]). `PID_TEST_DATA_DIR` is an optional third
-//! root: it is one of the places `backup-plant-data` is looked for, beside the
-//! corpus and the two `pid-test-data` paths listed in [`backup_dir`].
+//! With no face in reach the gate refuses to pass rather than reporting the
+//! written-page pins unread ([`require_faces`]).
 //!
-//! The corpus also decides what the ledger gate at the end compares. Its
-//! baseline, `docs/baselines/export-ledger-backup.json`, names a package's
-//! `RefData~*.zip` archives as the sources of its symbols and templates, so
-//! only a package run has its 53 pages' counts compared with it. A share reads
-//! both from directories, and the gate then reports the count comparison as
-//! skipped while still holding the unattributed and cross-check rules.
+//! `PID_TEST_DATA_DIR` is an optional third root: it is one of the places
+//! `backup-plant-data` is looked for, beside the named corpus — the share,
+//! when none is named — and the two `pid-test-data` paths listed in
+//! [`backup_dir`].
 //!
 //! # What the 53 sheets exercise
 //!
@@ -140,11 +165,13 @@ use pid_plot::read::read_plot;
 use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_ledger, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
-fn corpus_dir() -> PathBuf {
-    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
-        || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
-        PathBuf::from,
-    )
+fn share_dir() -> PathBuf {
+    PathBuf::from(r"D:\work\cad\PID自研软件验证")
+}
+
+/// The corpus `PID_PARSE_SELF_CHECK_DIR` names, when the run names one.
+fn named_corpus() -> Option<PathBuf> {
+    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map(PathBuf::from)
 }
 
 /// Where the shelled-out plant backup sits, if this machine has one.
@@ -152,18 +179,108 @@ fn corpus_dir() -> PathBuf {
 /// The extraction is a local artifact, not a repository fixture, so the gate
 /// looks beside the corpus and then in the backup package itself. `None`
 /// soft-skips the test, which is what CI sees.
+///
+/// "Beside the corpus" is beside the one the run names, or beside the share
+/// when it names none. The corpus an unnamed run ends up reading is not a root
+/// here: [`corpus_for`] picks it from where this function found the backup.
 fn backup_dir() -> Option<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
         roots.push(PathBuf::from(dir));
     }
-    roots.push(corpus_dir());
+    roots.push(named_corpus().unwrap_or_else(share_dir));
     roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
     roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
     roots
         .into_iter()
         .map(|root| root.join("backup-plant-data"))
         .find(|candidate| candidate.is_dir())
+}
+
+/// Why a run lays the backup out against the corpus it does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CorpusOrigin {
+    /// `PID_PARSE_SELF_CHECK_DIR` names it.
+    Named,
+    /// No corpus is named and the backup sits in a package: the directory
+    /// above `backup-plant-data` holds the package's `RefData~*.zip`.
+    Package,
+    /// No corpus is named and no `RefData~*.zip` sits beside the backup, so
+    /// the share is read.
+    Share,
+}
+
+impl CorpusOrigin {
+    /// The reason in the words a run prints.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Named => "named by PID_PARSE_SELF_CHECK_DIR",
+            Self::Package => {
+                "the backup package, by default: PID_PARSE_SELF_CHECK_DIR is unset and \
+                 backup-plant-data sits in it, beside its RefData~*.zip"
+            }
+            Self::Share => {
+                "the share, by default: PID_PARSE_SELF_CHECK_DIR is unset and no \
+                 RefData~*.zip sits beside backup-plant-data"
+            }
+        }
+    }
+}
+
+/// The corpus a run lays the backup out against, and why it is that one.
+struct Corpus {
+    dir: PathBuf,
+    origin: CorpusOrigin,
+}
+
+/// The corpus the drawings under `backup` are laid out against.
+///
+/// A run that names one gets it, whichever kind it is. A run that names none
+/// gets the package the backup was shelled out of, when `backup` sits in one:
+/// the directory above it then holds the package's `RefData~*.zip`, and that
+/// is the corpus the ledger baseline was taken from — the only one whose 53
+/// pages have their counts compared with it. Left to the share, an unnamed run
+/// would lay every page out, skip that comparison and pass, and say so only
+/// under `--nocapture`. The share is what an unnamed run reads when the
+/// extraction sits anywhere else.
+fn corpus_for(backup: &Path) -> Corpus {
+    if let Some(dir) = named_corpus() {
+        return Corpus {
+            dir,
+            origin: CorpusOrigin::Named,
+        };
+    }
+    match backup.parent() {
+        Some(package) if !pid_parse::refdata_archive::refdata_archives(package).is_empty() => {
+            Corpus {
+                dir: package.to_path_buf(),
+                origin: CorpusOrigin::Package,
+            }
+        }
+        _ => Corpus {
+            dir: share_dir(),
+            origin: CorpusOrigin::Share,
+        },
+    }
+}
+
+/// The directories the faces are looked for in, in search order.
+///
+/// [`font_dirs`] lists `PID_PLOT_FONTS`, then `<corpus>/fonts`, then the
+/// repository's `test-file/fonts`. A package picked by default is searched for
+/// the share's `fonts` after those: a backup writes no faces into its package,
+/// so one that keeps none beside its archives would have the default refuse to
+/// run until a second variable was set. The share's directory is listed
+/// whether or not it is there, so a run that finds no face names it among the
+/// places it looked. A named corpus is searched as named, and
+/// [`require_faces`] says what to set when that finds nothing.
+fn face_dirs(corpus: &Corpus) -> Vec<PathBuf> {
+    let mut dirs = font_dirs(Some(&corpus.dir));
+    let beside = share_dir().join("fonts");
+    if corpus.origin == CorpusOrigin::Package && !dirs.contains(&beside) {
+        dirs.push(beside);
+    }
+    dirs
 }
 
 /// One primitive, named so a reader can find it: a label by its text and
@@ -1092,26 +1209,29 @@ fn label_differences(measured: &[Label], pinned: &[Label]) -> String {
     lines.join("\n")
 }
 
-/// The corpus this run is reading, one line per source.
+/// What this run is reading: the corpus and why it is that one, the backup,
+/// and the face directories that are present, in search order.
 ///
 /// A passing gate has to say what it read. The archive-template run — the
 /// corpus pointed at a backup package instead of the share — once took 85 s and
 /// reported ok while touching no pin at all, and nothing in its output would
 /// have said which corpus that `ok` was about.
-fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathBuf]) -> String {
-    let origin = if std::env::var_os("PID_PARSE_SELF_CHECK_DIR").is_some() {
-        "PID_PARSE_SELF_CHECK_DIR"
-    } else {
-        "built-in default"
-    };
+///
+/// The corpus carries its reason because the reason is what a reader needs
+/// when the ledger gate at the end skips its count comparison: a named share
+/// asked for that, a share read for want of a package beside the backup did
+/// not, and under a package the skip means its sources are not the
+/// baseline's, which the gate's own report itemizes.
+fn describe_sources(corpus: &Corpus, backup: &Path, drawings: usize, dirs: &[PathBuf]) -> String {
     let faces: Vec<String> = dirs
         .iter()
         .filter(|dir| dir.is_dir())
         .map(|dir| dir.display().to_string())
         .collect();
     format!(
-        "corpus {} ({origin}); backup {} ({drawings} drawings); faces {}",
-        corpus.display(),
+        "corpus {} ({}); backup {} ({drawings} drawings); faces {}",
+        corpus.dir.display(),
+        corpus.origin.reason(),
         backup.display(),
         if faces.is_empty() {
             "none present".to_string()
@@ -1132,10 +1252,17 @@ fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathB
 /// and this used to be an `eprintln!` and a `return`, which the harness
 /// reports as a pass. It did, for one run.
 ///
+/// `dirs` is [`face_dirs`]' list, so the message names every place that was
+/// looked in, in the order it was looked in, and what it says to do next goes
+/// by how the corpus was picked: a package picked by default has already been
+/// searched for the share's `fonts`, a named one has not. Naming the share as
+/// the corpus is not among the remedies — it would bring its faces, and it
+/// would also take the 53 pages out of the ledger gate's count comparison.
+///
 /// The two configurations, and the command each one takes, are in this file's
 /// module docs under `Two corpora, two variables`; the panic repeats the
 /// section's name so the message points there too.
-fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
+fn require_faces(corpus: &Corpus, dirs: &[PathBuf], drawings: usize) {
     if dirs.iter().any(|dir| dir.is_dir()) {
         return;
     }
@@ -1144,16 +1271,31 @@ fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
         .map(|dir| dir.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
+    let remedy = match corpus.origin {
+        CorpusOrigin::Named => {
+            "a named corpus is searched as named, and a backup package carries no `fonts/` \
+             of its own; set PID_PLOT_FONTS to a directory holding the faces (the share's \
+             `fonts`), or leave PID_PARSE_SELF_CHECK_DIR unset, which searches the share's \
+             as well"
+        }
+        CorpusOrigin::Package => {
+            "this package keeps no `fonts/` beside its archives, and the share's, searched \
+             last, is absent too; set PID_PLOT_FONTS to a directory holding the faces"
+        }
+        CorpusOrigin::Share => {
+            "the share keeps no `fonts/`; set PID_PLOT_FONTS to a directory holding the faces"
+        }
+    };
     panic!(
         "no font directory is present, so the written-page pins were not read for {drawings} \
          drawings: each PDF's page, its weight, its ink and its lettering, and the \
          {DERIVED_PAGES}-sheet measured-page ratchet.\n  \
-         searched: {searched}\n  \
-         corpus: {} — a backup package carries no `fonts/`; set PID_PLOT_FONTS to the \
-         share's fonts, or point PID_PARSE_SELF_CHECK_DIR at the share.\n  \
+         searched, in order: {searched}\n  \
+         corpus: {} ({}) — {remedy}.\n  \
          both variables, and the command for each corpus, are in this file's module \
          docs under `Two corpora, two variables`",
-        corpus.display()
+        corpus.dir.display(),
+        corpus.origin.reason()
     );
 }
 
@@ -1170,11 +1312,11 @@ fn every_backup_drawing_exports_a_readable_page() {
         "TEMPLATE_SHEETS has to count the sheets of every template TEMPLATE_PLACEMENTS pins, \
          row for row"
     );
-    let corpus = corpus_dir();
     let Some(backup) = backup_dir() else {
         eprintln!("skipping the backup export; no backup-plant-data directory is present");
         return;
     };
+    let corpus = corpus_for(&backup);
     let mut drawings = Vec::new();
     collect_pids(&backup, &mut drawings);
     if drawings.is_empty() {
@@ -1190,13 +1332,13 @@ fn every_backup_drawing_exports_a_readable_page() {
         drawings.len(),
         backup.display()
     );
-    let dirs = font_dirs(Some(&corpus));
+    let dirs = face_dirs(&corpus);
     let sources = describe_sources(&corpus, &backup, drawings.len(), &dirs);
     eprintln!("{sources}");
 
     let mut models: Vec<(PathBuf, PaperModel)> = Vec::new();
     for path in &drawings {
-        let model = lay_out_drawing(path, &corpus)
+        let model = lay_out_drawing(path, &corpus.dir)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         models.push((path.clone(), model));
     }
@@ -1715,11 +1857,15 @@ fn every_backup_drawing_exports_a_readable_page() {
         prepared.len()
     );
 
-    // The ledger gate over the whole package. Its baseline is taken from this
-    // very corpus (see the module docs' `Two corpora, two variables`), so a
-    // page whose account moved fails here rather than on the next release. The
-    // faces are named, so a machine that embeds a different set of typefaces
-    // is told that rather than made to look like a regression.
+    // The ledger gate over the whole package. Its baseline is taken from a
+    // package corpus — the one an unnamed run reads when the backup sits in a
+    // package (see the module docs' `Two corpora, two variables`) — so a page
+    // whose account moved fails here rather than on the next release. Under a
+    // share the counts are not comparable, and the gate passes on the
+    // unattributed and cross-check rules alone; its report says which of the
+    // two this run got. The faces are named, so a machine that embeds a
+    // different set of typefaces is told that rather than made to look like a
+    // regression.
     ledger_pages.sort_by(|left, right| left.0.cmp(&right.0));
     let ledgers: Vec<&pid_plot::ledger::LayoutLedger> =
         models.iter().map(|(_, model)| &model.ledger).collect();
@@ -1739,7 +1885,12 @@ fn every_backup_drawing_exports_a_readable_page() {
         failures: Vec::new(),
         breaches: Vec::new(),
         update,
-        hint: "备份基线取法：PID_PARSE_SELF_CHECK_DIR 指向含 RefData~*.zip 的包目录、PID_PLOT_FONTS 给出字型，再跑 cargo test -p pid-plot --test export_plant_backup（详见 docs/baselines/README.md）",
+        hint: "备份基线取法：在包语料下排版（基线文件头把包内 RefData~*.zip 记作模板与符号来源），\
+               只有这时 53 页才逐页比对。不设 PID_PARSE_SELF_CHECK_DIR 时，backup-plant-data \
+               的上一级目录带 RefData~*.zip 就默认用它；也可把该变量显式指向包目录，包里没有 \
+               fonts 时另用 PID_PLOT_FONTS 给出字型。显式指向共享语料则按需求 13.7 跳过计数\
+               比对，只查未归因与核对。命令：cargo test -p pid-plot --test export_plant_backup\
+               （详见 docs/baselines/README.md）",
     });
     let rendered = report.render();
     eprintln!("{rendered}");
