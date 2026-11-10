@@ -3223,6 +3223,113 @@ impl GeometryEmitter for JStyleOverrideEmitter {
     }
 }
 
+/// The signed area of a closed ring: positive when it runs
+/// counter-clockwise.
+fn ring_signed_area(ring: &[PidPoint]) -> f64 {
+    ring.iter()
+        .zip(ring.iter().cycle().skip(1))
+        .map(|(from, to)| from.x * to.y - to.x * from.y)
+        .sum::<f64>()
+        / 2.0
+}
+
+/// Whether `point` lies inside the closed `ring`, by the even-odd rule.
+fn ring_contains(ring: &[PidPoint], point: &PidPoint) -> bool {
+    let mut inside = false;
+    for (from, to) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        if (from.y > point.y) != (to.y > point.y)
+            && point.x < from.x + (point.y - from.y) * (to.x - from.x) / (to.y - from.y)
+        {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// `ring` and `other` as one ring: `ring` to its vertex nearest `other`,
+/// across to `other`, all the way round it and back onto the vertex it was
+/// entered at, and across again to carry on along `ring`.
+///
+/// The two crossings lie on one segment and enclose nothing, so the joined
+/// ring's signed area is the sum of the two rings'. Returns it with the
+/// crossing's length.
+fn rings_joined(ring: &[PidPoint], other: &[PidPoint]) -> (Vec<PidPoint>, f64) {
+    let mut nearest = (f64::INFINITY, 0usize, 0usize);
+    for (at_ring, from) in ring.iter().enumerate() {
+        for (at_other, to) in other.iter().enumerate() {
+            let distance = (from.x - to.x).hypot(from.y - to.y);
+            if distance < nearest.0 {
+                nearest = (distance, at_ring, at_other);
+            }
+        }
+    }
+    let (distance, at_ring, at_other) = nearest;
+    let mut joined = Vec::with_capacity(ring.len() + other.len() + 2);
+    joined.extend(ring[..=at_ring].iter().cloned());
+    joined.extend(other[at_other..].iter().cloned());
+    joined.extend(other[..=at_other].iter().cloned());
+    joined.extend(ring[at_ring..].iter().cloned());
+    (joined, distance)
+}
+
+/// The area the loops of one boundary fill, as one ring, with how many of
+/// the loops are holes and the longest crossing that joins two of them.
+///
+/// A loop that lies inside an odd number of the others is a hole; one inside
+/// an even number bounds an area. That is the even-odd rule, the rule the
+/// vendor's own plots paint every fill with (`f*`), made explicit: every
+/// area is walked counter-clockwise and every hole clockwise, and the loops
+/// are joined by crossings walked both ways ([`rings_joined`]), so one ring
+/// paints the same under the even-odd rule and by winding number and a
+/// renderer holding one ring per record needs no rule of its own.
+///
+/// A boundary of one loop is that loop, untouched. Whether one loop lies in
+/// another is asked of its first vertex: loops that touch or cross are not
+/// told apart, and the corpora hold none.
+fn boundary_fill_ring(loops: &[Vec<PidPoint>]) -> (Vec<PidPoint>, usize, f64) {
+    let Some((first, rest)) = loops.split_first() else {
+        return (Vec::new(), 0, 0.0);
+    };
+    if rest.is_empty() {
+        return (first.clone(), 0, 0.0);
+    }
+    let is_hole: Vec<bool> = (0..loops.len())
+        .map(|inner| {
+            let around = (0..loops.len())
+                .filter(|&outer| {
+                    outer != inner
+                        && loops[inner]
+                            .first()
+                            .is_some_and(|vertex| ring_contains(&loops[outer], vertex))
+                })
+                .count();
+            around % 2 == 1
+        })
+        .collect();
+    // A loop the way it has to be walked, from the vertex it starts at.
+    let walked = |index: usize| -> Vec<PidPoint> {
+        let ring = &loops[index];
+        if (ring_signed_area(ring) > 0.0) == is_hole[index] {
+            ring.iter()
+                .take(1)
+                .chain(ring.iter().skip(1).rev())
+                .cloned()
+                .collect()
+        } else {
+            ring.clone()
+        }
+    };
+    let mut ring = walked(0);
+    let mut longest = 0.0f64;
+    for index in 1..loops.len() {
+        let (joined, crossing) = rings_joined(&ring, &walked(index));
+        ring = joined;
+        longest = longest.max(crossing);
+    }
+    let holes = is_hole.iter().filter(|hole| **hole).count();
+    (ring, holes, longest)
+}
+
 /// Emits `Decoded` closed [`PidGraphicKind::Polyline`] entities for the
 /// `igBoundary2d` family (PSM `0x0013`).
 ///
@@ -3269,22 +3376,41 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 skips.out_of_range();
                 continue;
             };
-            // The segments chain end-to-start, so their starts are the ring's
-            // vertices and the closing edge is implied by `closed`.
-            let points: Vec<PidPoint> = record
-                .segments
-                .iter()
-                .map(|segment| PidPoint {
-                    x: segment.start_x,
-                    y: segment.start_y,
+            // The segments of a loop chain end-to-start, so their starts are
+            // the loop's vertices and the closing edge is implied by
+            // `closed`. A record of one loop is that ring. A record of
+            // several is a fill with holes, and stays one ring: one record,
+            // one entity, which is what the emitter's account counts by.
+            let loops: Vec<Vec<PidPoint>> = record
+                .loops()
+                .map(|segments| {
+                    segments
+                        .iter()
+                        .map(|segment| PidPoint {
+                            x: segment.start_x,
+                            y: segment.start_y,
+                        })
+                        .collect()
                 })
                 .collect();
-            if points.len() < 3 {
-                // A boundary needs three segments to enclose anything; a
+            if loops.is_empty() || loops.iter().any(|ring| ring.len() < 3) {
+                // A loop needs three segments to enclose anything; a
                 // shorter one is a run, not a fill ring.
                 skips.shape_rejected();
                 continue;
             }
+            let (points, holes, crossing) = boundary_fill_ring(&loops);
+            let cut = if loops.len() < 2 {
+                String::new()
+            } else {
+                format!(
+                    " The record states {} loops, {holes} of them holes: the ring walks \
+                     every loop, areas one way and holes the other, joined by crossings \
+                     walked both ways (the longest {crossing:.6} m), so it encloses the \
+                     areas less the holes.",
+                    loops.len(),
+                )
+            };
             out.push(PidGraphicEntity {
                 id: format!("{}:igboundary2d:{index}", sheet.path),
                 drawing_id: None,
@@ -3307,7 +3433,7 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                          segments, so a renderer must fill it rather than stroke \
                          it -- the outline is already on the sheet. Join \
                          style_link::fill_styles_for_file on (stream, oid) for \
-                         the fill.",
+                         the fill.{cut}",
                         record.oid,
                         record.segments.len(),
                         record.member_refs.len(),
@@ -3881,6 +4007,7 @@ mod tests {
                     }
                 })
                 .collect(),
+            loop_segment_counts: Vec::new(),
             anchor_x: 0.25,
             anchor_y: 0.1,
             trailer_flag: 1,
@@ -4064,6 +4191,7 @@ mod tests {
                         end_x: 0.4,
                         end_y: 0.1,
                     }],
+                    loop_segment_counts: Vec::new(),
                     anchor_x: 0.25,
                     anchor_y: 0.1,
                     trailer_flag: 1,
@@ -5471,6 +5599,143 @@ mod tests {
         assert_eq!(account.emitted, 1);
         assert_eq!(account.out_of_range, 0);
         assert_eq!(account.shape_rejected, 1);
+    }
+
+    fn ring(points: &[(f64, f64)]) -> Vec<PidPoint> {
+        points.iter().map(|&(x, y)| PidPoint { x, y }).collect()
+    }
+
+    /// A hole is joined into the edge it lies in: one ring whose area is the
+    /// edge's less the hole's, which holds a point of the area and not a
+    /// point of the hole.
+    #[test]
+    fn a_boundary_with_a_hole_is_one_ring_around_the_area_between() {
+        let outer = ring(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]);
+        // Wound against the outer edge, as the corpus's two are, and wound
+        // with it: the ring comes out the same either way.
+        let against = ring(&[(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)]);
+        let with = ring(&[(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)]);
+        let mut rings = Vec::new();
+        for hole in [against, with] {
+            let (filled, holes, crossing) = boundary_fill_ring(&[outer.clone(), hole]);
+            assert_eq!(holes, 1);
+            assert_eq!(filled.len(), 4 + 4 + 2, "both loops, each closed on itself");
+            assert!((ring_signed_area(&filled) - (16.0 - 4.0)).abs() < 1e-12);
+            assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 2.0 }));
+            assert!(!ring_contains(&filled, &PidPoint { x: 2.0, y: 2.0 }));
+            // The crossing joins the two nearest vertices.
+            assert!((crossing - 2f64.sqrt()).abs() < 1e-12);
+            assert_eq!(
+                (filled[0].x, filled[0].y),
+                (0.0, 0.0),
+                "the ring starts where the outer loop does"
+            );
+            rings.push(filled);
+        }
+        assert_eq!(rings[0], rings[1]);
+    }
+
+    /// Loops side by side are two areas in the one ring; a loop inside a
+    /// hole is an area again; an outer edge stored clockwise is turned.
+    #[test]
+    fn loops_fill_by_how_many_loops_they_lie_in() {
+        let left = ring(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        let right = ring(&[(2.0, 0.0), (3.0, 0.0), (3.0, 1.0), (2.0, 1.0)]);
+        let (filled, holes, crossing) = boundary_fill_ring(&[left.clone(), right]);
+        assert_eq!(holes, 0);
+        assert!((ring_signed_area(&filled) - 2.0).abs() < 1e-12);
+        assert!((crossing - 1.0).abs() < 1e-12);
+        assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 0.5 }));
+        assert!(ring_contains(&filled, &PidPoint { x: 2.5, y: 0.5 }));
+        assert!(!ring_contains(&filled, &PidPoint { x: 1.5, y: 0.5 }));
+
+        let outer = ring(&[(0.0, 0.0), (9.0, 0.0), (9.0, 9.0), (0.0, 9.0)]);
+        let hole = ring(&[(1.0, 1.0), (1.0, 8.0), (8.0, 8.0), (8.0, 1.0)]);
+        let island = ring(&[(3.0, 3.0), (6.0, 3.0), (6.0, 6.0), (3.0, 6.0)]);
+        let (filled, holes, _) = boundary_fill_ring(&[outer, hole, island]);
+        assert_eq!(holes, 1);
+        assert!((ring_signed_area(&filled) - (81.0 - 49.0 + 9.0)).abs() < 1e-12);
+        assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 4.0 }));
+        assert!(!ring_contains(&filled, &PidPoint { x: 2.0, y: 2.5 }));
+        assert!(ring_contains(&filled, &PidPoint { x: 4.5, y: 4.0 }));
+
+        // One loop is itself, whichever way it runs.
+        let clockwise = ring(&[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]);
+        let (filled, holes, crossing) = boundary_fill_ring(std::slice::from_ref(&clockwise));
+        assert_eq!((filled, holes), (clockwise.clone(), 0));
+        assert!(crossing.abs() < f64::EPSILON);
+        // Two loops whose outer edge runs clockwise: turned, from the same
+        // first vertex.
+        let inner = ring(&[(0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75)]);
+        let (filled, holes, _) = boundary_fill_ring(&[clockwise, inner]);
+        assert_eq!(holes, 1);
+        assert_eq!((filled[0].x, filled[0].y), (0.0, 0.0));
+        assert!((ring_signed_area(&filled) - (1.0 - 0.25)).abs() < 1e-12);
+    }
+
+    /// A boundary record of two loops emits one ring under the record's own
+    /// id, says in its note that a hole was cut, and counts as one record
+    /// emitted.
+    #[test]
+    fn a_two_loop_boundary_record_emits_one_filled_ring() {
+        let mut record = ig_boundary(0);
+        let outer = [(0.0, 0.0), (0.4, 0.0), (0.4, 0.4), (0.0, 0.4)];
+        let hole = [(0.1, 0.1), (0.1, 0.3), (0.3, 0.3), (0.3, 0.1)];
+        for loop_ in [outer, hole] {
+            for index in 0..4 {
+                let (from, to) = (loop_[index], loop_[(index + 1) % 4]);
+                record.segments.push(DecodedIgBoundary2dSegment {
+                    tag_offset: 28,
+                    start_x: from.0,
+                    start_y: from.1,
+                    end_x: to.0,
+                    end_y: to.1,
+                });
+            }
+        }
+        record.segment_count = 8;
+        record.loop_segment_counts = vec![4, 4];
+        // A third loop of two segments encloses nothing and refuses the
+        // record whole, rather than painting two loops of three.
+        let mut short = record.clone();
+        short.segments.extend(record.segments[..2].iter().cloned());
+        short.loop_segment_counts.push(2);
+
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igboundaries: vec![record, short],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let entity = &geometry.entities[0];
+        let PidGraphicKind::Polyline { points, closed } = &entity.kind else {
+            panic!("a boundary emits a ring: {:?}", entity.kind);
+        };
+        assert!(*closed);
+        assert_eq!(points.len(), 10);
+        assert!((ring_signed_area(points) - (0.16 - 0.04)).abs() < 1e-12);
+        assert_eq!(entity.source.record_id.as_deref(), Some("igboundary2d:0"));
+        assert!(
+            entity
+                .source
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("states 2 loops, 1 of them holes")),
+            "{:?}",
+            entity.source.note
+        );
+        let account = geometry
+            .emitter_account("/Sheet6", "igBoundary2d")
+            .expect("the igBoundary2d emitter must account for its stream");
+        assert_eq!(
+            (account.decoded, account.emitted, account.shape_rejected),
+            (2, 1, 1)
+        );
     }
 
     /// A curve that samples to under two points is not a curve.

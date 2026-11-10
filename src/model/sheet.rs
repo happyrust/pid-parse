@@ -1499,10 +1499,18 @@ pub struct DecodedIgBoundary2dRecord {
     /// Sub-header bytes at payload offsets 26–27 (`[2, 1]` across
     /// all fixture records; exposed verbatim).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries).
+    /// Decoded segment groups (`segment_count` entries), every loop's in
+    /// turn when the record states more than one.
     pub segments: Vec<DecodedIgBoundary2dSegment>,
-    /// Anchor X following the segment groups (inside the segment
-    /// bounding box on all fixture records).
+    /// How many of [`Self::segments`] each loop holds, in order, on a
+    /// record that states more than one loop; empty on a record of one
+    /// loop. The first loop is the outer edge of a fill and a loop inside
+    /// it is a hole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_segment_counts: Vec<u32>,
+    /// Anchor X following the segment groups: where the fill was seeded
+    /// (inside the loop on every record that carries member references;
+    /// `1e30` on a linked template's, which carry none).
     pub anchor_x: f64,
     /// Anchor Y following the segment groups.
     pub anchor_y: f64,
@@ -1515,6 +1523,27 @@ pub struct DecodedIgBoundary2dRecord {
     /// onto the first start within `1e-9` per axis (20/20 fixture
     /// records are closed).
     pub closed_loop: bool,
+}
+
+impl DecodedIgBoundary2dRecord {
+    /// The segments of each loop, in order: one slice for a record of one
+    /// loop, one per loop otherwise. Counts that do not add up to the
+    /// segments yield what they cover and then the rest as a last loop.
+    pub fn loops(&self) -> impl Iterator<Item = &[DecodedIgBoundary2dSegment]> {
+        let mut rest = self.segments.as_slice();
+        let mut counts = self.loop_segment_counts.iter();
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let take = counts
+                .next()
+                .map_or(rest.len(), |count| (*count as usize).min(rest.len()));
+            let (head, tail) = rest.split_at(take);
+            rest = tail;
+            Some(head)
+        })
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIgBoundary2dRecord {
@@ -1544,6 +1573,7 @@ impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIg
                     end_y: s.end.1,
                 })
                 .collect(),
+            loop_segment_counts: d.loop_segment_counts,
             anchor_x: d.anchor.0,
             anchor_y: d.anchor.1,
             trailer_flag: d.trailer_flag,

@@ -1477,19 +1477,11 @@
       },
       "furniture": {
         "parse": {
-          "items": [
-            {
-              "reason": "record_refused",
-              "stream": "/Sheet6",
-              "type_code": "0x0013",
-              "count": 2
-            }
-          ],
           "unattributed": 0
         },
         "entities": {
-          "total": 5102,
-          "on_page": 5002,
+          "total": 5104,
+          "on_page": 5004,
           "partial": 0,
           "dropped": {
             "point_no_marker": 84,
@@ -1504,7 +1496,7 @@
             },
             "polyline": {
               "decoded": {
-                "on_page": 27
+                "on_page": 29
               }
             },
             "point": {
@@ -1538,9 +1530,9 @@
           "trailing_empty_lines": 0
         },
         "primitives": {
-          "laid_out": 5002,
+          "laid_out": 5004,
           "off_sheet": 0,
-          "on_page": 5002,
+          "on_page": 5004,
           "partial": 0,
           "unattributed": 0
         },
@@ -1548,15 +1540,7 @@
           "total": 7054,
           "written": 7054,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_refused",
-            "stream": "/Sheet6",
-            "type_code": "0x0013",
-            "count": 2
-          }
-        ]
+        }
       }
     },
     "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid": {

@@ -5533,10 +5533,19 @@ pub struct SheetIgBoundary2dDecoded {
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries).
+    /// Decoded segment groups (`segment_count` entries), every loop's in
+    /// turn when the record states more than one.
     pub segments: Vec<SheetIgBoundary2dSegment>,
-    /// Anchor point following the segment groups; inside the
-    /// segment bounding box on 20/20 fixture records.
+    /// How many of [`Self::segments`] each loop holds, in order, on a
+    /// record that states more than one loop (the `u32` at payload `+18`);
+    /// empty on a record of one loop, which is every record of the corpora
+    /// but two. The first loop is the outer edge of a fill and a loop
+    /// inside it is a hole: see [`decode_igboundaries`].
+    pub loop_segment_counts: Vec<u32>,
+    /// Anchor point following the segment groups: where the fill was
+    /// seeded. It lies inside the loop on every corpus record that carries
+    /// member references, and between the loops on the two that state two.
+    /// A linked template's records carry `(1e30, 1e30)` and no reference.
     pub anchor: (f64, f64),
     /// `u8` flag between the anchor and the member count (`1`
     /// across all fixture records; exposed verbatim, not
@@ -5555,22 +5564,45 @@ impl SheetIgBoundary2dDecoded {
     /// equality fails on 19/20 records, `1e-9` passes on 20/20), so
     /// callers should pass a small positive tolerance such as
     /// `1e-9` rather than `0.0`.
+    ///
+    /// A record of several loops is closed when each of them is.
     pub fn is_closed_loop(&self, tolerance: f64) -> bool {
         let close = |a: (f64, f64), b: (f64, f64)| {
             (a.0 - b.0).abs() <= tolerance && (a.1 - b.1).abs() <= tolerance
         };
-        if self.segments.len() < 2 {
-            return false;
+        let mut loops = 0usize;
+        for segments in self.loops() {
+            loops += 1;
+            let chained = segments.len() >= 2
+                && segments.windows(2).all(|w| close(w[0].end, w[1].start))
+                && close(segments[segments.len() - 1].end, segments[0].start);
+            if !chained {
+                return false;
+            }
         }
-        let chained = self
-            .segments
-            .windows(2)
-            .all(|w| close(w[0].end, w[1].start));
-        chained
-            && close(
-                self.segments[self.segments.len() - 1].end,
-                self.segments[0].start,
-            )
+        loops > 0
+    }
+
+    /// The segments of each loop, in order: one slice for a record of one
+    /// loop, one per loop otherwise.
+    ///
+    /// A record whose [`Self::loop_segment_counts`] do not add up to its
+    /// segments yields what they cover and then the rest as a last loop,
+    /// so no segment is ever left out of a walk.
+    pub fn loops(&self) -> impl Iterator<Item = &[SheetIgBoundary2dSegment]> {
+        let mut rest = self.segments.as_slice();
+        let mut counts = self.loop_segment_counts.iter();
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let take = counts
+                .next()
+                .map_or(rest.len(), |count| (*count as usize).min(rest.len()));
+            let (head, tail) = rest.split_at(take);
+            rest = tail;
+            Some(head)
+        })
     }
 }
 
@@ -5581,7 +5613,12 @@ impl SheetIgBoundary2dDecoded {
 /// 1. `type_code == 0x0013`; type flags are zero;
 /// 2. `sub_type_word == 0x0010` (payload offset 12), or `0x0000` — the
 ///    linked-template grammar first, then this one;
-/// 3. sub-header `u32` at payload offset 18 equals `1`;
+/// 3. the loop count — the `u32` at payload offset 18 — equals `1`; or,
+///    under sub-type `0x0000`, it is two or more, each loop a member
+///    count, two bytes and members of the linked-template vocabulary, and
+///    the anchor, flag, reference count and references after the last loop
+///    close the payload exactly (a fill with holes; rules 4–6 and 8 are
+///    this rule's own for such a record);
 /// 4. `segment_count` (payload offset 22) is in
 ///    `1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT`;
 /// 5. every member group starts with the `0x67` line tag (33 bytes) or
@@ -5701,6 +5738,19 @@ fn decode_igboundary_payload(
             sheet_layer_ref,
         ) {
             return Some(record);
+        }
+        // More than one loop: a fill with a hole, which neither the
+        // template grammar nor the strict one below reads.
+        if read_u32(18)? != 1 {
+            return decode_igboundary_loops_payload(
+                data,
+                offset,
+                header,
+                payload_end,
+                oid,
+                parent_ref,
+                sheet_layer_ref,
+            );
         }
     } else if sub_type_word != 0x0010 {
         return None;
@@ -5825,6 +5875,7 @@ fn decode_igboundary_payload(
         segment_count,
         sub_header_tail,
         segments,
+        loop_segment_counts: Vec::new(),
         anchor: (anchor_x, anchor_y),
         trailer_flag,
         member_refs,
@@ -5889,14 +5940,6 @@ fn decode_igboundary_template_payload(
             .get(pos..pos + 4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     };
-    let read_f64 = |pos: usize| -> Option<f64> {
-        payload
-            .get(pos..pos + 8)
-            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-    };
-    let check = |v: f64| -> Option<f64> {
-        (v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT).then_some(v)
-    };
 
     let index = read_u32(14)?;
     if read_u32(18)? != 1 {
@@ -5915,19 +5958,67 @@ fn decode_igboundary_template_payload(
     }
 
     let mut segments = Vec::new();
-    let mut pos = 28usize;
-    let mut all_same = true;
-    let mut first_vertex: Option<(f64, f64)> = None;
-    let mut push_segment = |segments: &mut Vec<SheetIgBoundary2dSegment>,
-                            tag_offset: usize,
-                            start: (f64, f64),
-                            end: (f64, f64)| {
-        let reference = *first_vertex.get_or_insert(start);
-        for vertex in [start, end] {
-            if vertex != reference {
-                all_same = false;
-            }
-        }
+    let pos = igboundary_template_members(payload, 28, member_count, members_end, &mut segments)?;
+    if pos != members_end || segments.is_empty() || igboundary_segments_coincide(&segments) {
+        return None;
+    }
+    // The 21-byte trailer carries two identical 8-byte words followed
+    // by `u32 1` and a flag byte on every corpus record; the marker is
+    // the only part worth holding a rule to.
+    if read_u32(members_end + 16)? != 1 {
+        return None;
+    }
+    let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
+    let trailer_flag = *payload.last()?;
+
+    Some(SheetIgBoundary2dDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid,
+        parent_ref,
+        sheet_layer_ref,
+        sub_type_word: 0x0000,
+        index,
+        segment_count: member_count,
+        sub_header_tail,
+        segments,
+        loop_segment_counts: Vec::new(),
+        anchor,
+        trailer_flag,
+        member_refs: Vec::new(),
+    })
+}
+
+/// Read `member_count` members of the linked-template vocabulary — `0x67`
+/// line, `0x68` point run, `0x74` arc — from `payload[pos..]`, none
+/// starting at or past `members_end`, flattening each to chords appended to
+/// `segments`. Returns the offset after the last member.
+///
+/// One loop of a boundary is one such run of members; see
+/// [`decode_igboundary_template_payload`] for the layouts.
+fn igboundary_template_members(
+    payload: &[u8],
+    mut pos: usize,
+    member_count: u32,
+    members_end: usize,
+    segments: &mut Vec<SheetIgBoundary2dSegment>,
+) -> Option<usize> {
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+    let check = |v: f64| -> Option<f64> {
+        (v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT).then_some(v)
+    };
+    let mut push_segment = |tag_offset: usize, start: (f64, f64), end: (f64, f64)| {
         segments.push(SheetIgBoundary2dSegment {
             tag_offset,
             start,
@@ -5945,7 +6036,7 @@ fn decode_igboundary_template_payload(
                 let sy = check(read_f64(pos + 9)?)?;
                 let ex = check(read_f64(pos + 17)?)?;
                 let ey = check(read_f64(pos + 25)?)?;
-                push_segment(&mut segments, pos, (sx, sy), (ex, ey));
+                push_segment(pos, (sx, sy), (ex, ey));
                 pos += 33;
             }
             IGBOUNDARY2D_POINTRUN_TAG => {
@@ -5964,7 +6055,7 @@ fn decode_igboundary_template_payload(
                         check(read_f64(pos + 7 + i * 16)?)?,
                         check(read_f64(pos + 15 + i * 16)?)?,
                     );
-                    push_segment(&mut segments, pos, prev, next);
+                    push_segment(pos, prev, next);
                     prev = next;
                 }
                 pos = run_end;
@@ -5992,7 +6083,7 @@ fn decode_igboundary_template_payload(
                 for i in 1..=chords {
                     let angle = start_ang + sweep * (i as f64 / chords as f64);
                     let next = (cx + radius * angle.cos(), cy + radius * angle.sin());
-                    push_segment(&mut segments, pos, prev, next);
+                    push_segment(pos, prev, next);
                     prev = next;
                 }
                 pos = member_end;
@@ -6000,17 +6091,120 @@ fn decode_igboundary_template_payload(
             _ => return None,
         }
     }
-    if pos != members_end || segments.is_empty() || all_same {
+    Some(pos)
+}
+
+/// Whether every vertex of `segments` is the first one: a boundary that
+/// encloses nothing.
+fn igboundary_segments_coincide(segments: &[SheetIgBoundary2dSegment]) -> bool {
+    segments.first().is_none_or(|first| {
+        segments
+            .iter()
+            .all(|segment| segment.start == first.start && segment.end == first.start)
+    })
+}
+
+/// Bytes one loop of a multi-loop boundary cannot be shorter than: its
+/// `u32` member count, the two bytes after it, and one `0x67` line.
+const IGBOUNDARY2D_MIN_LOOP_LEN: usize = 6 + 33;
+
+/// Family-specific payload validation for an `igBoundary2d` that states
+/// more than one loop: a fill with a hole in it.
+///
+/// The `u32` at payload `+18`, which every other record of the family
+/// carries as `1`, is the loop count. Each loop is what a one-loop record
+/// holds from `+22`: a `u32` member count, the two bytes `[2, 1]`, and that
+/// many members of the linked-template vocabulary
+/// ([`igboundary_template_members`]). After the last loop comes the
+/// drawing-side trailer — the anchor, a flag byte, a `u32` reference count
+/// and that many 8-byte member references — and it closes the payload
+/// exactly.
+///
+/// Read this way the trailer closes the payload of all 2 158 boundaries the
+/// corpora keep on sheet chains, whichever grammar decodes them today (a
+/// linked template's 21-byte trailer is this one with no reference, its
+/// anchor the pair `1e30`). Two of them state two loops, both in
+/// `XA-A1.igr`: an outer loop and a loop wholly inside it wound the other
+/// way, with the anchor between the two
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §10.6).
+///
+/// The reference count is not held to the member count. One of the two
+/// names 217 lines for its 216 members; the odd one is a line 32 µm long
+/// that its outer loop steps over.
+fn decode_igboundary_loops_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+    oid: u32,
+    parent_ref: u32,
+    sheet_layer_ref: u32,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+    let index = u32_le(payload, 14)?;
+    let loop_count = usize::try_from(u32_le(payload, 18)?).ok()?;
+    // The count is bounded by the payload that has to hold the loops, not
+    // by a constant: a letter's outline runs to 162 members here.
+    if loop_count < 2 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
         return None;
     }
-    // The 21-byte trailer carries two identical 8-byte words followed
-    // by `u32 1` and a flag byte on every corpus record; the marker is
-    // the only part worth holding a rule to.
-    if read_u32(members_end + 16)? != 1 {
+    let members_end = payload
+        .len()
+        .checked_sub(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+
+    let mut segments = Vec::new();
+    let mut loop_segment_counts = Vec::with_capacity(loop_count);
+    let mut member_total = 0u32;
+    let mut sub_header_tail = [0u8; 2];
+    let mut pos = 22usize;
+    for loop_index in 0..loop_count {
+        let member_count = u32_le(payload, pos)?;
+        if member_count == 0 {
+            return None;
+        }
+        if loop_index == 0 {
+            sub_header_tail = [*payload.get(pos + 4)?, *payload.get(pos + 5)?];
+        }
+        let before = segments.len();
+        pos = igboundary_template_members(
+            payload,
+            pos.checked_add(6)?,
+            member_count,
+            members_end,
+            &mut segments,
+        )?;
+        loop_segment_counts.push(u32::try_from(segments.len() - before).ok()?);
+        member_total = member_total.checked_add(member_count)?;
+    }
+    if igboundary_segments_coincide(&segments) {
         return None;
     }
-    let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
-    let trailer_flag = *payload.last()?;
+
+    // Anchor, flag, reference count, references: to the payload's last byte.
+    let anchor = (f64_le(payload, pos)?, f64_le(payload, pos.checked_add(8)?)?);
+    for value in [anchor.0, anchor.1] {
+        if !value.is_finite() || value.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+            return None;
+        }
+    }
+    let trailer_flag = *payload.get(pos.checked_add(16)?)?;
+    let reference_count = usize::try_from(u32_le(payload, pos.checked_add(17)?)?).ok()?;
+    let references_at = pos.checked_add(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+    if references_at.checked_add(reference_count.checked_mul(8)?)? != payload.len() {
+        return None;
+    }
+    let member_refs = payload
+        .get(references_at..)?
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|entry| SheetIgBoundary2dMemberRef {
+            member_oid: u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]),
+            class_word: u16::from_le_bytes([entry[4], entry[5]]),
+            sub_word: u16::from_le_bytes([entry[6], entry[7]]),
+        })
+        .collect();
 
     Some(SheetIgBoundary2dDecoded {
         byte_range: offset..payload_end,
@@ -6022,12 +6216,13 @@ fn decode_igboundary_template_payload(
         sheet_layer_ref,
         sub_type_word: 0x0000,
         index,
-        segment_count: member_count,
+        segment_count: member_total,
         sub_header_tail,
         segments,
+        loop_segment_counts,
         anchor,
         trailer_flag,
-        member_refs: Vec::new(),
+        member_refs,
     })
 }
 
@@ -13702,6 +13897,187 @@ mod tests {
         assert_eq!(decoded[1].oid, 522);
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
         assert!(decoded[1].is_closed_loop(1e-9));
+    }
+
+    /// A boundary of two loops: an outer square of side 4 counter-clockwise
+    /// and a square hole of side 2 inside it clockwise, the anchor between
+    /// the two, and one reference per member — the layout of `XA-A1.igr`'s
+    /// two letters with a counter, in eight lines.
+    fn two_loop_boundary_payload() -> Vec<u8> {
+        let outer = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let hole = [(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&5074u32.to_le_bytes());
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.extend_from_slice(&40u32.to_le_bytes());
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        for ring in [outer, hole] {
+            payload.extend_from_slice(&4u32.to_le_bytes());
+            payload.extend_from_slice(&[2, 1]);
+            for index in 0..4 {
+                let (from, to) = (ring[index], ring[(index + 1) % 4]);
+                payload.push(IGBOUNDARY2D_SEGMENT_TAG);
+                for value in [from.0, from.1, to.0, to.1] {
+                    payload.extend_from_slice(&f64::to_le_bytes(value));
+                }
+            }
+        }
+        for value in [0.5f64, 0.5] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(1);
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        for (index, sub_word) in [5u16, 4, 4, 4, 2, 0, 0, 0].into_iter().enumerate() {
+            payload.extend_from_slice(&(1000 + index as u32).to_le_bytes());
+            payload.extend_from_slice(&0x00CBu16.to_le_bytes());
+            payload.extend_from_slice(&sub_word.to_le_bytes());
+        }
+        payload
+    }
+
+    fn boundary_record(payload: &[u8]) -> Vec<u8> {
+        let mut out = PSM_TYPE_CODE_IGBOUNDARY2D.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn igboundary2d_decodes_a_boundary_of_two_loops() {
+        let record = boundary_record(&two_loop_boundary_payload());
+        let decoded = decode_igboundaries(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let b = &decoded[0];
+        assert_eq!((b.oid, b.sheet_layer_ref, b.index), (5074, 8, 40));
+        assert_eq!(b.sub_type_word, 0x0000);
+        assert_eq!(b.loop_segment_counts, [4, 4]);
+        assert_eq!(b.segment_count, 8);
+        assert_eq!(b.sub_header_tail, [2, 1]);
+        assert_eq!(b.anchor, (0.5, 0.5));
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs
+                .iter()
+                .map(|reference| (
+                    reference.member_oid,
+                    reference.class_word,
+                    reference.sub_word
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (1000, 0x00CB, 5),
+                (1001, 0x00CB, 4),
+                (1002, 0x00CB, 4),
+                (1003, 0x00CB, 4),
+                (1004, 0x00CB, 2),
+                (1005, 0x00CB, 0),
+                (1006, 0x00CB, 0),
+                (1007, 0x00CB, 0),
+            ]
+        );
+        let loops: Vec<Vec<(f64, f64)>> = b
+            .loops()
+            .map(|segments| segments.iter().map(|segment| segment.start).collect())
+            .collect();
+        assert_eq!(
+            loops,
+            [
+                vec![(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)],
+                vec![(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)],
+            ]
+        );
+        // Each loop closes on its own; read as one chain the eight segments
+        // would not.
+        assert!(b.is_closed_loop(1e-9));
+        assert_eq!(
+            b.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+    }
+
+    #[test]
+    fn igboundary2d_of_two_loops_need_not_name_one_line_a_member() {
+        // `XA-A1.igr`'s oid 5076 names 217 lines for 216 members: one more
+        // reference than members still closes the payload.
+        let mut payload = two_loop_boundary_payload();
+        let count_at = payload.len() - 8 * 8 - 4;
+        payload[count_at..count_at + 4].copy_from_slice(&9u32.to_le_bytes());
+        payload.extend_from_slice(&[0xEC, 0x12, 0, 0, 0xCB, 0, 0, 0]);
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert_eq!(decoded.member_refs.len(), 9);
+        assert_eq!(decoded.segment_count, 8);
+    }
+
+    #[test]
+    fn igboundary2d_of_two_loops_must_close_its_payload() {
+        let whole = two_loop_boundary_payload();
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+        let count_at = whole.len() - 8 * 8 - 4;
+
+        // A reference count the payload does not hold, either way.
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&7u32.to_le_bytes());
+        refused("one reference too few is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&9u32.to_le_bytes());
+        refused("one reference too many is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a reference count that overflows", payload);
+
+        // Loops the payload does not hold.
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&3u32.to_le_bytes());
+        refused("three loops stated, two present", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a loop count past the payload", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&0u32.to_le_bytes());
+        refused("no loop at all", payload);
+
+        // A loop that states no member, or more than it holds.
+        let second_loop_at = 22 + 6 + 4 * 33;
+        let mut payload = whole.clone();
+        payload[second_loop_at..second_loop_at + 4].copy_from_slice(&0u32.to_le_bytes());
+        refused("the second loop is empty", payload);
+        let mut payload = whole.clone();
+        payload[second_loop_at..second_loop_at + 4].copy_from_slice(&5u32.to_le_bytes());
+        refused("the second loop states a fifth member", payload);
+
+        // A member tag the template vocabulary does not have.
+        let mut payload = whole.clone();
+        payload[second_loop_at + 6] = 0x66;
+        refused("an unknown member tag", payload);
+
+        // A coordinate or an anchor that is not a number.
+        let mut payload = whole.clone();
+        payload[29..37].copy_from_slice(&f64::NAN.to_le_bytes());
+        refused("a NaN vertex", payload);
+        let anchor_at = count_at - 1 - 16;
+        let mut payload = whole.clone();
+        payload[anchor_at..anchor_at + 8].copy_from_slice(&f64::INFINITY.to_le_bytes());
+        refused("an infinite anchor", payload);
+
+        // Every truncation, and the same bytes under the drawing-side
+        // sub-type, which states one loop only.
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0010u16.to_le_bytes());
+        refused("two loops under sub-type 0x0010", payload);
     }
 
     /// Build a linked-template (`0x0000` sub-type) `igBoundary2d` whose
