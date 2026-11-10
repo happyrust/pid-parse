@@ -37,7 +37,9 @@
 //! For Arial Narrow at a 24-unit cell that is 20. Measured on this machine's
 //! GDI, which carries the same association: `动` and `℃` drawn through Arial
 //! Narrow at `lfHeight = 24` are the bitmap of 新宋体 at an em of 20, pixel
-//! for pixel.
+//! for pixel. Arial Narrow's own file says the same without GDI: the one row
+//! of its `VDMX` table that is 24 pixels from `yMax` to `yMin` is the row for
+//! an em of 20. `tools/gdi_font_association.py` takes both readings.
 //!
 //! The character height is the named face's own device metric, not a
 //! proportion of its cell. The same GDI answers 17 for Arial Narrow's 22-unit

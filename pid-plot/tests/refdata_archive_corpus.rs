@@ -53,6 +53,9 @@ use std::path::{Path, PathBuf};
 
 use pid_plot::model::{PaperModel, lay_out_drawing, lay_out_with_symbol_roots};
 
+#[path = "../src/scratch.rs"]
+mod scratch;
+
 /// The repository's own fixtures.
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file")
@@ -77,8 +80,12 @@ fn layout(drawing: &Path, corpus: &Path) -> PaperModel {
 /// that template from disk and “no furniture” was no longer the archive's doing.
 /// Copied out, the reading is the one the gate means, and it no longer depends
 /// on which templates the repository happens to ship.
-fn bare_corpus() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("pid-plot-bare-{}", std::process::id()));
+///
+/// The corpus is a directory inside a scratch directory of its own, so its
+/// parent holds nothing either; the copies go when the guard returned beside
+/// the corpus is dropped.
+fn bare_corpus() -> (scratch::ScratchDir, PathBuf) {
+    let root = scratch::ScratchDir::new("bare");
     let corpus = root.join("corpus");
     std::fs::create_dir_all(&corpus).expect("bare corpus");
     for name in ["DWG-0202GP06-01.pid", "DWG-0201GP06-01.pid", "D06.pid"] {
@@ -87,7 +94,7 @@ fn bare_corpus() -> PathBuf {
             std::fs::copy(&source, corpus.join(name)).expect("copy drawing");
         }
     }
-    corpus
+    (root, corpus)
 }
 
 /// The template's file name, or a panic naming what was drawn instead.
@@ -199,7 +206,7 @@ fn without_the_archive_the_same_drawings_draw_no_furniture() {
     // The drawings copied to a directory with no `Ref` and no archive in reach,
     // so an A2 page matches nothing — the negative control that makes the two
     // readings above the archive's doing rather than a disk copy's.
-    let bare = bare_corpus();
+    let (_root, bare) = bare_corpus();
     for name in ["DWG-0202GP06-01.pid", "DWG-0201GP06-01.pid", "D06.pid"] {
         let drawing = bare.join(name);
         if !drawing.is_file() {
@@ -229,7 +236,6 @@ fn without_the_archive_the_same_drawings_draw_no_furniture() {
             template.path
         );
     }
-    std::fs::remove_dir_all(bare.parent().expect("bare root")).ok();
 }
 
 #[test]

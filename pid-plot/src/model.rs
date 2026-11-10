@@ -6333,8 +6333,7 @@ mod tests {
     #[test]
     fn a_page_whose_template_is_missing_names_the_gap() {
         // A corpus with no `Ref` and no package beside it answers no name.
-        let corpus = std::env::temp_dir().join("pid-plot-a-corpus-with-no-templates");
-        std::fs::create_dir_all(&corpus).expect("an empty corpus");
+        let corpus = crate::scratch::ScratchDir::new("a-corpus-with-no-templates");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../test-file/工艺管道及仪表流程-1.pid");
         let model = super::lay_out_drawing(&fixture, &corpus).expect("the 熊安 fixture lays out");
@@ -6386,17 +6385,13 @@ mod tests {
     #[test]
     fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
         // The corpus sits in a directory of its own, so what the parent holds
-        // is this test's to say rather than the temp directory's; the name
-        // carries the process id, so another run of the tests is not in it.
-        let parent =
-            std::env::temp_dir().join(format!("pid-plot-template-places-{}", std::process::id()));
+        // is this test's to say rather than the temp directory's, and no
+        // other run of the tests is in it.
+        let parent = crate::scratch::ScratchDir::new("template-places");
         let corpus = parent.join("corpus");
         std::fs::create_dir_all(&corpus).expect("an empty corpus");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/D06.pid");
         let places = super::border_template_places(&fixture, &corpus);
-        // The places are in hand; nothing below reads the disk, so the
-        // directory goes before an assertion can leave it behind.
-        let _ = std::fs::remove_dir_all(&parent);
         assert_eq!(
             places.directories,
             vec![
@@ -7488,7 +7483,7 @@ mod tests {
                 // A candidate the parser cannot read is a silent `continue` in
                 // the pick; the trace is the difference between a corpus that
                 // lacks the file and one that carries a damaged copy.
-                let corpus = std::env::temp_dir().join("pid-plot-a-damaged-template-corpus");
+                let corpus = crate::scratch::ScratchDir::new("a-damaged-template-corpus");
                 let dir = corpus.join("Ref").join("Template Files");
                 std::fs::create_dir_all(&dir).expect("a corpus directory");
                 std::fs::write(dir.join("BROKEN-A1.igr"), b"not a compound file")
@@ -7501,15 +7496,13 @@ mod tests {
                     trace.unreadable.first().map(|name| name.name.as_str()),
                     Some("BROKEN-A1.igr")
                 );
-                let _ = std::fs::remove_dir_all(&corpus);
                 DropReason::TemplateCandidateUnreadable
             }
             DropReason::TemplateMissing => {
                 // A page that named a template and got none: the name it could
                 // not answer is what `PaperModel::missing_templates` reports,
                 // and the assembly reads its length as this count.
-                let corpus = std::env::temp_dir().join("pid-plot-a-corpus-with-no-templates");
-                std::fs::create_dir_all(&corpus).expect("an empty corpus");
+                let corpus = crate::scratch::ScratchDir::new("a-corpus-with-no-templates");
                 let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../test-file/工艺管道及仪表流程-1.pid");
                 let model =

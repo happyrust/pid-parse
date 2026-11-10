@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### 出图测试不再往临时目录里留东西（2026-11-11）
+
+`pid-plot` 的测试全量跑一遍，`%TEMP%` 里留下 8 个 `pid-plot-*` 目录：账本门禁的 7 条库内
+用例各一个 `pid-plot-ledger-gate-<进程号>-<用例>`（每跑一遍多 7 个，从不删除），加上两条
+用例共用的固定名字 `pid-plot-a-corpus-with-no-templates`。另有几处只在通过时才删，断言
+一失败就留下：`pid-plot-a-damaged-template-corpus`、`refdata_archive_corpus` 的
+`pid-plot-bare-<进程号>`、`template_symbol_gap` 的 `pid-plot-template-gap-…`，以及
+`write_five_drawings` 在 python 起不来时留下的脚本与文本两个文件。
+
+现在这些地方用同一个守卫 `ScratchDir`（`pid-plot/src/scratch.rs`；库内测试直接用，集成测试
+按路径包含同一个文件，所以只有一份实现）：目录名是 `pid-plot-<名字>-<进程号>-<本进程内的
+序号>`，守卫析构时删除，测试通过、断言失败都一样。固定名字没有了，两条用例、两个检出
+同时跑也不会写进同一个目录。
+
+验证：把 `TEMP` 指到一个空目录全量跑一遍，留下的 `pid-plot-*` 从 8 个变成 0 个；把两条
+库内用例改成写完文件之后失败（改完即还原），`TEMP` 里仍是 0 个。新增 2 条库内用例——守卫
+各归各、随守卫删除；断言失败退栈时也删除——库内 282 → 284 条。借字用例造字体目录用的
+`fonts::test_faces::scratch_dir` 上一轮已经是这个写法，没有动；`cli_pid_plot` 写在
+`CARGO_TARGET_TMPDIR`（`target` 之下）而不是 `TEMP`，也没有动。
+
 ### 借来的字照原厂参考图画：新宋体、`Tf 9.6`、整条借字按 `?` 的步进（2026-11-11）
 
 样式点名的字型画不了的字要向别的字型借。11 张验收参考图里这样的字一共 16 处：14 条报警限
@@ -34,6 +54,11 @@
 29 给出 17 / 19 / 21 / 24，Arial 的字格 24 给出 21——而参考图上的 16 条样本全在「Arial
 Narrow、字格 24」这一档。所以实现只写了这一档的 20，别的档位没有外推：那些标签借来的字
 照旧用所在那一段的字号、按出借字型自己的字宽走。
+
+这组实测入了库，可以复跑：`tools/gdi_font_association.py`（位图比对、逐档度量、参考字型表
+三种读法）。同一个 20 不经过 GDI 也读得出来——`ARIALN.TTF` 自己的 `VDMX` 表里，`yMax − yMin`
+等于 24 的只有 `yPelHeight 20` 那一行。把字格从 8 扫到 72，GDI 量到的字符高与 `VDMX` 表逐档
+对照：Arial Narrow 落在表内的 60 档、Arial 的 63 档全部一致。
 
 **新宋体进了参考字型表。** `REFERENCE_CAP_PX` 加一行 `NSimSun`（49.2 / 62.0，本机 GDI 实测，
 与宋体相同；表里原有的四行同时复现）。没有这一行，从新宋体借来的多字 run 按它自己字表的
