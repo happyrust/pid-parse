@@ -1531,3 +1531,178 @@ fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
     let _ = std::fs::remove_dir_all(&reference);
     let _ = std::fs::remove_dir_all(&out_dir);
 }
+
+// ---------------------------------------------------------------------
+// DWG-0202GP06-01: the one drawing whose `.pid`, Oracle `exp` backup
+// package and `SmartPlant` reference are all committed, so these run
+// wherever the repository is checked out.
+//
+// The package is a later revision of the plant than the reference: its
+// `T_PIPERUN` rows carry tag sequences (`565`, `01`) and item tags
+// (`OD-50 mm-03-565-1.6AR12-WE50mm`) the reference does not, so the
+// `--oracle-exp` figure keeps its pipeline findings. The pins below record
+// what each mode prints; a slice that closes a difference moves them.
+// ---------------------------------------------------------------------
+
+const DWG_DIR: &str = "test-file/export-test/publish-data/DWG-0202GP06-01";
+const DWG_PACKAGE: &str = "test-file/backup-test/DWG-0202GP06-01_p";
+
+fn repo_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+/// `DWG-0202GP06-01.pid --diff-against <its reference>`, alone or with the
+/// package's own dump and data map: `(exit code, stdout, stderr)`.
+fn dwg_diff(oracle_exp: bool) -> (Option<i32>, String, String) {
+    let mut command = Command::new(CLI);
+    command
+        .arg(repo_path(DWG_DIR).join("DWG-0202GP06-01.pid"))
+        .arg("--diff-against")
+        .arg(repo_path(DWG_DIR).join("DWG-0202GP06-01_Data.xml"))
+        .args(["--plant", "P01"]);
+    if oracle_exp {
+        command
+            .arg("--oracle-exp")
+            .arg(repo_path(DWG_PACKAGE).join("Export.dmp"))
+            .arg("--datamap")
+            .arg(repo_path(DWG_PACKAGE).join("RefData~4~804.zip"));
+    }
+    let output = command.output().expect("spawn pid_publish_xml");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// The printed finding lines, tallied by their first word (`missing value`
+/// and `missing rel` count apart from a missing object).
+fn finding_kinds(stdout: &str) -> BTreeMap<String, usize> {
+    let mut kinds = BTreeMap::new();
+    for line in stdout.lines() {
+        let kind = if line.starts_with("missing value ") {
+            "missing value"
+        } else if line.starts_with("missing rel ") {
+            "missing rel"
+        } else if line.starts_with("missing ") {
+            "missing"
+        } else if line.starts_with("extra ") {
+            "extra"
+        } else if line.starts_with("class ") {
+            "class"
+        } else if line.starts_with("value ") {
+            "value"
+        } else if line.starts_with("rel (") {
+            "rel"
+        } else {
+            continue;
+        };
+        *kinds.entry(kind.to_string()).or_insert(0) += 1;
+    }
+    kinds
+}
+
+fn kinds(pairs: &[(&str, usize)]) -> BTreeMap<String, usize> {
+    pairs
+        .iter()
+        .map(|(kind, count)| ((*kind).to_string(), *count))
+        .collect()
+}
+
+#[test]
+fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
+    let (code, stdout, stderr) = dwg_diff(false);
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stdout.lines().any(|line| line
+            == "pid export diff: objects 78 (extra 0, wrong class 0), values 71 \
+                (different 2, not in reference 0), rels 81 (not in reference 0)"),
+        "{stdout}"
+    );
+    // Two values read otherwise (a note's line break, the vessel's
+    // description); 18 reference values on published objects are neither
+    // stated nor on the exclusion list.
+    assert_eq!(
+        finding_kinds(&stdout),
+        kinds(&[("missing value", 18), ("value", 2)]),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
+    let (code, stdout, stderr) = dwg_diff(true);
+    assert!(
+        !stderr.contains("error:"),
+        "the package's dump must read: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, \
+             5 fluid codes missing, 0 fluid systems unmapped"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stdout.lines().any(|line| line
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 99 \
+                (different 2, not in reference 0), rels 133 (not in reference 6)"),
+        "{stdout}"
+    );
+    // The six pipelines and their six connector rels are the dump's own
+    // revision of the run tags; the reference's five pipelines and one
+    // off-page connector are the six missing objects.
+    assert_eq!(
+        finding_kinds(&stdout),
+        kinds(&[
+            ("extra", 6),
+            ("missing", 6),
+            ("missing value", 18),
+            ("rel", 6),
+            ("value", 2),
+        ]),
+        "{stdout}"
+    );
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+}
+
+#[test]
+fn the_dwg_package_publishes_every_drawing_it_lists() {
+    let out_dir = unique_out_dir("dwg-package");
+    let output = Command::new(CLI)
+        .arg(repo_path(DWG_PACKAGE))
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("spawn pid_publish_xml <DWG package>");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("_Index.json")).expect("_Index.json"),
+    )
+    .expect("index json");
+    assert_index_shape(&index);
+    assert_eq!(index["export"], "OracleExp");
+    assert_eq!(index["pid_entries"], 7);
+    assert_eq!(index["drawing_rows"], 7);
+    assert_eq!(index["paired"], 7);
+    assert_eq!(index["failed"], 0);
+    assert_eq!(index["shells"], 1);
+    for name in [
+        "001",
+        "002",
+        "222",
+        "DWG-0104GP01-08",
+        "DWG-0201GP01-01",
+        "DWG-0201GP06-01",
+        "DWG-0202GP06-01",
+    ] {
+        for suffix in ["_Data.xml", "_Meta.xml", "_Coverage.json"] {
+            assert!(
+                out_dir.join(format!("{name}{suffix}")).is_file(),
+                "{name}{suffix} was not written"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
