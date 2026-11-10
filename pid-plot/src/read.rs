@@ -95,6 +95,19 @@ impl std::error::Error for PlotReadError {}
 
 /// Read the first page of a PDF into paper-space ink and text.
 pub fn read_plot(pdf_bytes: &[u8]) -> Result<PlotInk, PlotReadError> {
+    read_plot_with_faces(pdf_bytes).map(|(ink, _)| ink)
+}
+
+/// Read the first page of a PDF as [`read_plot`] does, and name the typeface
+/// every text span is set in.
+///
+/// The second value holds one name per [`PlotInk::spans`] entry, in the same
+/// order: the name the PDF gives the span's font — its `BaseFont` — with a
+/// subset's tag taken off, so a subset and the whole program read alike. A
+/// span is set in one face — a run ends where the font changes — so one name
+/// is the whole span's. The name is empty where the interpreter has none: a
+/// Type 3 font, a Type 1 program, a font that is not embedded.
+pub fn read_plot_with_faces(pdf_bytes: &[u8]) -> Result<(PlotInk, Vec<String>), PlotReadError> {
     let pdf = Pdf::new(pdf_bytes.to_vec()).map_err(|_| PlotReadError::InvalidPdf)?;
     let pages = pdf.pages();
     let page = pages.first().ok_or(PlotReadError::NoPage)?;
@@ -123,11 +136,15 @@ pub fn read_plot(pdf_bytes: &[u8]) -> Result<PlotInk, PlotReadError> {
         clips: Vec::new(),
     };
     interpret_page(page, &mut ctx, &mut device);
-    Ok(PlotInk {
-        page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
-        segments: device.segments,
-        spans: cluster_spans(device.glyphs, height_pt),
-    })
+    let (spans, faces) = cluster_spans(device.glyphs, height_pt);
+    Ok((
+        PlotInk {
+            page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
+            segments: device.segments,
+            spans,
+        },
+        faces,
+    ))
 }
 
 struct RawGlyph {
@@ -137,6 +154,9 @@ struct RawGlyph {
     direction_view: [f64; 2],
     advance_pt: f64,
     font_key: u128,
+    /// The name the PDF gives the glyph's font, without a subset's tag; empty
+    /// when the interpreter has none for it.
+    face: String,
 }
 
 struct InkDevice {
@@ -325,9 +345,13 @@ impl<'a> Device<'a> for InkDevice {
         if !height_pt.is_finite() || height_pt > 10_000.0 {
             return;
         }
-        let font_key = match glyph {
-            Glyph::Outline(glyph) => glyph.font_data().map(|font| font.cache_key).unwrap_or(0),
-            Glyph::Type3(_) => 1,
+        // The interpreter reads the name off the font's `BaseFont` and takes
+        // a subset's `ABCDEF+` tag off it.
+        let (font_key, face) = match glyph {
+            Glyph::Outline(glyph) => glyph.font_data().map_or((0, String::new()), |font| {
+                (font.cache_key, font.postscript_name.unwrap_or_default())
+            }),
+            Glyph::Type3(_) => (1, String::new()),
         };
         let advance_pt = (placed * Point::new(advance, 0.0) - origin).hypot();
         self.glyphs.push(RawGlyph {
@@ -337,6 +361,7 @@ impl<'a> Device<'a> for InkDevice {
             direction_view: direction,
             advance_pt,
             font_key,
+            face,
         });
     }
 }
@@ -523,8 +548,11 @@ pub fn view_pt_to_paper_mm(x_pt: f64, y_pt: f64, page_height_pt: f64) -> [f64; 2
     [x_pt * MM_PER_PT, (page_height_pt - y_pt) * MM_PER_PT]
 }
 
-fn cluster_spans(glyphs: Vec<RawGlyph>, page_height_pt: f64) -> Vec<TextSpan> {
+/// The spans `glyphs` cluster into, and the face of each in the same order.
+/// A space span the clustering inserts is in the face of the span before it.
+fn cluster_spans(glyphs: Vec<RawGlyph>, page_height_pt: f64) -> (Vec<TextSpan>, Vec<String>) {
     let mut spans = Vec::new();
+    let mut faces = Vec::new();
     let mut current: Option<OpenSpan> = None;
     for glyph in glyphs {
         let continues = current.as_ref().is_some_and(|span| span.accepts(&glyph));
@@ -535,9 +563,12 @@ fn cluster_spans(glyphs: Vec<RawGlyph>, page_height_pt: f64) -> Vec<TextSpan> {
                 } else {
                     None
                 };
+                let face = span.face.clone();
                 spans.push(span.finish(page_height_pt));
+                faces.push(face.clone());
                 if let Some(space) = space {
                     spans.push(space);
+                    faces.push(face);
                 }
             }
             current = Some(OpenSpan::start(glyph));
@@ -546,9 +577,10 @@ fn cluster_spans(glyphs: Vec<RawGlyph>, page_height_pt: f64) -> Vec<TextSpan> {
         }
     }
     if let Some(span) = current {
+        faces.push(span.face.clone());
         spans.push(span.finish(page_height_pt));
     }
-    spans
+    (spans, faces)
 }
 
 struct OpenSpan {
@@ -557,6 +589,7 @@ struct OpenSpan {
     height_pt: f64,
     direction_view: [f64; 2],
     font_key: u128,
+    face: String,
     end_pt: Point,
 }
 
@@ -570,6 +603,7 @@ impl OpenSpan {
             height_pt: glyph.height_pt,
             direction_view: glyph.direction_view,
             font_key: glyph.font_key,
+            face: glyph.face,
             end_pt,
         }
     }

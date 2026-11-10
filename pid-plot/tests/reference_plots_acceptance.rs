@@ -105,6 +105,15 @@
 //! than 0.05 mm wider or narrower are counted on the whole page and pinned:
 //! 64 over the eleven pages, the text census's own count, each with a cause
 //! on record.
+//!
+//! A borrowed run is held to the reference's font family as well
+//! (2026-11-10). Where the face a label names cannot draw a character, the
+//! plot sets it in another: fourteen paired runs on the eleven pages, twelve
+//! `℃` after Arial Narrow digits and the A2 sheet's two `动火点`. The
+//! reference sets all fourteen in NSimSun. Ours sets the two `动火点` in
+//! SimSun, the same family, and the twelve `℃` in FangSong, which is another.
+//! Each page's count of borrowed runs is pinned, and its count of them in
+//! the reference's family may only rise — two of fourteen today.
 
 use std::path::PathBuf;
 
@@ -112,9 +121,9 @@ use pid_plot::compare::{
     CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
     compare_plots_with_model, template_masks, write_overlay, write_report,
 };
-use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::model::{PaperModel, TextAnchor, lay_out_drawing};
-use pid_plot::read::{PlotInk, read_plot};
+use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
+use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
+use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
@@ -169,6 +178,13 @@ struct WholePage {
     /// Paired labels past [`LABEL_POSITION_MM`] or [`LABEL_WIDTH_MM`], an
     /// equality: one more is a label that moved, one fewer a pin to lower.
     text_off: usize,
+    /// Paired runs of ours set in a font family their label names no face of
+    /// — a borrowed `℃`, a borrowed `动火点` — an equality.
+    borrowed: usize,
+    /// Of [`Self::borrowed`], the runs the reference letters in the same
+    /// family ([`FAMILIES`]). It may only rise, and the pin rises with it:
+    /// fewer is a run that left the reference's family, more a pin to raise.
+    borrowed_in_family: usize,
 }
 
 /// One bridge's worth of slack above the reading, as `plot_compare.rs` holds
@@ -255,6 +271,27 @@ const LABEL_POSITION_MM: f64 = 0.15;
 /// be before the label is counted in [`WholePage::text_off`], millimetres.
 const LABEL_WIDTH_MM: f64 = 0.05;
 
+/// The font families a plot letters in, each with the names its faces carry
+/// in a PDF.
+///
+/// A borrowed run is held to the reference's family rather than to its face.
+/// 宋体 and 新宋体 are one design — NSimSun is SimSun with a fixed-pitch
+/// Latin — so a `动火点` the reference sets in NSimSun and this crate sets in
+/// SimSun is the same lettering, while a `℃` set in FangSong against the
+/// reference's NSimSun is not. A face is listed under every name it goes by:
+/// the reference's driver writes `ArialNarrow`, while this crate's writer
+/// embeds a program under its own family name, `Arial Narrow`, which is also
+/// what [`typeface_key`] calls the face a label names.
+///
+/// A name in no row fails the page that reads it, so a face new to these
+/// pages is given its family on purpose.
+const FAMILIES: [(&str, &[&str]); 4] = [
+    ("Arial", &["Arial"]),
+    ("Arial Narrow", &["Arial Narrow", "ArialNarrow"]),
+    ("FangSong", &["FangSong"]),
+    ("Song", &["SimSun", "NSimSun"]),
+];
+
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 
 const PINS: [Pin; 11] = [
@@ -282,6 +319,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 583,
             text_reference: 583,
             text_off: 8,
+            borrowed: 2,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -308,6 +347,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 813,
             text_reference: 813,
             text_off: 7,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -334,6 +375,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 959,
             text_reference: 959,
             text_off: 8,
+            borrowed: 2,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -360,6 +403,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 155,
             text_reference: 155,
             text_off: 0,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -386,6 +431,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 161,
             text_reference: 161,
             text_off: 6,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -412,6 +459,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 171,
             text_reference: 171,
             text_off: 2,
+            borrowed: 2,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -438,6 +487,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 253,
             text_reference: 253,
             text_off: 2,
+            borrowed: 2,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -470,6 +521,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 326,
             text_reference: 326,
             text_off: 8,
+            borrowed: 1,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -498,6 +551,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 328,
             text_reference: 328,
             text_off: 8,
+            borrowed: 1,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -526,6 +581,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 321,
             text_reference: 321,
             text_off: 8,
+            borrowed: 1,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -565,6 +622,8 @@ const PINS: [Pin; 11] = [
             min_text_matched: 250,
             text_reference: 261,
             text_off: 7,
+            borrowed: 3,
+            borrowed_in_family: 2,
         },
     },
 ];
@@ -710,11 +769,14 @@ fn eleven_reference_plots_hold_their_readings() {
     // only after all eleven pass, so the delivery can never drift from what the
     // gate verified (see `deliver_plots`).
     let mut delivered: Vec<(&str, Vec<u8>)> = Vec::new();
+    let mut borrowed_on_all_pages = 0usize;
+    let mut in_family_on_all_pages = 0usize;
 
     for (pin, model) in PINS.iter().zip(&models) {
         let name = pin.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
-        let reference = read_plot(&reference_bytes).expect("read reference");
+        let (reference, reference_faces) =
+            read_plot_with_faces(&reference_bytes).expect("read reference");
         for axis in 0..2 {
             assert!(
                 (reference.page_mm[axis] - pin.page_mm[axis]).abs() < 1.0,
@@ -732,7 +794,7 @@ fn eleven_reference_plots_hold_their_readings() {
 
         let our_bytes = write_plot(model, &fonts).expect("write ours");
         delivered.push((name, our_bytes.clone()));
-        let ours = read_plot(&our_bytes).expect("read ours");
+        let (ours, our_faces) = read_plot_with_faces(&our_bytes).expect("read ours");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
             .missing_boxes
@@ -909,7 +971,46 @@ fn eleven_reference_plots_hold_their_readings() {
             floor.text_off,
             off.join("\n")
         );
+        let borrowed = borrowed_runs(
+            name,
+            &whole,
+            model,
+            (&reference, &reference_faces),
+            (&ours, &our_faces),
+        );
+        let listed = borrowed
+            .iter()
+            .map(|run| run.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            borrowed.len(),
+            floor.borrowed,
+            "{name} whole-page: the paired runs set in a family their label does not name \
+             are not the {} pinned:\n{listed}",
+            floor.borrowed
+        );
+        let in_family = borrowed.iter().filter(|run| run.in_family).count();
+        assert!(
+            in_family >= floor.borrowed_in_family,
+            "{name} whole-page: {in_family} borrowed runs are in the reference's font family \
+             where {} are pinned; one has left it:\n{listed}",
+            floor.borrowed_in_family
+        );
+        assert!(
+            in_family <= floor.borrowed_in_family,
+            "{name} whole-page: {in_family} borrowed runs are in the reference's font family \
+             and {} are pinned; raise `borrowed_in_family` to what it reads:\n{listed}",
+            floor.borrowed_in_family
+        );
+        borrowed_on_all_pages += borrowed.len();
+        in_family_on_all_pages += in_family;
     }
+    eprintln!(
+        "borrowed runs paired on the {} pages: {borrowed_on_all_pages}, of which \
+         {in_family_on_all_pages} are in the reference's font family",
+        PINS.len()
+    );
 
     deliver_plots(&corpus, &delivered);
 }
@@ -1000,4 +1101,165 @@ fn labels_off(report: &CompareReport, reference: &PlotInk) -> Vec<String> {
             ))
         })
         .collect()
+}
+
+/// One paired run of ours set in a font family its label names no face of.
+struct BorrowedRun {
+    /// The label, what we set outside its named faces and what the reference
+    /// sets there, for a failure to list.
+    line: String,
+    /// Whether the reference letters the label outside its named faces in
+    /// the same families we do.
+    in_family: bool,
+}
+
+/// The family a font name belongs to, by [`FAMILIES`].
+fn family_of(face: &str) -> Option<&'static str> {
+    FAMILIES
+        .iter()
+        .find(|(_, faces)| faces.contains(&face))
+        .map(|(family, _)| *family)
+}
+
+/// The family of a face one of `name`'s pages reads, or a failure that says
+/// whose face it is and asks for a row.
+fn family(name: &str, whose: &str, face: &str) -> &'static str {
+    family_of(face).unwrap_or_else(|| {
+        panic!("{name}: {whose} face {face:?} is in no row of FAMILIES; give it a family")
+    })
+}
+
+/// One run set outside its label's named families: the family, the face's
+/// name on the page and what the run spells.
+type Outside<'a> = (&'static str, &'a str, &'a str);
+
+/// The runs of one side of a pair that are set in a family `named` does not
+/// hold. A run of spaces inks nothing and is not counted.
+fn outside_named<'a>(
+    name: &str,
+    whose: &str,
+    runs: &[usize],
+    (ink, faces): (&'a PlotInk, &'a [String]),
+    named: &[&'static str],
+) -> Vec<Outside<'a>> {
+    runs.iter()
+        .filter(|index| !ink.spans[**index].text.trim().is_empty())
+        .map(|index| {
+            (
+                family(name, whose, &faces[*index]),
+                faces[*index].as_str(),
+                ink.spans[*index].text.as_str(),
+            )
+        })
+        .filter(|(family, ..)| !named.contains(family))
+        .collect()
+}
+
+/// The families `runs` are set in, each once, in order.
+fn families(runs: &[Outside<'_>]) -> Vec<&'static str> {
+    let mut families: Vec<&'static str> = runs.iter().map(|(family, ..)| *family).collect();
+    families.sort_unstable();
+    families.dedup();
+    families
+}
+
+/// `runs` as a failure lists them: what each spells and the face it is in.
+fn listed(runs: &[Outside<'_>]) -> String {
+    if runs.is_empty() {
+        return "nothing outside the named faces".to_string();
+    }
+    runs.iter()
+        .map(|(_, face, text)| format!("{text:?} in {face}"))
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// The paired runs of `report` the page borrows a face for, each with
+/// whether the reference letters it in the same family.
+///
+/// A label's style names a face, and a run inside it may name another;
+/// [`typeface_key`] reads both. A run of ours set in a family none of those
+/// faces belongs to is lettered in a borrowed face, the named one being
+/// unable to draw it. That is read off the written page — the face each of
+/// its spans is set in — so the writer's rule for choosing a lender is not
+/// repeated here. The reference's side of the pair is read the same way, and
+/// the two agree when the families they set outside the label's named faces
+/// are the same: for a `℃` paired with a `℃`, ours is in the family of the
+/// reference's.
+///
+/// Only a paired run can be held against the reference, and only a pair
+/// whose label the comparison found says which faces are named. A borrowed
+/// run that pairs with nothing is therefore not in this reading: the A2
+/// sheet's `L=-5℃` and `H=-15℃` sit in the instrument cluster the `.pid`
+/// stores 16.9 mm from where the reference prints it.
+fn borrowed_runs(
+    name: &str,
+    report: &CompareReport,
+    model: &PaperModel,
+    (reference, reference_faces): (&PlotInk, &[String]),
+    (ours, our_faces): (&PlotInk, &[String]),
+) -> Vec<BorrowedRun> {
+    let mut borrowed = Vec::new();
+    for pair in &report.text_pairs {
+        let Some(source) = &pair.source else {
+            continue;
+        };
+        // `text_sources` copies a label's text and insertion point out of the
+        // model, so the label is the one that holds exactly those.
+        let (value, font, spans) = model
+            .primitives
+            .iter()
+            .find_map(|primitive| match &primitive.shape {
+                PaperShape::Text {
+                    value,
+                    origin_mm,
+                    font,
+                    spans,
+                    ..
+                } if *value == source.text && *origin_mm == source.origin_mm => {
+                    Some((value, font, spans))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name}: no label of the model is the source {:?}",
+                    source.text
+                )
+            });
+        let mut named = vec![family(
+            name,
+            "a label's",
+            typeface_key(font.as_deref(), value),
+        )];
+        for span in spans {
+            if let Some(run_font) = span.font.as_deref() {
+                named.push(family(
+                    name,
+                    "a label run's",
+                    typeface_key(Some(run_font), value),
+                ));
+            }
+        }
+        let ours_outside = outside_named(name, "our", &pair.our_runs, (ours, our_faces), &named);
+        if ours_outside.is_empty() {
+            continue;
+        }
+        let reference_outside = outside_named(
+            name,
+            "the reference's",
+            &pair.reference_runs,
+            (reference, reference_faces),
+            &named,
+        );
+        borrowed.push(BorrowedRun {
+            line: format!(
+                "  {value:?}: ours {}; the reference {}",
+                listed(&ours_outside),
+                listed(&reference_outside)
+            ),
+            in_family: families(&ours_outside) == families(&reference_outside),
+        });
+    }
+    borrowed
 }

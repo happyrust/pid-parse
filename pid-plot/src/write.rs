@@ -5275,6 +5275,39 @@ mod tests {
         );
     }
 
+    /// A plot reads back the face of every span, by the name the page gives
+    /// the font: the program's own family name, which the writer embeds it
+    /// under, without the tag a subset's name carries. Both labels here are
+    /// set in Inter — one in the whole program, one in a subset embedded
+    /// under another key — and both come back as `Inter`, one name per span.
+    #[test]
+    fn a_plot_reads_back_the_face_of_every_span() {
+        let subset = crate::fonts::test_faces::ascii_only();
+        let sheet = lettered_sheet(&[("AB", "Arial"), ("CD", "Arial Narrow")]);
+        let fonts = [
+            PlotFont {
+                key: "Arial",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
+            },
+            PlotFont {
+                key: "Arial Narrow",
+                bytes: &subset,
+                subset: true,
+            },
+        ];
+        let pdf = write_plot(&sheet, &fonts).expect("write");
+        let (ink, faces) = crate::read::read_plot_with_faces(&pdf).expect("read");
+        assert_eq!(ink, read_plot(&pdf).expect("read"), "the ink is the same");
+        let read: Vec<(&str, &str)> = ink
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .zip(faces.iter().map(String::as_str))
+            .collect();
+        assert_eq!(read, [("AB", "Inter"), ("CD", "Inter")]);
+    }
+
     /// Every acceptance sheet letters each label in the same faces whether its
     /// faces are prepared for it alone — what `pid_plot` does with one drawing
     /// — or for all the sheets of the corpus together, which is what the

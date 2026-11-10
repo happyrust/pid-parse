@@ -12,7 +12,11 @@
 //!   found no label for (`unknown`), with the label it was read against;
 //! - every label past 0.15 mm of anchor-point miss or 0.05 mm of width
 //!   difference, the count the gate pins as `WholePage::text_off`;
-//! - every lettering class with its count and means.
+//! - every lettering class with its count and means;
+//! - every pair the two pages set in different faces, with each side's face
+//!   and body size. The gate's `WholePage::borrowed` reading is taken from
+//!   the same read-back: these are the runs a label's named face cannot draw,
+//!   which each page borrows another face for.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_which_label_a_paired_run_is_read_against
@@ -30,7 +34,7 @@ use pid_plot::compare::{
 };
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, TextAnchor, lay_out_drawing};
-use pid_plot::read::{PlotInk, read_plot};
+use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// The eleven acceptance sheets, in the gate's order.
@@ -61,6 +65,74 @@ fn runs<'a>(ink: &'a PlotInk, indices: &[usize]) -> Vec<&'a str> {
         .iter()
         .map(|index| ink.spans[*index].text.as_str())
         .collect()
+}
+
+/// A face under one spelling on both pages: the reference's driver writes
+/// `ArialNarrow` where this crate's writer writes `Arial Narrow`.
+fn face_name(face: &str) -> &str {
+    if face == "ArialNarrow" {
+        "Arial Narrow"
+    } else {
+        face
+    }
+}
+
+/// The inked runs at `indices`, each as its face and body size.
+fn set_in(ink: &PlotInk, faces: &[String], indices: &[usize]) -> Vec<(String, f64)> {
+    indices
+        .iter()
+        .filter(|index| !ink.spans[**index].text.trim().is_empty())
+        .map(|index| {
+            (
+                face_name(&faces[*index]).to_string(),
+                ink.spans[*index].height_mm,
+            )
+        })
+        .collect()
+}
+
+/// Print every pair of `report` whose runs the two pages set in different
+/// faces, and return how many there are.
+fn print_faces(
+    report: &CompareReport,
+    (reference, reference_faces): (&PlotInk, &[String]),
+    (ours, our_faces): (&PlotInk, &[String]),
+) -> usize {
+    let mut differing = 0usize;
+    for pair in &report.text_pairs {
+        let ours_set = set_in(ours, our_faces, &pair.our_runs);
+        let reference_set = set_in(reference, reference_faces, &pair.reference_runs);
+        // The faces, not the runs: the two pages often cut one label into a
+        // different number of runs of the same face.
+        let names = |set: &[(String, f64)]| -> Vec<String> {
+            let mut names: Vec<String> = set.iter().map(|(face, _)| face.clone()).collect();
+            names.sort_unstable();
+            names.dedup();
+            names
+        };
+        if names(&ours_set) == names(&reference_set) {
+            continue;
+        }
+        differing += 1;
+        let shown = |set: &[(String, f64)]| {
+            set.iter()
+                .map(|(face, height_mm)| format!("{face} {height_mm:.3} mm"))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
+        println!(
+            "      face  {:<22} {:?}: ours {}, reference {} | {}",
+            pair.class,
+            runs(ours, &pair.our_runs),
+            shown(&ours_set),
+            shown(&reference_set),
+            pair.source.as_ref().map_or_else(
+                || "no label".to_string(),
+                |source| format!("{:?}", source.text)
+            ),
+        );
+    }
+    differing
 }
 
 /// Print one view's labels past the two limits and its lettering classes.
@@ -136,14 +208,16 @@ fn main() -> ExitCode {
             subset: face.subset,
         })
         .collect();
+    let mut set_in_other_faces = 0usize;
     for (name, model) in SHEETS.iter().zip(&models) {
         let reference = std::fs::read(corpus.join(format!("{name}.pdf")))
             .ok()
-            .and_then(|bytes| read_plot(&bytes).ok());
+            .and_then(|bytes| read_plot_with_faces(&bytes).ok());
         let ours = write_plot(model, &fonts)
             .ok()
-            .and_then(|bytes| read_plot(&bytes).ok());
-        let (Some(reference), Some(ours)) = (reference, ours) else {
+            .and_then(|bytes| read_plot_with_faces(&bytes).ok());
+        let (Some((reference, reference_faces)), Some((ours, our_faces))) = (reference, ours)
+        else {
             eprintln!("{name}: a plot could not be written or read back");
             return ExitCode::from(1);
         };
@@ -199,6 +273,10 @@ fn main() -> ExitCode {
         }
         print_view("whole", &whole, &reference);
         print_view("masked", &masked, &reference);
+        let differing = print_faces(&whole, (&reference, &reference_faces), (&ours, &our_faces));
+        println!("   whole: {differing} pairs set in different faces on the two pages");
+        set_in_other_faces += differing;
     }
+    println!("== {set_in_other_faces} pairs set in different faces over the eleven sheets");
     ExitCode::SUCCESS
 }
