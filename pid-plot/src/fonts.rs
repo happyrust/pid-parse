@@ -38,7 +38,7 @@ pub struct PreparedFont {
 /// [`pid_parse::style_link::TEXT_CHAR_FONT_NAME_OFFSET`]. Anything else
 /// with a Han character uses FangSong; Latin-only lettering uses Arial
 /// Narrow. Individual characters the chosen face cannot encode borrow one
-/// of the two faces [`borrow_order`] names, one character at a time — see
+/// of the faces [`borrow_order`] names, one character at a time — see
 /// [`crate::write`].
 #[must_use]
 pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
@@ -54,7 +54,7 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
     }
 }
 
-/// The two faces a label borrows from, in the order they are asked.
+/// The faces a label borrows from, in the order they are asked.
 ///
 /// A character the face a label names cannot draw — Han in an Arial Narrow
 /// style, the `℃` after its digits — is lettered in SimSun or FangSong, and
@@ -64,21 +64,40 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
 /// A2 sheet's two `动火点` in SimSun, every borrowed `℃` in FangSong — stated
 /// so that a sheet prepared on its own gets the same answer.
 ///
-/// Reading it off the programs in hand instead would make the answer follow
-/// the batch. Those are subsets cut to the labels of whichever sheets were
-/// prepared together, so the first program that holds `动火点` is FangSong
-/// for the A2 sheet alone and SimSun beside a sheet whose own 宋体 label
-/// holds the same three characters. [`prepare_fonts`] gives each lender what
-/// this order sends it, judged against the lender's whole program, and the
+/// The four that follow are the other faces [`typeface_key`] knows, by name.
+/// They answer for a character neither lender draws: Latin beyond what the
+/// two carry — Arial has `Ż`, SimSun does not — or a Han character of
+/// extension B, which only SimSun-ExtB holds. The list is every face this
+/// crate loads, so a character none of the six draws is drawn by none, and
+/// [`prepare_fonts`] refuses it. The face a character is named in stands in
+/// the list like any other and is passed over, having just been found not to
+/// draw it.
+///
+/// Reading the lender off the programs in hand instead would make the answer
+/// follow the batch. Those are subsets cut to the labels of whichever sheets
+/// were prepared together, so the first program that holds `动火点` is
+/// FangSong for the A2 sheet alone and SimSun beside a sheet whose own 宋体
+/// label holds the same three characters; and a character neither lender
+/// draws would be found in whichever other face the batch had loaded, or in
+/// none for a sheet prepared alone. [`prepare_fonts`] gives each face what
+/// this order sends it, judged against the face's whole program, and the
 /// writer asks in the same order, so the two agree whatever else was
 /// prepared with the sheet.
 #[must_use]
-pub fn borrow_order(label: &str) -> [&'static str; 2] {
-    if label.chars().any(is_cjk) {
+pub fn borrow_order(label: &str) -> [&'static str; 6] {
+    let [first, second] = if label.chars().any(is_cjk) {
         ["SimSun", "FangSong"]
     } else {
         ["FangSong", "SimSun"]
-    }
+    };
+    [
+        first,
+        second,
+        "Arial",
+        "Arial Narrow",
+        "NSimSun",
+        "SimSun-ExtB",
+    ]
 }
 
 /// The directories [`prepare_fonts`] looks in, in order.
@@ -106,9 +125,9 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 /// formatting **run** names is optional — the label draws in its own face
 /// where the run's face is absent, the way it did before the partition was
 /// read — since one missing typeface must not refuse a whole export.
-/// A character the face it is named in cannot draw borrows one of the two
-/// faces [`borrow_order`] names for its label, and that lender is loaded, or
-/// its program widened, to carry it — the run keeps its named face for
+/// A character the face it is named in cannot draw borrows one of the faces
+/// [`borrow_order`] names for its label, and that lender is loaded, or its
+/// program widened, to carry it — the run keeps its named face for
 /// everything that face draws and only the rest borrows. Which lender
 /// carries a character is settled against the lenders' whole programs, never
 /// against the subsets this call builds, so a sheet's faces carry the same
@@ -116,8 +135,11 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns an error when a needed face is absent from every directory, or
-/// a file is present but not an embeddable standalone font.
+/// Returns an error when a needed face is absent from every directory, when
+/// a file is present but not an embeddable standalone font, or when a label
+/// holds a character that no face of its [`borrow_order`] draws — the error
+/// names the character and the label, and is the same for a sheet prepared
+/// alone and in any batch.
 pub fn prepare_fonts(
     models: &[&PaperModel],
     dirs: &[PathBuf],
@@ -234,17 +256,27 @@ pub fn prepare_fonts(
             }),
         }
     }
-    // Neither lender draws these. A face loaded for another reason may, and
-    // the writer takes it as a last resort; with none the export is refused.
-    let still: String = lending
-        .unplaced
-        .iter()
-        .copied()
-        .filter(|ch| !face_covers(&faces, *ch))
-        .collect();
-    if !still.is_empty() {
+    // No face of the label's order draws these, on this machine's files, so
+    // no face the writer asks could. Refused here, by the label, whatever
+    // else shares the call: a face another sheet happened to load is in the
+    // same order and was asked with the rest.
+    if let Some(first) = lending.unplaced.first() {
+        let characters = first
+            .characters
+            .iter()
+            .map(|ch| format!("{ch:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let others = match lending.unplaced.len() - 1 {
+            0 => String::new(),
+            more => format!("; {more} more label(s) hold a character no face draws"),
+        };
         return Err(format!(
-            "no loaded face can draw {still:?} (searched {})",
+            "no face draws {characters} of the label {:?}, which names {} (asked {}; searched \
+             {}){others}",
+            first.label,
+            first.named,
+            borrow_order(&first.label).join(", "),
             searched_dirs(dirs)
         ));
     }
@@ -255,8 +287,19 @@ pub fn prepare_fonts(
 struct Loans {
     /// The characters each face is asked for beyond the labels that name it.
     lent: BTreeMap<&'static str, BTreeSet<char>>,
-    /// The characters neither of their label's two lenders draws.
-    unplaced: BTreeSet<char>,
+    /// The labels that hold a character no face of their order draws, in
+    /// the order the drawings letter them.
+    unplaced: Vec<Unplaced>,
+}
+
+/// A label one or more of whose characters no face draws.
+struct Unplaced {
+    /// The label's text.
+    label: String,
+    /// The face its style names.
+    named: &'static str,
+    /// The characters of it no face of its [`borrow_order`] draws.
+    characters: BTreeSet<char>,
 }
 
 /// Which face lends each character the face it is named in cannot draw.
@@ -264,16 +307,23 @@ struct Loans {
 /// Every character a label letters is named in a face ([`named_faces`]) —
 /// the blanks inside the line with the rest, since each is set for its
 /// advance, and not the trailing pad, which the writer drops. The ones
-/// that face cannot draw go to the label's two lenders in [`borrow_order`]:
-/// the first is given every such character its program draws, and the second
-/// is asked only when that leaves some over. It is then given every one *it*
-/// draws, not just the remainder, because the writer hands a stretch its
-/// named face draws none of to one lender whole, and when the first cannot
-/// take all of it the second has to be able to.
+/// that face cannot draw go to the faces of the label's [`borrow_order`],
+/// asked in turn: a face is given every such character its program draws,
+/// and the next is asked only when that leaves some over. It is then given
+/// every one *it* draws, not just the remainder, because the writer hands a
+/// stretch its named face draws none of to one lender whole, and when an
+/// earlier face cannot take all of it a later one has to be able to. A face
+/// that draws nothing an earlier one does not already draw all of is given
+/// nothing: the writer, asking in the same order, never gets as far as it.
+/// The asking stops at the first face that draws every one of them.
 ///
 /// A lender is judged by its whole program (`programs`), never by a subset:
 /// a subset holds a character only where some label prepared in the same call
-/// needed it, so it would answer for the batch instead of for the face.
+/// needed it, so it would answer for the batch instead of for the face. The
+/// writer then finds, in each face up to the one that ends the asking,
+/// exactly the label's characters that face's program draws — so the first
+/// face it finds able to draw a character, or a whole stretch, is the same
+/// one whatever else was prepared with the sheet.
 fn loans(
     models: &[&PaperModel],
     faces: &[PreparedFont],
@@ -282,7 +332,7 @@ fn loans(
 ) -> Result<Loans, String> {
     let mut loans = Loans {
         lent: BTreeMap::new(),
-        unplaced: BTreeSet::new(),
+        unplaced: Vec::new(),
     };
     for model in models {
         for primitive in &model.primitives {
@@ -339,22 +389,34 @@ fn loans(
             if lacking.is_empty() {
                 continue;
             }
-            let [first, second] = borrow_order(value);
-            let from_first = drawn_by(programs, dirs, first, &lacking)?;
-            if !from_first.is_empty() {
-                loans.lent.entry(first).or_default().extend(&from_first);
+            // What each face asked so far draws of `lacking`, in the order
+            // asked.
+            let mut drawn: Vec<BTreeSet<char>> = Vec::new();
+            for lender in borrow_order(value) {
+                let from_lender = drawn_by(programs, dirs, lender, &lacking)?;
+                if from_lender.is_empty()
+                    || drawn.iter().any(|earlier| from_lender.is_subset(earlier))
+                {
+                    continue;
+                }
+                loans.lent.entry(lender).or_default().extend(&from_lender);
+                let all = from_lender.len() == lacking.len();
+                drawn.push(from_lender);
+                if all {
+                    break;
+                }
             }
-            if from_first.len() == lacking.len() {
-                continue;
-            }
-            let from_second = drawn_by(programs, dirs, second, &lacking)?;
-            loans.unplaced.extend(
-                lacking
-                    .iter()
-                    .filter(|ch| !from_first.contains(*ch) && !from_second.contains(*ch)),
-            );
-            if !from_second.is_empty() {
-                loans.lent.entry(second).or_default().extend(&from_second);
+            let characters: BTreeSet<char> = lacking
+                .iter()
+                .copied()
+                .filter(|ch| !drawn.iter().any(|from_lender| from_lender.contains(ch)))
+                .collect();
+            if !characters.is_empty() {
+                loans.unplaced.push(Unplaced {
+                    label: value.clone(),
+                    named: own,
+                    characters,
+                });
             }
         }
     }
@@ -423,11 +485,6 @@ fn drawn_by(
 fn draws(program: &[u8], ch: char) -> bool {
     let mut buf = [0u8; 4];
     pdfcraft_fonts::embedding::covers(program, ch.encode_utf8(&mut buf))
-}
-
-/// Whether any loaded face encodes `ch`.
-fn face_covers(faces: &[PreparedFont], ch: char) -> bool {
-    faces.iter().any(|face| draws(&face.bytes, ch))
 }
 
 /// The face `key`'s file, subset to the run's characters when the source
@@ -977,16 +1034,133 @@ mod tests {
         assert_eq!(keys, vec!["Arial Narrow"], "nothing is borrowed for a pad");
     }
 
+    /// A character neither of a label's two lenders draws is borrowed from
+    /// the first of the other faces whose program draws it, and that face is
+    /// loaded for it. `甲` here is drawn by Arial and by SimSun-ExtB and by
+    /// neither lender; Arial comes first. Looking only among the faces a
+    /// call has loaded would refuse the sheet prepared alone, and beside a
+    /// sheet that names SimSun-ExtB would find the character there.
+    #[test]
+    fn a_character_neither_lender_draws_is_given_to_the_same_face_alone_and_in_a_batch() {
+        let latin = ascii_only();
+        let han = drawing("甲");
+        let dir = scratch_dir(
+            "last-resort",
+            &[
+                ("ARIALN.TTF", &latin),
+                ("simsun.ttf", &latin),
+                ("simfang.ttf", &latin),
+                ("arial.ttf", &han),
+                ("simsunb.ttf", &han),
+            ],
+        );
+        let borrowing = sheet(&[("甲", "Arial Narrow")]);
+        let naming = sheet(&[("甲", "SimSun-ExtB")]);
+        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
+            assert!(
+                carries(faces, "Arial", '甲'),
+                "prepared {prepared}: Arial, the first face after the two lenders that draws \
+                 '甲', does not carry it"
+            );
+        }
+        let keys: Vec<&str> = alone.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["Arial Narrow", "Arial"],
+            "prepared alone, only the face that lends is loaded beside the label's own"
+        );
+    }
+
+    /// A character no face draws refuses the export, and the refusal names
+    /// the character and the label that holds it. It is refused whatever the
+    /// batch: `乙` is drawn by no program here, with the sheet alone and
+    /// beside a sheet that loads Arial for a label of its own.
+    #[test]
+    fn a_character_no_face_draws_is_refused_by_name_alone_and_in_a_batch() {
+        let latin = ascii_only();
+        let han = drawing("甲");
+        let dir = scratch_dir(
+            "no-face-draws",
+            &[
+                ("ARIALN.TTF", &latin),
+                ("simsun.ttf", &latin),
+                ("simfang.ttf", &latin),
+                ("arial.ttf", &han),
+            ],
+        );
+        let lacking = sheet(&[("甲乙", "Arial Narrow")]);
+        let naming = sheet(&[("甲", "Arial")]);
+        for (prepared, models) in [
+            ("alone", vec![&lacking]),
+            ("in a batch", vec![&lacking, &naming]),
+        ] {
+            let Err(error) = prepare_fonts(&models, std::slice::from_ref(&dir)) else {
+                panic!(
+                    "prepared {prepared}: a label holding a character no face draws was accepted"
+                );
+            };
+            assert!(
+                error.contains("'乙'") && error.contains("\"甲乙\""),
+                "prepared {prepared}: the refusal does not name the character and its label: {error}"
+            );
+            assert!(
+                !error.contains("'甲'"),
+                "prepared {prepared}: the refusal names a character Arial draws: {error}"
+            );
+        }
+    }
+
+    /// The four faces asked after a label's two lenders, the same for every
+    /// label.
+    const AFTER_THE_LENDERS: [&str; 4] = ["Arial", "Arial Narrow", "NSimSun", "SimSun-ExtB"];
+
     #[test]
     fn a_label_with_a_han_character_borrows_from_simsun_first() {
-        assert_eq!(borrow_order("动火点"), ["SimSun", "FangSong"]);
-        assert_eq!(borrow_order("LNG至  总  体"), ["SimSun", "FangSong"]);
+        for label in ["动火点", "LNG至  总  体"] {
+            let order = borrow_order(label);
+            assert_eq!(order[..2], ["SimSun", "FangSong"], "{label:?}");
+            assert_eq!(order[2..], AFTER_THE_LENDERS, "{label:?}");
+        }
     }
 
     #[test]
     fn a_label_without_a_han_character_borrows_from_fangsong_first() {
-        assert_eq!(borrow_order("120℃"), ["FangSong", "SimSun"]);
-        assert_eq!(borrow_order("L=-18℃ "), ["FangSong", "SimSun"]);
+        for label in ["120℃", "L=-18℃ "] {
+            let order = borrow_order(label);
+            assert_eq!(order[..2], ["FangSong", "SimSun"], "{label:?}");
+            assert_eq!(order[2..], AFTER_THE_LENDERS, "{label:?}");
+        }
+    }
+
+    /// The order is every face the loader knows a file for, each once: a
+    /// character none of them draws is drawn by no face this crate loads.
+    #[test]
+    fn the_borrow_order_holds_every_face_the_loader_knows() {
+        for label in ["动火点", "120℃"] {
+            let mut order = borrow_order(label).to_vec();
+            order.sort_unstable();
+            assert_eq!(
+                order,
+                [
+                    "Arial",
+                    "Arial Narrow",
+                    "FangSong",
+                    "NSimSun",
+                    "SimSun",
+                    "SimSun-ExtB"
+                ],
+                "{label:?}"
+            );
+            for key in order {
+                assert_eq!(
+                    typeface_key(Some(key), label),
+                    key,
+                    "{key} is not a face a style can name"
+                );
+            }
+        }
     }
 
     #[test]

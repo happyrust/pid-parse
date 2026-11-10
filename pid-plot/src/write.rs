@@ -24,7 +24,8 @@
 //! characters hands the whole string to one face that can, so a label is not
 //! split where the first lender draws only part of it. Which face lends is
 //! read off the label — [`crate::fonts::borrow_order`]: SimSun first for a
-//! label with a Han character, FangSong first for any other — and never off
+//! label with a Han character, FangSong first for any other, and after the
+//! two the remaining faces in one order for every label — and never off
 //! what the programs in hand happen to hold, so a sheet letters the same
 //! whether its faces were prepared for it alone or for a batch of sheets. A
 //! string borrowed whole from a 2.5 mm label that names Arial Narrow is
@@ -172,7 +173,11 @@ pub fn carries_a_pen(declared_mm: f64) -> bool {
 
 /// One face [`write_plot`] may select for a text run.
 pub struct PlotFont<'a> {
-    /// Canonical name from [`typeface_key`]. Empty means last resort only.
+    /// Canonical name from [`typeface_key`].
+    ///
+    /// Any other name — `pid_plot` uses the empty one — marks a face of the
+    /// caller's own: no label is named in it, and a label asks it only after
+    /// every face of its [`borrow_order`].
     pub key: &'a str,
     /// Static TrueType or OpenType bytes, whole or subset.
     pub bytes: &'a [u8],
@@ -1080,23 +1085,30 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
 type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>, String)>;
 
 /// The faces a label's characters are borrowed from, in the order they are
-/// asked: the two [`borrow_order`] names for the label, where they are
-/// embedded, and then every embedded face as it was handed over.
+/// asked: the faces [`borrow_order`] names for the label, where they are
+/// embedded, and then any face embedded under a name that order does not
+/// hold, as it was handed over.
 ///
-/// The first two are the rule. Which of them lends is read off the label,
-/// and [`crate::fonts::prepare_fonts`] has put into each what that order
-/// sends it, so the answer does not turn on what else a batch of sheets
-/// happened to put in a program. The rest is a last resort for a character
-/// neither of the two draws, and for a caller that hands over faces of its
-/// own; only there does the order of the list decide.
+/// The order is the rule. Which face lends is read off the label, and
+/// [`crate::fonts::prepare_fonts`] has put into each what that order sends
+/// it, so the answer does not turn on what else a batch of sheets happened
+/// to put in a program, nor on where a face stands in the list.
+///
+/// What follows the order is not one of this crate's faces at all: a caller
+/// may embed a face of its own under any other name — `pid_plot` embeds the
+/// file `PID_PLOT_CJK_FONT` names under the empty one. Such a face is asked
+/// last — for a character no face of the order draws, or a stretch none of
+/// them draws whole — and among several the order they were handed over in
+/// decides, since nothing else tells them apart.
 fn lenders<'f, 'a>(
     faces: &'f [ReadyFace<'a>],
     label: &str,
 ) -> impl Iterator<Item = &'f ReadyFace<'a>> {
-    borrow_order(label)
+    let order = borrow_order(label);
+    order
         .into_iter()
         .filter_map(move |key| faces.iter().find(|face| face.key == key))
-        .chain(faces)
+        .chain(faces.iter().filter(move |face| !order.contains(&face.key)))
 }
 
 /// Split `value`, a stretch of `label` named in the face `key`, into runs
@@ -5030,6 +5042,90 @@ mod tests {
             lettered_faces(&borrowing, &plot_fonts(&batch)),
             expected,
             "the sheet prepared with one whose own 宋体 label holds the space"
+        );
+    }
+
+    /// A character neither of a label's two lenders draws is lettered in the
+    /// first of the other faces that draws it — Arial here, ahead of
+    /// SimSun-ExtB — whether the string is borrowed whole or one character
+    /// of it is. The sheet letters it so prepared alone and beside a sheet
+    /// that names SimSun-ExtB for the same character, where the embedded
+    /// faces in the order they were handed over would give SimSun-ExtB.
+    #[test]
+    fn a_character_neither_lender_draws_is_lettered_in_the_same_face_alone_and_in_a_batch() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let latin = ascii_only();
+        let han = drawing("甲");
+        let dirs = [scratch_dir(
+            "write-last-resort",
+            &[
+                ("ARIALN.TTF", &latin),
+                ("simsun.ttf", &latin),
+                ("simfang.ttf", &latin),
+                ("arial.ttf", &han),
+                ("simsunb.ttf", &han),
+            ],
+        )];
+        let borrowing = lettered_sheet(&[("甲", "Arial Narrow"), ("A甲", "Arial Narrow")]);
+        let naming = lettered_sheet(&[("甲", "SimSun-ExtB")]);
+        let expected = vec![
+            lettered("甲", "Arial Narrow", &[("Arial", "甲")]),
+            lettered(
+                "A甲",
+                "Arial Narrow",
+                &[("Arial Narrow", "A"), ("Arial", "甲")],
+            ),
+        ];
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one that names SimSun-ExtB for the same character"
+        );
+    }
+
+    /// A face the caller embeds under a name of its own — `pid_plot` does
+    /// with `PID_PLOT_CJK_FONT`, under the empty name — is asked after every
+    /// face a label borrows from, wherever it stands in the list it was
+    /// handed over in, and draws what none of them can.
+    #[test]
+    fn a_callers_own_face_is_asked_after_the_faces_a_label_borrows_from() {
+        use crate::fonts::test_faces::{ascii_only, drawing};
+
+        let latin = ascii_only();
+        let han = drawing("甲");
+        let own = drawing("甲乙");
+        let sheet = lettered_sheet(&[("甲", "Arial Narrow")]);
+        let face = |key: &'static str, bytes| PlotFont {
+            key,
+            bytes,
+            subset: false,
+        };
+        // The caller's own face is handed over first, so the order of the
+        // list would pick it.
+        assert_eq!(
+            lettered_faces(
+                &sheet,
+                &[
+                    face("", &own),
+                    face("Arial Narrow", &latin),
+                    face("Arial", &han)
+                ]
+            ),
+            vec![lettered("甲", "Arial Narrow", &[("Arial", "甲")])],
+            "Arial is one of the faces a label borrows from and the caller's own is not"
+        );
+        assert_eq!(
+            lettered_faces(&sheet, &[face("", &own), face("Arial Narrow", &latin)]),
+            vec![lettered("甲", "Arial Narrow", &[("", "甲")])],
+            "no face a label borrows from draws the character, so the caller's own does"
         );
     }
 

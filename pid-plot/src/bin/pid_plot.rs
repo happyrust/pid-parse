@@ -91,6 +91,15 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // `PID_PLOT_CJK_FONT` names one more face to embed, whole and under no
+    // name. No label is named in it, and the writer asks it after every face
+    // of a label's borrow order (`fonts::borrow_order`), so it letters one
+    // thing only: a stretch its named face draws none of and no single face
+    // of that order draws whole, which would otherwise be split between
+    // lenders. It cannot make a drawing exportable. `prepare_fonts` settles
+    // what can be drawn from the faces it loads, is not told about this one,
+    // and has already stopped the run above for a character none of them
+    // draws.
     if let Ok(path) = env::var("PID_PLOT_CJK_FONT") {
         match fs::read(&path) {
             Ok(bytes) => prepared.push(pid_plot::fonts::PreparedFont {
