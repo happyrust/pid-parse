@@ -2652,9 +2652,15 @@ pub const IGSYMBOL2D_STYLE_REF_OFFSET: usize = 25;
 /// and a sub-type discriminator, followed by a reference-like raw tail.
 pub const PSM_TYPE_CODE_DEPENDENCY_OBJECT: u16 = 0x00FA;
 
-/// Minimum `0x00FA` payload size observed in current fixtures: a group of
-/// one member, `DEPENDENCY_OBJECT_FIXED_LEN + DEPENDENCY_OBJECT_BYTES_PER_MEMBER`.
-pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = 44;
+/// Minimum `0x00FA` payload size: a dependency object that lists no member,
+/// which is the part that does not grow with the count
+/// (`DEPENDENCY_OBJECT_FIXED_LEN`).
+///
+/// This was 44 — one member — for as long as every record in the fixtures
+/// had one. `A井场`'s `/Sheet6 +251219` has none and is 36 bytes of the
+/// same grammar; at 44 it was the one record of the 53-sheet plant backup a
+/// family refused.
+pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = DEPENDENCY_OBJECT_FIXED_LEN;
 
 /// The part of a `0x00FA` payload that does not grow with its member count:
 /// the 16-byte head (oid, parent, six zero bytes, the count) and the shortest
@@ -4477,11 +4483,11 @@ pub struct SheetDependencyObjectDecoded {
 ///
 /// Validation:
 /// 1. `type_code == 0x00FA` and type flags are zero;
-/// 2. `bytes_to_follow` is even and in `[44, 512]`;
+/// 2. `bytes_to_follow` is even and in `[36, 512]`;
 /// 3. payload exists, `oid != 0`, `parent_ref == 6`;
 /// 4. payload bytes 8..13 are zero in the current fixture family;
-/// 5. `group_kind_word` -- the member count -- is non-zero and the payload
-///    has room for that many members: `36 + 8·k <= bytes_to_follow`.
+/// 5. the payload has room for the members `group_kind_word` counts:
+///    `36 + 8·k <= bytes_to_follow`, zero members included.
 pub fn decode_dependency_objects(data: &[u8]) -> Vec<SheetDependencyObjectDecoded> {
     DependencyObjectDecoder.scan(data)
 }
@@ -4574,11 +4580,15 @@ fn decode_dependency_object_payload(
     // `k <= 16`, the largest count one batch of fixtures showed; DWG-0201's
     // 22-member group follows the same layout and was refused for it. See
     // `docs/analysis/2026-09-24-the-last-five-refusals.md`.
+    //
+    // The count may be zero: the record is then its head, the six bytes that
+    // precede every closing block, and the block — 36 bytes, which is what
+    // `36 + 8·k` gives. A count of zero used to be refused outright, on no
+    // evidence but that no fixture had one.
     let group_kind_word = u16::from_le_bytes([payload[14], payload[15]]);
-    if group_kind_word == 0
-        || DEPENDENCY_OBJECT_FIXED_LEN
-            + DEPENDENCY_OBJECT_BYTES_PER_MEMBER * usize::from(group_kind_word)
-            > payload.len()
+    if DEPENDENCY_OBJECT_FIXED_LEN
+        + DEPENDENCY_OBJECT_BYTES_PER_MEMBER * usize::from(group_kind_word)
+        > payload.len()
     {
         return None;
     }
@@ -12019,10 +12029,56 @@ mod tests {
         );
     }
 
+    /// A dependency object that lists no member is the same record with a
+    /// count of zero: the 16-byte head, no `(oid, 1)` entries, no flags, the
+    /// six bytes every record has before its closing block, and the block.
+    /// `A井场`'s `/Sheet6 +251219` is one — oid 46838, 36 bytes, the payload
+    /// below verbatim — and it was the one record of the 53 backup sheets a
+    /// family refused: the decoder required a count of at least one and,
+    /// from it, a payload of at least 44 bytes. `36 + 8·k` holds at `k = 0`.
+    #[test]
+    fn dependency_object_with_no_member_decodes() {
+        let payload: [u8; 36] = [
+            0xf6, 0xb6, 0x00, 0x00, // oid 46838
+            0x06, 0x00, 0x00, 0x00, // owner: the page
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
+            0x00, 0x00, // member count: none
+            0x00, 0x00, 0x03, 0x00, 0x00, 0x00, // the six bytes before the block
+            0x07, 0x00, 0x01, 0x00, 0x08, 0x00, // block: type 7, selector 1, 8 bytes
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_DEPENDENCY_OBJECT.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+
+        let decoded = decode_dependency_objects(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1, "a group of no member is still a record");
+        assert_eq!(decoded[0].oid, 46838);
+        assert_eq!(decoded[0].parent_ref, 6);
+        assert_eq!(decoded[0].group_kind_word, 0);
+        assert_eq!(decoded[0].bytes_to_follow, 36);
+        // The closing block describes itself: its length word and the bytes
+        // after it end the record.
+        let tail = &decoded[0].raw_reference_payload;
+        assert_eq!(tail.len(), 18);
+        assert_eq!(u16::from_le_bytes([tail[8], tail[9]]), 8);
+
+        // One byte short of the head, the six bytes and the shortest block,
+        // it is not this record.
+        let mut short = record[..record.len() - 2].to_vec();
+        short[2..6].copy_from_slice(&34u32.to_le_bytes());
+        assert!(decode_dependency_object_at(&short, 0).is_none());
+    }
+
+    // Each refusal below starts from a record that decodes — a group of two
+    // with room for two — so that the one thing changed is what refuses it.
+
     #[test]
     fn dependency_object_rejects_wrong_type_code() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_object_at(&record, 0).is_some());
         record[0] = 0x18;
         record[1] = 0x00;
 
@@ -12031,7 +12087,7 @@ mod tests {
 
     #[test]
     fn dependency_object_rejects_nonzero_type_flags() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         let flagged_type = PSM_TYPE_CODE_DEPENDENCY_OBJECT | 0x4000;
         record[0..2].copy_from_slice(&flagged_type.to_le_bytes());
@@ -12041,11 +12097,15 @@ mod tests {
 
     #[test]
     fn dependency_object_rejects_invalid_size_and_truncation() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
-        record[2..6].copy_from_slice(&43u32.to_le_bytes());
+        // An odd length, with the payload grown to match so that only the
+        // parity is wrong.
+        let mut raw_tail = shortest_dependency_tail(2);
+        raw_tail.push(0x01);
+        let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert_eq!(record.len(), 6 + 53);
         assert!(decode_dependency_object_at(&record, 0).is_none());
 
+        let raw_tail = shortest_dependency_tail(2);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         assert!(decode_dependency_object_at(&record[..record.len() - 1], 0).is_none());
         assert!(decode_dependency_objects(&chain_stream(&record[..record.len() - 1])).is_empty());
@@ -12053,28 +12113,35 @@ mod tests {
 
     #[test]
     fn dependency_object_rejects_invalid_header_fields() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         assert!(decode_dependency_object_at(
-            &build_synthetic_dependency_object_record(0, 6, 2, 0x01A1, &raw_tail),
+            &build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail),
             0
         )
-        .is_none());
-        assert!(decode_dependency_object_at(
-            &build_synthetic_dependency_object_record(42, 7, 2, 0x01A1, &raw_tail),
-            0
-        )
-        .is_none());
-        assert!(decode_dependency_object_at(
-            &build_synthetic_dependency_object_record(42, 6, 0, 0x01A1, &raw_tail),
-            0
-        )
-        .is_none());
+        .is_some());
+        assert!(
+            decode_dependency_object_at(
+                &build_synthetic_dependency_object_record(0, 6, 2, 0x01A1, &raw_tail),
+                0
+            )
+            .is_none(),
+            "an oid of zero"
+        );
+        assert!(
+            decode_dependency_object_at(
+                &build_synthetic_dependency_object_record(42, 7, 2, 0x01A1, &raw_tail),
+                0
+            )
+            .is_none(),
+            "an owner other than the page"
+        );
     }
 
     #[test]
     fn dependency_object_rejects_nonzero_reserved_prefix() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_object_at(&record, 0).is_some());
         record[6 + 8] = 1;
 
         assert!(decode_dependency_object_at(&record, 0).is_none());
@@ -12082,7 +12149,7 @@ mod tests {
 
     #[test]
     fn dependency_object_decoder_is_panic_safe_on_short_input() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         for trunc_len in 0..record.len() {
             assert!(decode_dependency_object_at(&record[..trunc_len], 0).is_none());

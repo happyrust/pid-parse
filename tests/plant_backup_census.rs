@@ -53,9 +53,12 @@ fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
 /// it lists beside them.
 const UNDECODED: &[(u16, usize)] = &[(0x0019, 5), (0x0021, 1)];
 
-/// Records a decoder refused: one `DependencyObject` on `A井场` (36 bytes,
-/// no member). The family draws nothing whether it decodes or not.
-const REFUSED: &[(u16, usize)] = &[(0x00FA, 1)];
+/// Records a decoder refused: none.
+///
+/// There was one, a `DependencyObject` on `A井场` (`/Sheet6 +251219`, oid
+/// 46838) that lists no member: 36 bytes of the family's own grammar, which
+/// the decoder turned away for requiring a count of at least one.
+const REFUSED: &[(u16, usize)] = &[];
 
 /// Records the native reader seeks past (`0x8000` in the type word). 23 of
 /// them were hidden under census-walk phantoms until the census read the

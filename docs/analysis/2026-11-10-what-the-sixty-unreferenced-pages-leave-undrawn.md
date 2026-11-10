@@ -418,3 +418,22 @@ gongyi-guandao-1 47、publish-a01 1、publish-dwg-0202 30），全部是 `record
 98 条命中全部落在 `DependencyObject` 收尾块的长度字上并越过宿主末尾；582 条里 581 条落在宿主的 `+12`、
 声明的长度等于宿主的样式号；84 条「属性片段」里 77 条的文字与宿主文字框自己解出的文字相同，7 条落在
 符号放置里。
+
+### 10.2 零成员的 `DependencyObject` 解得出（§2.2）
+
+`DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN` 从 44（一个成员）降到 36（没有成员，即 `36 + 8·k` 在 `k = 0` 时的值），
+并去掉「成员数不许为 0」那条。先红后绿：`dependency_object_with_no_member_decodes` 用 `A井场` 那条记录的
+36 个字节原样喂进去，修复前解出 0 条，修复后 1 条（oid 46838、成员数 0、收尾块长度 8）。
+
+| 读数 | 之前 | 之后 |
+|---|---:|---:|
+| 备份 53 张被拒的记录（`plant_backup_census` 的 `REFUSED`） | `0x00FA`×1 | 无 |
+| 备份账本可疑项 | 48 | 47 |
+| 夹具账本可疑项 | 12 | 12 |
+
+备份账本基线动了 3 个计数，都在 `A井场`：`record_refused` `0x00FA` 1 → 0（解析层一项、可疑站点一项），
+`record_audit_only_family` `DependencyObject` 1 809 → 1 810。
+
+`tests/render_gap_census.rs` 里两条「拒收措辞」用例原来拿 `A井场` 当「唯一还带拒收记录的图」，现在这张图
+不再拒收任何记录：两条用例改成钉住这一点，措辞检查改读入库的 `XA-A1.igr`（它还有 2 条被拒的
+`igBoundary2d` 和 2 条没有解码器的 `igEllipticalArc2d`，两种措辞在同一张上都有），因此这一半在 CI 上也真跑。

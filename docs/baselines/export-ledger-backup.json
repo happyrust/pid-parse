@@ -115,12 +115,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_refused",
-              "stream": "/Sheet6",
-              "type_code": "0x00FA",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/Sheet6",
               "type_code": "0x003D",
@@ -182,7 +176,7 @@
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
               "family": "DependencyObject",
-              "count": 1809
+              "count": 1810
             },
             {
               "reason": "record_audit_only_family",
@@ -292,15 +286,7 @@
             "segment_too_short": 4
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_refused",
-            "stream": "/Sheet6",
-            "type_code": "0x00FA",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
