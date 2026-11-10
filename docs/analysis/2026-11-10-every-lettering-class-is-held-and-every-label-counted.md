@@ -210,3 +210,11 @@ probe_which_label_a_paired_run_is_read_against` 逐张打印每一对「被切�
 - **变异**：把有汉字的标签改成先借 FangSong，门禁在 A2 页失败（`0 borrowed runs are in the
   reference's font family where 2 are pinned; one has left it`），这道门原有的各项读数都
   拦不住它（库内用例拦得住）；把 `NSimSun` 从表里拿掉，门禁在第一页失败并点名这个字体名。
+
+## 九、后续：借来的 run 照参考图画了（2026-11-11）
+
+第七节「没做的」第一条已经做了：借来的字改用新宋体、`Tf 9.6`，整条借字按 `?` 的步进。本文的
+读数因此变了三处——`Left/Ascender part` 从 +0.0294 回到 −0.0003，为它钉的例外名单删除；逐条
+超限的标签 64 → 50（少掉的正是那 12 条 `℃` 与两处 `动火点`）；借来的 run 与参考同族 2 → 14
+（14 条里）。字号的来历、逐页的前后值与样本管不到的标签见
+`2026-11-11-a-borrowed-glyph-is-set-at-the-named-fonts-character-height.md`。

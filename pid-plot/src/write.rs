@@ -23,20 +23,22 @@
 //! encodable characters' widths. A named face that can encode none of the
 //! characters hands the whole string to one face that can, so a label is not
 //! split where the first lender draws only part of it. Which face lends is
-//! read off the label — [`crate::fonts::borrow_order`]: SimSun first for a
-//! label with a Han character, FangSong first for any other, and after the
-//! two the remaining faces in one order for every label — and never off
-//! what the programs in hand happen to hold, so a sheet letters the same
-//! whether its faces were prepared for it alone or for a batch of sheets. A
-//! string borrowed whole from a 2.5 mm label that names Arial Narrow is
-//! pitched at 1.524 mm a glyph, the spacing the reference uses for that one
-//! label; every other height, and every other named face, stays one em.
+//! one order for every label — [`crate::fonts::BORROW_ORDER`], NSimSun
+//! first, the face the reference plots borrow — and never what the programs
+//! in hand happen to hold, so a sheet letters the same whether its faces
+//! were prepared for it alone or for a batch of sheets. A borrowed character
+//! is drawn at the size of the face its label names and advances by the
+//! lender's own width, except where a reference plot shows otherwise: the
+//! `borrowed` module holds that lettering — the size the reference sets a
+//! borrowed glyph at, and the step of a label borrowed whole — and says
+//! which labels it reaches.
 //! A style height is written at the `Tf` the reference plotter would size it
 //! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
 //! `plotted_size_pt`). Every face must be a static TrueType or
 //! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
 //! a variable font.
 
+mod borrowed;
 mod verdict;
 
 pub use verdict::{
@@ -54,7 +56,7 @@ use pdfcraft_cos::{Dict, Document, Object, PdfString, Stream};
 use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
-use crate::fonts::{borrow_order, typeface_key};
+use crate::fonts::{BORROW_ORDER, typeface_key};
 use crate::model::PaperTextSpan;
 use crate::model::{
     DashFit, PaperModel, PaperShape, PaperStroke, STANDARD_SHEETS_MM, TextAnchor, TextHeightBasis,
@@ -177,7 +179,7 @@ pub struct PlotFont<'a> {
     ///
     /// Any other name — `pid_plot` uses the empty one — marks a face of the
     /// caller's own: no label is named in it, and a label asks it only after
-    /// every face of its [`borrow_order`].
+    /// every face of [`BORROW_ORDER`].
     pub key: &'a str,
     /// Static TrueType or OpenType bytes, whole or subset.
     pub bytes: &'a [u8],
@@ -1077,22 +1079,30 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
     runs
 }
 
-/// Byte runs of one label, each with the face that encodes it.
-/// Each run's face, its encoded bytes, and the original text those bytes
-/// encode — [`run_advance`] needs the text back to read the Latin 72-pixel
-/// tables by codepoint, since the bytes carry this writer's own assigned
-/// CID instead.
-type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>, String)>;
+/// One run of a label: a stretch of it that one face letters.
+struct FaceRun<'a> {
+    /// The face that encodes the run.
+    face: &'a ReadyFace<'a>,
+    /// The run in that face's encoding.
+    bytes: Vec<u8>,
+    /// The characters `bytes` encode — [`run_advance`] needs them back to
+    /// read the Latin 72-pixel tables by codepoint, since the bytes carry
+    /// this writer's own assigned CID instead.
+    text: String,
+    /// Whether `face` lends the run: it is not the face the stretch is named
+    /// in, which cannot draw these characters.
+    borrowed: bool,
+}
 
 /// The faces a label's characters are borrowed from, in the order they are
-/// asked: the faces [`borrow_order`] names for the label, where they are
-/// embedded, and then any face embedded under a name that order does not
-/// hold, as it was handed over.
+/// asked: the faces of [`BORROW_ORDER`] that are embedded, and then any face
+/// embedded under a name that order does not hold, as it was handed over.
 ///
-/// The order is the rule. Which face lends is read off the label, and
-/// [`crate::fonts::prepare_fonts`] has put into each what that order sends
-/// it, so the answer does not turn on what else a batch of sheets happened
-/// to put in a program, nor on where a face stands in the list.
+/// The order is the rule. [`crate::fonts::prepare_fonts`] has put into each
+/// face what that order sends it, so the answer does not turn on what else a
+/// batch of sheets happened to put in a program, nor on where a face stands
+/// in the list. A face of the order this machine has no file for is not
+/// embedded, and the next one is asked.
 ///
 /// What follows the order is not one of this crate's faces at all: a caller
 /// may embed a face of its own under any other name — `pid_plot` embeds the
@@ -1100,20 +1110,20 @@ type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>, String)>;
 /// last — for a character no face of the order draws, or a stretch none of
 /// them draws whole — and among several the order they were handed over in
 /// decides, since nothing else tells them apart.
-fn lenders<'f, 'a>(
-    faces: &'f [ReadyFace<'a>],
-    label: &str,
-) -> impl Iterator<Item = &'f ReadyFace<'a>> {
-    let order = borrow_order(label);
-    order
+fn lenders<'f, 'a>(faces: &'f [ReadyFace<'a>]) -> impl Iterator<Item = &'f ReadyFace<'a>> {
+    BORROW_ORDER
         .into_iter()
         .filter_map(move |key| faces.iter().find(|face| face.key == key))
-        .chain(faces.iter().filter(move |face| !order.contains(&face.key)))
+        .chain(
+            faces
+                .iter()
+                .filter(|face| !BORROW_ORDER.contains(&face.key)),
+        )
 }
 
 /// Split `value`, a stretch of `label` named in the face `key`, into runs
 /// that share one face, preferring that face. A character the named face
-/// cannot encode moves to the first of the label's [`lenders`] that can —
+/// cannot encode moves to the first of the [`lenders`] that can —
 /// only that character moves, so `120℃` keeps its digits in the narrow face
 /// instead of dragging the whole run to a lender whose Latin is wider.
 ///
@@ -1121,9 +1131,8 @@ fn lenders<'f, 'a>(
 /// each character from the first lender that owns it could cut the label
 /// apart where the first lender draws only some of it, and the reader then
 /// sees two runs where the record states one. The whole string goes to the
-/// first lender that can draw every character, and that run is reported as
-/// borrowed so the caller can pitch it. A named face that draws any
-/// character keeps the per-character split.
+/// first lender that can draw every character, as one borrowed run. A named
+/// face that draws any character keeps the per-character split.
 ///
 /// A run may name a face that is not embedded — the file is optional, and a
 /// machine may lack it. That stretch is lettered as the label's own face
@@ -1133,7 +1142,7 @@ fn encode_runs<'a>(
     label: &ShownText<'_>,
     key: &str,
     value: &str,
-) -> Result<(FaceRuns<'a>, bool), PlotWriteError> {
+) -> Result<Vec<FaceRun<'a>>, PlotWriteError> {
     let char_encodes = |face: &ReadyFace<'_>, ch: char| {
         let mut buf = [0u8; 4];
         face.metrics.encode(ch.encode_utf8(&mut buf)).is_some()
@@ -1142,17 +1151,23 @@ fn encode_runs<'a>(
         .iter()
         .find(|face| face.key == key)
         .or_else(|| faces.iter().find(|face| face.key == label.typeface));
+    let lent = |face: &ReadyFace<'_>| !named.is_some_and(|named| std::ptr::eq(named, face));
     let named_draws_any = named.is_some_and(|face| value.chars().any(|ch| char_encodes(face, ch)));
     if !named_draws_any
-        && let Some((face, bytes)) = lenders(faces, label.value)
-            .find_map(|face| face.metrics.encode(value).map(|bytes| (face, bytes)))
+        && let Some((face, bytes)) =
+            lenders(faces).find_map(|face| face.metrics.encode(value).map(|bytes| (face, bytes)))
     {
-        return Ok((vec![(face, bytes, value.to_string())], true));
+        return Ok(vec![FaceRun {
+            face,
+            bytes,
+            text: value.to_string(),
+            borrowed: lent(face),
+        }]);
     }
     let face_for_char = |ch: char| -> Option<&'a ReadyFace<'a>> {
         named
             .filter(|face| char_encodes(face, ch))
-            .or_else(|| lenders(faces, label.value).find(|face| char_encodes(face, ch)))
+            .or_else(|| lenders(faces).find(|face| char_encodes(face, ch)))
     };
     let mut runs: Vec<(&ReadyFace<'_>, String)> = Vec::new();
     for ch in value.chars() {
@@ -1172,11 +1187,15 @@ fn encode_runs<'a>(
         .map(|(face, text)| {
             face.metrics
                 .encode(&text)
-                .map(|bytes| (face, bytes, text.clone()))
+                .map(|bytes| FaceRun {
+                    face,
+                    bytes,
+                    borrowed: lent(face),
+                    text: text.clone(),
+                })
                 .ok_or_else(|| missing_glyph(&face.metrics, &text))
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|runs| (runs, false))
+        .collect()
 }
 
 struct ShownText<'a> {
@@ -1228,7 +1247,7 @@ fn text_segments<'a>(
         // The named face is sized by its own tables; a named face the
         // embedded set does not carry sizes off the face [`encode_runs`]
         // letters it with — the label's own, and failing that the first of
-        // the label's [`lenders`] able to encode the string — because
+        // the [`lenders`] able to encode the string — because
         // `Tf`'s size and the reference-font model in `run_advance` both
         // read `height_basis` off *a* face's own `FaceHeights`, and the two
         // have to be the same face or the size and the glyph widths stop
@@ -1238,9 +1257,7 @@ fn text_segments<'a>(
             .iter()
             .find(|face| face.key == typeface)
             .or_else(|| faces.iter().find(|face| face.key == text.typeface))
-            .or_else(|| {
-                lenders(faces, text.value).find(|face| face.metrics.encode(text.value).is_some())
-            })
+            .or_else(|| lenders(faces).find(|face| face.metrics.encode(text.value).is_some()))
             .map_or(FaceHeights::ARIAL, |face| face.heights);
         plotted_size_pt(heights, text.height_basis, height_mm)
     };
@@ -1415,32 +1432,6 @@ fn wf_reference_scale(heights: FaceHeights, width_permille: Option<u16>) -> f64 
     if denom > 0.0 { lw_ref / denom } else { 1.0 }
 }
 
-/// Advance of one glyph, as a fraction of the em, when a 2.5 mm label names
-/// Arial Narrow, that face can draw none of it, and the whole string is
-/// handed to another face.
-///
-/// The only such labels on the eleven acceptance sheets are the two
-/// `动火点` runs. The reference pitches them at 4.32 pt (1.524 mm) in a
-/// 9.6 pt NSimSun, and centres on that pitch. `1.524 / 2.5` is that pitch
-/// over the style height, and [`show_text`] applies it to the em the run is
-/// set in, so the pitch stays 1.524 mm whatever `Tf` the run carries.
-///
-/// The pitch is a reading of the named face, not of the characters: nine
-/// 150 dpi pixels are Arial Narrow's `?` at this body
-/// (`round(28 × a8)`, [`ARIAL_NARROW_72PX`] and [`reference_scale`]), the
-/// advance the plotter measures a character that face does not carry at
-/// ([`reference_extent_mm`]). So it is held to the face and the body it was
-/// read at. A label that names another face is not pitched — the reference
-/// has none to read one off, and `DWG-0202GP06-01`'s 2.5 mm `施工图`, named
-/// in SimSun-ExtB, would be squeezed to 43% of its width beside rows of
-/// 2.54 mm that keep theirs. A different body size is not multiplied:
-/// nothing else on those sheets takes this path, so there is no second
-/// height to measure. A lone glyph steps to no neighbour and keeps its
-/// width. `120℃` is not this path either — its named face still draws the
-/// digits. See
-/// `docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`.
-const BORROWED_HAN_ADVANCE: f64 = 1.524 / 2.5;
-
 fn show_text(
     ops: &mut Vec<Op>,
     faces: &[ReadyFace<'_>],
@@ -1472,20 +1463,26 @@ fn show_text(
         return Ok(Shown::default());
     }
     // A label that letters in more than one style is cut into the stretches
-    // that share a size and a face; a plain label is one stretch. `encode_runs`
-    // itself runs first, ahead of sizing, because the width scale below
-    // ([`BORROWED_HAN_ADVANCE`]) needs its `borrowed` reading.
+    // that share a size and a face; a plain label is one stretch. Each
+    // stretch is then cut where its face cannot draw a character and another
+    // lends it.
     let segments = text_segments(faces, &text, inked, height_mm);
-    let mut runs: Vec<(f64, &ReadyFace<'_>, Vec<u8>, String)> = Vec::new();
-    let mut borrowed_whole = !segments.is_empty();
+    let mut runs: Vec<(f64, FaceRun<'_>)> = Vec::new();
     for segment in &segments {
-        let (segment_runs, borrowed) = encode_runs(faces, &text, segment.typeface, &segment.text)?;
-        borrowed_whole &= borrowed;
-        for (face, bytes, run_text) in segment_runs {
-            runs.push((segment.size_pt, face, bytes, run_text));
+        for run in encode_runs(faces, &text, segment.typeface, &segment.text)? {
+            runs.push((segment.size_pt, run));
         }
     }
     let (sin, cos) = text.rotation.sin_cos();
+    let upright = sin.abs() < 1e-9;
+    // A borrowed run is set at its stretch's size and spaced by its lender's
+    // own widths, like any other run — except the one the reference plots
+    // show: `borrowed` names it, and the size the reference sets it at.
+    let as_the_reference =
+        borrowed::witnessed_run(faces, &text, height_mm, upright, &segments, &runs);
+    if let Some(index) = as_the_reference {
+        runs[index].0 = borrowed::size_pt();
+    }
     // The reference plot letters a border template's text one glyph narrower
     // than the em it sets it in, and letters the sheet's own text at the full
     // em. Height is *not* touched by this: the two sides' glyph boxes are the
@@ -1493,28 +1490,6 @@ fn show_text(
     // 4.5 mm styles on both sheets; what differs is only the horizontal
     // advance [`permille_scale`] computes.
     //
-    // A 2.5 mm string named in Arial Narrow, which draws none of it, is the
-    // A2 `动火点` class: the reference pitches it at 1.524 mm a glyph and
-    // centres on that width. Any other body, any other named face, a lone
-    // glyph, or a string the named face still partly draws (`120℃`), stays
-    // one em. See [`BORROWED_HAN_ADVANCE`].
-    let han_pitch = if !text.furniture
-        && borrowed_whole
-        && text.typeface == "Arial Narrow"
-        && (height_mm - 2.5).abs() < 1e-3
-        && inked.chars().nth(1).is_some()
-    {
-        // The pitch is a length on the page, so it is taken against the em
-        // the run is actually set in, not the style height.
-        let set_pt = segments.first().map_or(0.0, |segment| segment.size_pt);
-        if set_pt > 0.0 {
-            BORROWED_HAN_ADVANCE * height_mm * PT_PER_MM / set_pt
-        } else {
-            BORROWED_HAN_ADVANCE
-        }
-    } else {
-        1.0
-    };
     // The drawing's own lettering takes its style's stated width as it
     // stands, and the template's furniture reads the same field: the symbol
     // bodies' 7.2 pt ascent `M` states `800` and the reference letters it at
@@ -1524,16 +1499,15 @@ fn show_text(
     let named_face = faces
         .iter()
         .find(|face| face.key == text.typeface)
-        .or_else(|| runs.first().map(|(_, face, ..)| *face));
+        .or_else(|| runs.first().map(|(_, run)| run.face));
     let scale_heights = named_face.map_or(FaceHeights::ARIAL, |face| face.heights);
-    let permille = permille_scale(
+    let plate = permille_scale(
         text.typeface,
         scale_heights,
         text.height_basis,
         height_mm,
         text.width_permille,
     );
-    let plate = permille * han_pitch;
     // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
     // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`,
     // the device font's natural width only for a lone glyph and, rounded to
@@ -1551,29 +1525,48 @@ fn show_text(
     // this function.
     let mut emitted: Vec<LetteredPiece<'_, '_>> = Vec::with_capacity(runs.len());
     let mut width_mm = 0.0;
-    for (size_pt, face, bytes, run_text) in runs {
-        // `face.key`/`face.heights`, not `text.typeface`/`scale_heights`:
-        // the 72-unit reference tables are calibrated per *embedded* font
-        // identity, and `size_pt` was sized off this same face's own
-        // heights once a named face with nothing to draw the run falls
-        // back to the first face that can ([`text_segments`],
-        // [`encode_runs`] — the two resolve the same fallback face, so the
-        // heights agree either way).
-        let advance = run_advance(
-            face.key,
-            &face.metrics,
-            &bytes,
-            &run_text,
-            face.heights,
-            text.height_basis,
-            height_mm,
-            size_pt,
-            text.width_permille,
-            plate,
-            han_pitch == 1.0,
-            sin.abs() < 1e-9,
-            device_scale(page).unwrap_or(1.0),
-        );
+    let device = device_scale(page).unwrap_or(1.0);
+    for (index, (size_pt, run)) in runs.into_iter().enumerate() {
+        let FaceRun {
+            face,
+            bytes,
+            text: run_text,
+            ..
+        } = run;
+        let advance = match named_face {
+            // The run the reference shows steps by the face the label names.
+            Some(named) if as_the_reference == Some(index) => borrowed::advance(
+                named,
+                &face.metrics,
+                &bytes,
+                text.height_basis,
+                height_mm,
+                size_pt,
+                plate,
+                device,
+            ),
+            // `face.key`/`face.heights`, not `text.typeface`/`scale_heights`:
+            // the 72-unit reference tables are calibrated per *embedded* font
+            // identity, and `size_pt` was sized off this same face's own
+            // heights once a named face with nothing to draw the run falls
+            // back to the first face that can ([`text_segments`],
+            // [`encode_runs`] — the two resolve the same fallback face, so the
+            // heights agree either way).
+            _ => run_advance(
+                face.key,
+                &face.metrics,
+                &bytes,
+                &run_text,
+                face.heights,
+                text.height_basis,
+                height_mm,
+                size_pt,
+                text.width_permille,
+                plate,
+                upright,
+                device,
+            ),
+        };
         width_mm += advance.width_mm;
         // `Tc` is a graphics-state parameter: once set it adds to *every*
         // glyph's own displacement, including the run's last one. The
@@ -2059,9 +2052,15 @@ fn on_the_device_grid(start_mm: [f64; 2], scale: f64) -> [f64; 2] {
 /// here (256 units per em, no hinting at this scale) they agree to the
 /// first decimal. Measured on this machine's GDI, matching
 /// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
-const REFERENCE_CAP_PX: [(&str, f64, f64); 4] = [
+///
+/// NSimSun reads what SimSun reads — the two are one design and one set of
+/// vertical tables — and has its row so that a run borrowed from it
+/// ([`crate::fonts::BORROW_ORDER`]) is spaced exactly as the same run
+/// borrowed from SimSun is. No label of the corpus names NSimSun itself.
+const REFERENCE_CAP_PX: [(&str, f64, f64); 5] = [
     // (face key, cap72 — code 0x0D, asc72 — code 0x0C)
     ("SimSun", 49.2, 62.0),
+    ("NSimSun", 49.2, 62.0),
     ("FangSong", 48.2, 62.0),
     ("Arial", 46.0, 58.0),
     ("Arial Narrow", 44.0, 58.0),
@@ -2259,20 +2258,13 @@ fn reference_extent_mm(
 /// `Tc` the reference writes for it, that grid's drift included.
 ///
 /// Both `width_mm` and `tc_pt` are figured at `sx = 1` —
-/// the one `Tm` horizontal scale the caller's whole label carries,
-/// `permille` and the borrowed-Han pitch alike, is what turns either into
+/// the one `Tm` horizontal scale the caller's whole label carries
+/// ([`permille_scale`]) is what turns either into
 /// what actually lands on the page, the same way it turns every glyph's
 /// own outline narrower together with its advance (the reason `render.dll`
 /// drew a condensed run with a condensed device font rather than a kerning
 /// table). `sx` is only this function's divisor for `tc_pt`, so a `Tm` of
-/// `1` reproduces it exactly; the caller never multiplies `tc_pt` again.
-///
-/// `reference_font_applies` is `false` for a label stepping to the
-/// borrowed-Han pitch ([`BORROWED_HAN_ADVANCE`]): `render.dll` never built
-/// that pitch, it is this crate's own stand-in for a face that cannot draw
-/// the string at all, so there is no 72-unit reference font for it either
-/// — such a run keeps its own even spacing rather than feeding an invented
-/// ratio through a formula calibrated on real `lfWidth` values. See
+/// `1` reproduces it exactly; the caller never multiplies `tc_pt` again. See
 /// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
 struct RunAdvance {
     /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
@@ -2306,7 +2298,6 @@ fn run_advance(
     size_pt: f64,
     width_permille: Option<u16>,
     sx: f64,
-    reference_font_applies: bool,
     upright: bool,
     device: f64,
 ) -> RunAdvance {
@@ -2317,7 +2308,7 @@ fn run_advance(
         width_mm: run_width_mm(metrics, size_pt, bytes),
         steps_px: Vec::new(),
     };
-    if n < 2 || !reference_font_applies || !(sx.is_finite() && sx > 0.0) {
+    if n < 2 || !(sx.is_finite() && sx > 0.0) {
         return natural();
     }
     let cell = heights.ascent + heights.descent;
@@ -2354,22 +2345,30 @@ fn run_advance(
     // one-`char`-at-a-time walk), are the codepoint the table actually
     // wants.
     let mut chars = text.chars();
+    let lp_dx = pixel_steps(codes.iter().zip(&widths_em).map(|((code, _), &width_em)| {
+        let unicode = chars.next().map_or(*code, u32::from);
+        reference_advance_px(key, unicode, width_em, cell, wf_scale) * a8
+    }));
+    stepped_advance(lp_dx, &widths_em, em_px, size_pt, sx, upright)
+}
+
+/// The whole-pixel step of each glyph of a run, from the continuous advance
+/// the reference font measures each at, in device pixels.
+///
+/// `lpDx_i = round(Δref_i × a8)`, each glyph's own step rounded on its own —
+/// not the running total rounded once per glyph, which drifts a full em's
+/// worth of identical glyphs a pixel short (a three-glyph run of the same
+/// full-em CJK code once settled a pixel under the reference's own reading
+/// this way: every other glyph in the corpus happens to vary enough from its
+/// neighbours that the two roundings agree). The running floating-point and
+/// already-rounded totals are tracked so a step can still be nudged by one
+/// when they drift more than a pixel apart — the error diffusion
+/// [`RunAdvance`]'s own doc comment describes.
+fn pixel_steps(advances_px: impl IntoIterator<Item = f64>) -> Vec<i64> {
     let mut float_acc = 0.0;
     let mut int_acc: i64 = 0;
-    let mut lp_dx = Vec::with_capacity(n);
-    for ((code, _), &width_em) in codes.iter().zip(&widths_em) {
-        let unicode = chars.next().map_or(*code, u32::from);
-        // `lpDx_i = round(Δref_i × a8)`, each glyph's own step rounded on
-        // its own — not the running total rounded once per glyph, which
-        // drifts a full em's worth of identical glyphs a pixel short (a
-        // three-glyph run of the same full-em CJK code once settled a
-        // pixel under the reference's own reading this way: every other
-        // glyph in the corpus happens to vary enough from its neighbours
-        // that the two roundings agree). `float_acc`/`int_acc` track the
-        // running floating-point and already-rounded totals so a step can
-        // still be nudged by one when they drift more than a pixel apart —
-        // the error diffusion [`RunAdvance`]'s own doc comment describes.
-        let step_px = reference_advance_px(key, unicode, width_em, cell, wf_scale) * a8;
+    let mut lp_dx = Vec::new();
+    for step_px in advances_px {
         float_acc += step_px;
         #[allow(clippy::cast_possible_truncation)]
         let mut step_i = step_px.round() as i64;
@@ -2383,6 +2382,21 @@ fn run_advance(
         int_acc += step_i;
         lp_dx.push(step_i);
     }
+    lp_dx
+}
+
+/// The advance of a run of two or more glyphs whose whole-pixel steps are
+/// `lp_dx`, one per glyph, drawn in a face whose glyphs are `widths_em` wide
+/// at an em of `em_px` device pixels and `size_pt` points.
+fn stepped_advance(
+    mut lp_dx: Vec<i64>,
+    widths_em: &[f64],
+    em_px: f64,
+    size_pt: f64,
+    sx: f64,
+    upright: bool,
+) -> RunAdvance {
+    let n = widths_em.len();
     let leading: i64 = lp_dx[..n - 1].iter().sum();
     #[allow(clippy::cast_precision_loss)]
     let leading_px = leading as f64;
@@ -2602,7 +2616,6 @@ mod tests {
             None,
             1.0,
             true,
-            true,
             1.0,
         );
         let codes = metrics.codes(&bytes);
@@ -2630,7 +2643,7 @@ mod tests {
         let cap = crate::model::TextHeightBasis::Cap;
         let size_pt = super::plotted_size_pt(inter, cap, 4.0);
         let advance = super::run_advance(
-            "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, true, false, 1.0,
+            "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, false, 1.0,
         );
         assert_eq!(
             advance.tc_pt, 0.0,
@@ -2669,8 +2682,7 @@ mod tests {
         let sx = 0.9;
         let advance = |upright| {
             super::run_advance(
-                "", &metrics, &bytes, "ABAB", inter, cap, 4.0, size_pt, None, sx, true, upright,
-                1.0,
+                "", &metrics, &bytes, "ABAB", inter, cap, 4.0, size_pt, None, sx, upright, 1.0,
             )
         };
         let (rotated, upright) = (advance(false), advance(true));
@@ -2736,7 +2748,6 @@ mod tests {
             None,
             1.0,
             true,
-            true,
             1.0,
         );
         assert_ne!(
@@ -2788,7 +2799,6 @@ mod tests {
                 size_pt,
                 None,
                 1.0,
-                true,
                 true,
                 device,
             );
@@ -3337,7 +3347,7 @@ mod tests {
         let basis = crate::model::TextHeightBasis::Cap;
         let size_pt = super::plotted_size_pt(inter, basis, 5.0);
         let laid_out_mm = super::run_advance(
-            "", &metrics, &bytes, "ABA", inter, basis, 5.0, size_pt, None, 1.0, true, true, 1.0,
+            "", &metrics, &bytes, "ABA", inter, basis, 5.0, size_pt, None, 1.0, true, 1.0,
         )
         .width_mm;
         let face = super::ReadyFace {
@@ -3515,6 +3525,56 @@ mod tests {
         let unlisted = arial.drop("", TextLine::Middle, Cap);
         let own = (arial.ascent - arial.descent) / 2.0 / arial.cap;
         assert!(close(unlisted, own), "{unlisted} against {own}");
+    }
+
+    /// NSimSun is SimSun with a fixed-pitch Latin: one set of vertical tables,
+    /// and the same reading of the 72-unit reference font on GDI — a cap of
+    /// 49.2 and an ascent of 62. So a run the page borrows from NSimSun is
+    /// scaled, and so spaced, exactly as the same run borrowed from SimSun,
+    /// at every style height and on either height basis. Left to its own
+    /// tables NSimSun would read 49.21875 and 61.875, and a step here and
+    /// there would round the other way.
+    #[test]
+    fn nsimsun_is_measured_as_simsun_is() {
+        use crate::model::TextHeightBasis::{Ascent, Cap};
+        let song = super::FaceHeights {
+            ascent: 220.0 / 256.0,
+            descent: 36.0 / 256.0,
+            cap: 175.0 / 256.0,
+            stated_cap: Some(175.0 / 256.0),
+            avg_em: 128.0 / 256.0,
+        };
+        for basis in [Cap, Ascent] {
+            assert_eq!(
+                super::reference_cap_px("NSimSun", basis),
+                super::reference_cap_px("SimSun", basis),
+                "{basis:?}"
+            );
+            for line in [
+                TextLine::Bottom,
+                TextLine::Middle,
+                TextLine::Top,
+                TextLine::Ascender,
+                TextLine::Descender,
+                TextLine::HalfAscender,
+            ] {
+                assert_eq!(
+                    song.drop("NSimSun", line, basis).to_bits(),
+                    song.drop("SimSun", line, basis).to_bits(),
+                    "{line:?} of a {basis:?} style"
+                );
+            }
+            for hundredths in 150..=800 {
+                let height_mm = f64::from(hundredths) / 100.0;
+                assert_eq!(
+                    super::reference_scale("NSimSun", song, basis, height_mm).to_bits(),
+                    super::reference_scale("SimSun", song, basis, height_mm).to_bits(),
+                    "a {basis:?} style {height_mm} mm tall"
+                );
+            }
+        }
+        assert_eq!(super::reference_cap_px("NSimSun", Cap), Some(49.2));
+        assert_eq!(super::reference_cap_px("NSimSun", Ascent), Some(62.0));
     }
 
     /// The heights come off the face's own tables, with the top of `H`
@@ -4474,8 +4534,8 @@ mod tests {
     /// FangSong carrying only `点` and SimSun carrying `动火点` used to cut an
     /// Arial Narrow label into `动火` plus `点`, because the earlier face won
     /// the one character it had. The named face encodes none of the
-    /// characters, so the whole label stays on SimSun. `120℃` still splits:
-    /// the digits stay on Arial Narrow.
+    /// characters, so the whole label stays on one lender. `120℃` still
+    /// splits: the digits stay on Arial Narrow.
     #[test]
     fn a_han_label_the_named_face_cannot_draw_stays_one_run() {
         let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -4561,8 +4621,14 @@ mod tests {
     /// Narrow, carries none of the three characters: the box is three `?` in
     /// its reference font ([`super::reference_extent_mm`]), and the reference
     /// starts the run 2.336 / 2.391 mm left of the insertion, against 2.386
-    /// for the three `?` and 2.286 for half of the 1.524 mm pitch the glyphs
-    /// are lettered at. `120℃` is centred in the same test on `120?`.
+    /// for the three `?` and 2.286 for half of three 1.524 mm steps. `120℃`
+    /// is centred in the same test on `120?`.
+    ///
+    /// The run itself reads back as the reference's does: NSimSun where the
+    /// machine has it, an em of 20 device units (`Tf 9.6`, 3.387 mm), and
+    /// 38 units from its start to the end of its last glyph — two steps of 9
+    /// and one full em — which is the 6.435 mm the reference's own run reads.
+    /// The `℃` that ends `120℃` is the same 20 units.
     #[test]
     fn a_centred_borrowed_han_run_steps_back_by_the_reference_pitch() {
         let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -4623,13 +4689,46 @@ mod tests {
             })
             .collect();
         let pdf = write_plot(&model, &fonts).expect("write");
-        let ink = read_plot(&pdf).expect("read");
-        let borrowed = ink
+        let (ink, faces) = crate::read::read_plot_with_faces(&pdf).expect("read");
+        let lender = if ready("nsimsun.ttf") {
+            "NSimSun"
+        } else {
+            "SimSun"
+        };
+        let (borrowed, face) = ink
             .spans
             .iter()
-            .find(|span| span.text == "动火点" && span.origin_mm[0] > 70.0)
+            .zip(&faces)
+            .find(|(span, _)| span.text == "动火点" && span.origin_mm[0] > 70.0)
             .expect("the centred 动火点");
         let px_mm = 25.4 / super::PLOT_DPI;
+        assert_eq!(face, lender, "the face the borrowed label is set in");
+        assert!(
+            (borrowed.height_mm - 20.0 * px_mm).abs() < 1e-6,
+            "the borrowed glyphs are {:.4} mm of em, not 20 device units ({:.4} mm)",
+            borrowed.height_mm,
+            20.0 * px_mm
+        );
+        assert!(
+            (borrowed.advance_mm - 38.0 * px_mm).abs() < 1e-6,
+            "the borrowed run is {:.4} mm long, not two steps of 9 units and an em of 20 \
+             ({:.4} mm)",
+            borrowed.advance_mm,
+            38.0 * px_mm
+        );
+        for (degree, face) in ink
+            .spans
+            .iter()
+            .zip(&faces)
+            .filter(|(span, _)| span.text == "℃")
+        {
+            assert_eq!(face, lender, "the face a borrowed ℃ is set in");
+            assert!(
+                (degree.height_mm - 20.0 * px_mm).abs() < 1e-6,
+                "a borrowed ℃ is {:.4} mm of em, not 20 device units",
+                degree.height_mm
+            );
+        }
         let a8 = super::reference_scale(
             "Arial Narrow",
             super::FaceHeights::ARIAL,
@@ -4851,10 +4950,29 @@ mod tests {
         labels
     }
 
+    /// One string a label shows.
+    #[derive(Debug)]
+    struct ShownRun {
+        /// The face it is set in.
+        face: String,
+        /// The `Tf` size in force, points.
+        size_pt: f64,
+        /// The `Tc` in force, points.
+        tc_pt: f64,
+        /// The characters it shows.
+        text: String,
+        /// How many glyphs that is.
+        glyphs: usize,
+        /// How far the pen moves over them before `Tc`: each glyph's own
+        /// width at `size_pt`, points.
+        natural_pt: f64,
+    }
+
     /// How `model`'s labels are set under `fonts`, for every label the page
     /// letters, in primitive order: the label's text, the horizontal scale of
-    /// its `Tm`, and the size of its first `Tf` in points.
-    fn lettered_scales(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<(String, f64, f64)> {
+    /// its `Tm`, and every string it shows. Read off the operators
+    /// [`super::show_text`] emits.
+    fn shown_runs(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<(String, f64, Vec<ShownRun>)> {
         use super::Object;
 
         let real = |operand: Option<&Object>| match operand {
@@ -4867,29 +4985,101 @@ mod tests {
         shown_labels(model, &faces)
             .into_iter()
             .map(|(value, _, ops)| {
-                let matrix = ops
-                    .iter()
-                    .find(|op| op.op.as_slice() == b"Tm")
-                    .expect("a label sets its text matrix");
-                let scale = real(matrix.operands.first()).hypot(real(matrix.operands.get(1)));
-                let size = ops
-                    .iter()
-                    .find(|op| op.op.as_slice() == b"Tf")
-                    .map(|op| real(op.operands.get(1)))
-                    .expect("a label selects a face");
-                (value, scale, size)
+                let mut scale = f64::NAN;
+                let mut tc_pt = 0.0;
+                let mut set: Option<(&super::ReadyFace<'_>, f64)> = None;
+                let mut runs = Vec::new();
+                for op in &ops {
+                    match op.op.as_slice() {
+                        b"Tm" => {
+                            scale = real(op.operands.first()).hypot(real(op.operands.get(1)));
+                        }
+                        b"Tc" => tc_pt = real(op.operands.first()),
+                        b"Tf" => {
+                            let face = op
+                                .operands
+                                .first()
+                                .and_then(Object::as_name)
+                                .and_then(|name| {
+                                    faces.iter().find(|face| face.resource.as_bytes() == name)
+                                })
+                                .expect("a run selects an embedded face");
+                            set = Some((face, real(op.operands.get(1))));
+                        }
+                        b"Tj" | b"TJ" => {
+                            let (face, size_pt) =
+                                set.expect("a run names its face before it shows text");
+                            let mut bytes = Vec::new();
+                            for operand in &op.operands {
+                                let shown: &[Object] = match operand {
+                                    Object::Array(items) => items,
+                                    other => std::slice::from_ref(other),
+                                };
+                                for item in shown {
+                                    if let Object::String(string) = item {
+                                        bytes.extend_from_slice(&string.bytes);
+                                    }
+                                }
+                            }
+                            let codes = face.metrics.codes(&bytes);
+                            runs.push(ShownRun {
+                                face: face.key.to_string(),
+                                size_pt,
+                                tc_pt,
+                                text: face.metrics.decode(&bytes),
+                                glyphs: codes.len(),
+                                natural_pt: codes
+                                    .iter()
+                                    .map(|(code, _)| face.metrics.width(*code) * size_pt)
+                                    .sum(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                (value, scale, runs)
             })
             .collect()
     }
 
+    /// A style height, in millimetres, at which a face with `heights` is
+    /// lettered on a cell of `cell` device units: the middle of the heights
+    /// that are. The stand-in for Arial Narrow in these tests is Inter, whose
+    /// tables are not Arial Narrow's, so the 2.5 mm of the reference's labels
+    /// is not the height that puts it on their 24-unit cell.
+    fn height_on_cell(heights: super::FaceHeights, cell: f64) -> f64 {
+        let on_cell: Vec<f64> = (1500..4500)
+            .map(|thousandths| f64::from(thousandths) / 1000.0)
+            .filter(|height| {
+                super::whole_pixel_cell(heights, crate::model::TextHeightBasis::Cap, *height)
+                    == Some(cell)
+            })
+            .collect();
+        *on_cell
+            .get(on_cell.len() / 2)
+            .expect("some style height letters the face on that cell")
+    }
+
+    /// Set every label of `sheet` at `height_mm`.
+    fn at_height(mut sheet: PaperModel, height_mm: f64) -> PaperModel {
+        for primitive in &mut sheet.primitives {
+            if let PaperShape::Text {
+                height_mm: stated, ..
+            } = &mut primitive.shape
+            {
+                *stated = Some(height_mm);
+            }
+        }
+        sheet
+    }
+
     /// The A2 acceptance sheet's two `动火点` labels name Arial Narrow, which
-    /// draws no Han, so the whole label is borrowed. Taking the lender to be
-    /// the first program in the list that holds the three characters would
-    /// make it follow the batch: FangSong for the sheet prepared alone, SimSun
-    /// beside a sheet whose own 宋体 label holds the same characters. A label
-    /// with a Han character borrows from SimSun and one without from FangSong
-    /// (`120℃`'s `℃`); that is read off the label, so the sheet letters the
-    /// same either way.
+    /// draws no Han, so the whole label is borrowed, as the `℃` of `120℃` is.
+    /// Taking the lender to be the first program in the list that holds the
+    /// characters would make it follow the batch: one face for the sheet
+    /// prepared alone, another beside a sheet whose own 宋体 or 仿宋 label
+    /// holds the same characters. Both borrow from NSimSun, the first face of
+    /// the order, so the sheet letters the same either way.
     #[test]
     fn a_borrowed_label_is_lettered_in_the_same_face_alone_and_in_a_batch() {
         use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
@@ -4900,6 +5090,7 @@ mod tests {
             "write-borrow-alone-and-batch",
             &[
                 ("ARIALN.TTF", &narrow),
+                ("nsimsun.ttf", &song),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
@@ -4909,11 +5100,11 @@ mod tests {
         let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
         let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
         let expected = vec![
-            lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
+            lettered("动火点", "Arial Narrow", &[("NSimSun", "动火点")]),
             lettered(
                 "120℃",
                 "Arial Narrow",
-                &[("Arial Narrow", "120"), ("FangSong", "℃")],
+                &[("Arial Narrow", "120"), ("NSimSun", "℃")],
             ),
         ];
         assert_eq!(
@@ -4928,39 +5119,39 @@ mod tests {
         );
     }
 
-    /// The writer asks the label's own two lenders in the label's own order,
-    /// and not the embedded faces in the order they were handed over. The two
-    /// part ways only where a batch has put the borrowed characters into both
-    /// lenders' programs, which the batch above does not: its FangSong holds
-    /// `点` alone, so the list's order and the label's give the same answer.
+    /// The writer asks the faces of the borrow order in that order, and not
+    /// the embedded faces in the order they were handed over. The two part
+    /// ways where a batch has put the borrowed characters into the program of
+    /// a face that stands ahead of the lender in the list, which the batch
+    /// above does not: its FangSong holds `点` alone and its SimSun no `℃`.
     ///
     /// Here one batch letters all of `动火点℃` in a 仿宋 label and in a 宋体
-    /// one, so FangSong — ahead of SimSun in the list — could draw the whole
-    /// of `动火点` too; another names only 宋体, so SimSun stands in the list
-    /// ahead of a FangSong that is there to lend, and holds `℃` as well.
-    /// Either way `动火点` borrows from SimSun and the `℃` of `120℃` from
-    /// FangSong, as the sheet does prepared alone.
+    /// one, so FangSong and SimSun — both ahead of NSimSun in the list, which
+    /// is there only to lend — could each draw the whole of `动火点` and the
+    /// `℃`; another names only 宋体. Either way both borrow from NSimSun, as
+    /// the sheet does prepared alone.
     #[test]
-    fn a_borrowed_label_keeps_its_lender_when_both_lenders_hold_its_characters() {
+    fn a_borrowed_label_keeps_its_lender_when_other_faces_hold_its_characters() {
         use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
 
         let narrow = ascii_only();
         let song = drawing("动火点℃");
         let dirs = scratch_dir(
-            "write-borrow-both-lenders-hold",
+            "write-borrow-other-faces-hold",
             &[
                 ("ARIALN.TTF", &narrow),
+                ("nsimsun.ttf", &song),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
         );
         let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
         let expected = vec![
-            lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
+            lettered("动火点", "Arial Narrow", &[("NSimSun", "动火点")]),
             lettered(
                 "120℃",
                 "Arial Narrow",
-                &[("Arial Narrow", "120"), ("FangSong", "℃")],
+                &[("Arial Narrow", "120"), ("NSimSun", "℃")],
             ),
         ];
         let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
@@ -4989,13 +5180,57 @@ mod tests {
         }
     }
 
+    /// A machine may have no NSimSun file. The borrowed characters then go to
+    /// SimSun, the next face of the order and the same design — the label
+    /// with a Han character and the one without alike — and not to FangSong,
+    /// though a 仿宋 label of the batch puts FangSong ahead of SimSun in the
+    /// list with every one of the characters in its program.
+    #[test]
+    fn without_nsimsun_a_borrowed_label_is_lettered_in_simsun() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let narrow = ascii_only();
+        let song = drawing("动火点℃");
+        let dirs = scratch_dir(
+            "write-borrow-without-nsimsun",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        );
+        let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
+        let naming = lettered_sheet(&[("动火点℃", "仿宋")]);
+        let expected = vec![
+            lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
+            lettered(
+                "120℃",
+                "Arial Narrow",
+                &[("Arial Narrow", "120"), ("SimSun", "℃")],
+            ),
+        ];
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one that letters the same characters in 仿宋"
+        );
+    }
+
     /// A blank is lettered like any other character: it inks nothing and
     /// still takes its advance, so a face has to carry it. `动　火　点` spaces
     /// its characters with the ideographic space U+3000, which Arial Narrow
     /// does not draw, so the string is borrowed whole, spaces and all; in a
-    /// label the named face partly draws, the space alone is borrowed. The
-    /// sheet prepared alone letters both the way it does beside a sheet whose
-    /// own 宋体 label holds the same space.
+    /// label the named face partly draws, the space alone is borrowed. Both
+    /// borrow from SimSun on this machine, which has no NSimSun. The sheet
+    /// prepared alone letters both the way it does beside a sheet whose own
+    /// 宋体 label holds the same space.
     #[test]
     fn a_space_the_named_face_cannot_draw_is_borrowed_alone_and_in_a_batch() {
         use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
@@ -5026,7 +5261,7 @@ mod tests {
                 "Arial Narrow",
                 &[
                     ("Arial Narrow", "A"),
-                    ("FangSong", "\u{3000}"),
+                    ("SimSun", "\u{3000}"),
                     ("Arial Narrow", "B"),
                 ],
             ),
@@ -5045,8 +5280,8 @@ mod tests {
         );
     }
 
-    /// A character neither of a label's two lenders draws is lettered in the
-    /// first of the other faces that draws it — Arial here, ahead of
+    /// A character none of the order's Chinese faces draws is lettered in the
+    /// first of the faces after them that draws it — Arial here, ahead of
     /// SimSun-ExtB — whether the string is borrowed whole or one character
     /// of it is. The sheet letters it so prepared alone and beside a sheet
     /// that names SimSun-ExtB for the same character, where the embedded
@@ -5130,8 +5365,9 @@ mod tests {
     }
 
     /// A label its named face draws none of goes whole to one lender, and
-    /// where the first lender draws only part of it that is the second: `甲乙`
-    /// asks SimSun first, this SimSun draws `甲` alone, and FangSong draws
+    /// where an earlier lender draws only part of it that is a later one:
+    /// with no NSimSun on the machine `甲乙` asks SimSun first, this SimSun
+    /// draws `甲` alone, and FangSong draws
     /// both. FangSong therefore has to be given `甲` as well as `乙`, or the
     /// label is cut in two — and it has to be given it whether or not another
     /// sheet in the batch happens to letter `甲` in FangSong.
@@ -5207,71 +5443,199 @@ mod tests {
         );
     }
 
-    /// The 1.524 mm pitch is Arial Narrow's `?` at a 2.5 mm body, the step the
-    /// reference sets a string that face draws none of at: nine pixels, on
-    /// the A2 sheet's two `动火点`. A label that names another face has no
-    /// such reading behind it — `DWG-0202GP06-01`'s title block names
-    /// SimSun-ExtB for a 2.5 mm `施工图`, and at that pitch its three
-    /// characters are squeezed to 43% of their width while the 2.54 mm rows
-    /// beside it keep theirs. A lone borrowed glyph has no neighbour to step
-    /// to, so it is not narrowed either.
+    /// The reference plots set the glyphs a label named in Arial Narrow on a
+    /// 24-unit cell borrows at `Tf 9.6` — 20 device units, whatever size the
+    /// label's own face is lettered at — under a text matrix with no
+    /// horizontal scale. A label borrowed whole advances by Arial Narrow's
+    /// `?` after each glyph but the last: nine units, less than the glyph is
+    /// wide, so the glyphs overlap as the reference's `动火点` does. A lone
+    /// borrowed glyph, the whole of a label or the end of one, has nothing to
+    /// step to.
     #[test]
-    fn the_borrowed_pitch_is_for_a_string_named_in_arial_narrow() {
+    fn a_borrowed_run_the_reference_shows_is_set_at_twenty_units() {
         use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
 
         let latin = ascii_only();
-        let han = drawing("动火点施工图℃");
+        let han = drawing("动火点℃");
         let dirs = scratch_dir(
-            "write-borrowed-pitch",
+            "write-as-the-reference",
+            &[("ARIALN.TTF", &latin), ("nsimsun.ttf", &han)],
+        );
+        let heights = super::FaceHeights::of(&latin);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let height_mm = height_on_cell(heights, 24.0);
+        let named_pt = super::plotted_size_pt(heights, cap, height_mm);
+        assert!(
+            (named_pt - 9.6).abs() > 1e-6,
+            "the stand-in for Arial Narrow is itself lettered at Tf 9.6, so a borrowed glyph at \
+             9.6 would show nothing"
+        );
+        let sheet = at_height(
+            lettered_sheet(&[
+                ("动火点", "Arial Narrow"),
+                ("120℃", "Arial Narrow"),
+                ("℃", "Arial Narrow"),
+            ]),
+            height_mm,
+        );
+        let prepared = crate::fonts::prepare_fonts(&[&sheet], &dirs).expect("fonts");
+        let shown = shown_runs(&sheet, &plot_fonts(&prepared));
+        let texts: Vec<&str> = shown.iter().map(|(value, ..)| value.as_str()).collect();
+        assert_eq!(texts, ["动火点", "120℃", "℃"]);
+        for (value, scale, _) in &shown {
+            assert!(
+                (scale - 1.0).abs() < 1e-12,
+                "{value:?} is set under a horizontal scale of {scale}"
+            );
+        }
+
+        // The label borrowed whole.
+        let (_, _, whole) = &shown[0];
+        let lettered: String = whole.iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(lettered, "动火点");
+        for run in whole {
+            assert_eq!(run.face, "NSimSun", "{run:?}");
+            assert!((run.size_pt - 9.6).abs() < 1e-9, "{run:?}");
+        }
+        let a8 = super::reference_scale("Arial Narrow", heights, cap, height_mm);
+        let question_px = f64::from(super::ARIAL_NARROW_72PX[usize::from(b'?' - b' ')]) * a8;
+        assert_eq!(
+            question_px.round(),
+            9.0,
+            "the stand-in's `?` is {question_px:.3} units at this height, not the reference's 9"
+        );
+        let (stepped, last) = whole.split_at(whole.len() - 1);
+        for run in stepped {
+            #[allow(clippy::cast_precision_loss)]
+            let step_pt = run.natural_pt / run.glyphs as f64 + run.tc_pt;
+            assert!(
+                (step_pt - 9.0 * 72.0 / super::PLOT_DPI).abs() < 1e-9,
+                "each glyph of {:?} steps {:.4} units, not the 9 of the named face's `?`",
+                run.text,
+                step_pt * super::PLOT_DPI / 72.0
+            );
+            assert!(
+                step_pt < run.natural_pt / 2.0,
+                "the glyphs of a label borrowed whole overlap: {run:?}"
+            );
+        }
+        assert_eq!(last[0].glyphs, 1, "{last:?}");
+        assert!(last[0].tc_pt.abs() < 1e-12, "{last:?}");
+
+        // The label whose last character alone is borrowed.
+        let (_, _, tail) = &shown[1];
+        let (borrowed, named) = tail.split_last().expect("runs");
+        assert_eq!(
+            (borrowed.face.as_str(), borrowed.text.as_str()),
+            ("NSimSun", "℃")
+        );
+        assert!((borrowed.size_pt - 9.6).abs() < 1e-9, "{borrowed:?}");
+        let digits: String = named.iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(digits, "120");
+        for run in named {
+            assert_eq!(run.face, "Arial Narrow", "{run:?}");
+            assert!(
+                (run.size_pt - named_pt).abs() < 1e-9,
+                "the label's own face keeps its size: {run:?}"
+            );
+        }
+
+        // The label that is one borrowed character.
+        let (_, _, lone) = &shown[2];
+        assert_eq!(lone.len(), 1, "{lone:?}");
+        assert_eq!(lone[0].face, "NSimSun");
+        assert!((lone[0].size_pt - 9.6).abs() < 1e-9, "{lone:?}");
+        assert!(lone[0].tc_pt.abs() < 1e-12, "{lone:?}");
+    }
+
+    /// The reference's lettering of a borrowed run is applied where a
+    /// reference plot shows it and nowhere else. Each label here differs
+    /// from the samples in one respect, and its borrowed characters are set
+    /// like the rest of it: at the size its own face is lettered at.
+    #[test]
+    fn a_borrowed_run_the_samples_do_not_reach_keeps_the_size_of_its_label() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let latin = ascii_only();
+        let han = drawing("动火点℃总体施工图");
+        let dirs = scratch_dir(
+            "write-past-the-samples",
             &[
                 ("ARIALN.TTF", &latin),
                 ("arial.ttf", &latin),
                 ("simsunb.ttf", &latin),
-                ("simsun.ttf", &han),
-                ("simfang.ttf", &han),
+                ("nsimsun.ttf", &han),
             ],
         );
-        let mut sheet = lettered_sheet(&[
-            ("动火点", "Arial Narrow"),
-            ("施工图", "SimSun-ExtB"),
-            ("动火点", "Arial"),
-            ("℃", "Arial Narrow"),
-            ("动火点", "Arial Narrow"),
-        ]);
-        // The last label is the first one again at the 2.54 mm of the rows
-        // beside `施工图`: the pitch is read at 2.5 mm and nowhere else.
-        if let PaperShape::Text { height_mm, .. } = &mut sheet.primitives[4].shape {
-            *height_mm = Some(2.54);
+        let heights = super::FaceHeights::of(&latin);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let on_the_cell = height_on_cell(heights, 24.0);
+        let on_another = height_on_cell(heights, 25.0);
+        let cases = [
+            ("动火点", "Arial", "a label that names another face"),
+            ("动火点", "Arial Narrow", "a label on another cell"),
+            ("动火点", "Arial Narrow", "a rotated label"),
+            ("动火点", "Arial Narrow", "a border template's label"),
+            (
+                "动火点",
+                "Arial Narrow",
+                "a label that states a character width",
+            ),
+            (
+                "总  体",
+                "Arial Narrow",
+                "a borrowed character with one of the named face after it",
+            ),
+            (
+                "A℃℃",
+                "Arial Narrow",
+                "two borrowed characters after one of the named face",
+            ),
+            (
+                "施工图",
+                "SimSun-ExtB",
+                "a label named in a face of its own that draws none of it",
+            ),
+        ];
+        let labels: Vec<(&str, &str)> =
+            cases.iter().map(|(text, font, _)| (*text, *font)).collect();
+        let mut sheet = at_height(lettered_sheet(&labels), on_the_cell);
+        if let PaperShape::Text { height_mm, .. } = &mut sheet.primitives[1].shape {
+            *height_mm = Some(on_another);
+        }
+        if let PaperShape::Text { rotation, .. } = &mut sheet.primitives[2].shape {
+            *rotation = std::f64::consts::FRAC_PI_2;
+        }
+        sheet.primitives[3].furniture = true;
+        if let PaperShape::Text { width_permille, .. } = &mut sheet.primitives[4].shape {
+            *width_permille = Some(800);
         }
         let prepared = crate::fonts::prepare_fonts(&[&sheet], &dirs).expect("fonts");
-        let set = lettered_scales(&sheet, &plot_fonts(&prepared));
-        let texts: Vec<&str> = set.iter().map(|(value, ..)| value.as_str()).collect();
-        assert_eq!(texts, ["动火点", "施工图", "动火点", "℃", "动火点"]);
-        let (_, pitched, size_pt) = &set[0];
-        let pitch_mm = pitched * size_pt / super::PT_PER_MM;
+        let shown = shown_runs(&sheet, &plot_fonts(&prepared));
+        assert_eq!(shown.len(), cases.len());
+        let mut resized = Vec::new();
+        for (index, ((value, _, runs), (_, _, what))) in shown.iter().zip(&cases).enumerate() {
+            let height_mm = if index == 1 { on_another } else { on_the_cell };
+            // Every stand-in face here is Inter, so every label's own face is
+            // lettered at the size Inter is at the label's height.
+            let own_pt = super::plotted_size_pt(heights, cap, height_mm);
+            assert!(
+                runs.iter().any(|run| run.face == "NSimSun"),
+                "{what} ({value:?}) borrows nothing: {runs:?}"
+            );
+            for run in runs {
+                if (run.size_pt - own_pt).abs() > 1e-9 {
+                    resized.push(format!(
+                        "  {what} ({value:?}): {:?} in {} at Tf {:.3}, its label at {own_pt:.3}",
+                        run.text, run.face, run.size_pt
+                    ));
+                }
+            }
+        }
         assert!(
-            (pitch_mm - 1.524).abs() < 1e-9,
-            "a 2.5 mm string named in Arial Narrow steps {pitch_mm:.4} mm an em, not 1.524 \
-             (Tm scale {pitched:.4} at Tf {size_pt:.2})"
-        );
-        let narrowed: Vec<String> = [
-            (1, "a 2.5 mm string named in SimSun-ExtB"),
-            (2, "a 2.5 mm string named in Arial"),
-            (3, "a lone borrowed glyph"),
-            (4, "a 2.54 mm string named in Arial Narrow"),
-        ]
-        .into_iter()
-        .filter_map(|(index, what)| {
-            let (value, scale, _) = &set[index];
-            ((scale - 1.0).abs() >= 1e-12)
-                .then(|| format!("  {what} ({value:?}) is set at {scale:.4} of its width"))
-        })
-        .collect();
-        assert!(
-            narrowed.is_empty(),
-            "only a string of two or more glyphs named in Arial Narrow at 2.5 mm takes the \
-             pitch:\n{}",
-            narrowed.join("\n")
+            resized.is_empty(),
+            "a run was resized on a label no reference plot shows:\n{}",
+            resized.join("\n")
         );
     }
 
@@ -5314,7 +5678,9 @@ mod tests {
     /// acceptance gate does with the eleven. The A2 sheet is the one a lender
     /// that followed the batch would show on: its two `动火点` labels name
     /// Arial Narrow and borrow all three characters. Both preparations letter
-    /// them in SimSun, the face the gate's eleven pages carry.
+    /// them in the first face of the borrow order the machine has a file of —
+    /// NSimSun, the face the reference plots set them in, or SimSun without
+    /// it.
     ///
     /// A corpus with no drawing at all, or a machine without the three
     /// faces, says so and skips. A corpus that holds drawings and not the A2
@@ -5378,6 +5744,11 @@ mod tests {
             .collect();
         let models: Vec<&PaperModel> = sheets.iter().map(|(_, model)| model).collect();
         let together = crate::fonts::prepare_fonts(&models, &dirs).expect("fonts for the corpus");
+        let lender = if ready("nsimsun.ttf") {
+            "NSimSun"
+        } else {
+            "SimSun"
+        };
         let mut borrowed_han = 0usize;
         for (name, model) in &sheets {
             let alone = crate::fonts::prepare_fonts(&[model], &dirs)
@@ -5409,13 +5780,13 @@ mod tests {
                 differing.join("\n")
             );
             if name == A2_SHEET {
-                let expected = lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]);
+                let expected = lettered("动火点", "Arial Narrow", &[(lender, "动火点")]);
                 for label in &lettered_together {
                     if label.value.trim() == "动火点" && label.named == "Arial Narrow" {
                         assert_eq!(
                             label.runs, expected.runs,
                             "{name}: a `动火点` its style's face cannot draw is borrowed whole \
-                             from SimSun"
+                             from {lender}"
                         );
                         borrowed_han += 1;
                     }
@@ -5424,7 +5795,7 @@ mod tests {
         }
         assert_eq!(
             borrowed_han, 2,
-            "the A2 sheet letters two `动火点` in a borrowed SimSun"
+            "the A2 sheet letters two `动火点` in a borrowed {lender}"
         );
         eprintln!(
             "{} acceptance sheets letter alone as they do together",

@@ -38,7 +38,7 @@ pub struct PreparedFont {
 /// [`pid_parse::style_link::TEXT_CHAR_FONT_NAME_OFFSET`]. Anything else
 /// with a Han character uses FangSong; Latin-only lettering uses Arial
 /// Narrow. Individual characters the chosen face cannot encode borrow one
-/// of the faces [`borrow_order`] names, one character at a time — see
+/// of the faces of [`BORROW_ORDER`], one character at a time — see
 /// [`crate::write`].
 #[must_use]
 pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
@@ -54,59 +54,51 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
     }
 }
 
-/// The faces a label borrows from, in the order they are asked.
+/// The faces a label borrows from, in the order they are asked: one order
+/// for every label.
 ///
 /// A character the face a label names cannot draw — Han in an Arial Narrow
-/// style, the `℃` after its digits — is lettered in SimSun or FangSong, and
-/// which of the two is read off the label alone: a label that holds a Han
-/// character asks SimSun first, any other asks FangSong first. That is what
-/// the eleven acceptance sheets letter when they are prepared together — the
-/// A2 sheet's two `动火点` in SimSun, every borrowed `℃` in FangSong — stated
-/// so that a sheet prepared on its own gets the same answer.
+/// style, the `℃` after its digits — is lettered in the first of these whose
+/// program draws it.
 ///
-/// Only the first half of it is the reference's lettering. The reference
-/// plots set every borrowed run of those sheets in NSimSun, the two `动火点`
-/// and all fourteen `℃` alike, so a Han label's SimSun is the reference's
-/// family and the `℃`'s FangSong is not: that half is this crate's own batch
-/// lettering, kept because changing it rewrites the delivered pages. The
-/// acceptance gate counts the borrowed runs that are in the reference's
-/// family, so the day the order changes its reading has to rise.
+/// NSimSun is first because it is the face the reference plots borrow. All
+/// sixteen borrowed runs on the eleven acceptance sheets — fourteen `℃` and
+/// the A2 sheet's two `动火点` — are set in it, whatever the label holds:
+/// 新宋体 is the face a Chinese Windows associates with a font of the ANSI
+/// character set (`FontAssoc`'s `FontPackage`), and the plotter leaves the
+/// characters a font lacks to that association.
 ///
-/// The four that follow are the other faces [`typeface_key`] knows, by name.
-/// They answer for a character neither lender draws: Latin beyond what the
-/// two carry — Arial has `Ż`, SimSun does not — or a Han character of
-/// extension B, which only SimSun-ExtB holds. The list is every face this
-/// crate loads, so a character none of the six draws is drawn by none, and
-/// [`prepare_fonts`] refuses it. The face a character is named in stands in
-/// the list like any other and is passed over, having just been found not to
-/// draw it.
+/// SimSun follows for a machine that has no NSimSun file. The two are one
+/// design — NSimSun is SimSun with a fixed-pitch Latin — so every character
+/// the reference borrows is the same outline in either, and a borrowed run
+/// stays in the reference's family. FangSong is third, for a machine with
+/// neither.
+///
+/// The three after them are the other faces [`typeface_key`] knows, by name.
+/// They answer for a character none of the first three draws: Latin beyond
+/// what a Chinese face carries — Arial has `Ż`, SimSun does not — or a Han
+/// character of extension B, which only SimSun-ExtB holds. The list is every
+/// face this crate loads, so a character none of the six draws is drawn by
+/// none, and [`prepare_fonts`] refuses it. The face a character is named in
+/// stands in the list like any other and is passed over, having just been
+/// found not to draw it.
 ///
 /// Reading the lender off the programs in hand instead would make the answer
 /// follow the batch. Those are subsets cut to the labels of whichever sheets
-/// were prepared together, so the first program that holds `动火点` is
-/// FangSong for the A2 sheet alone and SimSun beside a sheet whose own 宋体
-/// label holds the same three characters; and a character neither lender
-/// draws would be found in whichever other face the batch had loaded, or in
-/// none for a sheet prepared alone. [`prepare_fonts`] gives each face what
-/// this order sends it, judged against the face's whole program, and the
-/// writer asks in the same order, so the two agree whatever else was
+/// were prepared together, so the first program that holds `动火点` would be
+/// one face for a sheet prepared alone and another beside a sheet whose own
+/// label holds the same three characters. [`prepare_fonts`] gives each face
+/// what this order sends it, judged against the face's whole program, and
+/// the writer asks in the same order, so the two agree whatever else was
 /// prepared with the sheet.
-#[must_use]
-pub fn borrow_order(label: &str) -> [&'static str; 6] {
-    let [first, second] = if label.chars().any(is_cjk) {
-        ["SimSun", "FangSong"]
-    } else {
-        ["FangSong", "SimSun"]
-    };
-    [
-        first,
-        second,
-        "Arial",
-        "Arial Narrow",
-        "NSimSun",
-        "SimSun-ExtB",
-    ]
-}
+pub const BORROW_ORDER: [&str; 6] = [
+    "NSimSun",
+    "SimSun",
+    "FangSong",
+    "Arial",
+    "Arial Narrow",
+    "SimSun-ExtB",
+];
 
 /// The directories [`prepare_fonts`] looks in, in order.
 ///
@@ -134,7 +126,7 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 /// where the run's face is absent, the way it did before the partition was
 /// read — since one missing typeface must not refuse a whole export.
 /// A character the face it is named in cannot draw borrows one of the faces
-/// [`borrow_order`] names for its label, and that lender is loaded, or its
+/// of [`BORROW_ORDER`], and that lender is loaded, or its
 /// program widened, to carry it — the run keeps its named face for
 /// everything that face draws and only the rest borrows. Which lender
 /// carries a character is settled against the lenders' whole programs, never
@@ -145,7 +137,7 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 ///
 /// Returns an error when a needed face is absent from every directory, when
 /// a file is present but not an embeddable standalone font, or when a label
-/// holds a character that no face of its [`borrow_order`] draws — the error
+/// holds a character that no face of [`BORROW_ORDER`] draws — the error
 /// names the character and the label, and is the same for a sheet prepared
 /// alone and in any batch.
 pub fn prepare_fonts(
@@ -264,10 +256,10 @@ pub fn prepare_fonts(
             }),
         }
     }
-    // No face of the label's order draws these, on this machine's files, so
-    // no face the writer asks could. Refused here, by the label, whatever
-    // else shares the call: a face another sheet happened to load is in the
-    // same order and was asked with the rest.
+    // No face of the order draws these, on this machine's files, so no face
+    // the writer asks could. Refused here, by the label, whatever else shares
+    // the call: a face another sheet happened to load is in the same order
+    // and was asked with the rest.
     if let Some(first) = lending.unplaced.first() {
         let characters = first
             .characters
@@ -284,7 +276,7 @@ pub fn prepare_fonts(
              {}){others}",
             first.label,
             first.named,
-            borrow_order(&first.label).join(", "),
+            BORROW_ORDER.join(", "),
             searched_dirs(dirs)
         ));
     }
@@ -295,8 +287,8 @@ pub fn prepare_fonts(
 struct Loans {
     /// The characters each face is asked for beyond the labels that name it.
     lent: BTreeMap<&'static str, BTreeSet<char>>,
-    /// The labels that hold a character no face of their order draws, in
-    /// the order the drawings letter them.
+    /// The labels that hold a character no face of the order draws, in the
+    /// order the drawings letter them.
     unplaced: Vec<Unplaced>,
 }
 
@@ -306,7 +298,7 @@ struct Unplaced {
     label: String,
     /// The face its style names.
     named: &'static str,
-    /// The characters of it no face of its [`borrow_order`] draws.
+    /// The characters of it no face of [`BORROW_ORDER`] draws.
     characters: BTreeSet<char>,
 }
 
@@ -315,8 +307,10 @@ struct Unplaced {
 /// Every character a label letters is named in a face ([`named_faces`]) —
 /// the blanks inside the line with the rest, since each is set for its
 /// advance, and not the trailing pad, which the writer drops. The ones
-/// that face cannot draw go to the faces of the label's [`borrow_order`],
-/// asked in turn: a face is given every such character its program draws,
+/// that face cannot draw go to the faces of [`BORROW_ORDER`], asked in
+/// turn: a face is given every such character its program draws — none, for
+/// a face this machine has no file of, which is how SimSun comes to lend
+/// where NSimSun is absent —
 /// and the next is asked only when that leaves some over. It is then given
 /// every one *it* draws, not just the remainder, because the writer hands a
 /// stretch its named face draws none of to one lender whole, and when an
@@ -400,7 +394,7 @@ fn loans(
             // What each face asked so far draws of `lacking`, in the order
             // asked.
             let mut drawn: Vec<BTreeSet<char>> = Vec::new();
-            for lender in borrow_order(value) {
+            for lender in BORROW_ORDER {
                 let from_lender = drawn_by(programs, dirs, lender, &lacking)?;
                 if from_lender.is_empty()
                     || drawn.iter().any(|earlier| from_lender.is_subset(earlier))
@@ -735,7 +729,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::test_faces::{ascii_only, drawing, scratch_dir};
-    use super::{borrow_order, font_dirs, prepare_fonts, subset_or_whole, typeface_key};
+    use super::{BORROW_ORDER, font_dirs, prepare_fonts, subset_or_whole, typeface_key};
     use crate::model::{
         PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
     };
@@ -849,13 +843,12 @@ mod tests {
 
     /// The A2 acceptance sheet letters two `动火点` labels in a style that
     /// names Arial Narrow, which draws no Han, so the three characters are
-    /// borrowed. The program that carries them must not depend on the other
-    /// sheets prepared in the same call — FangSong for the sheet alone, and
-    /// no program at all beside a sheet whose own 宋体 label already holds
-    /// them, which leaves the writer to find them in SimSun. A label that
-    /// holds a Han character borrows from SimSun first, and SimSun's program
-    /// carries what it lends whatever else the batch letters; `℃`, in a label
-    /// with no Han character, goes to FangSong the same way.
+    /// borrowed, as the `℃` of `120℃` is. The program that carries them must
+    /// not depend on the other sheets prepared in the same call: read off the
+    /// subsets in hand it would be one face for the sheet alone and another
+    /// beside a sheet whose own 宋体 or 仿宋 label already holds the
+    /// characters. They go to NSimSun, the first face of the order, whose
+    /// program carries what it lends whatever else the batch letters.
     #[test]
     fn a_borrowed_character_is_given_to_the_same_face_alone_and_in_a_batch() {
         let narrow = ascii_only();
@@ -864,31 +857,66 @@ mod tests {
             "borrow-alone-and-batch",
             &[
                 ("ARIALN.TTF", &narrow),
+                ("nsimsun.ttf", &song),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
         );
         let borrowing = sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
-        let naming = sheet(&[("动火点", "宋体"), ("点", "仿宋")]);
+        let naming = sheet(&[("动火点℃", "宋体"), ("点℃", "仿宋")]);
         let alone = prepare_fonts(&[&borrowing], &dir).expect("alone");
         let batch = prepare_fonts(&[&borrowing, &naming], &dir).expect("in a batch");
         for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
-            for ch in "动火点".chars() {
+            for ch in "动火点℃".chars() {
                 assert!(
-                    carries(faces, "SimSun", ch),
-                    "prepared {prepared}: SimSun, which a Han label borrows from first, \
+                    carries(faces, "NSimSun", ch),
+                    "prepared {prepared}: NSimSun, the face every label borrows from first, \
                      does not carry {ch:?}"
                 );
             }
-            assert!(
-                carries(faces, "FangSong", '℃'),
-                "prepared {prepared}: FangSong, which a label with no Han character borrows \
-                 from first, does not carry '℃'"
-            );
         }
-        assert!(
-            !"动火".chars().any(|ch| carries(&alone, "FangSong", ch)),
-            "prepared alone, FangSong was given Han it lends to no label"
+        let keys: Vec<&str> = alone.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["Arial Narrow", "NSimSun"],
+            "prepared alone, a face that lends nothing was loaded"
+        );
+    }
+
+    /// NSimSun is a file a machine may not have. The characters then go to
+    /// the next face of the order, SimSun — the same design, so the page
+    /// stays in the family the reference borrows — for a label with a Han
+    /// character and for one without alike, and FangSong is not asked.
+    #[test]
+    fn a_machine_without_nsimsun_borrows_from_simsun() {
+        let narrow = ascii_only();
+        let song = drawing("动火点℃");
+        let dir = scratch_dir(
+            "borrow-without-nsimsun",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        );
+        let borrowing = sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
+        let naming = sheet(&[("动火点℃", "仿宋")]);
+        let alone = prepare_fonts(&[&borrowing], &dir).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &dir).expect("in a batch");
+        for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
+            for ch in "动火点℃".chars() {
+                assert!(
+                    carries(faces, "SimSun", ch),
+                    "prepared {prepared}: SimSun, the face after an absent NSimSun, does not \
+                     carry {ch:?}"
+                );
+            }
+        }
+        let keys: Vec<&str> = alone.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["Arial Narrow", "SimSun"],
+            "prepared alone, FangSong was loaded though SimSun lends every character"
         );
     }
 
@@ -1077,12 +1105,13 @@ mod tests {
         assert_eq!(keys, vec!["Arial Narrow"], "nothing is borrowed for a pad");
     }
 
-    /// A character neither of a label's two lenders draws is borrowed from
-    /// the first of the other faces whose program draws it, and that face is
-    /// loaded for it. `甲` here is drawn by Arial and by SimSun-ExtB and by
-    /// neither lender; Arial comes first. Looking only among the faces a
-    /// call has loaded would refuse the sheet prepared alone, and beside a
-    /// sheet that names SimSun-ExtB would find the character there.
+    /// A character none of the order's three Chinese faces draws is borrowed
+    /// from the first of the faces after them whose program draws it, and
+    /// that face is loaded for it. `甲` here is drawn by Arial and by
+    /// SimSun-ExtB and by neither SimSun nor FangSong, and the machine has no
+    /// NSimSun; Arial comes first. Looking only among the faces a call has
+    /// loaded would refuse the sheet prepared alone, and beside a sheet that
+    /// names SimSun-ExtB would find the character there.
     #[test]
     fn a_character_neither_lender_draws_is_given_to_the_same_face_alone_and_in_a_batch() {
         let latin = ascii_only();
@@ -1104,7 +1133,7 @@ mod tests {
         for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
             assert!(
                 carries(faces, "Arial", '甲'),
-                "prepared {prepared}: Arial, the first face after the two lenders that draws \
+                "prepared {prepared}: Arial, the first face after the Chinese ones that draws \
                  '甲', does not carry it"
             );
         }
@@ -1197,54 +1226,37 @@ mod tests {
         );
     }
 
-    /// The four faces asked after a label's two lenders, the same for every
-    /// label.
-    const AFTER_THE_LENDERS: [&str; 4] = ["Arial", "Arial Narrow", "NSimSun", "SimSun-ExtB"];
-
+    /// The face the reference plots borrow leads the order, and the face of
+    /// the same design follows it, ahead of FangSong: a machine without the
+    /// NSimSun file still borrows in the reference's family.
     #[test]
-    fn a_label_with_a_han_character_borrows_from_simsun_first() {
-        for label in ["动火点", "LNG至  总  体"] {
-            let order = borrow_order(label);
-            assert_eq!(order[..2], ["SimSun", "FangSong"], "{label:?}");
-            assert_eq!(order[2..], AFTER_THE_LENDERS, "{label:?}");
-        }
-    }
-
-    #[test]
-    fn a_label_without_a_han_character_borrows_from_fangsong_first() {
-        for label in ["120℃", "L=-18℃ "] {
-            let order = borrow_order(label);
-            assert_eq!(order[..2], ["FangSong", "SimSun"], "{label:?}");
-            assert_eq!(order[2..], AFTER_THE_LENDERS, "{label:?}");
-        }
+    fn the_borrow_order_is_led_by_the_face_the_reference_borrows() {
+        assert_eq!(BORROW_ORDER[..3], ["NSimSun", "SimSun", "FangSong"]);
     }
 
     /// The order is every face the loader knows a file for, each once: a
     /// character none of them draws is drawn by no face this crate loads.
     #[test]
     fn the_borrow_order_holds_every_face_the_loader_knows() {
-        for label in ["动火点", "120℃"] {
-            let mut order = borrow_order(label).to_vec();
-            order.sort_unstable();
+        let mut order = BORROW_ORDER.to_vec();
+        order.sort_unstable();
+        assert_eq!(
+            order,
+            [
+                "Arial",
+                "Arial Narrow",
+                "FangSong",
+                "NSimSun",
+                "SimSun",
+                "SimSun-ExtB"
+            ]
+        );
+        for key in order {
             assert_eq!(
-                order,
-                [
-                    "Arial",
-                    "Arial Narrow",
-                    "FangSong",
-                    "NSimSun",
-                    "SimSun",
-                    "SimSun-ExtB"
-                ],
-                "{label:?}"
+                typeface_key(Some(key), "120℃"),
+                key,
+                "{key} is not a face a style can name"
             );
-            for key in order {
-                assert_eq!(
-                    typeface_key(Some(key), label),
-                    key,
-                    "{key} is not a face a style can name"
-                );
-            }
         }
     }
 

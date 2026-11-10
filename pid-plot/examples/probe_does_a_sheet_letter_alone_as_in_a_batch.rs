@@ -3,8 +3,8 @@
 //! `pid_plot` prepares the faces for the one drawing it exports; a gate
 //! prepares them once for all of its sheets. A character the face it is named
 //! in cannot draw is borrowed from another face, and which face lends it must
-//! not follow the company a sheet keeps: `pid_plot::fonts::borrow_order` reads
-//! the lender off the label, and `prepare_fonts` judges a lender by its whole
+//! not follow the company a sheet keeps: `pid_plot::fonts::BORROW_ORDER` is
+//! one order for every label, and `prepare_fonts` judges a lender by its whole
 //! program rather than by the subset one call happened to build.
 //!
 //! This probe asks the written pages. Every drawing it is given is written
@@ -42,10 +42,11 @@
 //! against the repository's own `Ref`, which letters their border templates
 //! as well.
 //!
-//! Read on 2026-11-10: every sheet of all five runs letters each label in the
-//! same faces alone and together. A sheet that does not is reported label by
-//! label. This is what the A2 acceptance sheet reads when the lender is taken
-//! to be the first program in hand that holds the characters:
+//! Read on 2026-11-10, and again on 2026-11-11 once NSimSun led the borrow
+//! order: every sheet of all five runs letters each label in the same faces
+//! alone and together. A sheet that does not is reported label by label. This
+//! is what the A2 acceptance sheet read while the lender was taken to be the
+//! first program in hand that holds the characters:
 //!
 //! ```text
 //! 集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图: 258 labels, 2 lettered in other faces alone than together

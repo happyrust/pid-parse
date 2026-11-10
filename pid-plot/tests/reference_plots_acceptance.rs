@@ -98,22 +98,27 @@
 //! `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`).
 //! Every lettering class of a page — in the masked view and on the whole
 //! page, whatever its size, `unknown` included — reads inside the two class
-//! thresholds, except the pieces of the labels that end in a borrowed `℃`,
-//! which are pinned at the +0.0294 they read on the eight pages that have
-//! one. A class mean cannot see a single label, so the labels whose anchor
-//! point lands more than 0.15 mm from the reference's or whose run is more
-//! than 0.05 mm wider or narrower are counted on the whole page and pinned:
-//! 64 over the eleven pages, the text census's own count, each with a cause
-//! on record.
+//! thresholds, with no exception. A class mean cannot see a single label, so
+//! the labels whose anchor point lands more than 0.15 mm from the
+//! reference's or whose run is more than 0.05 mm wider or narrower are
+//! counted on the whole page and pinned: 50 over the eleven pages, each with
+//! a cause on record.
 //!
 //! A borrowed run is held to the reference's font family as well
 //! (2026-11-10). Where the face a label names cannot draw a character, the
 //! plot sets it in another: fourteen paired runs on the eleven pages, twelve
 //! `℃` after Arial Narrow digits and the A2 sheet's two `动火点`. The
-//! reference sets all fourteen in NSimSun. Ours sets the two `动火点` in
-//! SimSun, the same family, and the twelve `℃` in FangSong, which is another.
-//! Each page's count of borrowed runs is pinned, and its count of them in
-//! the reference's family may only rise — two of fourteen today.
+//! reference sets all fourteen in NSimSun, and so does this crate, at the
+//! reference's size — SimSun, the same family, on a machine with no NSimSun
+//! file. Each page's count of borrowed runs is pinned, and its count of them
+//! in the reference's family may only rise: it is fourteen of fourteen.
+//!
+//! Until the borrowed runs were lettered as the reference letters them
+//! (2026-11-11), the twelve `℃` were FangSong at the label's own 10.17 pt
+//! and the two `动火点` were squeezed to their 1.524 mm step: the pieces of
+//! the `℃` labels read +0.0294 body heights wide on eight pages, pinned
+//! there as the one class past the width threshold, 64 labels were past the
+//! two limits, and two of the fourteen runs were in the reference's family.
 
 use std::path::PathBuf;
 
@@ -205,52 +210,19 @@ const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 
 /// Largest mean width difference a lettering class may show, in body heights.
 ///
-/// Held on every class, as [`CLASS_DOWN_HEIGHTS`] is. Apart from
-/// [`SPLIT_LABEL_CLASS`], which is pinned at its reading, no class reads past
+/// Held on every class, as [`CLASS_DOWN_HEIGHTS`] is. No class reads past
 /// ±0.015: the widest are the two fused valve tags left in `J K`'s `unknown`
 /// and a title block's two `Right/Bottom` certificate captions. Every
 /// `Center` class read about +0.028 while an upright two-glyph run kept its
 /// natural advance rather than the whole-pixel `lpDx` steps the plotter
 /// spaces it by, and the A2 `Left/Ascender` class read −0.320 while its 8 pt
 /// Arial line labels were lettered at the style size rather than the
-/// reference's `Tf 11.16`.
+/// reference's `Tf 11.16`. `Left/Ascender part` — the two pieces of a label
+/// such as `L=35℃`, whose `℃` the style's Arial Narrow cannot draw — read
+/// +0.0294 on the eight pages that have one while the borrowed `℃` was set
+/// at the label's own 10.17 pt instead of the reference's `Tf 9.6`; it reads
+/// −0.0003 now.
 const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
-
-/// The one lettering class that reads past [`CLASS_ADVANCE_HEIGHTS`]: the
-/// pieces of the alarm-limit labels that end in `℃`.
-///
-/// The style's Arial Narrow cannot draw `℃`, so `L=35℃` prints as two runs
-/// on both pages: `L=35`, and a `℃` in a borrowed face. The reference
-/// letters that `℃` in NSimSun at `Tf 9.6`; ours borrows FangSong at the
-/// label's own 10.17 pt, and its run is 0.201 mm wider on a 3.387 mm body —
-/// +0.0594 body heights, on every one of the twelve such labels the eleven
-/// pages pair. Beside the Latin half, which reads about −0.0005, the class
-/// comes to +0.0294 on each page that has one, in either view. That is a
-/// lettering difference, not a reading to widen a threshold for, so it is
-/// pinned where it reads until the borrowed run is sized as the reference
-/// sizes it.
-const SPLIT_LABEL_CLASS: &str = "Left/Ascender part";
-
-/// What [`SPLIT_LABEL_CLASS`] reads for its mean width difference, in body
-/// heights, to four decimals. A ceiling: the class may not read wider.
-const SPLIT_LABEL_ADVANCE: f64 = 0.0294;
-
-/// Half of the last decimal place [`SPLIT_LABEL_ADVANCE`] is stated to.
-const SPLIT_LABEL_ROUNDING: f64 = 0.00005;
-
-/// The pages that letter a `℃` after Arial Narrow digits, and so carry
-/// [`SPLIT_LABEL_CLASS`] past the width threshold. A page that stops reading
-/// past it has to leave this list, so the pin cannot outlive the difference.
-const SPLIT_LABEL_PAGES: [&str; 8] = [
-    "I井场 注采阀组工艺及自控流程图",
-    "L M井场 注采阀组工艺及自控流程图",
-    "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-    "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-    "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
-    "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
-    "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
-    "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
-];
 
 /// How far a paired label's anchor point — the start of a left-anchored run,
 /// the middle of a centred one, the end of a right-anchored one — may land
@@ -260,11 +232,13 @@ const SPLIT_LABEL_PAGES: [&str; 8] = [
 /// A class mean cannot see one label: a class of two hundred averages a
 /// label half a millimetre out down to nothing. This limit and
 /// [`LABEL_WIDTH_MM`] are the text census's
-/// (`probe_why_paired_labels_miss_the_reference`), which names a cause for
-/// each of the 64 labels past them
+/// (`probe_why_paired_labels_miss_the_reference`), which named a cause for
+/// each of the 64 labels then past them
 /// (`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`).
-/// Counted here with the comparison's own lookup, the eleven pages come to
-/// the same 64, page for page.
+/// Fourteen of the 64 were the borrowed runs — twelve `℃` 0.201 mm wide and
+/// the A2 sheet's two `动火点` 1.863 mm narrow — and came inside both limits
+/// when they were lettered as the reference letters them; the eleven pages
+/// now come to 50.
 const LABEL_POSITION_MM: f64 = 0.15;
 
 /// How much wider or narrower than the reference's a paired label's run may
@@ -276,9 +250,10 @@ const LABEL_WIDTH_MM: f64 = 0.05;
 ///
 /// A borrowed run is held to the reference's family rather than to its face.
 /// 宋体 and 新宋体 are one design — NSimSun is SimSun with a fixed-pitch
-/// Latin — so a `动火点` the reference sets in NSimSun and this crate sets in
-/// SimSun is the same lettering, while a `℃` set in FangSong against the
-/// reference's NSimSun is not. A face is listed under every name it goes by:
+/// Latin — so a `动火点` the reference sets in NSimSun and a machine without
+/// that file sets in SimSun is the same lettering, while a `℃` set in
+/// FangSong against the reference's NSimSun is not. A face is listed under
+/// every name it goes by:
 /// the reference's driver writes `ArialNarrow`, while this crate's writer
 /// embeds a program under its own family name, `Arial Narrow`, which is also
 /// what [`typeface_key`] calls the face a label names.
@@ -318,9 +293,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 583,
             text_reference: 583,
-            text_off: 8,
+            text_off: 6,
             borrowed: 2,
-            borrowed_in_family: 0,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -374,9 +349,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 959,
             text_reference: 959,
-            text_off: 8,
+            text_off: 6,
             borrowed: 2,
-            borrowed_in_family: 0,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -458,9 +433,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 3478.694 + EXTRA_SLACK_MM,
             min_text_matched: 171,
             text_reference: 171,
-            text_off: 2,
+            text_off: 0,
             borrowed: 2,
-            borrowed_in_family: 0,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -486,9 +461,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 253,
             text_reference: 253,
-            text_off: 2,
+            text_off: 0,
             borrowed: 2,
-            borrowed_in_family: 0,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -520,9 +495,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 326,
             text_reference: 326,
-            text_off: 8,
+            text_off: 7,
             borrowed: 1,
-            borrowed_in_family: 0,
+            borrowed_in_family: 1,
         },
     },
     Pin {
@@ -550,9 +525,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
-            text_off: 8,
+            text_off: 7,
             borrowed: 1,
-            borrowed_in_family: 0,
+            borrowed_in_family: 1,
         },
     },
     Pin {
@@ -580,15 +555,16 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
-            text_off: 8,
+            text_off: 7,
             borrowed: 1,
-            borrowed_in_family: 0,
+            borrowed_in_family: 1,
         },
     },
     Pin {
         // The two `动火点` labels are the only whole-string font fallback on
-        // these sheets, both 2.5 mm and centred. Pitching that run at 1.524 mm
-        // a glyph brings both inside 1 mm. The mirrored valve's `D` pairs
+        // these sheets, both 2.5 mm and centred. Stepping that run 9 device
+        // units (1.524 mm) a glyph, each glyph at the reference's `Tf 9.6`,
+        // brings both inside 0.07 mm. The mirrored valve's `D` pairs
         // once it letters from the descender line. The other eleven stay out.
         // The template sits where the border frame places it, (0.388, 0.566)
         // mm off the origin, which pairs two more of its strokes.
@@ -621,9 +597,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 187.091 + EXTRA_SLACK_MM,
             min_text_matched: 250,
             text_reference: 261,
-            text_off: 7,
+            text_off: 4,
             borrowed: 3,
-            borrowed_in_family: 2,
+            borrowed_in_family: 3,
         },
     },
 ];
@@ -1019,12 +995,8 @@ fn eleven_reference_plots_hold_their_readings() {
 ///
 /// No class is left out for being small or for being `unknown`: a class of
 /// one label is that label's own reading, and the thresholds are wide of
-/// every one of them. [`SPLIT_LABEL_CLASS`] is the exception on the pages of
-/// [`SPLIT_LABEL_PAGES`]: its width reading is held to the value it is pinned
-/// at instead, and has to still be past the threshold — a page it has come
-/// back inside on is asked to leave the list.
+/// every one of them.
 fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
-    let pinned_page = SPLIT_LABEL_PAGES.contains(&name);
     for class in classes {
         assert!(
             class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
@@ -1033,25 +1005,6 @@ fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
             class.mean_down_heights,
             class.count
         );
-        if pinned_page && class.class == SPLIT_LABEL_CLASS {
-            assert!(
-                class.mean_advance_heights <= SPLIT_LABEL_ADVANCE + SPLIT_LABEL_ROUNDING,
-                "{name} {view} {} advance {:+.4} body heights over {} labels; it is pinned at \
-                 {SPLIT_LABEL_ADVANCE:+.4} and may not read wider",
-                class.class,
-                class.mean_advance_heights,
-                class.count
-            );
-            assert!(
-                class.mean_advance_heights > CLASS_ADVANCE_HEIGHTS,
-                "{name} {view} {} advance {:+.4} body heights over {} labels is inside \
-                 ±{CLASS_ADVANCE_HEIGHTS} now; take the page out of SPLIT_LABEL_PAGES",
-                class.class,
-                class.mean_advance_heights,
-                class.count
-            );
-            continue;
-        }
         assert!(
             class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
             "{name} {view} {} advance {:+.4} body heights over {} labels, past \
@@ -1061,11 +1014,6 @@ fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
             class.count
         );
     }
-    assert!(
-        !pinned_page || classes.iter().any(|class| class.class == SPLIT_LABEL_CLASS),
-        "{name} {view} has no {SPLIT_LABEL_CLASS} class and is in SPLIT_LABEL_PAGES; the page \
-         no longer letters a label in pieces, so take it out of the list"
-    );
 }
 
 /// The paired labels of `report` past [`LABEL_POSITION_MM`] or

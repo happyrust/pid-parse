@@ -93,7 +93,7 @@ fn main() -> ExitCode {
     };
     // `PID_PLOT_CJK_FONT` names one more face to embed, whole and under no
     // name. No label is named in it, and the writer asks it after every face
-    // of a label's borrow order (`fonts::borrow_order`), so it letters one
+    // of the borrow order (`fonts::BORROW_ORDER`), so it letters one
     // thing only: a stretch its named face draws none of and no single face
     // of that order draws whole, which would otherwise be split between
     // lenders. It cannot make a drawing exportable. `prepare_fonts` settles
