@@ -4896,14 +4896,14 @@ mod tests {
 
         let narrow = ascii_only();
         let song = drawing("动火点℃");
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-borrow-alone-and-batch",
             &[
                 ("ARIALN.TTF", &narrow),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
-        )];
+        );
         let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
         let naming = lettered_sheet(&[("动火点", "宋体"), ("点", "仿宋")]);
         let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
@@ -4946,14 +4946,14 @@ mod tests {
 
         let narrow = ascii_only();
         let song = drawing("动火点℃");
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-borrow-both-lenders-hold",
             &[
                 ("ARIALN.TTF", &narrow),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
-        )];
+        );
         let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
         let expected = vec![
             lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
@@ -5002,14 +5002,14 @@ mod tests {
 
         let narrow = ascii_only();
         let song = drawing("动火点审定\u{3000}");
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-borrowed-space",
             &[
                 ("ARIALN.TTF", &narrow),
                 ("simfang.ttf", &song),
                 ("simsun.ttf", &song),
             ],
-        )];
+        );
         let borrowing = lettered_sheet(&[
             ("动\u{3000}火\u{3000}点", "Arial Narrow"),
             ("A\u{3000}B", "Arial Narrow"),
@@ -5057,7 +5057,7 @@ mod tests {
 
         let latin = ascii_only();
         let han = drawing("甲");
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-last-resort",
             &[
                 ("ARIALN.TTF", &latin),
@@ -5066,7 +5066,7 @@ mod tests {
                 ("arial.ttf", &han),
                 ("simsunb.ttf", &han),
             ],
-        )];
+        );
         let borrowing = lettered_sheet(&[("甲", "Arial Narrow"), ("A甲", "Arial Narrow")]);
         let naming = lettered_sheet(&[("甲", "SimSun-ExtB")]);
         let expected = vec![
@@ -5140,14 +5140,14 @@ mod tests {
         use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
 
         let narrow = ascii_only();
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-second-lender",
             &[
                 ("ARIALN.TTF", &narrow),
                 ("simsun.ttf", &drawing("甲")),
                 ("simfang.ttf", &drawing("甲乙")),
             ],
-        )];
+        );
         let borrowing = lettered_sheet(&[("甲乙", "Arial Narrow")]);
         let naming = lettered_sheet(&[("甲", "宋体")]);
         let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
@@ -5175,13 +5175,13 @@ mod tests {
         use crate::fonts::test_faces::{ascii_only, scratch_dir};
 
         let narrow = ascii_only();
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-absent-run-face",
             &[
                 ("ARIALN.TTF", &narrow),
                 ("arial.ttf", pdfcraft_fonts::INTER_REGULAR),
             ],
-        )];
+        );
         let mut spanned = lettered_sheet(&[("AB", "Arial Narrow")]);
         if let PaperShape::Text { spans, .. } = &mut spanned.primitives[0].shape {
             spans.push(PaperTextSpan {
@@ -5221,7 +5221,7 @@ mod tests {
 
         let latin = ascii_only();
         let han = drawing("动火点施工图℃");
-        let dirs = [scratch_dir(
+        let dirs = scratch_dir(
             "write-borrowed-pitch",
             &[
                 ("ARIALN.TTF", &latin),
@@ -5230,7 +5230,7 @@ mod tests {
                 ("simsun.ttf", &han),
                 ("simfang.ttf", &han),
             ],
-        )];
+        );
         let mut sheet = lettered_sheet(&[
             ("动火点", "Arial Narrow"),
             ("施工图", "SimSun-ExtB"),
@@ -5282,6 +5282,10 @@ mod tests {
     /// that followed the batch would show on: its two `动火点` labels name
     /// Arial Narrow and borrow all three characters. Both preparations letter
     /// them in SimSun, the face the gate's eleven pages carry.
+    ///
+    /// A corpus with no drawing at all, or a machine without the three
+    /// faces, says so and skips. A corpus that holds drawings and not the A2
+    /// sheet fails: its sheets would otherwise pass with the pin unread.
     #[test]
     fn an_acceptance_sheet_letters_alone_as_it_does_among_the_eleven() {
         const A2_SHEET: &str = "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图";
@@ -5304,6 +5308,17 @@ mod tests {
             );
             return;
         }
+        // A directory of drawings without the A2 sheet is not the corpus this
+        // test is about, and the sheets it does hold would pass with the pin
+        // on `动火点` never read.
+        assert!(
+            drawings
+                .iter()
+                .any(|path| path.file_stem().is_some_and(|stem| stem == A2_SHEET)),
+            "{} holds {} drawing(s) and not {A2_SHEET}.pid, whose two `动火点` this test pins",
+            corpus.display(),
+            drawings.len()
+        );
         // The acceptance corpus ships no faces; the gate reads the share's.
         let mut dirs = crate::fonts::font_dirs(Some(&corpus));
         dirs.push(std::path::PathBuf::from(
@@ -5374,12 +5389,10 @@ mod tests {
                 }
             }
         }
-        if sheets.iter().any(|(name, _)| name == A2_SHEET) {
-            assert_eq!(
-                borrowed_han, 2,
-                "the A2 sheet letters two `动火点` in a borrowed SimSun"
-            );
-        }
+        assert_eq!(
+            borrowed_han, 2,
+            "the A2 sheet letters two `动火点` in a borrowed SimSun"
+        );
         eprintln!(
             "{} acceptance sheets letter alone as they do together",
             sheets.len()

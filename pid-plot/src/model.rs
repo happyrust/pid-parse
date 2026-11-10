@@ -6338,12 +6338,17 @@ mod tests {
     #[test]
     fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
         // The corpus sits in a directory of its own, so what the parent holds
-        // is this test's to say rather than the temp directory's.
-        let parent = std::env::temp_dir().join("pid-plot-template-places");
+        // is this test's to say rather than the temp directory's; the name
+        // carries the process id, so another run of the tests is not in it.
+        let parent =
+            std::env::temp_dir().join(format!("pid-plot-template-places-{}", std::process::id()));
         let corpus = parent.join("corpus");
         std::fs::create_dir_all(&corpus).expect("an empty corpus");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/D06.pid");
         let places = super::border_template_places(&fixture, &corpus);
+        // The places are in hand; nothing below reads the disk, so the
+        // directory goes before an assertion can leave it behind.
+        let _ = std::fs::remove_dir_all(&parent);
         assert_eq!(
             places.directories,
             vec![

@@ -634,17 +634,52 @@ fn is_cjk(ch: char) -> bool {
 #[cfg(test)]
 pub(crate) mod test_faces {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A scratch font directory, removed when the test that made it lets go
+    /// of it. It stands where [`super::prepare_fonts`] takes its search
+    /// path: `&dir` is that one directory.
+    pub(crate) struct ScratchDir([PathBuf; 1]);
+
+    impl std::ops::Deref for ScratchDir {
+        type Target = [PathBuf];
+
+        fn deref(&self) -> &[PathBuf] {
+            &self.0
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            // Nothing rests on the removal: a directory a locked file keeps
+            // behind is litter in the temporary directory, not a failed test.
+            let _ = std::fs::remove_dir_all(&self.0[0]);
+        }
+    }
 
     /// A scratch directory holding each face under the name the loader looks
     /// for, so a test needs no licensed fonts on the machine.
-    pub(crate) fn scratch_dir(name: &str, faces: &[(&str, &[u8])]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pid-plot-fonts-{name}"));
+    ///
+    /// The directory is the caller's alone. Its name carries the process id
+    /// and a count of the directories this process has made, so neither
+    /// another run of the tests sharing the temporary directory nor another
+    /// test of this run reads or replaces its faces; `name` only says whose
+    /// it is.
+    pub(crate) fn scratch_dir(name: &str, faces: &[(&str, &[u8])]) -> ScratchDir {
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "pid-plot-fonts-{name}-{}-{}",
+            std::process::id(),
+            MADE.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A process id comes round again, and a run that was killed left its
+        // directories behind.
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         for (file, bytes) in faces {
             std::fs::write(dir.join(file), bytes).expect("scratch face");
         }
-        dir
+        ScratchDir([dir])
     }
 
     /// Inter cut down to printable ASCII: a face whose file is present and
@@ -827,8 +862,8 @@ mod tests {
         );
         let borrowing = sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
         let naming = sheet(&[("动火点", "宋体"), ("点", "仿宋")]);
-        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
-        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        let alone = prepare_fonts(&[&borrowing], &dir).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &dir).expect("in a batch");
         for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
             for ch in "动火点".chars() {
                 assert!(
@@ -868,7 +903,7 @@ mod tests {
             height_mm: Some(2.5),
             font: Some("宋体".into()),
         }]);
-        let faces = prepare_fonts(&[&model], &[dir]).expect("both faces load");
+        let faces = prepare_fonts(&[&model], &dir).expect("both faces load");
         let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
         assert_eq!(keys, vec!["Arial", "SimSun"], "the run's face came along");
     }
@@ -887,7 +922,7 @@ mod tests {
             height_mm: Some(2.5),
             font: Some("宋体".into()),
         }]);
-        let faces = prepare_fonts(&[&model], &[dir]).expect("the label's own face is enough");
+        let faces = prepare_fonts(&[&model], &dir).expect("the label's own face is enough");
         let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -907,7 +942,7 @@ mod tests {
         let dir = scratch_dir("probe-only", &[]);
         let mut model = labelled(Vec::new());
         model.primitives[0].confidence = "probe_only";
-        let faces = prepare_fonts(&[&model], &[dir]).expect("nothing was asked for");
+        let faces = prepare_fonts(&[&model], &dir).expect("nothing was asked for");
         assert!(
             faces.is_empty(),
             "a record the page never draws asked for {faces:?}",
@@ -934,7 +969,7 @@ mod tests {
         if let PaperShape::Text { value, .. } = &mut model.primitives[0].shape {
             *value = "   ".into();
         }
-        let faces = prepare_fonts(&[&model], &[dir]).expect("nothing was asked for");
+        let faces = prepare_fonts(&[&model], &dir).expect("nothing was asked for");
         assert!(
             faces.is_empty(),
             "a blank label asked for {faces:?}",
@@ -971,7 +1006,7 @@ mod tests {
                 font: Some("Arial".into()),
             });
         }
-        let faces = prepare_fonts(&[&model], &[dir]).expect("the run's own face draws Ω");
+        let faces = prepare_fonts(&[&model], &dir).expect("the run's own face draws Ω");
         let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
         assert_eq!(keys, vec!["Arial", "Arial Narrow"], "nothing is borrowed");
         assert!(
@@ -1000,8 +1035,8 @@ mod tests {
         );
         let borrowing = sheet(&[("动\u{3000}火\u{3000}点", "Arial Narrow")]);
         let naming = sheet(&[("审\u{3000}定", "宋体")]);
-        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
-        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        let alone = prepare_fonts(&[&borrowing], &dir).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &dir).expect("in a batch");
         for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
             for ch in "动\u{3000}火点".chars() {
                 assert!(
@@ -1029,7 +1064,7 @@ mod tests {
             ],
         );
         let padded = sheet(&[("AB\u{3000}", "Arial Narrow")]);
-        let faces = prepare_fonts(&[&padded], &[dir]).expect("the label's own face is enough");
+        let faces = prepare_fonts(&[&padded], &dir).expect("the label's own face is enough");
         let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
         assert_eq!(keys, vec!["Arial Narrow"], "nothing is borrowed for a pad");
     }
@@ -1056,8 +1091,8 @@ mod tests {
         );
         let borrowing = sheet(&[("甲", "Arial Narrow")]);
         let naming = sheet(&[("甲", "SimSun-ExtB")]);
-        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
-        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        let alone = prepare_fonts(&[&borrowing], &dir).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &dir).expect("in a batch");
         for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
             assert!(
                 carries(faces, "Arial", '甲'),
@@ -1096,7 +1131,7 @@ mod tests {
             ("alone", vec![&lacking]),
             ("in a batch", vec![&lacking, &naming]),
         ] {
-            let Err(error) = prepare_fonts(&models, std::slice::from_ref(&dir)) else {
+            let Err(error) = prepare_fonts(&models, &dir) else {
                 panic!(
                     "prepared {prepared}: a label holding a character no face draws was accepted"
                 );
@@ -1110,6 +1145,48 @@ mod tests {
                 "prepared {prepared}: the refusal names a character Arial draws: {error}"
             );
         }
+    }
+
+    /// A scratch font directory is the test's own and goes when the test
+    /// lets go of it. Two made under one name are two directories, so tests
+    /// running at once cannot swap each other's faces; each carries the
+    /// process id, so two runs sharing a temporary directory cannot either;
+    /// and dropping one removes it with its faces and leaves the other.
+    #[test]
+    fn a_scratch_font_directory_is_its_tests_own_and_goes_with_it() {
+        let first = scratch_dir("scratch", &[("arial.ttf", b"a face")]);
+        let second = scratch_dir("scratch", &[]);
+        let (first_path, second_path) = (first[0].clone(), second[0].clone());
+        assert_ne!(first_path, second_path, "one name made one directory twice");
+        let process = std::process::id().to_string();
+        for path in [&first_path, &second_path] {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("a directory name");
+            assert!(
+                name.split('-').any(|part| part == process),
+                "{name} does not carry the process id {process}"
+            );
+        }
+        assert!(first_path.join("arial.ttf").is_file());
+        assert!(!second_path.join("arial.ttf").exists());
+        drop(first);
+        assert!(
+            !first_path.exists(),
+            "{} outlived its test",
+            first_path.display()
+        );
+        assert!(
+            second_path.is_dir(),
+            "dropping one directory removed another"
+        );
+        drop(second);
+        assert!(
+            !second_path.exists(),
+            "{} outlived its test",
+            second_path.display()
+        );
     }
 
     /// The four faces asked after a label's two lenders, the same for every
