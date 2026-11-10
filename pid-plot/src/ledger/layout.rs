@@ -581,6 +581,16 @@ impl LedgerRecorder {
             if stream.geometry.is_some() {
                 continue;
             }
+            // A sheet stream is an 8-byte header — magic and record count —
+            // and then its records. One no longer than the header holds no
+            // record, so there is none it failed to turn into an entity and
+            // no census it lost: it is an empty sheet, not a drop. The code
+            // is for a stream that has records and yielded nothing.
+            let header = u64::try_from(pid_parse::parsers::sheet_records::SHEET_STREAM_HEADER_LEN)
+                .unwrap_or(u64::MAX);
+            if stream.size <= header {
+                continue;
+            }
             counts.push_record(
                 ParseRecord::new(
                     DropReason::SheetStreamWithoutGeometry,
@@ -1217,6 +1227,38 @@ mod tests {
             Some(DropReason::SheetStreamWithoutGeometry)
         );
         assert_eq!(counts.items.first().and_then(|item| item.bytes), Some(4096));
+    }
+
+    /// A sheet stream that is its 8-byte header alone holds no record, so it
+    /// has dropped none: there is nothing for the three censuses to have
+    /// lost. `N井场` has two such streams and `Q井场` one, each `magic +
+    /// record count 0`, and `A01`'s embedded frame has four; they were seven
+    /// of the sixty suspect items the two baselines carried. A stream one
+    /// byte longer than its header can hold a record's first byte and is
+    /// counted as before.
+    #[test]
+    fn a1_a_stream_that_is_its_header_alone_has_dropped_nothing() {
+        let streams = vec![
+            a_stream("/Sheet41276", 8, false),
+            a_stream("/Sheet43032", 0, false),
+            a_stream("/Sheet7", 9, false),
+        ];
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(
+            LedgerDomain::Drawing,
+            &streams,
+            &[],
+            &NormalizedPidGeometry::default(),
+        );
+        let counts = recorder.ledger.parse.get(LedgerDomain::Drawing);
+        assert_eq!(
+            counts
+                .items
+                .iter()
+                .map(|item| (item.reason, item.stream.as_str(), item.bytes))
+                .collect::<Vec<_>>(),
+            vec![(DropReason::SheetStreamWithoutGeometry, "/Sheet7", Some(9))]
+        );
     }
 
     #[test]

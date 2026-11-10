@@ -868,30 +868,6 @@
               "count": 4
             },
             {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet22",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet32",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet41",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet51",
-              "count": 1,
-              "bytes": 8
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite121",
               "count": 11
@@ -1030,26 +1006,6 @@
             "reason": "record_no_decoder",
             "stream": "/JSite204/Sheet6",
             "type_code": "0x007B",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet22",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet32",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet41",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet51",
             "count": 1
           }
         ]

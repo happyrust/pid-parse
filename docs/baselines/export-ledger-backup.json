@@ -2542,18 +2542,6 @@
               "count": 14
             },
             {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet41276",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet43032",
-              "count": 1,
-              "bytes": 8
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite221",
               "count": 522
@@ -2694,19 +2682,7 @@
             "segment_too_short": 8
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet41276",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet43032",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
@@ -3349,12 +3325,6 @@
               "count": 6
             },
             {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet67868",
-              "count": 1,
-              "bytes": 8
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite221",
               "count": 524
@@ -3505,14 +3475,7 @@
             "segment_on_sheet_edge": 1
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet67868",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {

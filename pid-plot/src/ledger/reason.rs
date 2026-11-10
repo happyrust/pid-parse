@@ -88,10 +88,12 @@ pub enum DropReason {
     /// native-skip bit `PSMSerializeIn` tests before reading the oid
     /// (`NormalizedPidGeometry::skipped_graphic_records`).
     RecordNativeSkip,
-    /// A `Sheet*` stream whose geometry is `None` — the stream could not be
-    /// opened, or no family decoded a record from it and the probe found
-    /// nothing. Its three censuses are lost with it in
-    /// `sheet_geometry_from_probe` (`src/streams/cluster.rs`).
+    /// A `Sheet*` stream longer than its 8-byte header whose geometry is
+    /// `None` — the stream could not be opened, or no family decoded a
+    /// record from it and the probe found nothing. Its three censuses are
+    /// lost with it in `sheet_geometry_from_probe`
+    /// (`src/streams/cluster.rs`). A stream that is its header alone holds
+    /// no record and is not counted: an empty sheet has dropped nothing.
     SheetStreamWithoutGeometry,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as

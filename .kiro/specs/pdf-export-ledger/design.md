@@ -483,7 +483,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `record_no_decoder` | `NormalizedPidGeometry::dropped_graphic_records` | 计数项（流，类型码），值为表中 `count` |
 | `record_refused` | `refused_graphic_records` | 同上 |
 | `record_native_skip` | `skipped_graphic_records` | 同上 |
-| `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None` 者 | 计数项（流），另记 `size` 字节数 |
+| `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None`、且 `size` 大于 8 字节流头者（只有流头的空流不含记录，不记） | 计数项（流），另记 `size` 字节数 |
 | `record_symbol_body_cache` | `doc.jsites[..].nested_geometry` 的 `len()` | 计数项（存储路径） |
 | `cache_definition_unplaced` | `geometry.symbol_definitions` 中没有任何 `SymbolInstance.definition` 指向的定义 | 计数项（`JSite<site>`），值为定义数，另记其体图元数 |
 | `record_audit_only_family` | `emitter_accounts` 中 `audit_only` 行的 `decoded` | 计数项（流，族） |
