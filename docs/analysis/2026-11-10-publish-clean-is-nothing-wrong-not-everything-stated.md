@@ -116,7 +116,7 @@ MTF 包那 27 条与 `.pid` 单发的 27 条只是个数碰巧相同：4 个多�
 
 ### 2.4 完整度普查
 
-这是本轮新增的口径：对参考里的每个对象（管线按名配对），数它的接口元素、非空属性值、关系有多少在我方文件里（值要逐字相等，关系按两端与 `DefUID`、不看 `Rel` 自己的 UID）。脚本在 `target/publish-audit/census.py`，不入库；方案 S0 把它做成入库的探针。
+这是本轮新增的口径：对参考里的每个对象（管线按名配对），数它的接口元素、非空属性值、关系有多少在我方文件里（值要逐字相等，关系按两端与 `DefUID`、不看 `Rel` 自己的 UID）。下表出自当时的脚本 `target/publish-audit/census.py`（不入库）。入库的探针是 `examples/probe_how_much_of_a_reference_does_a_publish_state.rs`（方案 S0），口径相同，只有一处更严：对象要同 UID 且同类才算写出。因此 A01 · `.pid` 那一行探针读作 6 / 12、9 / 105——脚本把那个已登记的错类对象（参考 `PIDPipeline` 的 UID 下我方写的是 `PIDPipingConnector`）算作写出；其余各行两者相同。
 
 | 图 · 模式 | 对象 | 接口元素 | 非空值 | 值错 | 关系 |
 |---|---|---|---|---:|---|
@@ -235,6 +235,10 @@ rustup run nightly cargo test --locked -p pid-parse --test publish_from_pid -- -
   --plant P01 `
   --oracle-exp "$wt\test-file\backup-test\DWG-0202GP06-01_p\Export.dmp" `
   --datamap "$wt\test-file\backup-test\DWG-0202GP06-01_p\RefData~4~804.zip"
+
+# 一对文件的完整度（入库的探针，方案 S0）
+rustup run nightly cargo run --locked --example probe_how_much_of_a_reference_does_a_publish_state -- `
+  <我方的 _Data.xml> <参考的 _Data.xml>
 
 # 整张矩阵与普查（脚本在 target 下，不入库）
 python "$wt\target\publish-audit\audit.py" "$wt\target\debug\pid_publish_xml.exe" <run-set>

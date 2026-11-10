@@ -3,7 +3,7 @@
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
 > 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。
-> 状态：§5 的四片已提交；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
+> 状态：§5 的四片与 S0 已提交；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
 
 ## 一句话
 
@@ -34,7 +34,7 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 
 | 片 | 改什么 | 怎么验证 | 依赖 | 大小 |
 |---|---|---|---|---|
-| S0 完整度探针入库 | `examples/probe_publish_reference_completeness.rs`：一对文件出「对象 / 接口元素 / 非空值 / 空值属性 / 关系」的写出比例与缺得最多的 `(类, 接口, 属性)`；`tests/publish_from_pid.rs` 的 DWG 三条加上比例下限 | 与 `target/publish-audit/census.py` 的 22 行数字相同 | | 小 |
+| S0 ✔ 完整度探针入库、比例钉进测试 | §5 第二阶段 | | | |
 | S1 ✔ exp 宽松读 | §5 | | | |
 | S2 ✔ 设备的 `Description` 标签 | §5 | | | |
 | S3 ✔ 注释正文的换行 | §5 | | | |
@@ -79,3 +79,37 @@ S3 与 S3b 提交时各跑了全量：`cargo test --locked -p pid-parse --all-ta
 新增的门：`tests/publish_from_pid.rs` 的 `the_dwg_fixture_alone_states_nothing_the_reference_lacks`、`the_dwg_fixture_reads_its_own_packages_exp_dump`、`the_dwg_package_publishes_every_drawing_it_lists`，全部读仓库内夹具，任何检出都真跑；`oracle_exp` 3 条、`pid_load` 2 条单测，`pid_writer` 一条单测加了断言。
 
 停在这里的原因：剩下影响大的切片（S4 之后）都要先有 Q1–Q3 的答复；S0 不依赖批复，留给下一阶段开头。
+
+### 第二阶段（2026-11-10）：S0 与测试的临时目录
+
+Q1–Q6 答复之前做的两件不依赖答复的事。门与第一阶段相同，每个提交另跑一次全量（`--all-targets`、`--no-default-features --lib`、wasm32、`missing documentation`）。
+
+| 提交 | 做了什么 |
+|---|---|
+| `624916d` test(publish): remove a test's scratch directory when the test ends, passing or not | `tests/common/mod.rs` 加 `Scratch`（值 drop 时删目录），在临时目录下建目录的三个 `publish_*` 测试文件都改用它 |
+| `0c8f9dc` feat(publish): measure how much of a reference a generated document states | `publish::completeness::measure` 与探针 `examples/probe_how_much_of_a_reference_does_a_publish_state.rs` |
+| 本提交 | `tests/publish_completeness.rs`：10 条用例、17 个钉 |
+
+**完整度的口径。** `measure` 只读两份文档：参考的 `<Container>` 属性、对象、接口元素、非空值、空值属性、关系各有多少，我方写出其中多少。它不读豁免清单。`Completeness::reference_attributes` 把各分母加起来，测试拿它和参考正文里数出的属性个数比：13 份参考共 200 860 个属性（不含 XML 声明），逐份相等，所以参考里没有落在分母之外的内容。对象要同 UID 且同类才算写出；UID 给不出来的 `PIDPipeline` 按 `IObject.Name` 配对（与门禁相同），配对数单列。关系按两端与 `DefUID` 算，我方的一条关系只顶参考的一条。
+
+**与 `census.py` 的对照。** 分析页的完整度数字出自 `target/publish-audit/census.py`。探针对那 23 次运行（13 份参考）逐次重算，22 次的总数与全部分项相同。A01 `.pid` 单发不同：脚本只按 UID 配对，把那个已登记的错类对象（参考 `PIDPipeline` 的 UID 下我方写的是 `PIDPipingConnector`）算作写出，并把连接件的三个接口算作「参考没有的接口」；探针读作对象 6 / 12、接口元素 9 / 105、参考没有的接口 1 个，脚本是 7、10、4。给脚本补上「同类才算」之后 23 次全部相同（分项 5 705 行）。对照表在 `target/publish-audit/s0/probe-vs-census-s4*.txt`。
+
+**钉法。** 分母是参考自己的数，精确钉。分子只许升：降了失败，升了也失败，直到把钉抬到新值，所以钉永远等于今天的读数。「写得与参考不同的值」「参考对象没有的接口元素」只许降。DWG-0202GP06-01 三种模式读仓库内夹具，没有软跳过分支；7 张同版参考图的两种模式要语料，缺的时候打印是哪个目录不在再跳过。7 张图的钉就是分析页 §2.4 表里的数。
+
+| DWG-0202GP06-01 | 对象 | 接口元素 | 非空值 | 空值属性 | 关系 |
+|---|---|---|---|---|---|
+| `.pid` 单发 | 78 / 108 | 164 / 747 | 71 / 236 | 0 / 93 | 81 / 133 |
+| `--oracle-exp` | 102 / 108 | 332 / 747 | 99 / 236 | 0 / 93 | 127 / 133 |
+| 备份包目录 | 100 / 108 | 328 / 747 | 58 / 236，另 39 个写得不同 | 0 / 93 | 123 / 133 |
+
+包目录那一行低，是因为包里的 `.pid` 比参考新：39 个不同的值里 37 个是 `GraphicOID`、2 个是 `PipingConnectorSeqNo`；那台设备（`PIDProcessVessel` F1081777…）后来有了 `EquipSeqNo`，而参考对象没有 `INamedEquipment`，这是唯一一个「参考对象没有的接口元素」。
+
+**红绿。** 三次运行的输出在 `target/publish-audit/s0-redgreen/`（不入库）：
+
+1. 把 `pid_load::published_attribute` 里的 `PipingMaterialsClass` 标签关掉：10 条用例全部失败（DWG `.pid` 单发接口元素 164 → 158、非空值 71 → 65；I井场 `.pid` 单发 3559 → 3516、1530 → 1487）。同一棵树上 `--diff-against` 的结论没变：DWG 仍是 17 条 `missing value`、退出 1，I井场 `--oracle-exp` 仍是 clean、退出 0，因为这个属性本来就在豁免清单里。
+2. 恢复后，把 DWG 那 17 条 `missing value` 背后的 7 个 `(接口, 属性)` 加进 `EXCLUDED_ATTRIBUTE_CLASSES`：DWG `.pid` 单发的门禁从退出 1 变成 clean、退出 0，10 条用例照原钉通过，没有一个数字动。
+3. 再恢复：与改前相同。
+
+**测试的临时目录。** 改前逐个测试文件对着清空的临时目录跑，只有 `publish_from_pid` 在通过时留下东西：每轮 12 个目录、43.8 MB（整包 53 张的输出 `sqplant` 占 42 MB），都是成功路径上从来没删。其余用到临时目录的用例只在函数最后一行删，断言失败时留下（`publish_from_pid` 与 `publish_xml_cli` 各强制失败一条验过）。改后 15 个文件各留 0 个，强制失败的两条也留 0 个；110 条用例的名字、结果与 21 行 skip 输出同改前。
+
+库自己写临时文件的地方只有一处：MTF 包暂存的 `.mdf`（`mdf_load::open_mtf_dump_as_sqlite`）。正常结束、包门禁退出 1、暂存后读库失败、4 种截断或损坏的 dump，共 7 种情形下临时目录都是空的（`target/publish-audit/tmp-leak/lib/`）。读代码可见一条没能复现的路径：写暂存文件中途失败（例如盘满）时 `?` 直接返回，写了一半的文件留在临时目录里。主检出 `stash@{0}` 的 `StagedMdf` 补的正是这一条。publish 线之外还有三处测试留临时目录，本轮没动：`src/symbol_library.rs` 的两条单测、`tests/inspect_cli.rs` 的四条、`src/inspect/commands.rs` 的一条。
