@@ -3,7 +3,7 @@
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
 > 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。
-> 状态：§5 的四片与 S0 已提交；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
+> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
 
 ## 一句话
 
@@ -21,12 +21,12 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 
 | # | 问题 | 选项 | 推荐 |
 |---|---|---|---|
-| Q1 | 库里的属性从哪条线补 | (a) 在 `.pid` + exp 线上补：类的固定接口表 + 按 `SPPIDDataMap.xml` 把 dump 的列发成属性；(b) 把 Oracle `exp` 的行送进数据库线（MDF 那条线的 `sqlite_load` + `xml_writer`，`backup-store-v2` 分支计划的方向）；(c) 两条都做 | **(a)**。`.pid` + exp 线的对象与关系在 7 张图、21 个类上已经 100 % 对上，这是最难的一半；数据库线只在 A01 一张图、8 个类上验证过，比它少 6 个类，写手是逐类手写的。数据映射是原厂自己的文件，对 87.5 % 的参考值给得出「哪一列发成哪个属性」，比照参考手抄更站得住。(b) 的好处是 14 条 DWG 软跳过能真跑、MTF 与 Oracle 同一条路，代价是要一个完整的 Oracle 行解码器（LOB、所有类型），那边分支上有未提交的一半。不选 (a) 的话 S5–S9 换成「Oracle 行进 SQLite」一大片 |
+| Q1 | 库里的属性从哪条线补 | (a) 在 `.pid` + exp 线上补：类的固定接口表 + 按 `SPPIDDataMap.xml` 把 dump 的列发成属性；(b) 把 Oracle `exp` 的行送进数据库线（MDF 那条线的 `sqlite_load` + `xml_writer`，`backup-store-v2` 分支计划的方向）；(c) 两条都做 | **(a)**。`.pid` + exp 线的对象与关系在 7 张图、21 个类上已经 100 % 对上，这是最难的一半；数据库线只在 A01 一张图、8 个类上验证过，比它少 6 个类，写手是逐类手写的。数据映射是原厂自己的文件，对 87.5 % 的参考值给得出「哪一列发成哪个属性」（名字级的匹配，不管值怎么写；只看 7 张图还没写出的 19 437 个值是 76.9 %，叫不出名字的 4 488 个是层级枚举里映射没有点名的几级，见分析 §3.4），比照参考手抄更站得住。(b) 的好处是 14 条 DWG 软跳过能真跑、MTF 与 Oracle 同一条路，代价是要一个完整的 Oracle 行解码器（LOB、所有类型），那边分支上有未提交的一半。不选 (a) 的话 S5–S9 换成「Oracle 行进 SQLite」一大片 |
 | Q2 | 主检出 `stash@{0}`（18 个文件的 publish 未合入改动）怎么办 | (a) 原样并到本分支，单独成提交，再在其上继续；(b) 只取门禁那几项（接口、`<Container>`、重复 UID、包模式版本检查）；(c) 不要 | **(a)**。在本 worktree 临时套上验过：348 条库测与 14 个 `publish_*` 全过，对照矩阵不变。它让门禁更严，所以**会往基线里加条目**（A01 27 → 28，I井场 别名 1 → 2）并改两处测试计数——这是口径变严带来的登记，不是放宽，但要你点头。它与本轮 S1 改了 `oracle_exp.rs` 的同一处（`ExpTables::read` 五张表改宽松读）、与 S3b 改了 `pid_writer.rs` 的同一处（空的 `IOffpageConnector`），并入时这些行两边写法相同，`oracle_exp.rs` 的端口投影（它改成跳过非端口行，本轮保持报错）和测试辅助函数要手工对一下 |
 | Q3 | `.pid` 单发要不要也写类的固定接口（`<IDrawingItem/>` 这类没有属性的元素） | (a) 两种模式都写；(b) 只在有 dump 时写，`.pid` 单发保持「只写文件里说的」 | **(a)**。13 份参考里 12 个类的接口序列只有一种写法，这是类的定义，不是从库里读的值；不写的话下游按接口认对象时，`.pid` 单发的对象什么都不是。空值属性（`InstrTagSuffix=""`）建议一并照参考写 |
 | Q4 | DWG-0202GP06-01 的备份包比参考新（管段的序号、位号写法都改过） | (a) 承认它是版本差：`.pid` 单发收进基线，`--oracle-exp` 的管线类差异钉在测试里并写明原因；同时请现场对**现在的库**重新发布一次这张图，或给参考当时的备份；(b) 只管 `.pid` 单发 | **(a)**。这是唯一一个三件都在仓库里、CI 上真跑的 Oracle 图。有了同版参考，「`T_PIPELINE` 有行时管线用它的 UID」（S10）才能验证 |
 | Q5 | 数据库线（`Export.mdf --drawing`）的命令行门禁只比个数 | (a) 换成与 `.pid` 线同一个 `diff_pid_export`，A01 的三类合成残差（连接件 UID、`Rel` UID、`GraphicOID`）逐条登记进基线；(b) 维持 | **(a)**。测试层已经逐字节比过，命令行给用户的却是最弱的一档；MTF 包走包门禁时报的 27 条现在既没登记也没人看 |
-| Q6 | 还缺的参考数据 | 请现场提供：① 4 张旧集注站图那一版的备份包；② 53 张里没有参考的图挑几张发布（建议 C井场——27 个只在库里的管件是外推的——和任意一张带设备 `Description` 标签的图）；③ Q4 的 DWG 重新发布 | 没有这些，对应的结论只能停在「外推」或「版本差」 |
+| Q6 | 还缺的参考数据 | 请现场提供：① 4 张旧集注站图那一版的备份包；② 53 张里没有参考的图挑几张发布（建议 C井场——27 个只在库里的管件是外推的——和任意一张带设备 `Description` 标签的图）；③ Q4 的 DWG 重新发布；④ 一张本图 stockpile 里放着 OPC 的图的发布件，连同发布那一刻的备份（`DWG-0202GP06-01_p` 这个库里 `DWG-0201GP06-01` 上就有 2 个，S12） | 没有这些，对应的结论只能停在「外推」或「版本差」 |
 
 ## 3. 切片
 
@@ -41,15 +41,17 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 | S3b ✔ 无 `ToFromText` 的 OPC 不写 `IOffpageConnector` | §5 | | | |
 | S4 门禁看接口元素、`<Container>`、重复 UID | Q2 (a) 时直接来自 stash；否则重写：`PublishBlocks` 记每个对象带的接口与根属性，写出侧多三种发现项 | 三条删改回归（多写一个接口 / 改 `Plant` / 重复一个块）各退出 1；13 张图矩阵不变 | Q2 | 小（并入）/ 中（重写） |
 | S5 类的固定接口表 | `catalog.rs` 每类一行有序接口表（13 份参考量出，可选接口单列条件：有值才写）；`pid_writer` 按表写；门禁加参考侧接口比对，表外的接口记发现项 | 7 张图 exp 模式接口元素 56–58 % → 100 %；DWG 与 4 张旧图 `.pid` 单发同样到 100 %；写出的接口无一不在参考里 | S4、Q3 | 中 |
-| S6 数据映射读全 | `src/backup/datamap.rs` 现在只读 `MapEnumToEnum`；补 `MapClassToClass`、`MapClassMapProperties`、`MapPropertyToProperty`、`MapPropertyMapEnumList`、`MapEnumMapEnum`（层级）与 `ProcessPropertyCriteria` | 单测 + 对三个包里那份映射钉计数（1 818 个属性定义、12 087 条关系）；`SPMP_Vessel_Description → LongMaterialDescription` 等 6 条抽查 | Q1 (a) | 中 |
+| S6 ✔ 数据映射读全 | §5 第三阶段 | | | |
 | S7 库属性第一批：原样的值 | 从 dump 取、不经枚举与单位：`IPIDTypical.IsTypical`、`IConnector.RepresentationsAreAllZeroLength`、`IInlineComponent.IsFlowDirectional`、`IPipingSpecifiedItem.PipingMaterialsClass`、`IInsulatedItem.InsulSpec`、`INamedPipingConnector.PipingConnectorSeqNo`、`IPipeCrossSectionItem.NominalDiameter`（补标签没给的）、`IObject.Name`（`ITEMTAG`）、`IObject.Description`（设备取 `NAME`）。每个属性一个提交，同时把它从 `EXCLUDED_ATTRIBUTE_CLASSES` 里拿掉——拿掉之后 7 张图逐值对参考 | 每片：该属性在 7 张图 exp 模式「缺 / 参考」归零、值错 0；`.pid` 单发不变。7 张图合计缺 19 437 个非空值，这一批占 7 667 个 | S6 | 大（9 个小片） |
-| S8 库属性第二批：枚举 | `IPBSItem.ConstructionStatus(2)`、`IPipingConnector.PipingConnectorType`、`IConnector.FlowDirection`、`IPipingComponent.*`、`IInstrument.*`、`IInstrumentOcc.InstrumentLocation`、`IEquipment.EqType0–5` 与 `EqTypeDescription`、`IEquipmentComponent.*`、`IDocument.DocCategory / DocType`。要先定层级枚举的规则（`ConstructionStatus` 写 `@NewConstruction`、`ConstructionStatus2` 写 `@{GUID}`；`EqType0…5` 是一条链） | 规则先用探针对 7 张图量：每个 `(类, 属性)` 预测值与参考逐值相同才进代码。这一批占 11 610 个；再剩 160 个零散的（仪表位号 102、`LongMaterialDescription3` 34、`EquipPrefix` 17、`ReliefPressure` 6、`EquipmentTrimSpec` 1）随 S7 / S9 走 | S6；规则若量不出要 `EFAdapter.dll` 的反汇编 | 大 |
+| S8 库属性第二批：枚举 | `IPBSItem.ConstructionStatus(2)`、`IPipingConnector.PipingConnectorType`、`IConnector.FlowDirection`、`IPipingComponent.*`、`IInstrument.*`、`IInstrumentOcc.InstrumentLocation`、`IEquipment.EqType0–5` 与 `EqTypeDescription`、`IEquipmentComponent.*`、`IDocument.DocCategory / DocType`。要先定层级枚举的规则（`ConstructionStatus` 写 `@NewConstruction`、`ConstructionStatus2` 写 `@{GUID}`；`EqType0…5` 是一条链）。S6 读出来的结构与这里原先的设想不一样，见 §5 第三阶段「层级」：映射里的 `MapEnumMapEnum` 是库这一侧的层级（类 → 子类 → 型），发布件各级跟的是目标枚举在 schema 一侧的层级，映射里没有 | 规则先用探针对 7 张图量：每个 `(类, 属性)` 预测值与参考逐值相同才进代码。这一批占 11 610 个；再剩 160 个零散的（仪表位号 102、`LongMaterialDescription3` 34、`EquipPrefix` 17、`ReliefPressure` 6、`EquipmentTrimSpec` 1）随 S7 / S9 走 | S6；规则若量不出要 `EFAdapter.dll` 的反汇编 | 大 |
 | S9 带单位的值 | `TotalInsulThick`（`50 mm`）、`InsulThickSrc`、`SlopedPipingAngle`（`2.9999910000486E-03 rad`）、`HeightRelativeToGrade`（`3 m`）、`ProcessVessel_VesselVolumetricCapacity`（`27 m^3`）、`CatalogPartNumber` | 样本只有 DWG 一张图加 A01；规则写成「SI 列 + 单位名」，对这两张逐值相同 | S6；样本少，建议等 Q6 ② 的图 | 中 |
 | S10 管线用 `T_PIPELINE` 的 UID | 库里有 `T_PIPELINE` 行时，管线的 UID 取 `SP_ID`、名字取它的 `ITEMTAG`，不再合成；管段归哪条管线的规则待定（`SP_PARTOFID` 在 DWG 包里全空） | 需要同版参考 | Q4 的数据 | 中 |
 | S11 数据库线门禁 | Q5 (a)：`report_diff` 改走 `diff_pid_export`；基线加 `A01 · Export.mdf` 与 `A01 · TEST02_p 目录` 两项 | A01 两种入口打印的每一行都在基线里；删改回归仍退出 1 | Q5 | 中 |
-| S12 DWG 少的那个 OPC | `799B9008…`：参考里是个没有表示、没有关系的孤立 `PIDBranchPoint`；dump 里它的配对已画到本图，那条表示不在参考版的 `.pid` 里。要定的是「没画到图上的 OPC 是否照发一个孤立对象」 | 同版参考里再出现一例才写规则；否则记为版本差 | Q4 的数据 | 小 |
+| S12 本图 stockpile 里的 OPC（未决，样本 1 例） | 现状：只发表示在 `.pid` 里的 OPC。DWG 的参考多一个 `799B9008…`，是没有表示、没有关系的孤立 `PIDBranchPoint`；dump 里它的配对 `9B50CC42…` 只有一条表示，在本图上、`INSTOCKPILE = 2`（dump 自己的数据字典：布尔代码表，2 = `True`）、没有 `GRAPHICOID`，即本图 stockpile 里的条目。dump 现在的状态就解释了参考，所以不是版本差（本行原先写「dump 里它的配对已画到本图」，错了，独立审查指出）。候选规则：本图 stockpile 里的 OPC 照发一个对象，UID 取配对里较小的那个，带 `IObject.Name`（`OPCTAG`）与类的固定接口，不发表示、不发关系。管件已有一条相近的规则（`ExpTables::dump_only_piping_components`：本图上有表示而 `.pid` 没画的管件照发，带端口与表示）；OPC 这 1 例不能直接套它，因为那条表示没有 `GRAPHICOID`，参考发出的对象不带表示，UID 又是配对的另一端。这一轮不改发布规则 | 要第二个样本才写进代码：一张 stockpile 里有 OPC 的图的原厂发布件，加同一时刻的 dump。用它定四件事：① 是不是每个这样的 OPC 都发；② UID 是「配对里较小的」还是「不在本图的那一端」——现在这 1 例两种说法给出同一个 UID，要一例 stockpile 那一端 UID 较小的；③ 带哪些接口与属性（有 `ToFromText` 时写不写 `IOffpageConnector`）；④ 两端都在 stockpile 里时发几个。53 张那个库没有样本（476 对 OPC 都是一端在图上、另一端在 `SP_DRAWINGID = 0`）；DWG 包里另有 2 个在 `DWG-0201GP06-01` 上，没有参考。整包用例钉的 4 个 `PIDBranchPoint` 同理只是现状 | Q6 ④ | 小 |
 | S13 DWG 进基线 | `publish-diff-accepted.json` 加 `DWG-0202GP06-01 · .pid`（S5–S9 之后剩下的才登记）与版本差说明；`tests/publish_diff_accepted_baseline.rs` 加一条 | 与 `tests/publish_from_pid.rs` 的三条钉值一致 | S5–S9、Q4 | 小 |
 | S14 14 条 DWG 软跳过 | Q1 (a)：删掉这 14 条等 `Export.mdf` 的用例，换成对 Oracle 包真跑的；Q1 (b)：让它们读 Oracle 行 | 没有一条 `publish_*` 用例在仓库夹具齐全时软跳过 | Q1 | 小 / 大 |
+| S15 数据库线的注释正文与 OPC 接口（只记录） | 读代码所见（独立审查提出，已对照代码）：`xml_writer::write_item_note` 的 `INote.NoteText` 取对象的 `NoteText` 字段，没有就取 `T_ModelItem.Description`；`mdf_load` 暂存的 24 张表里有 `T_ItemNote`、没有放正文的 `T_Note`。`.pid` 线取的是标签的 `Note.Body`，库里对应 `T_NOTE.BODY`；Oracle dump 的 `T_ITEMNOTE` 只有 2 列、没有正文，7 张同版图参考里的 178 个注释在库里的 `T_MODELITEM.DESCRIPTION` 全空。照这样，数据库线遇到带正文的注释会写成空的 `<INote/>`。`write_pid_branch_point` 从不写 `IOffpageConnector`，`T_OPC` 也不在暂存的表里：没有 `ToFromText` 时两条线一致，有值时数据库线缺这个接口 | 仓库里没有带注释或 OPC 的 MDF 夹具（A01 的 12 个对象里这两类都没有），这一轮不改；有夹具之后先写红测 | 一份带注释与 OPC 的 MDF / MTF 备份 | 小 |
+| S16 管线名回退时的流体代号（只记录） | `codelist_short_text(19)` 只读 `CODELIST_SHORT_TEXT`。19 号代码表里出厂自带的代号只填 `CODELIST_TEXT`（两个包都是 173 行），所以 `fluid codes missing` 把它们计成缺失：DWG 包 5 条管段（代号 493 = `OD`），53 张那个库 70 条（代号 20 = `AI`）。管段在 `T_PLANTITEM` 里有行时名字取 `ITEMTAG`，输出不受影响；dump 没有这张表或这一行时，回退拼出的名字会少掉流体这一格 | 找到一条走回退拼名、代号又只有 `CODELIST_TEXT` 的管段并对上参考之后再改 | 那样的样本 | 小 |
 
 S5 做完，接口元素这一栏就满了；S7 + S8 做完，7 张图的非空值从 19 734 / 39 171（50.4 %）到 39 011 / 39 171（99.6 %），豁免清单只剩合成值。
 
@@ -76,7 +78,7 @@ S5 做完，接口元素这一栏就满了；S7 + S8 做完，7 张图的非空�
 
 S3 与 S3b 提交时各跑了全量：`cargo test --locked -p pid-parse --all-targets` 1813 过 / 0 败 / 3 ignored；`--no-default-features --lib` 937 过；wasm32 `cargo check` 过；`missing documentation` 0 = 基线 0（`cargo rustdoc` 自身因 11 条既有的 private intra-doc link 报错退出，都不在本轮改过的文件里，棘轮脚本本来就不看它的退出码）。
 
-新增的门：`tests/publish_from_pid.rs` 的 `the_dwg_fixture_alone_states_nothing_the_reference_lacks`、`the_dwg_fixture_reads_its_own_packages_exp_dump`、`the_dwg_package_publishes_every_drawing_it_lists`，全部读仓库内夹具，任何检出都真跑；`oracle_exp` 3 条、`pid_load` 2 条单测，`pid_writer` 一条单测加了断言。
+新增的门：`tests/publish_from_pid.rs` 的 `the_dwg_fixture_alone_states_nothing_the_reference_lacks`、`the_dwg_fixture_reads_its_own_packages_exp_dump`（第三阶段改名为 `the_dwg_fixture_publishes_against_its_packages_later_dump`）、`the_dwg_package_publishes_every_drawing_it_lists`，全部读仓库内夹具，任何检出都真跑；`oracle_exp` 3 条、`pid_load` 2 条单测，`pid_writer` 一条单测加了断言。
 
 停在这里的原因：剩下影响大的切片（S4 之后）都要先有 Q1–Q3 的答复；S0 不依赖批复，留给下一阶段开头。
 
@@ -113,3 +115,78 @@ Q1–Q6 答复之前做的两件不依赖答复的事。门与第一阶段相同
 **测试的临时目录。** 改前逐个测试文件对着清空的临时目录跑，只有 `publish_from_pid` 在通过时留下东西：每轮 12 个目录、43.8 MB（整包 53 张的输出 `sqplant` 占 42 MB），都是成功路径上从来没删。其余用到临时目录的用例只在函数最后一行删，断言失败时留下（`publish_from_pid` 与 `publish_xml_cli` 各强制失败一条验过）。改后 15 个文件各留 0 个，强制失败的两条也留 0 个；110 条用例的名字、结果与 21 行 skip 输出同改前。
 
 库自己写临时文件的地方只有一处：MTF 包暂存的 `.mdf`（`mdf_load::open_mtf_dump_as_sqlite`）。正常结束、包门禁退出 1、暂存后读库失败、4 种截断或损坏的 dump，共 7 种情形下临时目录都是空的（`target/publish-audit/tmp-leak/lib/`）。读代码可见一条没能复现的路径：写暂存文件中途失败（例如盘满）时 `?` 直接返回，写了一半的文件留在临时目录里。主检出 `stash@{0}` 的 `StagedMdf` 补的正是这一条。publish 线之外还有三处测试留临时目录，本轮没动：`src/symbol_library.rs` 的两条单测、`tests/inspect_cli.rs` 的四条、`src/inspect/commands.rs` 的一条。
+
+### 第三阶段（2026-11-10）：独立审查的十条与 S6
+
+Q1–Q6 仍未答复。这一阶段做两件不依赖答复的事：处理一个只读的独立审查对第一阶段四处修复与分析页的十条结论（报告在 `target/publish-audit/review-5c61ac4.md`，不入库），以及 S6。每一条先用自己的脚本或读法复现，再改。门比前两阶段多一步：全量门禁对着**暂存的改动**跑（`fmt`、`clippy -D warnings`、`--lib`、`--all-targets`、15 个 `tests/publish_*.rs` 逐个带 `--nocapture`、`parser_panic_safety`、`--no-default-features --lib`、wasm32、`missing documentation`），提交后核对提交的 diff 与过门的那一份指纹相同。
+
+| 提交 | 审查项 | 做了什么 |
+|---|---|---|
+| `b2576fc` fix(parser): refuse an exp INSERT whose column list follows VALUES | ⑥ | `column_names` 遇到「`(` 在 `VALUES` 之后」的 INSERT 行按下标切片，panic；改成 `get` 并报错。`publish::oracle_exp` 的 7 个字节级入口进了 `tests/parser_panic_safety.rs`，另有一条用例把一份 2 530 字节的合成 dump 逐前缀截断、逐字节替换。加进去之后对抗语料又打出一个：`nominal_spelling` 把公称直径代码乘 100 时 `i64` 溢出，改成 `checked_mul` |
+| `51521ef` fix(publish): refuse every exp column a stage follows when a cell of it was not read | ① ⑦ | 取列的两个函数 `column_index` / `optional_column_index` 拒绝「列在、但没读懂」的列：不是 AL16UTF16 的字符列，或有一格没读出来的列（`Column::unread_row` 记第一处），报错点名表、列与行。「dump 里没有这一列」对可选列仍然合法。连接关系的端点集合改从端口阶段的投影取，同一行两个阶段给同一个结论 |
+| `71e02a2` test(publish): hold the exp reader's charset-id check and its port-column checks | ④ | 两条用例：国家字符集 UTF8（871 / 2）的列留作没读；端口表先为它的列负责、再看行 |
+| `ba5a83f` test(publish): pin which findings the DWG fixture prints, not how many | ⑤（③ 的测试注释） | `("missing value", 17)` 换成逐行钉：`DWG_VALUES_NOT_STATED` 17 行、`DWG_EXP_OBJECT_AND_REL_FINDINGS` 18 行，原样比对。`5 fluid codes missing` 的原因、缺的那个 `PIDBranchPoint` 是未决的 stockpile 规则、整包那 4 个 `PIDBranchPoint` 同理，都写在钉旁边。`…reads_its_own_packages_exp_dump` 改名 `the_dwg_fixture_publishes_against_its_packages_later_dump` |
+| `0569645` docs(publish): name the cell the strict exp read stopped on, and the samples behind three rules | ② ⑨ | 拦住旧读法的是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`（0.05），不是 `SLOPE`：代码注释、测试、CHANGELOG、分析页四处改对，CHANGELOG 加一句更正。三条规则各自的样本量写进代码注释与分析页 §3.2 |
+| `28a8e29` feat(backup): read the class and property maps of SPPIDDataMap.xml | S6 | 见下 |
+| 本提交 | ③ ⑧ ⑩ | 分析页 §3.4、§3.6、§6 与本计划的 Q1、Q6、S8、S12、S15、S16 |
+
+**① 的复现与证明。** 把 DWG 包那份 dump 的 `T_PLANTITEM.ITEMTAG` 列头改成数据库字符集（873 / 1）：改前的二进制退出 0，管线从 6 条变 0 条、关系从 133 条变 127 条，一行报错都没有。审查只指出了「整列不是 AL16UTF16」这一种；同样静默的还有格子一级的，例如 `T_CONNECTOR.STARTOBJECT` 里出现一个小数，少一条连接关系。19 份各坏一处的 dump（10 份改字符集、9 份放一个小数）里，改前 11 份退出 0（4 份输出变了），改后 19 份全部退出 1、一个文件不写、报错点名表与列。单测 `every_followed_column_is_refused_when_its_cells_were_not_read` 把 16 张表里被跟的 66 个列逐个弄坏，改前的读法放过其中 24 个。真实数据不受影响的证明有两层：两份 Oracle dump（DWG 包、53 张那个库）里被跟的列没有一个不是 AL16UTF16、被跟的格没有一个没读出来（`target/publish-audit/review2/followed-census-*.txt`）；整张对照矩阵 30 次运行、253 个文件逐字节相同，退出码与标准输出也相同。第三个包 `TEST02_p` 的 `Export.dmp` 是 SQL Server 的 MTF，不走这个读法，它在矩阵里的输出同样没变。
+
+**⑦。** `connectivity_ends` 原来自己读点号，读不懂的行跳过；端口阶段对同一行报错。现在它用端口阶段的投影，小数与 NULL 的点号两个阶段都报错、说法相同（`the_connectivity_stage_refuses_the_port_rows_the_port_stage_refuses`）。主检出 `stash@{0}` 把端口投影改成「跳过没有 id 或点号不是整数的行」；并入（Q2）时列一级的拒绝仍然成立，因为它在 `column_index` 里，行一级的要重新对一遍。
+
+**变异验证。** 每个变异只改生产代码、不碰测试，跑完把文件逐字节还原（`target/publish-audit/review2/mutate.py`，日志在同目录的 `mutations/`）：
+
+| 变异 | 结果 |
+|---|---|
+| `column_names` 换回下标切片 | `a_column_list_after_values_is_refused_not_a_panic` 红；`parser_panic_safety` 两条红 |
+| `nominal_spelling` 换回不检查的乘法 | `a_nominal_diameter_code_at_the_far_end_of_i64_is_not_spelled` 红；`exp_dump_readers_do_not_panic_on_a_damaged_dump` 红 |
+| 取列时放过别的字符集 / 放过没读的格 / 读表时不记没读的行 / 没读懂的 `ITEMTAG` 当作没有这一列 | 四个都红（`every_followed_column_…`，前三个另有一条） |
+| 连接阶段丢掉端口阶段拒绝的点 | `the_connectivity_stage_refuses_…` 红 |
+| 列头只看 form、不看字符集 id | 补用例之前**绿**（审查说得对），补之后 `national_text_in_another_charset_is_kept_unread` 红 |
+| `project_piping` / `project_signal` 跳过开头的列检查 | 审查指出它在 `5c61ac4` 上没人守（没有回到那个提交上重跑）；到 `51521ef` 时矩阵用例已经让它红，`71e02a2` 再加一条专门的 `a_port_table_answers_for_its_columns_before_its_rows` |
+| 把一条 `missing value` 换成另一条（豁免清单里一进一出，总数仍是 17） | 旧的计数钉**绿**，逐行钉两条用例都红 |
+
+**③ 复核。** 属实，见分析 §3.6 与 S12。读 dump 用的是自己的脚本（`review2/opc_stockpile.py`），`InStockpile` 的含义取自 dump 自己的数据字典，不靠猜。
+
+**⑧ 复算。** 属实，数字见分析 §3.4；`review2/item8_breakdown.py` 与入库的探针两条路算出同样的数。
+
+**⑩。** 属实，记为 S15。
+
+**矩阵。** `51521ef` 之后与 S6 之后各跑一遍（`audit.py` + `compare_runs.py`，30 次运行）：253 个文件逐字节相同，退出码与标准输出相同。这一阶段没有一个输出文件变过。`tests/publish_completeness.rs` 的 17 个钉没有动。
+
+**门禁结果。** 表里前六个提交各跑一遍全量，每次都是：`fmt` 与 `clippy` 通过；15 个 `publish_*` 文件 116 过 / 2 ignored，`parser_panic_safety` 3 过；`--no-default-features --lib` 937 过；wasm32 通过；`missing documentation` 0 = 基线 0；`publish_*` 文件打印的 skip 行 21 行（分布在 5 个文件里），逐次相同。`--lib` / `--all-targets` 的通过数依次是 1 420 / 1 838、1 424 / 1 842、1 426 / 1 844、1 426 / 1 844、1 426 / 1 844、1 432 / 1 850，都是 0 败、3 ignored。`28a8e29` 那一次的 `--all-targets` 第一遍在 `tests/plant_backup_census.rs` 里中止（`memory allocation of 1572864 bytes failed`，机器上当时有别的构建在跑）；这条用例单独跑通过，峰值提交内存 2.6 GB，同一份暂存改动整步重跑是上面的 1 850。本提交只改文档，它的门禁结果写在交回的报告里。
+
+#### S6：数据映射读全
+
+`src/backup/datamap.rs` 原来只读 `MapEnumToEnum` 与枚举表的名字。现在 `DataMap` 另外带：`classes`（`SPMapClassDef`，物项类型，连同 `MapClassToClass` 发成的类）、`properties`（`SPMapPropertyDef`，连同所属物项类型、`MapPropertyToProperty` 的每个目标、`MapPropertyMapEnumList` 的值表、`ProcessPropertyCriteria`）、`enum_parents`（`MapEnumMapEnum`）、`unit_list_names`、`rel_counts`。`DataMap::sources(类, 属性)` 回答「这个类上的这个属性由哪些库属性发出来」。没有一条写出路径用它；原有两个字段由原来那几句语句填，矩阵逐字节不变。
+
+**钉值**（单测读入库的 `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip`，没有软跳过分支；三个包里是同一个 3 678 496 字节的 `SPPIDDataMap.xml`，SHA-256 `248c6a3b…06794548`）：31 个物项类型、1 818 个属性定义、12 087 条 `<Rel>`，分属 18 种 `DefUID`，每一种的条数都钉了——计划原先写的 1 818 与 12 087 复核无误。其中 `MapClassToClass` 29、`MapClassMapProperties` 1 818、`MapPropertyToProperty` 694（693 个属性，一个属性有两个目标）、`MapPropertyMapEnumList` 1 022、`MapEnumMapEnum` 1 573、`MapEnumToEnum` 1 921。
+
+**抽查**（`the_committed_map_sends_an_equipment_description_to_its_material_description` 等四条）：`Vessel.Description` 与 `Exchanger.Description → LongMaterialDescription`；`EquipmentOther.Description → LongMaterialDescription3`；四类设备的 `Name → Description`；`SPMP_Mechanical_Description` 与 `SPMP_ItemNote_Description` 没有目标；`PipeRun.TagSequenceNo → PipingConnectorSeqNo`；`PipeRun.InsulThick → TotalInsulThick`（单位表 `Thickness`）；`PipeRun.Slope → SlopedPipingAngle`（单位表 `Angle`）；`PipeRun.ConstructionStatus → ConstructionStatus`（`EFAdapter.EnumConversions`，枚举表 `SP_93`）。
+
+**读到的结构**（只读出来，不解释；与原先设想不同的地方照实写）：
+
+1. **每条 `MapPropertyToProperty` 自己点名发布类。** 694 条都带 `IMapRel End2MapValue`。637 条点的是所属物项类型的发布类；另外 57 条是 `PipeRun` 的工艺属性，点的是 `PIDProcessPoint`（`PipeRun` 自己发成 `PIDPipingConnector`）。所以「物项类型发成哪个类」加「属性发成哪个名字」不足以确定对象，要看这条关系自己的类。48 条另带 `EndEdgeDef = ProcessPointCollection_21`，都属于 `DuctRun`。
+2. **3 个物项类型不发成任何类**（`ControlSysIO`、`Equipment`、`Revision`）；`Pipeline` 发成两个：`PIDPipeline` 与 `IProcessPoint`。
+3. **`ProcessPropertyCriteria` 有 17 种写法**，另有 1 377 个属性没有这个属性、110 个是空串。最多的是 `EFAdapter.EnumConversions`（215）、`UoMToDoubleConv`（30）、`EnumToBoolConv`（28）；管段名字的拼法写在里面：`EFAdapter.PpConnNameConv, <ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`。
+4. **值表。** 1 022 条里 565 条指向枚举表、451 条指向单位表、6 条指向文件里没有定义的表（`SPMU_4`、`SPMU_37`、`SPMU_21`）。单位怎么写出来，映射只给到「这个属性的值在哪张单位表里」，换算与写法不在这个文件里。
+5. **层级——与原先的设想不同。** S6 原来把 `MapEnumMapEnum` 写作「层级」，S8 设想用它定 `ConstructionStatus` / `ConstructionStatus2`、`EqType0…5` 这类属性各级的值。读出来的是：`MapEnumListMapEnumList` 有 11 对枚举表（设备的类 → 子类 → 型，管件的类 → 子类 → 型，仪表的类 → 型，设备部件的类 → 型，`FluidSystem → FluidCode`，文档的类别 → 类型，状态的类型 → 值，风管的类 → 子类 → 型），`MapEnumMapEnum` 的 1 573 条是这些表之间「上一级枚举 → 下一级枚举」，每个下级只有一个上级（设备部件那一对之间一条都没有）。这是**库这一侧**的层级。发布件各级的值对不上它：
+   - `ConstructionStatus` 的值表 `SP_93` 不在任何一对里，参考却有两级。11 份参考里 `ConstructionStatus2` 的 3 255 个值全是 `SP_93` 某个枚举的 `MapEnumToEnum` 目标；`ConstructionStatus` 的 3 255 个值（`@NewConstruction`）不是任何枚举的目标。
+   - 映射点名的是 `PipingComp.PipingCompClass → PipingComponentType1`，值表是「类」那张（`SP_27`）；参考里 `PipingComponentType1` 的 869 个值有 866 个是「子类」表（`SP_26`）枚举的目标，`Type2` 的 859 个里 738 个、`Type3` 的 661 个全部是「型」表（`SP_25`）枚举的目标。
+   - `EqType0` 的 102 个值是 `SP_22` / `SP_23` / `SP_24` 里枚举的目标（同一个 GUID 是好几张表里枚举的目标）；`InstrumentType` 的 159 个值不是任何枚举的目标，`InstrumentType3` 的 159 个是 `SP_28` 的目标。
+   - 映射给这四条链各点了一个名字（`ConstructionStatus`、`EqType0`、`PipingComponentType1`、`ProcessEqCompType1`），其余各级（`ConstructionStatus2`、`EqType1–5`、`PipingComponentType2/3`、`ProcessEqCompType2`）没点；仪表的 `InstrumentType` / `InstrumentType3` 与图纸的 `DocCategory` / `DocType` 一个都没点。
+
+   所以各级的值跟的是**目标枚举在 schema 一侧的层级**，这份映射里没有。S8 的规则不能只从 `MapEnumMapEnum` 推出来，要么从参考里量（每个下级值配哪个上级值），要么读 schema 文件或 `EFAdapter.dll`。
+6. **`ToolOID` 不是键。** 1 818 个属性只有 1 808 个不同的 `ToolOID`，10 对属性共用一个；`DataMap` 按 `UID` 关联。
+7. **库属性落到表和列，要靠 dump 自己的数据字典。** 映射只有物项类型名与属性名。dump 里的 `ITEM` / `ITEMATTRIBUTIONS` / `UNIQUEATTS` / `ENTITIES` / `ATTRIBUTES` 五张表把它们接到 `T_表.列`：694 条属性关系里 572 条接得上；119 条属于字典里没有同名物项类型的映射类（`InstrumentInline` 92、`DuctNozzle` 17、`InstrumentCtrlSysFunc` 10）；3 条的物项类型没有同名属性（`InstrLoop.TagPrefix`、`Instrument.TagPrefix`、`PipingComp.IsFlowDirectional`）。这一步现在只在探针里，没有进库。
+
+**探针**：`examples/probe_where_the_data_map_says_a_published_value_comes_from.rs`。对参考的每个 `(类, 接口, 属性)` 给出映射里的来源、换算与值表；`--ours` 按我方写没写出来分开；`--dump` 再给出表和列。它复现了审查者的两组数：
+
+| 输入 | 输出 |
+|---|---|
+| 11 份验收参考 | 45 963 个非空值，叫得出名字的 40 208 个（87.5 %）；按物项类型的发布类算与按关系自己点名的类算是同一个数 |
+| 7 份同版参考，`--ours` 给 53 张整包的输出（这 7 张与单图 `--oracle-exp` 的输出逐字节相同） | 已写出 19 734 个（50.4 %），其中叫得出名字的 19 363 个；没写出 19 437 个，其中叫得出名字的 14 949 个（76.9 %）、叫不出的 4 488 个 |
+
+DWG 那 17 个缺的值，探针逐个给出表和列，例如 `PIDPipingConnector IInsulatedItem.TotalInsulThick <- PipeRun.InsulThick [unit list Thickness] => T_PipeRun.InsulThick`。
+
+**这一阶段没做的。** S4、S5 及之后的切片（等 Q1–Q3）；不并 stash；不动已接受基线；`.pid` 单发的输出没变；stockpile 的发布规则（S12，只有 1 例）；`StagedMdf` 那条「写到一半失败」的路径（随 Q2）；数据库线的两处不一致（S15，没有夹具）；流体代号只读 `CODELIST_SHORT_TEXT`（S16，没有样本）。没核实的：没有用 CI 的 stable 工具链跑（门禁用的是 `rustup run nightly cargo`）；`vendor/oxidized-mdf` 自己的测试没有单独跑；「层级跟 schema 一侧」是从值对不上映射推出来的，schema 文件本身没有读。

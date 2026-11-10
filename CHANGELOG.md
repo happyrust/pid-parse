@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### publish：独立审查之后的收紧，数据映射读全（2026-11-10）
+
+一个只读的独立审查核对了紧接在下面那一条的四处修复与分析页，这一条是照它的十条结论做的改动，加上计划的 S6。
+**没有一个输出文件变**：整张对照矩阵 30 次运行、253 个文件逐字节相同，退出码与标准输出也相同。逐条的复现、变异验证与没做的事在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第三阶段。
+
+- **exp 里没读懂的列不再当空值用。** 下面那一条把五张表改成逐格读之后，「跟的列若没读出来就报错」只对其中一部分列成立：可选列的查找不看这一列读没读懂。把 `T_PLANTITEM.ITEMTAG` 的列头改成数据库字符集，发布照样退出 0，管线从 6 条变 0 条。现在取列的两个函数都拒绝「列在、但没读懂」的列（不是 AL16UTF16 的字符列，或有一格没读出来的列），报错点名表、列与行；「dump 里没有这一列」对可选列仍然合法。连接关系对读不懂的点号原来是跳过，现在与端口阶段一样报错。16 张表里被跟的 66 个列逐个弄坏的单测，改前的读法放过 24 个。两份真实的 Oracle dump 里被跟的列与格没有一个没读懂，所以输出不变。（`51521ef`）
+- **exp 读法的两处 panic。** INSERT 行的 `(` 落在 `VALUES` 之后时 `column_names` 按下标切片；公称直径代码乘 100 时 `i64` 溢出。两处都改成报错或 `None`。`publish::oracle_exp` 的 7 个字节级入口进了 `tests/parser_panic_safety.rs`，另有一条用例把一份合成 dump 逐前缀截断、逐字节替换——第二处就是它找出来的。（`b2576fc`）
+- **钉内容，不钉个数。** DWG 夹具的两条用例原来钉 `("missing value", 17)`：把豁免清单里的属性一进一出，总数不变，用例照过。现在逐行钉打印出来的 17 行与 18 行。字符集 id 的检查与端口表开头的列检查各补一条用例，都做了变异验证。用例 `…reads_its_own_packages_exp_dump` 改名 `the_dwg_fixture_publishes_against_its_packages_later_dump`：`.pid` 是参考那一版，dump 是后来的。（`71e02a2`、`ba5a83f`）
+- **更正两处说法。** DWG `--oracle-exp` 少的那个 OPC（`799B9008…`）不是版本差：dump 里它的配对在本图的 stockpile 里（`INSTOCKPILE = 2`，没有 `GRAPHICOID`），原厂照发一个没有表示、没有关系的对象。这条规则只有 1 例，这一轮不写进代码，记为计划 S12 并写明要什么样的第二个样本。「数据映射对 87.5 % 的参考值给得出名字」是名字级的匹配，分母含已经写出的值；只看 7 张图还没写出的 19 437 个值是 76.9 %，叫不出名字的 4 488 个是层级枚举里映射没有点名的几级。三条规则（设备的 `Description`、注释换行、没有 `ToFromText` 的 OPC）各自的样本量写进了代码注释。（`0569645` 与本提交）
+- **数据映射读全。** `backup::datamap` 原来只读 `MapEnumToEnum`。现在 `DataMap` 另外带物项类型与它发成的类、每个库属性发成的属性与那条关系自己点名的类、值表、`ProcessPropertyCriteria`、枚举的上一级。没有一条写出路径用它。单测读入库的 `RefData~4~804.zip`（任何检出都真跑）：31 个物项类型、1 818 个属性定义、12 087 条关系按 18 种 `DefUID` 逐种钉。探针 `examples/probe_where_the_data_map_says_a_published_value_comes_from.rs` 对参考的每个 `(类, 接口, 属性)` 回答它来自哪个库属性，给了 dump 就再落到表和列；它复现了上面两组数（40 208 / 45 963，14 949 / 19 437）。读到的结构有一处与原先的设想不同：`MapEnumMapEnum` 是库这一侧的层级，发布件各级的值跟的是目标枚举在 schema 一侧的层级，这份映射里没有。（`28a8e29`）
+
+上一批的三个提交没有记进这个文件，补在这里：`publish::completeness::measure` 与探针 `probe_how_much_of_a_reference_does_a_publish_state`（`0c8f9dc`）量一份输出写出了参考的多少；`tests/publish_completeness.rs` 把比例钉住，分母精确、分子只许升（`0bb5045`）；`tests/common` 的 `Scratch` 让 `publish_*` 测试结束时删掉自己的临时目录，通过与否都删（`624916d`）。
+
 ### publish：DWG-0202GP06-01 的备份包读得进来了，`.pid` 线在 13 张参考图上不再写错值（2026-11-10）
 
 把每张有原厂参考的图、每种输入方式重新对了一遍（`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`）。

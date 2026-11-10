@@ -3,6 +3,7 @@
 > 基线：`main` = `803984a`。工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110` 上做，主检出只读。
 > 方法：构建后跑全部 `tests/publish_*.rs`（`--nocapture --test-threads=1`），再用同一份二进制对每张有原厂参考的图、每种适用的输入方式跑 `--diff-against`，把打印出的每一行与 `docs/baselines/publish-diff-accepted.json` 对上；最后另写一遍「参考里有多少、我方写出多少」的普查，因为 `--diff-against` 在 clean 时不打印被豁免的量。
 > 标「已核实」的是本轮亲自跑到或读到的；标「推断」的没有被数据钉死。配套方案：`docs/plans/2026-11-10-publish-export-completion.md`。
+> 2026-11-10 第三阶段：一个只读的独立审查核对了本页与四处修复，§3.1、§3.2、§3.4、§3.6、§6 按它的结论更正或补全，每处都写着「更正」或出处。§2.4 的完整度比例（接口元素 56.5–58.1 %、非空值 49.6–51.8 %）与「缺 19 437 个值」，它用自己另写的普查逐张复算过，相同。
 
 ## 一句话
 
@@ -190,7 +191,12 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 接口元素缺 43 %、非空值缺 50 %，全部被 §1.3 的 1、2、6 条放过。两类：
 
 - **类的固定接口表。** 13 份参考、21 355 个对象、21 个类里，12 个类的接口序列只有一种写法，其余 9 个类只在 1–11 个可选接口上有出入（`IInsulatedItem`、`INamedPipingConnector`、`IPipingSpecifiedItem`、`ISlopedPipingItem`、`IOffpageConnector`、`INamedEquipment`、`ISpecifiedMatlItem` 与设备子类接口）。也就是说「这个类带哪些接口」基本是常量，可以照参考量成一张表。`SPPIDDataMap.xml` 的 `ClassToMapClass` 只说得出 11 张验收图参考里 157 773 个接口元素中的 10 898 个（6.9 %），不能当出处。
-- **库里的属性。** 同一份 `SPPIDDataMap.xml` 的 `MapPropertyToProperty` 对 11 张验收图参考里 45 963 个非空值中的 40 208 个（87.5 %）给得出「哪个库属性发成哪个属性名」。剩下的是层级枚举的上层（`ConstructionStatus2`、`PipingComponentType2 / 3`、`InstrumentType / 3`、`EqType1–5`）、管线的 `FluidSystem` 与 `DocCategory / DocType`。值的写法要靠枚举映射（`MapEnumToEnum`，`src/backup/datamap.rs` 已读）和单位规则（`50 mm`、`3 m`、`27 m^3`、`2.9999910000486E-03 rad`，未定）。
+- **库里的属性。** 同一份 `SPPIDDataMap.xml` 的 `MapPropertyToProperty` 对 11 张验收图参考里 45 963 个非空值中的 40 208 个（87.5 %）给得出「哪个库属性发成哪个属性名」。这个数要连着下面三句一起读（独立审查提出；已复算，入库的探针 `examples/probe_where_the_data_map_says_a_published_value_comes_from` 可复现）：
+  - 它是**名字级**的匹配：对象的类是某个映射类的发布类，而且该映射类有一个属性发成同名的属性，就算叫得出名字。值怎么写（枚举的 `@{GUID}`、带单位的长度、层级枚举的哪一级）不在这个数里。
+  - 分母是全部值，已经写出的也在里面：11 份参考里 `IObject.Name` 11 473 个与 `GraphicOID` 6 222 个两项就占 38.5 %；7 张同版图 `--oracle-exp` 已写出的 19 734 个值（50.4 %）里 19 363 个叫得出名字。
+  - 只看这 7 张图**还没写出**的 19 437 个值，叫得出名字的是 14 949 个（**76.9 %**）。叫不出的 4 488 个是 `ConstructionStatus2` 2 782、`PipingComponentType2` 729、`PipingComponentType3` 553、`InstrumentType` 与 `InstrumentType3` 各 136、`ProcessEqCompType2` 45、`EqType1–5` 93、`DocCategory` 与 `DocType` 各 7：层级枚举里映射没有单独点名的那几级，加上图纸的类别与类型。11 份参考的 5 755 个里还多一项管线的 `IFluidSystem.FluidSystem`（460 个）：映射只有 `Pipeline.FluidSystem → FluidCode`，没有点 `FluidSystem` 这个名字；7 张图上这一项我方已经全部写出，所以不在 4 488 里。
+
+  值的写法要靠枚举映射（`MapEnumToEnum`）和单位规则（`50 mm`、`3 m`、`27 m^3`、`2.9999910000486E-03 rad`，未定）。映射读全（方案 S6）之后看到的结构，包括「层级」与原先设想不同的地方，记在方案 §5 第三阶段。
 
 数据库线的写手（`xml_writer.rs`）已经按对象写全接口与属性，A01 上逐字节验证过；但它只接 MDF / SQLite，Oracle `exp` 的行进不去，而且比 `.pid` 线少 6 个类（`PIDInstrument`、`PIDInlineInstrument`、3 个设备类、`PIDSignalBranchPoint`）。这是方案里要用户定的方向。
 
@@ -202,8 +208,8 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 
 ### 3.6 这一阶段没有归因完的
 
-- DWG `--oracle-exp` 少一个 OPC（`799B9008…`，`Name = 278`）。已核实的部分：参考里这个 `PIDBranchPoint` 没有任何表示、也没有任何 `<Rel>` 提到它，是个孤立对象；dump 里它的配对 `9B50CC42…` 有一条在本图上的表示 `3A36F254…`，而这条表示不在参考、也不在参考那一版的 `.pid` 里，所以被「表示必须在 `.pid` 里」这条过滤掉。看起来是版本差（参考那时这对 OPC 还没画到图上），但「没画到图上的 OPC 原厂照样发一个孤立对象」这条规则只有这 1 例，没有定论。
-- DWG 的 18 个 `missing value`（`InsulThickSrc`、`TotalInsulThick`、`SlopedPipeDirection`、`SlopedPipingAngle`、`CatalogPartNumber`、`HeightRelativeToGrade`、`ProcessVessel_VesselVolumetricCapacity`、`LongMaterialDescription`）不在豁免清单里，所以是发现项；除最后一个外都属于 §3.4。
+- DWG `--oracle-exp` 少一个 OPC（`799B9008…`，`Name = 278`）。**未决：本图 stockpile 里的 OPC，样本 1 例。** 已核实的：参考里这个 `PIDBranchPoint` 没有任何表示、也没有任何 `<Rel>` 提到它，是 13 份参考的 142 个 `PIDBranchPoint` 里唯一的孤立对象。dump 里它的配对 `9B50CC42…` 只有一条表示 `3A36F254…`，在本图上，`INSTOCKPILE = 2`、没有 `GRAPHICOID`；dump 自己的数据字典把 `InStockpile` 定义成布尔代码表（73 号：1 = `False`，2 = `True`），所以它是放在本图 stockpile 里、没画到图面上的条目。`799B9008…` 自己的那条表示在 `SP_DRAWINGID = 0` 上。我方只发表示在 `.pid` 里的 OPC，于是把它丢了。更正（独立审查指出）：本页原先说「看起来是版本差（参考那时这对 OPC 还没画到图上）」，并在 §6 把它与管线一起算作版本差。dump 现在的状态就足以解释参考，不需要那个假设，所以它不是版本差，是一条还没写的规则：本图 stockpile 里的 OPC，原厂照发一个没有表示、没有关系的对象，UID 取配对里较小的那个。这条规则只有这 1 例：同一个包里另有 2 个这样的条目在 `DWG-0201GP06-01` 上，没有参考；53 张那个库的 476 对 OPC 都是一端画在图上、另一端在 `SP_DRAWINGID = 0`，没有一例落在某张图的 stockpile 里。要什么样的第二个样本才能定，见方案 S12。
+- DWG 的 18 个 `missing value`（`InsulThickSrc`、`TotalInsulThick`、`SlopedPipeDirection`、`SlopedPipingAngle`、`CatalogPartNumber`、`HeightRelativeToGrade`、`ProcessVessel_VesselVolumetricCapacity`、`LongMaterialDescription`）不在豁免清单里，所以是发现项；除最后一个外都属于 §3.4。修掉最后一个之后是 17 个，数据映射加 dump 自己的数据字典给得出每一个的表和列，其中 16 个在包里的 dump 有值：`T_PIPERUN.INSULATIONTHKSOURCE = 3`（6 个 `InsulThickSrc`）、`INSULTHICK = 50mm` 与 `SP_INSULTHICKSI = 0.05`（6 个 `TotalInsulThick`）、`SLOPEDIRECTION = 2`、`SLOPE = 0.3 %` 与 `SP_SLOPESI`、`T_EQUIPMENT.HEIGHT = 3m`、`T_VESSEL.VOLUMERATING = 27m^3`；`CatalogPartNumber` 对应的 `T_PLANTITEM.SP_PARTNO` 在这份较新的 dump 里是 NULL。逐条钉在 `tests/publish_from_pid.rs` 的 `DWG_VALUES_NOT_STATED`。
 
 ## 4. 别处没合进来的 publish 工作
 
@@ -229,7 +235,7 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 
 ## 6. 本阶段修掉的
 
-见方案 §5 的提交表。修完之后 DWG 的两个值错归零、备份包读得进来（`.pid` 单发 78 / 71 / 81、值错 0、缺 17 个值；`--oracle-exp` 108 / 99 / 133、值错 0，剩 6 多发 + 6 缺的对象、6 条关系与同样 17 个值，前三项是 §3.3 的版本差）。前三片之后其余输出逐字节不变：整张矩阵 253 个文件里只有 DWG 的 26 个不同，其中 25 个是原来写不出来的（`target/publish-audit/compare_runs.py base s3`）。第四片（S3b）去掉空的 `<IOffpageConnector/>`，再变 6 个 `_Data.xml`：轻烃分离器I 的单图与整包各一、整包里的低压气压缩机入口改造、DWG 的三个；7 张图的退出码与摘要行都没动，与基线逐行比对的结果也没动。
+见方案 §5 的提交表。修完之后 DWG 的两个值错归零、备份包读得进来（`.pid` 单发 78 / 71 / 81、值错 0、缺 17 个值；`--oracle-exp` 108 / 99 / 133、值错 0，剩 6 多发 + 6 缺的对象、6 条关系与同样 17 个值。6 条多发的管线、5 条缺的管线与 6 条关系是 §3.3 的版本差；缺的第 6 个对象是 §3.6 的 stockpile OPC，未决，不是版本差——本句原先把这三项统称版本差，已更正）。前三片之后其余输出逐字节不变：整张矩阵 253 个文件里只有 DWG 的 26 个不同，其中 25 个是原来写不出来的（`target/publish-audit/compare_runs.py base s3`）。第四片（S3b）去掉空的 `<IOffpageConnector/>`，再变 6 个 `_Data.xml`：轻烃分离器I 的单图与整包各一、整包里的低压气压缩机入口改造、DWG 的三个；7 张图的退出码与摘要行都没动，与基线逐行比对的结果也没动。
 
 ## 7. 复现
 
@@ -249,6 +255,10 @@ rustup run nightly cargo test --locked -p pid-parse --test publish_from_pid -- -
 # 一对文件的完整度（入库的探针，方案 S0）
 rustup run nightly cargo run --locked --example probe_how_much_of_a_reference_does_a_publish_state -- `
   <我方的 _Data.xml> <参考的 _Data.xml>
+
+# 参考里的每个值按数据映射来自哪个库属性；--ours 给出我方输出所在目录，--dump 给出 dump（用它自己的数据字典落到表和列）
+rustup run nightly cargo run --locked --example probe_where_the_data_map_says_a_published_value_comes_from -- `
+  <SPPIDDataMap.xml 或装着它的 RefData zip> [--ours <目录>] [--dump <Export.dmp>] <参考的 _Data.xml>...
 
 # 整张矩阵与普查（脚本在 target 下，不入库）
 python "$wt\target\publish-audit\audit.py" "$wt\target\debug\pid_publish_xml.exe" <run-set>
