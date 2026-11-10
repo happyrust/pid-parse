@@ -810,6 +810,7 @@ mod tests {
                 decoded_igdimensions: vec![],
                 decoded_igcomplexstrings: vec![],
                 decoded_iggroups: vec![],
+                decoded_igellipticalarcs: vec![],
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

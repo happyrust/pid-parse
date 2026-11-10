@@ -36,9 +36,9 @@ use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
     decode_attribute_fragments, decode_dependency_objects, decode_igarcs, decode_igboundaries,
     decode_igbspcurves, decode_igcircles, decode_igcomplexstrings, decode_igdimensions,
-    decode_iggroups, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igrectangles,
-    decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
-    decode_smartframes, decode_sub_records_0x0010,
+    decode_igellipticalarcs, decode_iggroups, decode_iglines, decode_iglinestrings,
+    decode_igpoints, decode_igrectangles, decode_igsymbols, decode_igtextboxes,
+    decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -527,6 +527,31 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // An elliptical arc is a leaf curve, like a B-spline: nothing lists it
+    // and nothing else draws it. It emits as the polyline `bspline::sample`
+    // makes of the rational B-spline a cached symbol body draws for the
+    // same record.
+    SheetRecordFamily {
+        name: "igEllipticalArc2d",
+        type_code: 0x007E,
+        emits_geometry: true,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igellipticalarcs",
+        model_dto: "DecodedIgEllipticalArc2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igellipticalarcs = decode_igellipticalarcs(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igellipticalarcs.len(),
+        decoded_ranges: |data| {
+            decode_igellipticalarcs(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
 ];
 
 /// True when no family has any decoded records on `geometry`
@@ -570,8 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_nineteen_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 19);
+    fn registry_has_twenty_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 20);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -580,7 +605,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            19,
+            20,
             "every registry row must own a distinct SheetGeometry field"
         );
     }

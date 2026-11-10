@@ -2427,6 +2427,10 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // Same leaf-curve story: sheet-level circles draw directly. W's
     // instrument balloons are the first real-sheet evidence.
     &IgCircle2dEmitter,
+    // And sheet-level elliptical arcs: the two that close the counters of
+    // an outlined letter on `XA-A1.igr`. Appended, so every family before
+    // it keeps its golden order.
+    &IgEllipticalArc2dEmitter,
     // Audit-only families: explicit no-op policy.
     &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
@@ -3479,6 +3483,107 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
     }
 }
 
+/// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every sheet-level
+/// `igEllipticalArc2d` (PSM `0x007E`): the exact rational B-spline
+/// [`crate::bspline::elliptical_arc_directed`] builds from the record,
+/// sampled span by span through [`crate::bspline::sample`] -- the curve, and
+/// the reading of the direction byte, a cached symbol body draws the same
+/// record with, so the two paths cannot disagree on an arc. It is a leaf,
+/// like `igBspCurve2d`: nothing lists it, so it has to be emitted to be
+/// seen. A record that sweeps nothing has no curve and is counted as
+/// shape-rejected.
+struct IgEllipticalArc2dEmitter;
+
+impl GeometryEmitter for IgEllipticalArc2dEmitter {
+    fn family(&self) -> &'static str {
+        "igEllipticalArc2d"
+    }
+
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
+        let Some(geometry) = &sheet.geometry else {
+            return skips;
+        };
+        for (index, record) in geometry.decoded_igellipticalarcs.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                skips.out_of_range();
+                continue;
+            };
+            let Some((poles, weights, knots)) = crate::bspline::elliptical_arc_directed(
+                (record.center_x, record.center_y),
+                (record.major_x, record.major_y),
+                record.ratio,
+                record.sweep_start,
+                record.sweep_end,
+                record.flag == 0,
+            ) else {
+                skips.shape_rejected();
+                continue;
+            };
+            let points: Vec<PidPoint> =
+                crate::bspline::sample(&poles, &weights, &knots, BSPLINE_SEGMENTS_PER_SPAN)
+                    .into_iter()
+                    .map(|(x, y)| PidPoint { x, y })
+                    .collect();
+            if points.len() < 2 {
+                skips.shape_rejected();
+                continue;
+            }
+            out.push(PidGraphicEntity {
+                id: format!("{}:igellipticalarc2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                kind: PidGraphicKind::Polyline {
+                    points,
+                    closed: false,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igellipticalarc2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igEllipticalArc2d record (type 0x007E); oid={} parent_ref={} \
+                         index={} center=({:.6}, {:.6}) major=({:.6}, {:.6}) ratio={:.6} \
+                         sweep {:.6} -> {:.6} direction={}; drawn as the rational B-spline of \
+                         that arc, {} segments per knot span",
+                        record.oid,
+                        record.parent_ref,
+                        record.index,
+                        record.center_x,
+                        record.center_y,
+                        record.major_x,
+                        record.major_y,
+                        record.ratio,
+                        record.sweep_start,
+                        record.sweep_end,
+                        if record.flag == 0 {
+                            "clockwise"
+                        } else {
+                            "counter-clockwise"
+                        },
+                        BSPLINE_SEGMENTS_PER_SPAN,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+        skips
+    }
+}
+
 /// No-op emitter: an `igRectangle2d` (PSM `0x0020`) is the parent of the
 /// four `igLine2d` edges it lists by oid, and those edges are records of the
 /// same stream that emit on their own. Every corpus rectangle's four edges
@@ -4119,6 +4224,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4229,6 +4335,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4378,6 +4485,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4479,6 +4587,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4551,6 +4660,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4643,6 +4753,7 @@ mod tests {
                 decoded_igdimensions: Vec::new(),
                 decoded_igcomplexstrings: Vec::new(),
                 decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

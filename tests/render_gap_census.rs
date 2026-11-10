@@ -298,8 +298,9 @@ const ONCE_REFUSING_BACKUP_SHEET: &str = "A井场 注采阀组工艺及自控流
 /// A committed document a family still refuses records of: the border
 /// template the 熊安 fixture wears. Two of the four `igBoundary2d` of its
 /// `/Sheet6` are fills with a hole — two loops where the decoder reads one —
-/// and are refused; the same sheet has two `igEllipticalArc2d` no sheet
-/// family decodes, so both wordings occur on it.
+/// and are refused. The same sheet had two `igEllipticalArc2d` no sheet
+/// family decoded, so both wordings occurred on it until 2026-11-10; the
+/// arcs draw now, and what is left on it is refusals alone.
 const REFUSING_TEMPLATE: &str = "test-file/Ref/Template Files/XA-A1.igr";
 
 /// The extracted plant backup, if this machine has one: under
@@ -472,7 +473,8 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
     // lines and emits nothing) and none of its records is refused, so both of
     // its lists are empty and it has no refusal wording to read. The backup
     // sheet below used to have a refusal and no longer has either; the
-    // template after it has both, and the synthetic pair in `geometry.rs`
+    // template after it has refusals and, since its two elliptical arcs
+    // draw, no record without a decoder; the synthetic pair in `geometry.rs`
     // keeps the two wordings apart on bytes of its own.
     let path = "test-file/DWG-0202GP06-01.pid";
     if !std::path::Path::new(path).exists() {

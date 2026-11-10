@@ -1479,12 +1479,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x007E",
-              "count": 2
-            },
-            {
               "reason": "record_refused",
               "stream": "/Sheet6",
               "type_code": "0x0013",
@@ -1494,8 +1488,8 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 5100,
-          "on_page": 5000,
+          "total": 5102,
+          "on_page": 5002,
           "partial": 0,
           "dropped": {
             "point_no_marker": 84,
@@ -1510,7 +1504,7 @@
             },
             "polyline": {
               "decoded": {
-                "on_page": 25
+                "on_page": 27
               }
             },
             "point": {
@@ -1544,24 +1538,18 @@
           "trailing_empty_lines": 0
         },
         "primitives": {
-          "laid_out": 5000,
+          "laid_out": 5002,
           "off_sheet": 0,
-          "on_page": 5000,
+          "on_page": 5002,
           "partial": 0,
           "unattributed": 0
         },
         "segments": {
-          "total": 6990,
-          "written": 6990,
+          "total": 7054,
+          "written": 7054,
           "unattributed": 0
         },
         "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x007E",
-            "count": 2
-          },
           {
             "reason": "record_refused",
             "stream": "/Sheet6",

@@ -228,6 +228,17 @@ pub struct SheetGeometry {
     /// list in turn.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_iggroups: Vec<DecodedIgGroupRecord>,
+    /// PSM `0x007E` `igEllipticalArc2d` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igellipticalarcs`]: a leaf
+    /// curve nothing else draws, emitted as the polyline
+    /// [`crate::bspline::sample`] makes of the exact rational B-spline
+    /// [`crate::bspline::elliptical_arc_directed`] builds from it -- the
+    /// curve a cached symbol body draws for the same record.
+    ///
+    /// One sheet of the corpora carries any: `XA-A1.igr`'s two half
+    /// ellipses, which close the counters of an outlined letter.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igellipticalarcs: Vec<super::DecodedIgEllipticalArc2dRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
