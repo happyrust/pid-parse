@@ -683,6 +683,26 @@ fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'s
     }
 }
 
+/// A note's label text with the line breaks `T_NOTE.BODY` stores.
+///
+/// The label caches the text box's rendition, where a line ends in a bare
+/// carriage return; the plant database keeps the body as it was typed, with
+/// `\r\n`, and that is what `SmartPlant` publishes as `INote.NoteText`
+/// (DWG-0202GP06-01, note `6A2C6590…`: the dump's `BODY` and the reference
+/// both read `…5m。\r\n2、…`, the label `…5m。\r2、…`). A carriage return that
+/// already has its line feed is left alone.
+fn note_body_line_breaks(text: &str) -> String {
+    let mut body = String::with_capacity(text.len() + 2);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        body.push(ch);
+        if ch == '\r' && chars.peek() != Some(&'\n') {
+            body.push('\n');
+        }
+    }
+    body
+}
+
 /// `<F>name=value</F>` pairs of a label format string.
 fn format_pairs(text: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
@@ -916,6 +936,11 @@ fn load_from_records(
                 continue;
             }
             if let Some((interface, name)) = published_attribute(&property, class) {
+                let value = if (interface, name) == ("INote", "NoteText") {
+                    note_body_line_breaks(&value)
+                } else {
+                    value
+                };
                 found
                     .entry((*item, interface, name))
                     .or_default()
@@ -1281,6 +1306,18 @@ mod tests {
         ] {
             assert_eq!(description(class), Some(("IObject", "Description")));
         }
+    }
+
+    #[test]
+    fn a_note_body_gets_the_line_feed_its_label_dropped() {
+        assert_eq!(
+            note_body_line_breaks("1、first\r2、second"),
+            "1、first\r\n2、second"
+        );
+        assert_eq!(note_body_line_breaks("a\r\nb"), "a\r\nb");
+        assert_eq!(note_body_line_breaks("a\r\rb\r"), "a\r\n\r\nb\r\n");
+        assert_eq!(note_body_line_breaks("设备自带"), "设备自带");
+        assert_eq!(note_body_line_breaks("a\nb"), "a\nb");
     }
 
     #[test]
