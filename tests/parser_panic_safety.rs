@@ -15,6 +15,12 @@
 //! and three deterministic xorshift32 streams for coverage of weird
 //! mid-stream bit patterns.
 //!
+//! The Oracle `exp` dump readers of `pid_parse::publish::oracle_exp` take
+//! the same corpus when the `backup-exp` feature builds them. They refuse a
+//! dump whose first table does not pin the row format, so they also get a
+//! sweep of their own over a small dump that does
+//! (`exp_dump_readers_do_not_panic_on_a_damaged_dump`).
+//!
 //! When this test fails, the panic message points at the offending
 //! parser and input shape — fix the parser, then add a focused
 //! regression test in the parser's own `#[cfg(test)] mod tests` so
@@ -120,7 +126,15 @@ fn adversarial_inputs() -> Vec<Vec<u8>> {
 
     out.push(b"SmartPlantPID.a".to_vec());
 
+    // Oracle `exp` bait: an `INSERT` whose column list follows `VALUES` used
+    // to slice backwards in the column-name reader; the third clears the
+    // marker and the name list, then lies about the binary header behind it.
+    out.push(b"INSERT INTO \"APPLICATIONS\" ) VALUES (\n".to_vec());
+    out.push(b"INSERT INTO \"T_PLANTGROUP\" ) VALUES (\n".to_vec());
+    out.push(b"INSERT INTO \"APPLICATIONS\" (\"ID\") VALUES\n\x01\x00\x02\x00".to_vec());
+
     push_space_map_bait(&mut out);
+    push_exp_dump_bait(&mut out);
 
     out
 }
@@ -157,6 +171,312 @@ fn push_space_map_bait(out: &mut Vec<Vec<u8>>) {
     let mut legacy = b"sseg".to_vec();
     legacy.extend_from_slice(&[0x00; 8]);
     out.push(legacy);
+}
+
+/// How an Oracle `exp` table header declares a column.
+#[derive(Clone, Copy)]
+enum ExpKind {
+    /// National text: charset 2000 (AL16UTF16), form 2.
+    Text,
+    /// Oracle `NUMBER`.
+    Number,
+    /// Oracle `DATE`.
+    Date,
+    /// Text in the database character set (charset 873, form 1), which the
+    /// publish readers keep unread.
+    Bytes,
+}
+
+/// One cell of an `exp` row.
+#[derive(Clone, Copy)]
+enum ExpCell {
+    Null,
+    /// Written as UTF-16BE.
+    Text(&'static str),
+    /// A `NUMBER`, a `DATE` or database-charset bytes, as stored.
+    Raw(&'static [u8]),
+}
+
+/// One table of an `exp` dump: the `INSERT INTO` line, the binary column
+/// header, each row's length-prefixed cells and the end-of-table word.
+fn exp_table(name: &str, columns: &[(&str, ExpKind)], rows: &[&[ExpCell]]) -> Vec<u8> {
+    let listed = columns
+        .iter()
+        .map(|(column, _)| format!("\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = format!("INSERT INTO \"{name}\" ({listed}) VALUES\n").into_bytes();
+    let word = |value: usize| u16::try_from(value).expect("fits a word").to_le_bytes();
+    out.extend(word(columns.len()));
+    for (_, kind) in columns {
+        let header: &[u16] = match kind {
+            ExpKind::Text => &[1, 4000, 2000, 2],
+            ExpKind::Bytes => &[1, 4000, 873, 1],
+            ExpKind::Number => &[2, 22],
+            ExpKind::Date => &[12, 7],
+        };
+        for field in header {
+            out.extend(field.to_le_bytes());
+        }
+    }
+    out.extend([0, 0, 0, 0]);
+    for row in rows {
+        assert_eq!(row.len(), columns.len(), "{name}: a row has every column");
+        for cell in *row {
+            match cell {
+                ExpCell::Null => out.extend(0xFFFEu16.to_le_bytes()),
+                ExpCell::Text(text) => {
+                    let payload: Vec<u8> = text.encode_utf16().flat_map(u16::to_be_bytes).collect();
+                    out.extend(word(payload.len()));
+                    out.extend(payload);
+                }
+                ExpCell::Raw(payload) => {
+                    out.extend(word(payload.len()));
+                    out.extend(*payload);
+                }
+            }
+        }
+        out.extend([0, 0]);
+    }
+    out.extend(0xFFFFu16.to_le_bytes());
+    out
+}
+
+/// A small Oracle `exp` dump every publish reader gets through.
+///
+/// One drawing `D`: equipment `E` with a piping and a signal point, pipe run
+/// `R` whose connector `C` starts on that piping point and ends on off-page
+/// connector `O1`, a nozzle, a note, a piping component `P` the dump places
+/// on the drawing, a codelist row, a plant item tag and a plant group. The
+/// tables also carry what a real dump does beside the followed columns: a
+/// date, a `NUMBER` that is not an integer and database-charset text.
+fn exp_dump() -> Vec<u8> {
+    use ExpCell::{Null, Raw, Text};
+    use ExpKind::{Bytes, Date, Number};
+    const ONE: ExpCell = Raw(&[0xc1, 0x02]);
+    const TWO: ExpCell = Raw(&[0xc1, 0x03]);
+    const HUNDRED: ExpCell = Raw(&[0xc2, 0x02]);
+    const A_DATE: ExpCell = Raw(&[120, 126, 4, 25, 20, 12, 1]);
+    let text = ExpKind::Text;
+
+    let mut dump = exp_table(
+        "APPLICATIONS",
+        &[("ID", Number), ("NAME", text), ("SHORTNAME", text)],
+        &[&[ONE, Text("SmartPlant PID"), Text("SPPID")]],
+    );
+    dump.extend(exp_table(
+        "T_PIPINGPOINT",
+        &[
+            ("SP_PLANTITEMID", text),
+            ("PIPINGPOINTNUMBER", Number),
+            ("FLOWDIRECTION", Number),
+            ("NOMINALDIAMETER", Number),
+        ],
+        &[
+            &[Text("E"), ONE, TWO, HUNDRED],
+            &[Text("P"), ONE, Null, Null],
+        ],
+    ));
+    dump.extend(exp_table(
+        "T_SIGNALPOINT",
+        &[("SP_PLANTITEMID", text), ("SIGNALPOINTNUMBER", Number)],
+        &[&[Text("E"), TWO]],
+    ));
+    dump.extend(exp_table(
+        "T_CONNECTOR",
+        &[
+            ("SP_ID", text),
+            ("SP_CONNECTITEM1ID", text),
+            ("SP_CONNECTITEM2ID", text),
+            ("STARTOBJECT", Number),
+            ("ENDOBJECT", Number),
+        ],
+        &[&[Text("C"), Text("RE"), Text("RO"), ONE, Null]],
+    ));
+    dump.extend(exp_table(
+        "T_REPRESENTATION",
+        &[
+            ("SP_ID", text),
+            ("SP_MODELITEMID", text),
+            ("SP_DRAWINGID", text),
+            ("REPRESENTATIONTYPE", Number),
+            ("GRAPHICOID", Number),
+            ("FILENAME", Bytes),
+            ("DATECREATED", Date),
+        ],
+        &[
+            &[Text("C"), Text("R"), Text("D"), TWO, ONE, Null, A_DATE],
+            &[
+                Text("RE"),
+                Text("E"),
+                Text("D"),
+                TWO,
+                TWO,
+                Raw(b"a.sym"),
+                Null,
+            ],
+            &[Text("RO"), Text("O1"), Text("D"), TWO, HUNDRED, Null, Null],
+            // Representation type 13 is a piping component.
+            &[
+                Text("RP"),
+                Text("P"),
+                Text("D"),
+                Raw(&[0xc1, 0x0e]),
+                Raw(&[0xc1, 0x06]),
+                Null,
+                Null,
+            ],
+        ],
+    ));
+    dump.extend(exp_table(
+        "T_PIPERUN",
+        &[
+            ("SP_ID", text),
+            ("NOMINALDIAMETER", Number),
+            ("OPERFLUIDCODE", Number),
+            ("PIPINGMATERIALSCLASS", text),
+            ("TAGSEQUENCENO", text),
+            ("FLUIDSYSTEM", Number),
+            ("INSULATIONSPEC", text),
+            ("SP_INSULTHICKSI", Number),
+        ],
+        // 0.05 in the last column: one base-100 digit, 5, at exponent -1.
+        &[&[
+            Text("R"),
+            HUNDRED,
+            ONE,
+            Text("B5"),
+            Text("0101"),
+            ONE,
+            Null,
+            Raw(&[0xc0, 0x06]),
+        ]],
+    ));
+    dump.extend(exp_table(
+        "T_SIGNALRUN",
+        &[("SP_ID", text)],
+        &[&[Text("S")]],
+    ));
+    dump.extend(exp_table(
+        "T_OPC",
+        &[
+            ("SP_ID", text),
+            ("SP_PAIREDWITHID", text),
+            ("OPCTAG", text),
+            ("TOFROMTEXT", text),
+            ("MATINGOPCPATH", Bytes),
+        ],
+        &[&[Text("O1"), Text("O0"), Text("565"), Null, Raw(b"p")]],
+    ));
+    dump.extend(exp_table(
+        "T_NOZZLE",
+        &[("SP_ID", text), ("SP_EQUIPMENTID", text)],
+        &[&[Text("N"), Text("E")]],
+    ));
+    dump.extend(exp_table(
+        "T_NOTE",
+        &[
+            ("SP_ITEMNOTEID", text),
+            ("SP_MODELITEMID", text),
+            ("BODY", Bytes),
+        ],
+        &[&[Text("T"), Text("E"), Raw(b"a\r\nb")]],
+    ));
+    dump.extend(exp_table("T_ITEMNOTE", &[("SP_ID", text)], &[&[Text("T")]]));
+    dump.extend(exp_table(
+        "T_MODELITEM",
+        &[
+            ("SP_ID", text),
+            ("DESCRIPTION", text),
+            ("ITEMTYPENAME", text),
+        ],
+        &[
+            &[Text("P"), Null, Text("PipingComp")],
+            &[Text("O1"), Text("to G"), Text("OPC")],
+        ],
+    ));
+    dump.extend(exp_table(
+        "T_PLANTITEM",
+        &[("SP_ID", text), ("ITEMTAG", text)],
+        &[&[Text("R"), Text("OD-50")]],
+    ));
+    dump.extend(exp_table(
+        "T_INLINECOMP",
+        &[("SP_ID", text), ("NOMINALDIAMETER", Number)],
+        &[&[Text("P"), Raw(&[0xc1, 0x1a])]],
+    ));
+    dump.extend(exp_table(
+        "CODELISTS",
+        &[
+            ("CODELIST_NUMBER", Number),
+            ("CODELIST_INDEX", Number),
+            ("CODELIST_SHORT_TEXT", text),
+        ],
+        &[&[Raw(&[0xc1, 0x14]), ONE, Text("OD")]],
+    ));
+    dump.extend(exp_table(
+        "T_DRAWING",
+        &[
+            ("SP_ID", text),
+            ("NAME", text),
+            ("PATH", text),
+            ("DRAWINGNUMBER", text),
+            ("SP_PLANTGROUPID", text),
+            ("DATECREATED", Date),
+        ],
+        &[&[
+            Text("D"),
+            Text("One"),
+            Text("\\00\\One.pid"),
+            Null,
+            Text("G"),
+            A_DATE,
+        ]],
+    ));
+    dump.extend(exp_table(
+        "T_PLANTGROUP",
+        &[
+            ("SP_ID", text),
+            ("NAME", text),
+            ("PARENTID", text),
+            ("DIR_PATH", Bytes),
+        ],
+        &[&[Text("G"), Text("Plant"), Text("-1"), Raw(b"d")]],
+    ));
+    dump
+}
+
+/// Append Oracle `exp` dumps that clear the `APPLICATIONS` pin.
+///
+/// The publish readers refuse a dump until its first table pins the row
+/// format, so nothing else in the corpus gets them past that table. The
+/// whole dump goes in, and so does one whose pinned table is followed by a
+/// port table that lies about its row: a length prefix past the end.
+fn push_exp_dump_bait(out: &mut Vec<Vec<u8>>) {
+    let dump = exp_dump();
+    let mut runaway_cell = exp_table(
+        "APPLICATIONS",
+        &[
+            ("ID", ExpKind::Number),
+            ("NAME", ExpKind::Text),
+            ("SHORTNAME", ExpKind::Text),
+        ],
+        &[&[
+            ExpCell::Raw(&[0xc1, 0x02]),
+            ExpCell::Text("SmartPlant PID"),
+            ExpCell::Text("SPPID"),
+        ]],
+    );
+    runaway_cell.extend(exp_table(
+        "T_PIPINGPOINT",
+        &[("SP_PLANTITEMID", ExpKind::Text)],
+        &[],
+    ));
+    // Replace the end-of-table word with a cell length the dump cannot back.
+    let end = runaway_cell.len() - 2;
+    runaway_cell[end..].copy_from_slice(&0x0FA0u16.to_le_bytes());
+    out.push(dump);
+    out.push(runaway_cell);
 }
 
 /// Append three deterministic xorshift32 pseudo-random byte buffers
@@ -464,6 +784,22 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_attribute_fragment_at(input, input.len());
     }
 
+    // Oracle `exp` dump readers: every public entry that takes the dump.
+    #[cfg(feature = "backup-exp")]
+    {
+        use pid_parse::publish::oracle_exp::{
+            composition_relations, connectivity_ends_for_drawing, opc_points_for_drawing,
+            read_backup_drawings, read_plant_groups, read_port_tables, ExpTables,
+        };
+        let _ = ExpTables::read(input);
+        let _ = read_backup_drawings(input);
+        let _ = read_plant_groups(input);
+        let _ = read_port_tables(input);
+        let _ = composition_relations(input);
+        let _ = connectivity_ends_for_drawing(input, "D");
+        let _ = opc_points_for_drawing(input, "D");
+    }
+
     // Phase 25-A: normalized f64 pair scan + spatial-distribution
     // analysis. `collect_normalized_f64_pairs` is the byte-level entry;
     // chain into `coordinate_pair_spatial_analysis` with degenerate
@@ -510,5 +846,184 @@ fn parsers_do_not_panic_on_truncated_inputs() {
         for k in 0..=max_k {
             exercise_all_parsers(&input[..k]);
         }
+    }
+}
+
+/// Every public way into `publish::oracle_exp` from a dump's bytes, and every
+/// projection of a dump that reads, with the spelling each projected code
+/// goes through on its way to an attribute.
+#[cfg(feature = "backup-exp")]
+fn exercise_exp_readers(dump: &[u8], every_entry: bool) {
+    use std::collections::HashSet;
+
+    use pid_parse::publish::oracle_exp::{
+        composition_relations, connectivity_ends_for_drawing, drawing_in_dump, flow_spelling,
+        nominal_spelling, opc_points_for_drawing, plant_group_path, read_backup_drawings,
+        read_plant_groups, read_port_tables, ExpTables,
+    };
+
+    if let Ok(tables) = ExpTables::read(dump) {
+        if let Ok(ports) = tables.port_tables() {
+            for point in &ports.piping_points {
+                let _ = point.uid();
+                let _ = point.flow_direction.and_then(flow_spelling);
+                let _ = point.nominal_diameter.and_then(nominal_spelling);
+            }
+            for point in &ports.signal_points {
+                let _ = point.uid();
+            }
+        }
+        if let Ok(runs) = tables.pipe_runs() {
+            for run in &runs {
+                let _ = run.nominal_diameter.and_then(nominal_spelling);
+            }
+        }
+        let _ = tables.codelist_short_text(19);
+        let _ = tables.connectivity_ends("D");
+        let _ = tables.composition_relations();
+        let _ = tables.opc_points("D");
+        let _ = tables.drawings();
+        let _ = tables.dump_only_piping_components("D", &HashSet::new());
+        let _ = drawing_in_dump(&tables, "D");
+        let _ = tables.codelist_row_count();
+        let _ = tables.drawing_row_count();
+    }
+    if let Ok(groups) = read_plant_groups(dump) {
+        for group in &groups {
+            let _ = plant_group_path(&groups, &group.id);
+        }
+    }
+    let _ = read_backup_drawings(dump);
+    if every_entry {
+        let _ = read_port_tables(dump);
+        let _ = composition_relations(dump);
+        let _ = connectivity_ends_for_drawing(dump, "D");
+        let _ = opc_points_for_drawing(dump, "D");
+    }
+}
+
+/// Names the damaged dump a panic came from: the test runner prints the
+/// panic's own location, and this adds which damage reached it.
+#[cfg(feature = "backup-exp")]
+struct ExpDamage(String);
+
+#[cfg(feature = "backup-exp")]
+impl Drop for ExpDamage {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("the exp dump that panicked: {}", self.0);
+        }
+    }
+}
+
+/// Whether each byte of `dump` lies outside its `INSERT INTO` lines: in a
+/// binary column header or in a row.
+#[cfg(feature = "backup-exp")]
+fn exp_binary_bytes(dump: &[u8]) -> Vec<bool> {
+    const LINE: &[u8] = b"INSERT INTO";
+    let mut binary = vec![true; dump.len()];
+    let mut from = 0;
+    while let Some(start) = dump[from..]
+        .windows(LINE.len())
+        .position(|window| window == LINE)
+        .map(|at| from + at)
+    {
+        let end = dump[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(dump.len(), |at| start + at + 1);
+        binary[start..end].fill(false);
+        from = end;
+    }
+    binary
+}
+
+/// The shared corpus reaches the `exp` readers' first table and little
+/// beyond it: [`TRUNCATION_SWEEP_LIMIT`] ends inside the `APPLICATIONS`
+/// pin. This sweep starts from a dump every reader gets through
+/// ([`exp_dump`]) and damages it one place at a time:
+///
+/// * every prefix, through every entry;
+/// * in the binary headers and rows, every byte and every 16-bit word
+///   overwritten with the values the row framing and Oracle's `NUMBER` give
+///   a meaning to;
+/// * in the `INSERT INTO` lines, each punctuation character the column-name
+///   reader splits on.
+///
+/// The four entries that load a subset of the tables read the prefixes
+/// only; a byte or word that damages a table reaches the same table reader
+/// through [`ExpTables::read`](pid_parse::publish::oracle_exp::ExpTables::read).
+#[cfg(feature = "backup-exp")]
+#[test]
+fn exp_dump_readers_do_not_panic_on_a_damaged_dump() {
+    use pid_parse::publish::oracle_exp::{read_plant_groups, ExpTables};
+
+    // `0x0c` is the `DATE` column type and `0xff` half of the NULL and
+    // table-end words. `0xca` is the exponent byte of 100^9: an integer cell
+    // under it reads as about 10^18, the far end of `i64`.
+    const BYTES: [u8; 4] = [0x00, 0x0c, 0xca, 0xff];
+    // A zero length, NULL and the table end.
+    const WORDS: [u16; 3] = [0x0000, 0xFFFE, 0xFFFF];
+    const LINE_BYTES: [u8; 2] = [0x00, b')'];
+
+    let dump = exp_dump();
+    let tables = ExpTables::read(&dump).expect("the undamaged dump reads");
+    let ports = tables.port_tables().expect("its ports project");
+    assert_eq!(
+        (ports.piping_points.len(), ports.signal_points.len()),
+        (2, 1)
+    );
+    assert_eq!(tables.pipe_runs().expect("its runs project").len(), 1);
+    assert_eq!(tables.connectivity_ends("D").expect("ends").len(), 2);
+    assert_eq!(tables.composition_relations().expect("rels").len(), 2);
+    assert_eq!(tables.opc_points("D").expect("off-page").len(), 1);
+    assert_eq!(tables.drawings().expect("drawings").len(), 1);
+    assert_eq!(
+        tables
+            .dump_only_piping_components("D", &std::collections::HashSet::new())
+            .expect("components")
+            .len(),
+        1
+    );
+    assert_eq!(read_plant_groups(&dump).expect("groups").len(), 1);
+
+    for end in 0..dump.len() {
+        let damage = ExpDamage(format!("the first {end} of {} bytes", dump.len()));
+        exercise_exp_readers(&dump[..end], true);
+        drop(damage);
+    }
+
+    let binary = exp_binary_bytes(&dump);
+    let mut damaged = dump.clone();
+    for at in 0..dump.len() {
+        let values: &[u8] = if binary[at] {
+            &BYTES
+        } else if dump[at].is_ascii_alphanumeric() || dump[at] == b'_' {
+            &[]
+        } else {
+            &LINE_BYTES
+        };
+        for &value in values {
+            if dump[at] == value {
+                continue;
+            }
+            damaged[at] = value;
+            let damage = ExpDamage(format!("byte {at:#x} set to {value:#04x}"));
+            exercise_exp_readers(&damaged, false);
+            drop(damage);
+        }
+        damaged[at] = dump[at];
+    }
+    for at in 0..dump.len() - 1 {
+        if !(binary[at] && binary[at + 1]) {
+            continue;
+        }
+        for value in WORDS {
+            damaged[at..at + 2].copy_from_slice(&value.to_le_bytes());
+            let damage = ExpDamage(format!("word {at:#x} set to {value:#06x}"));
+            exercise_exp_readers(&damaged, false);
+            drop(damage);
+        }
+        damaged[at..at + 2].copy_from_slice(&dump[at..at + 2]);
     }
 }

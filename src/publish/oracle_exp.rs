@@ -864,7 +864,8 @@ pub fn flow_spelling(code: i64) -> Option<&'static str> {
 ///
 /// Below 5000 the code is millimetres (`25` → `25 mm`). Above 5000,
 /// `(code - 5000) / 32` is inches (`5032` → `1 in`, `5024` → `0.75 in`,
-/// `5384` → `12 in`). A code that does not land on that grid is `None`.
+/// `5384` → `12 in`). A code that does not land on that grid, or is too
+/// large to scale onto it, is `None`.
 #[must_use]
 pub fn nominal_spelling(code: i64) -> Option<String> {
     if (1..5000).contains(&code) {
@@ -873,11 +874,11 @@ pub fn nominal_spelling(code: i64) -> Option<String> {
     if code <= 5000 {
         return None;
     }
-    let ticks = code - 5000;
-    if (ticks * 100) % 32 != 0 {
+    let scaled = (code - 5000).checked_mul(100)?;
+    if scaled % 32 != 0 {
         return None;
     }
-    let hundredths = ticks * 100 / 32;
+    let hundredths = scaled / 32;
     let whole = hundredths / 100;
     let fraction = hundredths % 100;
     let body = if fraction == 0 {
@@ -1222,8 +1223,11 @@ fn read_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
 fn column_names(line: &str) -> Result<Vec<String>, String> {
     let open = line.find('(').ok_or("INSERT has no column list")?;
     let close = line.find(") VALUES").ok_or("INSERT has no VALUES")?;
+    let list = line
+        .get(open + 1..close)
+        .ok_or("INSERT column list does not come before VALUES")?;
     let mut names = Vec::new();
-    for piece in line[open + 1..close].split(',') {
+    for piece in list.split(',') {
         let name = piece.trim().trim_matches('"');
         if name.is_empty() {
             return Err("empty column name".to_string());
@@ -2082,6 +2086,20 @@ mod tests {
         assert_eq!(flow_spelling(9), None);
     }
 
+    // A `NUMBER` cell can hold any integer `i64` does, and the inch grid
+    // multiplies the code before it divides.
+    #[test]
+    fn a_nominal_diameter_code_at_the_far_end_of_i64_is_not_spelled() {
+        assert_eq!(nominal_spelling(i64::MAX), None);
+        assert_eq!(nominal_spelling(1_000_000_000_000_000_000), None);
+        assert_eq!(nominal_spelling(i64::MIN), None);
+        // A large code whose product still fits is spelled like any other.
+        assert_eq!(
+            nominal_spelling(5000 + 32 * 1_000_000).as_deref(),
+            Some("1000000 in")
+        );
+    }
+
     #[test]
     fn oracle_number_samples() {
         assert_eq!(decode_i64(&[0x80]), Some(0));
@@ -2260,6 +2278,12 @@ mod tests {
                 Some(utf16("SPPID")),
             ])],
         )
+    }
+
+    #[test]
+    fn a_column_list_after_values_is_refused_not_a_panic() {
+        assert!(column_names("INSERT INTO \"T_X\" ) VALUES (").is_err());
+        assert!(ExpTables::read(b"INSERT INTO \"APPLICATIONS\" ) VALUES (\n").is_err());
     }
 
     /// The tables [`ExpTables::read`] requires beyond the ones a test
