@@ -270,12 +270,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -285,6 +279,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -358,15 +358,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "DWG-0201GP06-01.pid": {
@@ -856,12 +848,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/JSite204/Sheet6",
-              "type_code": "0x007B",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/JSite204/Sheet6",
               "type_code": "0x0018",
@@ -894,6 +880,12 @@
               "stream": "/JSite39",
               "count": 2,
               "body_primitives": 11
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/JSite204/Sheet6",
+              "family": "igGroup",
+              "count": 1
             },
             {
               "reason": "record_audit_only_family",
@@ -1000,15 +992,7 @@
           "total": 140,
           "written": 140,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/JSite204/Sheet6",
-            "type_code": "0x007B",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {

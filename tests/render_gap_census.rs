@@ -63,10 +63,12 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("D06.pid", 0, 0),
     // Clean since the sub-type layout landed: the 18 text records that used
     // to sit here were all sub-type 1 or 3, refused only because the decoder
-    // looked for their count at sub-type 2's offset. The dropped record is
-    // /JSite204/Sheet6's one 0x007B Group implementation; the two A2 border
-    // rectangles that sat beside it decode since 2026-09-07.
-    ("export-test/publish-data/A01/A01.pid", 0, 1),
+    // looked for their count at sub-type 2's offset. The one dropped record
+    // was /JSite204/Sheet6's 0x007B Group implementation (oid 311), which
+    // decodes since 2026-11-10: it lists the two A2 border rectangles that
+    // sit beside it — oid 295 and oid 114, decoded since 2026-09-07 — and
+    // emits nothing, their edges being lines that already draw.
+    ("export-test/publish-data/A01/A01.pid", 0, 0),
 ];
 
 /// `(fixture, graphic records the native reader skips)`, as `(type code,

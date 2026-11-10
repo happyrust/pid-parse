@@ -8645,6 +8645,514 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 2026-11-10: igComplexString2d and igGroup — the two association records
+// ---------------------------------------------------------------------------
+//
+// Two graphic classes a sheet files curves and rectangles under, neither of
+// which carries a coordinate of its own
+// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+// §2.1, §2.4):
+//
+// * `0x0021` **ComplexString** — a run of curves joined end to end. Its
+//   payload is a style id, a member count and one 14-byte entry per member:
+//   the member's oid, its range box, and a word that is `0x8000` on the
+//   `0x0019 KeyPoint Constraint` records that pin one curve's end to the
+//   next one's start and `0x0000` / `0x0005` on the curves. Every curve
+//   member of the eight sheet records the corpora hold is a live `igLine2d`
+//   or `igArc2d` of the same stream whose owner is the string's oid and
+//   whose layer and style id are the string's — so the members, which decode
+//   and emit on their own, already draw what the string draws, with the pen
+//   the string would draw it with.
+// * `0x007B` **Group** — a count and the same 14-byte entries. The corpora's
+//   five sheet groups each list the two `igRectangle2d` of a border (outer
+//   frame and inner frame), whose owner is the group's oid and whose edges
+//   are `igLine2d` records of their own.
+//
+// Both decode so that they stop being graphic records nothing reads, and
+// both emit nothing: emitting either would draw its members twice.
+
+/// PSM type code for `ComplexString Object` (IGDS class tag `0x21 = 33`): a
+/// run of curves joined end to end.
+pub const PSM_TYPE_CODE_IGCOMPLEXSTRING2D: u16 = 0x0021;
+
+/// PSM type code for `Group implementation` (IGDS class tag `0x7B = 123`): a
+/// set of graphic objects that select and move as one.
+pub const PSM_TYPE_CODE_IGGROUP: u16 = 0x007B;
+
+/// Bytes one member entry takes in either record: `u32 oid`, four `i16` of
+/// range box, a `u16` word.
+pub const ASSOCIATION_MEMBER_LEN: usize = 14;
+
+/// Payload offset of a `ComplexString`'s member count; the entries start
+/// twelve bytes on, after the double.
+const IGCOMPLEXSTRING2D_COUNT_AT: usize = 21;
+/// Payload offset of a `ComplexString`'s first member entry.
+const IGCOMPLEXSTRING2D_MEMBERS_AT: usize = 33;
+/// Payload offset of a Group's member count.
+const IGGROUP_COUNT_AT: usize = 16;
+/// Payload offset of a Group's first member entry.
+const IGGROUP_MEMBERS_AT: usize = 28;
+
+/// The word a `ComplexString` member entry carries when the member is a
+/// constraint between two of its curves rather than a curve.
+pub const IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER: u16 = 0x8000;
+
+/// One member entry of a [`SheetIgComplexString2dDecoded`] or a
+/// [`SheetIgGroupDecoded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SheetAssociationMember {
+    /// Oid of the member record, in the same stream.
+    pub oid: u32,
+    /// The member's range box, `[min x, min y, max x, max y]`, in units of
+    /// 1/32768 m. Measured against the members' own geometry: a Group's
+    /// rectangle and each curve of `D04`'s string (entry word `0x0005`) read
+    /// the bare extent of the curve to within 0.041 mm — an arc's is the box
+    /// of the part it sweeps, not of its circle — while the lines of the
+    /// template strings (entry word `0x0000`) read it grown by half their
+    /// pen on every side: the first edge of `CPECCHB-SQ-A2`'s inner frame,
+    /// from x = 35.354 mm to 586.869 mm at y = 7.071 mm, reads
+    /// `[1135, 208, 19253, 255]`, which is 34.637 .. 587.555 by 6.348 ..
+    /// 7.782 mm.
+    pub range_box: [i16; 4],
+    /// The word that closes the entry. On a `ComplexString` it is
+    /// [`IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER`] for a `KeyPoint Constraint`
+    /// and `0x0000` or `0x0005` for a curve; on a Group, `0x0006` and
+    /// `0x000C` on the corpus. What the low values mean is not decoded.
+    pub word: u16,
+}
+
+/// One decoded `0x0021` `ComplexString` record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgComplexString2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this string sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); zero on the corpus.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`). Every curve member of every
+    /// corpus string carries the same one.
+    pub index: u32,
+    /// The three bytes between the style id and the count (payload `+18`),
+    /// verbatim: `01 06 00` on every corpus record.
+    pub head: [u8; 3],
+    /// The double after the count (payload `+25`); `1.0` on every corpus
+    /// record.
+    pub head_double: f64,
+    /// The members, in on-disk order: the curves first, then the constraints
+    /// that join them.
+    pub members: Vec<SheetAssociationMember>,
+    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
+    /// sheet.
+    pub trailing: Vec<u8>,
+}
+
+impl SheetIgComplexString2dDecoded {
+    /// The members that are curves, in order.
+    pub fn curve_members(&self) -> impl Iterator<Item = &SheetAssociationMember> {
+        self.members
+            .iter()
+            .filter(|member| member.word != IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER)
+    }
+}
+
+/// One decoded `0x007B` Group record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgGroupDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the group sits on (payload `+8`); zero on
+    /// the corpus — a group is on no layer of its own.
+    pub sheet_layer_ref: u32,
+    /// The `u32` at payload `+12`, verbatim; zero on the corpus.
+    pub head: u32,
+    /// The double after the count (payload `+20`); `1.0` on every corpus
+    /// record.
+    pub head_double: f64,
+    /// The members, in on-disk order.
+    pub members: Vec<SheetAssociationMember>,
+    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
+    /// sheet.
+    pub trailing: Vec<u8>,
+}
+
+/// `count` member entries from `payload[at..]`, or `None` when the payload
+/// is too short to hold them.
+fn association_members(
+    payload: &[u8],
+    at: usize,
+    count: usize,
+) -> Option<Vec<SheetAssociationMember>> {
+    let end = at.checked_add(count.checked_mul(ASSOCIATION_MEMBER_LEN)?)?;
+    let (entries, _) = payload.get(at..end)?.as_chunks::<ASSOCIATION_MEMBER_LEN>();
+    Some(
+        entries
+            .iter()
+            .map(|entry| {
+                let i16_at = |i: usize| i16::from_le_bytes([entry[i], entry[i + 1]]);
+                SheetAssociationMember {
+                    oid: u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]),
+                    range_box: [i16_at(4), i16_at(6), i16_at(8), i16_at(10)],
+                    word: u16::from_le_bytes([entry[12], entry[13]]),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Decode every `ComplexString` record on a record-chain stream.
+///
+/// At each record the chain starts: type code
+/// [`PSM_TYPE_CODE_IGCOMPLEXSTRING2D`]; a member count of at least one whose
+/// entries the payload has room for; a finite double before them. The count
+/// is bounded by the payload, not by a constant: a string is as long as the
+/// record that holds it.
+pub fn decode_igcomplexstrings(data: &[u8]) -> Vec<SheetIgComplexString2dDecoded> {
+    IgComplexString2dDecoder.scan(data)
+}
+
+/// Try to decode one `ComplexString` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igcomplexstring_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetIgComplexString2dDecoded> {
+    IgComplexString2dDecoder.decode_at(data, offset)
+}
+
+/// Decode every Group record on a record-chain stream.
+///
+/// At each record the chain starts: type code [`PSM_TYPE_CODE_IGGROUP`]; a
+/// member count of at least one whose entries the payload has room for; a
+/// finite double before them.
+pub fn decode_iggroups(data: &[u8]) -> Vec<SheetIgGroupDecoded> {
+    IgGroupDecoder.scan(data)
+}
+
+/// Try to decode one Group record at `offset`. `None` on any validation
+/// failure; panic-free on arbitrary input.
+pub fn decode_iggroup_at(data: &[u8], offset: usize) -> Option<SheetIgGroupDecoded> {
+    IgGroupDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0021` `ComplexString`.
+pub struct IgComplexString2dDecoder;
+
+impl PsmRecordDecoder for IgComplexString2dDecoder {
+    type Record = SheetIgComplexString2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGCOMPLEXSTRING2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGCOMPLEXSTRING2D_MEMBERS_AT + ASSOCIATION_MEMBER_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgComplexString2dDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGCOMPLEXSTRING2D {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(usize::try_from(header.bytes_to_follow).ok()?)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let head = <[u8; 3]>::try_from(payload.get(CURVE_GEOMETRY_AT..IGCOMPLEXSTRING2D_COUNT_AT)?)
+            .ok()?;
+        let count = usize::try_from(u32_le(payload, IGCOMPLEXSTRING2D_COUNT_AT)?).ok()?;
+        let head_double = f64_le(payload, IGCOMPLEXSTRING2D_COUNT_AT + 4)?;
+        if count == 0 || !head_double.is_finite() {
+            return None;
+        }
+        let members = association_members(payload, IGCOMPLEXSTRING2D_MEMBERS_AT, count)?;
+        let trailing = payload
+            .get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
+            .to_vec();
+        Some(SheetIgComplexString2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            head,
+            head_double,
+            members,
+            trailing,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgComplexString2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x007B` Group.
+pub struct IgGroupDecoder;
+
+impl PsmRecordDecoder for IgGroupDecoder {
+    type Record = SheetIgGroupDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGGROUP
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGGROUP_MEMBERS_AT + ASSOCIATION_MEMBER_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgGroupDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGGROUP {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(usize::try_from(header.bytes_to_follow).ok()?)?;
+        let payload = data.get(header.body_start..end)?;
+        let count = usize::try_from(u32_le(payload, IGGROUP_COUNT_AT)?).ok()?;
+        let head_double = f64_le(payload, IGGROUP_COUNT_AT + 4)?;
+        if count == 0 || !head_double.is_finite() {
+            return None;
+        }
+        let members = association_members(payload, IGGROUP_MEMBERS_AT, count)?;
+        let trailing = payload
+            .get(IGGROUP_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
+            .to_vec();
+        Some(SheetIgGroupDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: u32_le(payload, 0)?,
+            parent_ref: u32_le(payload, 4)?,
+            sheet_layer_ref: u32_le(payload, 8)?,
+            head: u32_le(payload, 12)?,
+            head_double,
+            members,
+            trailing,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgGroupDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+#[cfg(test)]
+mod association_family_tests {
+    use super::*;
+
+    /// `CPECCHB-SQ-A2.igr`'s `/Sheet6 +2326`, oid 67, payload verbatim: a
+    /// string of two lines — the title block's top edge and its left edge —
+    /// and the one constraint that joins them.
+    const STRING_OF_TWO: [u8; 79] = [
+        0x43, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xf0, 0x3f, 0x44, 0x00, 0x00, 0x00, 0xb3, 0x31, 0x39, 0x0e, 0x30, 0x4b, 0x60, 0x0e,
+        0x00, 0x00, 0x45, 0x00, 0x00, 0x00, 0xb3, 0x31, 0xed, 0xff, 0xd9, 0x31, 0x60, 0x0e, 0x00,
+        0x00, 0x46, 0x00, 0x00, 0x00, 0xc6, 0x31, 0x4c, 0x0e, 0xc7, 0x31, 0x4d, 0x0e, 0x00, 0x80,
+        0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// `A01.pid`'s `/JSite204/Sheet6 +2872`, oid 311, payload verbatim: the
+    /// group of the embedded border's two rectangles.
+    const GROUP_OF_TWO: [u8; 60] = [
+        0x37, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x27, 0x01,
+        0x00, 0x00, 0x33, 0x03, 0x47, 0x01, 0xc0, 0x4a, 0x7b, 0x34, 0x0c, 0x00, 0x72, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x4c, 0xc2, 0x35, 0x06, 0x00, 0x00, 0x02, 0x00, 0x00,
+    ];
+
+    fn framed(type_code: u16, payload: &[u8]) -> Vec<u8> {
+        let mut record = Vec::new();
+        record.extend_from_slice(&type_code.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(payload);
+        record
+    }
+
+    #[test]
+    fn a_complex_string_lists_its_curves_and_the_constraints_between_them() {
+        let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let decoded = decode_igcomplexstrings(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let string = &decoded[0];
+        assert_eq!(
+            string.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+        assert_eq!(
+            (string.oid, string.parent_ref, string.sheet_layer_ref),
+            (67, 6, 8)
+        );
+        assert_eq!((string.sub_type_word, string.index), (0, 12));
+        assert_eq!(string.head, [0x01, 0x06, 0x00]);
+        assert_eq!(string.head_double, 1.0);
+        assert_eq!(
+            string.members,
+            vec![
+                SheetAssociationMember {
+                    oid: 68,
+                    range_box: [12723, 3641, 19248, 3680],
+                    word: 0,
+                },
+                SheetAssociationMember {
+                    oid: 69,
+                    range_box: [12723, -19, 12761, 3680],
+                    word: 0,
+                },
+                SheetAssociationMember {
+                    oid: 70,
+                    range_box: [12742, 3660, 12743, 3661],
+                    word: IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER,
+                },
+            ]
+        );
+        assert_eq!(
+            string.curve_members().map(|m| m.oid).collect::<Vec<_>>(),
+            vec![68, 69]
+        );
+        assert_eq!(string.trailing, [0x00, 0x02, 0x00, 0x00]);
+        // The box is the member's range in 1/32768 m: oid 68 is the line
+        // from x = 586.869 mm to 388.889 mm at y = 111.717 mm.
+        let metres = |units: i16| f64::from(units) / 32768.0;
+        assert!((metres(12723) - 0.388_889).abs() < 0.001);
+        assert!((metres(19248) - 0.586_869).abs() < 0.001);
+        assert!((metres(3660) - 0.111_717).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_group_lists_its_members() {
+        let record = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        let decoded = decode_iggroups(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let group = &decoded[0];
+        assert_eq!(
+            (group.oid, group.parent_ref, group.sheet_layer_ref),
+            (311, 6, 0)
+        );
+        assert_eq!((group.head, group.head_double), (0, 1.0));
+        assert_eq!(
+            group.members,
+            vec![
+                SheetAssociationMember {
+                    oid: 295,
+                    range_box: [819, 327, 19136, 13435],
+                    word: 0x000c,
+                },
+                SheetAssociationMember {
+                    oid: 114,
+                    range_box: [0, 0, 19464, 13762],
+                    word: 0x0006,
+                },
+            ]
+        );
+        assert_eq!(group.trailing, [0x00, 0x02, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn neither_reads_the_other_or_a_record_of_another_type() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let group = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        assert!(decode_iggroup_at(&string, 0).is_none());
+        assert!(decode_igcomplexstring_at(&group, 0).is_none());
+        let line = framed(PSM_TYPE_CODE_IGLINE2D, &STRING_OF_TWO);
+        assert!(decode_igcomplexstring_at(&line, 0).is_none());
+        assert!(decode_iggroup_at(&line, 0).is_none());
+    }
+
+    #[test]
+    fn a_count_the_payload_cannot_hold_is_refused() {
+        // Four members claimed where the payload has entries for three.
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT] = 4;
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        // No member at all is not a string.
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT] = 0;
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT] = 3;
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT] = 0;
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn a_non_finite_double_before_the_members_is_refused() {
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT + 4..IGCOMPLEXSTRING2D_COUNT_AT + 12]
+            .copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT + 4..IGGROUP_COUNT_AT + 12]
+            .copy_from_slice(&f64::INFINITY.to_le_bytes());
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn a_record_the_native_reader_skips_is_not_decoded() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D | 0x8000, &STRING_OF_TWO);
+        assert!(decode_igcomplexstring_at(&string, 0).is_none());
+        let group = framed(PSM_TYPE_CODE_IGGROUP | 0x8000, &GROUP_OF_TWO);
+        assert!(decode_iggroup_at(&group, 0).is_none());
+    }
+
+    #[test]
+    fn both_survive_truncation_and_noise() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let group = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        for cut in 0..string.len() {
+            assert!(decode_igcomplexstring_at(&string[..cut], 0).is_none());
+            assert!(decode_igcomplexstrings(&chain_stream(&string[..cut])).is_empty());
+        }
+        for cut in 0..group.len() {
+            assert!(decode_iggroup_at(&group[..cut], 0).is_none());
+            assert!(decode_iggroups(&chain_stream(&group[..cut])).is_empty());
+        }
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igcomplexstrings(&noise);
+        let _ = decode_iggroups(&noise);
+        for at in 0..noise.len() {
+            let _ = decode_igcomplexstring_at(&noise, at);
+            let _ = decode_iggroup_at(&noise, at);
+        }
+        assert!(decode_igcomplexstrings(&[]).is_empty());
+        assert!(decode_iggroups(&[]).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod rectangle_and_bspline_tests {
     use super::*;

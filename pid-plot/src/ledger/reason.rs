@@ -104,7 +104,10 @@ pub enum DropReason {
     CacheDefinitionUnplaced,
     /// A decoded record whose family registers a deliberate no-op emitter in
     /// `EMITTERS`: `igSmartFrame2d`, `DependencyObject`, the `0x0010`
-    /// sub-records, the attribute fragments, `igRectangle2d`, `igDimension`.
+    /// sub-records, the attribute fragments, `igRectangle2d`, `igDimension`,
+    /// and the two associations whose strokes are the records they list —
+    /// `igComplexString2d` (its `igLine2d` / `igArc2d` curves) and `igGroup`
+    /// (its `igRectangle2d` members).
     RecordAuditOnlyFamily,
     /// A decoded record whose byte range falls outside the stream it was read
     /// from: each emitter's `source_range(..)` returned `None` and it

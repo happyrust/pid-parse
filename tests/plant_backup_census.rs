@@ -48,10 +48,21 @@ fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Records no decoder claims, by type code, over every sheet stream of the
-/// 53 drawings: `D04`'s one `ComplexString` — an association whose six
-/// stroke members draw on their own — and the five `KeyPoint Constraint`s
-/// it lists beside them.
-const UNDECODED: &[(u16, usize)] = &[(0x0019, 5), (0x0021, 1)];
+/// 53 drawings: the five `KeyPoint Constraint`s of `D04`'s one
+/// `ComplexString`. A constraint is not a graphic object — the native
+/// graphic predicate turns its type code away — and what it constrains, one
+/// curve's end to the next one's start, the curves' own coordinates already
+/// state.
+///
+/// The `ComplexString` itself (`0x0021`, one record) was on this list until
+/// the family decoded.
+const UNDECODED: &[(u16, usize)] = &[(0x0019, 5)];
+
+/// The `ComplexString` records on the 53 drawings' sheets, as `(drawing,
+/// oid, curve members, members)`: `D04`'s `/Sheet6` oid 62, a closed run of
+/// four arcs and two lines — 2.6 mm by 7.0 mm at (161.6, 213.5) mm — with
+/// the five constraints that join them.
+const COMPLEX_STRINGS: &[(&str, u32, usize, usize)] = &[("D04", 62, 6, 11)];
 
 /// Records a decoder refused: none.
 ///
@@ -110,6 +121,8 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     let mut smart_frames = 0usize;
     // Records of the three families no sheet chain carries a type code for.
     let mut chainless = 0usize;
+    let mut complex_strings: Vec<(String, u32, usize, usize)> = Vec::new();
+    let mut groups = 0usize;
     for path in &pids {
         let doc = PidParser::new()
             .parse_file(path)
@@ -122,6 +135,40 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
             chainless += geometry.decoded_jstyle_overrides.len()
                 + geometry.decoded_sub_records_0x0010.len()
                 + geometry.decoded_attribute_fragments.len();
+            groups += geometry.decoded_iggroups.len();
+            for string in &geometry.decoded_igcomplexstrings {
+                // A string states no coordinate; each curve it lists is a
+                // line or an arc of this sheet that names it as its owner,
+                // on its layer, in its style.
+                for oid in string.curve_oids() {
+                    let line = geometry
+                        .decoded_iglines
+                        .iter()
+                        .find(|line| line.oid == oid)
+                        .map(|line| (line.parent_ref, line.sheet_layer_ref, line.index));
+                    let arc = geometry
+                        .decoded_igarcs
+                        .iter()
+                        .find(|arc| arc.oid == oid)
+                        .map(|arc| (arc.parent_ref, arc.sheet_layer_ref, arc.index));
+                    assert_eq!(
+                        line.or(arc),
+                        Some((string.oid, string.sheet_layer_ref, string.index)),
+                        "{} {}: curve member {oid} of the ComplexString oid {}",
+                        path.display(),
+                        sheet.path,
+                        string.oid
+                    );
+                }
+                complex_strings.push((
+                    path.file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    string.oid,
+                    string.curve_oids().count(),
+                    string.members.len(),
+                ));
+            }
             for row in &geometry.undecoded_type_codes {
                 *undecoded.entry(row.type_code).or_default() += row.count;
             }
@@ -164,6 +211,25 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
         REFUSED.iter().copied().collect(),
         "refused records by type code"
     );
+    assert_eq!(
+        complex_strings,
+        COMPLEX_STRINGS
+            .iter()
+            .map(|&(drawing, oid, curves, members)| (drawing.to_string(), oid, curves, members))
+            .collect::<Vec<_>>(),
+        "ComplexString records on the sheets' chains"
+    );
+    // The members that are not curves are the constraints the census counts:
+    // nothing else on the 53 sheets goes undecoded.
+    assert_eq!(
+        complex_strings
+            .iter()
+            .map(|(_, _, curves, members)| members - curves)
+            .sum::<usize>(),
+        undecoded.get(&0x0019).copied().unwrap_or(0),
+        "a ComplexString's constraint members against the undecoded KeyPoint Constraints"
+    );
+    assert_eq!(groups, 0, "Group records on the sheets' chains");
     assert_eq!(
         skipped,
         SKIPPED.iter().copied().collect(),

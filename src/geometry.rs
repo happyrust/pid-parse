@@ -2434,6 +2434,8 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &AttributeFragmentEmitter,
     &IgRectangle2dEmitter,
     &IgDimensionEmitter,
+    &IgComplexString2dEmitter,
+    &IgGroupEmitter,
 ];
 
 /// `(family name, is_no_op)` for every registered emitter, in table
@@ -3503,6 +3505,64 @@ impl GeometryEmitter for IgRectangle2dEmitter {
     }
 }
 
+/// No-op emitter: a `ComplexString` (PSM `0x0021`) is a run of curves joined
+/// end to end, and it states none of their coordinates. Each curve it lists
+/// is an `igLine2d` or `igArc2d` of the same stream that names the string as
+/// its owner and carries its layer and style id, and each emits on its own
+/// with the pen the string states; emitting the string too would draw them
+/// twice. The vendor strokes the string as one path — the inner frame of
+/// `CPECCHB-SQ-A2` is one five-point path in 轻烃分离器I's reference plot —
+/// and the same ink results from the members' strokes wherever the page
+/// rounds its line ends, as that plot does (`1 J 1 j`)
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §10.4).
+struct IgComplexString2dEmitter;
+
+impl GeometryEmitter for IgComplexString2dEmitter {
+    fn family(&self) -> &'static str {
+        "igComplexString2d"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
+    }
+}
+
+/// No-op emitter: a Group (PSM `0x007B`) is a set of graphic objects that
+/// select and move as one. The corpus's five sheet groups each list the two
+/// `igRectangle2d` of a border, and a rectangle's strokes are the `igLine2d`
+/// edges it lists in turn — records of the same stream that emit on their
+/// own.
+struct IgGroupEmitter;
+
+impl GeometryEmitter for IgGroupEmitter {
+    fn family(&self) -> &'static str {
+        "igGroup"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
+    }
+}
+
 /// No-op emitter: an `igDimension` / `JDim` (PSM `0x0115`) is a driving
 /// dimension of a parametric symbol definition — a value the body is
 /// resized by, not a stroke of it. The file agrees: every corpus record
@@ -4057,6 +4117,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4165,6 +4227,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4312,6 +4376,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4411,6 +4477,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4481,6 +4549,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4571,6 +4641,8 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

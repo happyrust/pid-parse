@@ -2688,9 +2688,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -2754,15 +2754,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/O井场 注采阀组工艺及自控流程图.pid": {
@@ -2961,9 +2953,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3027,15 +3019,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/P井场 注采阀组工艺及自控流程图.pid": {
@@ -3228,9 +3212,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3294,15 +3278,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/Q井场 注采阀组工艺及自控流程图.pid": {
@@ -3481,9 +3457,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3547,15 +3523,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/集注站 低压气及轻烃处理单元 轻烃分离器一工艺及自控流程图.pid": {
@@ -11098,12 +11066,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -11113,6 +11075,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -11186,15 +11154,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid": {
@@ -11349,12 +11309,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -11364,6 +11318,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -11437,15 +11397,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "00/02/集注站 凝析油一级闪蒸分离器B气相出口改造工艺及自控流程图.pid": {
@@ -11774,12 +11726,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -11789,6 +11735,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -11862,15 +11814,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D01.pid": {
@@ -12014,12 +11958,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12029,6 +11967,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12102,15 +12046,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D03.pid": {
@@ -12184,12 +12120,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12199,6 +12129,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12272,15 +12208,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D04.pid": {
@@ -12297,12 +12225,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/Sheet6",
               "type_code": "0x00CE",
@@ -12318,6 +12240,12 @@
               "stream": "/JSite489",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 1
             },
             {
               "reason": "record_audit_only_family",
@@ -12413,25 +12341,11 @@
             "segment_too_short": 3
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
           "items": [
-            {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
             {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
@@ -12442,6 +12356,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12515,15 +12435,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D06.pid": {
@@ -12658,12 +12570,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12673,6 +12579,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12746,15 +12658,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D07.pid": {
@@ -12911,12 +12815,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12926,6 +12824,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12999,15 +12903,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/TESTDWG-0002TP03-01.pid": {
@@ -13156,12 +13052,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -13171,6 +13061,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -13244,15 +13140,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     }
   }

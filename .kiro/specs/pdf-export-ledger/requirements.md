@@ -256,7 +256,7 @@
 | `sheet_stream_without_geometry` | 可疑 | `SheetStream::geometry` 为 `None` 且流长于 8 字节流头：流打不开，或没有任何族解码出记录且探针一无所获；这时该流的三类普查在 `sheet_geometry_from_probe`（`src/streams/cluster.rs`）里一并丢掉。只有流头（魔数 + 记录数）的流不含记录，没有东西可丢，不记（2026-11-10 起；此前这样的空流 7 条被记成可疑） | 静默（新发现） |
 | `record_symbol_body_cache` | 有意 | 嵌套 `JSite*/PSMcluster0` 的符号体记录，经引用它的放置画出，本身不是页面内容 | 只有告警文字 |
 | `cache_definition_unplaced` | 有意 | 缓存定义没有任何放置引用（例如参数化符号缓存的模板体），其记录不上页 | 未计数（新发现） |
-| `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |
+| `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension`，以及笔画由所列成员记录画出的两种关联记录 `igComplexString2d`（成员是 `igLine2d` / `igArc2d`）与 `igGroup`（成员是 `igRectangle2d`） | 未计数（新发现） |
 | `record_emitter_out_of_range` | 可疑 | 已解码记录的字节范围超出所属流：每个发射器在 `source_range(..)` 为 `None` 时 `continue` | 静默（新发现） |
 | `record_emitter_shape_rejected` | 可疑 | 发射器拒绝已解码记录：`igLineString2d` 的 x/y 顶点数不等，或全重合却没有顶点；`igBoundary2d` 环点少于 3；`igBspCurve2d` 采样少于 2 点 | 静默（新发现） |
 

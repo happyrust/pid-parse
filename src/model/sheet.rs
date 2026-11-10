@@ -206,6 +206,28 @@ pub struct SheetGeometry {
     /// (`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igdimensions: Vec<DecodedIgDimensionRecord>,
+    /// PSM `0x0021` `ComplexString` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igcomplexstrings`]: a run of
+    /// curves joined end to end.
+    ///
+    /// Audit only. A string states no coordinate: it lists its curves by
+    /// oid, and each is an `igLine2d` or `igArc2d` of the same stream that
+    /// names the string as its owner, sits on its layer and carries its
+    /// style id — so the members, decoded and emitted on their own, draw
+    /// what the string draws
+    /// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    /// §10.4).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igcomplexstrings: Vec<DecodedIgComplexString2dRecord>,
+    /// PSM `0x007B` Group records emitted by
+    /// [`crate::parsers::sheet_records::decode_iggroups`]: graphic objects
+    /// that select and move as one.
+    ///
+    /// Audit only, for the reason a rectangle is: the corpus's groups list
+    /// `igRectangle2d` records, whose strokes are the `igLine2d` edges those
+    /// list in turn.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_iggroups: Vec<DecodedIgGroupRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
@@ -1086,6 +1108,116 @@ impl From<crate::parsers::sheet_records::SheetIgRectangle2dDecoded> for DecodedI
             rotation: d.rotation,
             aspect: d.aspect,
             edges: d.edges,
+        }
+    }
+}
+
+/// One member entry of a [`DecodedIgComplexString2dRecord`] or a
+/// [`DecodedIgGroupRecord`], mirroring
+/// [`crate::parsers::sheet_records::SheetAssociationMember`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedAssociationMember {
+    /// Oid of the member record, in the same stream.
+    pub oid: u32,
+    /// The member's range box, `[min x, min y, max x, max y]`, in units of
+    /// 1/32768 m.
+    pub range_box: [i16; 4],
+    /// The word that closes the entry: `0x8000` on a `ComplexString`'s
+    /// `KeyPoint Constraint` members, a small value otherwise.
+    pub word: u16,
+}
+
+impl From<crate::parsers::sheet_records::SheetAssociationMember> for DecodedAssociationMember {
+    fn from(m: crate::parsers::sheet_records::SheetAssociationMember) -> Self {
+        Self {
+            oid: m.oid,
+            range_box: m.range_box,
+            word: m.word,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgComplexString2dDecoded`] -- PSM
+/// type `0x0021` `ComplexString`, a run of curves joined end to end.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgComplexString2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this string sits on.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / style reference; every curve member carries the same one.
+    pub index: u32,
+    /// The members, in on-disk order: the curves, then the constraints that
+    /// join them.
+    pub members: Vec<DecodedAssociationMember>,
+}
+
+impl DecodedIgComplexString2dRecord {
+    /// Oids of the members that are curves, in order.
+    pub fn curve_oids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.members
+            .iter()
+            .filter(|member| {
+                member.word != crate::parsers::sheet_records::IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER
+            })
+            .map(|member| member.oid)
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetIgComplexString2dDecoded>
+    for DecodedIgComplexString2dRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetIgComplexString2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            members: d.members.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgGroupDecoded`] -- PSM type
+/// `0x007B` Group, graphic objects that select and move as one.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgGroupRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the group sits on; zero on the corpus.
+    pub sheet_layer_ref: u32,
+    /// The members, in on-disk order.
+    pub members: Vec<DecodedAssociationMember>,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgGroupDecoded> for DecodedIgGroupRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgGroupDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            members: d.members.into_iter().map(Into::into).collect(),
         }
     }
 }

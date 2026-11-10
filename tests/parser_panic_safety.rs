@@ -47,9 +47,10 @@ use pid_parse::parsers::sheet_records::{
     decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
     decode_dependency_objects, decode_double_value_at, decode_double_values, decode_igarc_at,
     decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
-    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igdimension_at,
-    decode_igdimensions, decode_igellipse_at, decode_igellipses, decode_igellipticalarc_at,
-    decode_igellipticalarcs, decode_igline_at, decode_iglines, decode_iglinestring_at,
+    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at,
+    decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions, decode_igellipse_at,
+    decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at,
+    decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
     decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
     decode_igrectangles, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
     decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
@@ -427,6 +428,20 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_igrectangle_at(input, input.len());
         let _ = decode_igbspcurve_at(input, input.len() - 1);
         let _ = decode_igbspcurve_at(input, input.len());
+    }
+
+    // `0x0021` ComplexString and `0x007B` Group: both read a member count
+    // and that many 14-byte entries, so a count the payload cannot hold
+    // must reject the record rather than index past it.
+    let _ = decode_igcomplexstrings(input);
+    let _ = decode_iggroups(input);
+    let _ = decode_igcomplexstring_at(input, 0);
+    let _ = decode_iggroup_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_igcomplexstring_at(input, input.len() - 1);
+        let _ = decode_igcomplexstring_at(input, input.len());
+        let _ = decode_iggroup_at(input, input.len() - 1);
+        let _ = decode_iggroup_at(input, input.len());
     }
 
     // PSM `0x003D` igSmartFrame2d decoder. The page a drawing's border
