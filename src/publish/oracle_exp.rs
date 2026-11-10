@@ -2255,7 +2255,7 @@ mod tests {
         let mut out = format!("INSERT INTO \"{name}\" ({listed}) VALUES\n").into_bytes();
         out.extend(u16::try_from(columns.len()).unwrap().to_le_bytes());
         for column in columns {
-            let kind = if column.kind == DB_CHAR {
+            let kind = if column.kind == DB_CHAR || column.kind == NATIONAL_UTF8 {
                 1
             } else {
                 column.kind
@@ -2268,6 +2268,9 @@ mod tests {
             } else if column.kind == DB_CHAR {
                 out.extend(852u16.to_le_bytes());
                 out.extend(1u16.to_le_bytes());
+            } else if column.kind == NATIONAL_UTF8 {
+                out.extend(871u16.to_le_bytes());
+                out.extend(CHARSET_FORM.to_le_bytes());
             }
         }
         out.extend([0, 0, 0, 0]);
@@ -2299,6 +2302,18 @@ mod tests {
         Col {
             name,
             kind: DB_CHAR,
+        }
+    }
+
+    /// Header kind the fixture writes as a national character column whose
+    /// character set is UTF8 (charset 871, form 2): the form AL16UTF16 text
+    /// carries, under another charset id.
+    const NATIONAL_UTF8: u16 = 0x0201;
+
+    fn ch_national_utf8(name: &'static str) -> Col {
+        Col {
+            name,
+            kind: NATIONAL_UTF8,
         }
     }
 
@@ -2494,6 +2509,114 @@ mod tests {
         let error = read_port_tables(&dump).unwrap_err().to_string();
         assert!(error.contains("T_PIPINGPOINT"), "{error}");
         assert!(error.contains("SP_PLANTITEMID"), "{error}");
+        assert!(error.contains("not AL16UTF16"), "{error}");
+    }
+
+    // The header's form says national text; only charset id 2000 says
+    // UTF-16. A database whose national character set is UTF8 writes form 2
+    // under id 871, and its bytes read as UTF-16 would publish a tag
+    // sequence nobody wrote.
+    #[test]
+    fn national_text_in_another_charset_is_kept_unread() {
+        let mut columns = pipe_run_columns();
+        columns[4] = ch_national_utf8("TAGSEQUENCENO");
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &columns,
+            &[row(&[
+                Some(utf16("RUN1")),
+                None,
+                None,
+                None,
+                Some(b"0101".to_vec()),
+                None,
+                None,
+            ])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let error = tables.pipe_runs().unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "T_PIPERUN: column TAGSEQUENCENO is not AL16UTF16 text; its cells were not read"
+        );
+    }
+
+    // A port table answers for its columns before any row is read: a table
+    // with no rows still has to carry them, and a column that was not read
+    // is reported as that, not as a row whose cell is empty.
+    #[test]
+    fn a_port_table_answers_for_its_columns_before_its_rows() {
+        let ports = |piping: Vec<u8>, signal: Vec<u8>| {
+            let mut dump = pinned();
+            dump.extend(piping);
+            dump.extend(signal);
+            read_port_tables(&dump)
+                .map(|tables| (tables.piping_points.len(), tables.signal_points.len()))
+        };
+        let piping_columns = [
+            ch("SP_PLANTITEMID"),
+            num("PIPINGPOINTNUMBER"),
+            num("FLOWDIRECTION"),
+            num("NOMINALDIAMETER"),
+        ];
+        let signal_columns = [ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")];
+        let no_piping = || table("T_PIPINGPOINT", &piping_columns, &[]);
+        let no_signal = || table("T_SIGNALPOINT", &signal_columns, &[]);
+        assert_eq!(
+            ports(no_piping(), no_signal()).expect("two empty tables"),
+            (0, 0)
+        );
+
+        let refused = |piping: Vec<u8>, signal: Vec<u8>| {
+            ports(piping, signal)
+                .expect_err("the port tables were accepted")
+                .to_string()
+        };
+        for (missing, column) in piping_columns.iter().enumerate() {
+            let mut short = piping_columns.to_vec();
+            short.remove(missing);
+            assert_eq!(
+                refused(table("T_PIPINGPOINT", &short, &[]), no_signal()),
+                format!("T_PIPINGPOINT: column {} is missing", column.name)
+            );
+        }
+        for (missing, column) in signal_columns.iter().enumerate() {
+            let mut short = signal_columns.to_vec();
+            short.remove(missing);
+            assert_eq!(
+                refused(no_piping(), table("T_SIGNALPOINT", &short, &[])),
+                format!("T_SIGNALPOINT: column {} is missing", column.name)
+            );
+        }
+
+        let mut unread = piping_columns;
+        unread[0] = ch_db("SP_PLANTITEMID");
+        assert_eq!(
+            refused(
+                table(
+                    "T_PIPINGPOINT",
+                    &unread,
+                    &[row(&[Some(b"AB".to_vec()), Some(one()), None, None])]
+                ),
+                no_signal()
+            ),
+            "T_PIPINGPOINT: column SP_PLANTITEMID is not AL16UTF16 text; its cells were not read"
+        );
+        let mut unread = signal_columns;
+        unread[0] = ch_db("SP_PLANTITEMID");
+        assert_eq!(
+            refused(
+                no_piping(),
+                table(
+                    "T_SIGNALPOINT",
+                    &unread,
+                    &[row(&[Some(b"AB".to_vec()), Some(one())])]
+                )
+            ),
+            "T_SIGNALPOINT: column SP_PLANTITEMID is not AL16UTF16 text; its cells were not read"
+        );
     }
 
     /// One table of [`followed_fixture`]: its name, its columns and its rows.
