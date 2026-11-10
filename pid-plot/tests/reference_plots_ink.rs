@@ -379,7 +379,7 @@ const SHEETS: [Sheet; 11] = [
         sheet_edges: 8,
         defects: &[Defect {
             field: Field::EndsOther,
-            reads: 41949.360,
+            reads: 41948.990,
             cause: Cause::NotFixed,
             what: ENDS,
         }],
@@ -392,7 +392,7 @@ const SHEETS: [Sheet; 11] = [
         sheet_edges: 8,
         defects: &[Defect {
             field: Field::EndsOther,
-            reads: 48726.432,
+            reads: 48725.690,
             cause: Cause::NotFixed,
             what: ENDS,
         }],
@@ -405,7 +405,7 @@ const SHEETS: [Sheet; 11] = [
         sheet_edges: 8,
         defects: &[Defect {
             field: Field::EndsOther,
-            reads: 55648.919,
+            reads: 55647.126,
             cause: Cause::NotFixed,
             what: ENDS,
         }],

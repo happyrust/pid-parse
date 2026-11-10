@@ -43,8 +43,17 @@ const ON_MM: f64 = 0.20;
 /// the comparison's `PEN_CHAIN_STEP_MM`.
 const STEP_MM: f64 = 0.05;
 /// How far a reference stroke may turn from ours and still run along it, as
-/// the absolute cosine of their angle: the comparison's `PEN_CHAIN_DOT`.
-const ALONG_DOT: f64 = std::f64::consts::FRAC_1_SQRT_2;
+/// the absolute cosine of their angle: 37.5°.
+///
+/// The comparison's own chain turns at 45° (`PEN_CHAIN_DOT`). A limit on an
+/// angle symbols are drawn at is decided by the last bit of a sum for every
+/// stroke that crosses another at exactly that angle — the two legs of a
+/// break mark across the line they break, on the A2 sheet — and the fit this
+/// module is handed is not the same to the last bit from one run to the next,
+/// so such a stroke was on the line in one run and off it in another. 37.5°
+/// is halfway between the 30° and the 45° a symbol's strokes turn by: a chord
+/// of a flattened curve still runs along its neighbour, a leg at 45° does not.
+const ALONG_DOT: f64 = 0.793_353_340_291_235_2;
 /// The shortest stroke that is held to a colour, paper millimetres: the
 /// comparison's `PEN_MIN_MM`. A shorter one is a dash stub.
 const MIN_STROKE_MM: f64 = 0.2;
@@ -1075,5 +1084,87 @@ mod tests {
         assert!((apart.other_mm - 10.0).abs() <= 0.25, "{apart:?}");
         assert!((apart.alone_mm - 20.0).abs() <= 0.25, "{apart:?}");
         assert!(apart.same_mm.abs() < 1e-9, "{apart:?}");
+    }
+
+    /// The A2 sheet's break mark: two legs at exactly 45° across the line
+    /// they break. With the limit on 45° itself each leg was along the line
+    /// or not on the last bit of the fit, and the reading moved by 0.474 mm
+    /// from one run to the next. A leg is across the line, however the page
+    /// is carried over; a chord 30° off its neighbour is still along it.
+    #[test]
+    fn a_leg_at_forty_five_degrees_is_across_the_line_whatever_the_fit() {
+        let line = stroke([505.1213, 230.4627], [505.1213, 243.1627]);
+        let mut reference = pens();
+        reference.ends = vec![ends(ROUND.0, ROUND.1, vec![line.clone()])];
+        let mut ours = pens();
+        ours.ends = vec![ends(
+            BUTT.0,
+            BUTT.1,
+            vec![
+                stroke([505.6473, 233.2540], [504.6419, 232.2485]),
+                stroke([504.6419, 242.1786], [505.6473, 241.1731]),
+            ],
+        )];
+        // The fits four runs of the comparison handed over for this sheet.
+        for (scale, translation) in [
+            (
+                0.999_987_214_907_646,
+                [0.160_366_741_226_885_7, 0.001_896_678_135_025_541_7],
+            ),
+            (
+                0.999_987_214_907_640_9,
+                [0.160_366_741_228_102_04, 0.001_896_678_136_204_900_6],
+            ),
+            (
+                0.999_987_214_907_653_3,
+                [0.160_366_741_224_694_77, 0.001_896_678_133_863_255_3],
+            ),
+            (1.0, [0.0, 0.0]),
+        ] {
+            let fit = Fit {
+                scale,
+                translation_mm: translation,
+                ..identity()
+            };
+            // Both pages carried the same way, so the legs cross the line
+            // where they did.
+            let carried = |stroke: &InkSegment| InkSegment {
+                start_mm: [
+                    stroke.start_mm[0] * scale + translation[0],
+                    stroke.start_mm[1] * scale + translation[1],
+                ],
+                end_mm: [
+                    stroke.end_mm[0] * scale + translation[0],
+                    stroke.end_mm[1] * scale + translation[1],
+                ],
+                width_mm: stroke.width_mm,
+            };
+            let mut moved = pens();
+            moved.ends = vec![ends(
+                BUTT.0,
+                BUTT.1,
+                ours.ends[0].strokes.iter().map(carried).collect(),
+            )];
+            let apart = ends_apart(&reference, &moved, &fit);
+            assert!(apart.other_mm.abs() < 1e-9, "{scale}: {apart:?}");
+            assert!(
+                (apart.alone_mm - 2.0 * 1.4219).abs() < 1e-3,
+                "{scale}: {apart:?}"
+            );
+        }
+
+        // A chord that turns 30° from the stroke it follows is along it.
+        let mut ours = pens();
+        let (sin, cos) = 30.0_f64.to_radians().sin_cos();
+        ours.ends = vec![ends(
+            BUTT.0,
+            BUTT.1,
+            vec![stroke(
+                [505.1213 - 0.1 * sin, 236.0 - 0.1 * cos],
+                [505.1213 + 0.1 * sin, 236.0 + 0.1 * cos],
+            )],
+        )];
+        let apart = ends_apart(&reference, &ours, &identity());
+        assert!((apart.other_mm - 0.2).abs() < 1e-9, "{apart:?}");
     }
 }
