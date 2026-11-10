@@ -65,7 +65,8 @@ pub struct PaperModel {
     /// A P&ID's border is a linked OLE object, so the frame, title block and
     /// sign-off column are not in the `.pid` at all — they live in the template
     /// file the frame record points at. This is the file whose furniture the
-    /// page carries; see [`border_template_files`] for how it is found.
+    /// page carries; see [`lay_out_drawing`] for how it is picked and
+    /// [`border_template_places`] for where it is looked for.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub template: Option<BorderTemplate>,
     /// Primitives in drawing order. Expanded symbol strokes follow the
@@ -2205,13 +2206,58 @@ const TEMPLATE_NAMED_TOLERANCE_MM: f64 = 10.0;
 /// and stops the noise from outvoting the name.
 const TEMPLATE_EXTENT_QUANTUM_MM: f64 = 1e-3;
 
-/// Directories that can hold `.igr` border templates, in search order.
+/// Where a sheet's border template is looked for; see
+/// [`border_template_places`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TemplatePlaces {
+    /// Directories whose `.igr` files are candidates, in search order. Each is
+    /// looked for whether or not the corpus has it, so one listed here may be
+    /// absent.
+    pub directories: Vec<PathBuf>,
+    /// `RefData~*.zip` archives whose `.igr` members are candidates, in search
+    /// order. An archive is found by listing a directory, so only archives
+    /// that are there are listed.
+    pub archives: Vec<PathBuf>,
+}
+
+/// Every place [`lay_out_drawing`] reads a border template from for `pid`
+/// laid out against `corpus`, when the drawing names its template.
+///
+/// The directories come first — `<corpus>/Ref/Template Files`, `<corpus>/Ref`,
+/// then the same two under the corpus's parent — and the archives after them:
+/// the `RefData~*.zip` in the corpus, in its parent, in the drawing's own
+/// `<name>_p` backup package, and last in every other `*_p` package under the
+/// corpus, which only a sheet that names its template is searched as far as.
+///
+/// This is the answer to "where would the file have to be": a page whose
+/// [`PaperModel::missing_templates`] is not empty found no template of its
+/// name and size in any of them. The search itself reads its sources from the
+/// same lists, so the two cannot name different places.
+#[must_use]
+pub fn border_template_places(pid: &Path, corpus: &Path) -> TemplatePlaces {
+    let package = drawing_package_dir(pid, corpus);
+    let mut archives = border_template_archives(corpus, package.as_deref());
+    for foreign in foreign_packages(corpus, package.as_deref()) {
+        for archive in refdata_archives(&foreign) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    TemplatePlaces {
+        directories: border_template_dir_candidates(corpus),
+        archives,
+    }
+}
+
+/// Directories that can hold `.igr` border templates, in search order, whether
+/// or not the corpus has them.
 ///
 /// A project keeps them in `<corpus>/Ref/Template Files` — both the five-drawing
 /// corpus and `test-file/Ref` do — so that directory is the first place to look.
 /// `Ref` itself and the corpus's parent follow, which is how a fixture reaches
 /// the same shared `Ref` the symbol library already searches.
-fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
+fn border_template_dir_candidates(corpus: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for candidate in [
         Some(corpus.join("Ref").join("Template Files")),
@@ -2224,11 +2270,34 @@ fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
     .into_iter()
     .flatten()
     {
-        if candidate.is_dir() && !dirs.iter().any(|seen| seen == &candidate) {
+        if !dirs.iter().any(|seen| seen == &candidate) {
             dirs.push(candidate);
         }
     }
     dirs
+}
+
+/// The [`border_template_dir_candidates`] that are there to read.
+fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
+    border_template_dir_candidates(corpus)
+        .into_iter()
+        .filter(|candidate| candidate.is_dir())
+        .collect()
+}
+
+/// The `RefData~*.zip` archives a sheet's template is read from before any
+/// other package's: the corpus's own and its parent's, then the drawing's own
+/// backup package's.
+fn border_template_archives(corpus: &Path, package: Option<&Path>) -> Vec<PathBuf> {
+    let mut archives = refdata_archive_files(corpus);
+    if let Some(package) = package {
+        for archive in refdata_archives(package) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    archives
 }
 
 /// One file a sheet's border could have come from.
@@ -2311,15 +2380,7 @@ fn border_template_sources(corpus: &Path, package: Option<&Path>) -> Vec<Templat
             }
         }
     }
-    let mut archives = refdata_archive_files(corpus);
-    if let Some(package) = package {
-        for archive in refdata_archives(package) {
-            if !archives.contains(&archive) {
-                archives.push(archive);
-            }
-        }
-    }
-    for archive in archives {
+    for archive in border_template_archives(corpus, package) {
         let Ok(members) = archive_members(&archive, "igr") else {
             continue;
         };
@@ -2726,10 +2787,10 @@ fn pick_border_template(
     best_exact.or(best).map(|(_, template)| template)
 }
 
-/// The `.igr` members of every other backup package's `RefData~*.zip` under
-/// the corpus, in path order: `<corpus>/*_p` and `<corpus>/*/*_p`, the two
-/// depths [`drawing_package_dir`] looks for a drawing's own package at.
-fn foreign_package_sources(corpus: &Path, own: Option<&Path>) -> Vec<TemplateSource> {
+/// Every backup package under the corpus other than `own`, in path order:
+/// `<corpus>/*_p` and `<corpus>/*/*_p`, the two depths
+/// [`drawing_package_dir`] looks for a drawing's own package at.
+fn foreign_packages(corpus: &Path, own: Option<&Path>) -> Vec<PathBuf> {
     let mut packages: Vec<PathBuf> = Vec::new();
     let mut visit = |dir: &Path| {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -2756,8 +2817,14 @@ fn foreign_package_sources(corpus: &Path, own: Option<&Path>) -> Vec<TemplateSou
         visit(&child);
     }
     packages.sort();
+    packages
+}
+
+/// The `.igr` members of every other backup package's `RefData~*.zip` under
+/// the corpus ([`foreign_packages`]), in path order.
+fn foreign_package_sources(corpus: &Path, own: Option<&Path>) -> Vec<TemplateSource> {
     let mut sources: Vec<TemplateSource> = Vec::new();
-    for package in packages {
+    for package in foreign_packages(corpus, own) {
         for archive in refdata_archives(&package) {
             let Ok(members) = archive_members(&archive, "igr") else {
                 continue;
@@ -6228,6 +6295,65 @@ mod tests {
             "it must not wear CPE-SQ's furniture"
         );
         assert_eq!(model.missing_templates, vec!["XA-A1".to_string()]);
+    }
+
+    /// The places reported for a drawing are the places its template is read
+    /// from: a fixture's worn template lies under one of them, whether it
+    /// came from a template directory (`D06`, the 熊安 sheet), the drawing's
+    /// own backup package (`DWG-0202GP06-01`) or another drawing's
+    /// (`DWG-0201GP06-01`).
+    #[test]
+    fn a_worn_template_comes_from_a_place_the_search_reports() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
+        for (name, from_an_archive) in [
+            ("D06.pid", false),
+            ("工艺管道及仪表流程-1.pid", false),
+            ("DWG-0202GP06-01.pid", true),
+            ("DWG-0201GP06-01.pid", true),
+        ] {
+            let pid = corpus.join(name);
+            let model = super::lay_out_drawing(&pid, &corpus)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let template = model
+                .template
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} wears no template"));
+            let worn = std::path::Path::new(&template.path);
+            let places = super::border_template_places(&pid, &corpus);
+            let searched = if from_an_archive {
+                &places.archives
+            } else {
+                &places.directories
+            };
+            assert!(
+                searched.iter().any(|place| worn.starts_with(place)),
+                "{name} wears {}, which is under none of {searched:?}",
+                template.path
+            );
+        }
+    }
+
+    /// A corpus with nothing in it still says where a template is looked for:
+    /// its own two directories, then its parent's, and no archive.
+    #[test]
+    fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
+        // The corpus sits in a directory of its own, so what the parent holds
+        // is this test's to say rather than the temp directory's.
+        let parent = std::env::temp_dir().join("pid-plot-template-places");
+        let corpus = parent.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("an empty corpus");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/D06.pid");
+        let places = super::border_template_places(&fixture, &corpus);
+        assert_eq!(
+            places.directories,
+            vec![
+                corpus.join("Ref").join("Template Files"),
+                corpus.join("Ref"),
+                parent.join("Ref").join("Template Files"),
+                parent.join("Ref"),
+            ]
+        );
+        assert!(places.archives.is_empty(), "{:?}", places.archives);
     }
 
     /// One of `Q井场`'s placement styles, at the width asked for.

@@ -11,10 +11,18 @@
 //! refusing it is the program's own job, and only its exit code and stderr can
 //! show that it did.
 //!
+//! A corpus that is a directory and still lacks the border template the
+//! drawing names is the quieter version of the same mistake: the page is
+//! written, bare, and exits 0. The program says so in one warning that names
+//! the template and the places it was looked for, and a drawing that names no
+//! template draws no such warning.
+//!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
 //! wherever a font directory is present and says why it did not where none is;
-//! a CI checkout carries no fonts.
+//! a CI checkout carries no fonts. The two template cases assert what stderr
+//! says on every machine — the warning is printed before a typeface is asked
+//! for — and what was written wherever a font directory is present.
 //!
 //! The variables the program reads are stated for every child, never
 //! inherited. `PID_PARSE_SELF_CHECK_DIR` (the corpus when none is named),
@@ -31,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pid_plot::fonts::font_dirs;
-use pid_plot::model::lay_out_drawing;
+use pid_plot::model::{PaperModel, border_template_places, lay_out_drawing};
 use pid_plot::read::read_plot;
 
 /// The line every argument error puts on stderr.
@@ -58,6 +66,16 @@ fn fixtures() -> PathBuf {
 /// committed under `test-file/Ref/Template Files`.
 fn d06() -> PathBuf {
     fixtures().join("D06.pid")
+}
+
+/// `test-file/export-test/publish-data/A01/A01.pid`, an A2 sheet whose frame
+/// links no template file at all: the one fixture that names none.
+fn a01() -> PathBuf {
+    fixtures()
+        .join("export-test")
+        .join("publish-data")
+        .join("A01")
+        .join("A01.pid")
 }
 
 /// A directory of `case`'s own under Cargo's test tmpdir. Cases run side by
@@ -298,12 +316,15 @@ fn export_d06_against_a_fallback(case: &str, fallback: &Path) -> Outcome {
 fn an_absent_fallback_corpus_is_a_warning_and_the_export_goes_on() {
     let corpus = scratch("fallback-absent").join("no-such-corpus");
     let outcome = export_d06_against_a_fallback("fallback-absent", &corpus);
+    // The warning about the template `D06` names lists the directories under
+    // this corpus too, so naming the path is not enough to be the warning
+    // about the corpus: it has to say what is wrong with it.
     let named = corpus.display().to_string();
     assert!(
         warnings(&outcome.stderr)
             .iter()
-            .any(|line| line.contains(&named)),
-        "no warning on stderr names the absent corpus {named}\n{outcome}"
+            .any(|line| line.contains(&named) && line.contains("is not a directory")),
+        "no warning on stderr says the fallback corpus {named} is not a directory\n{outcome}"
     );
 }
 
@@ -315,6 +336,162 @@ fn a_fallback_corpus_that_exists_draws_no_warning() {
     assert!(
         warnings(&outcome.stderr).is_empty(),
         "a corpus that exists drew a warning\n{outcome}"
+    );
+}
+
+/// The first line `pid_plot` prints for a page: how many primitives were laid
+/// out, on what sheet, into how many bytes.
+fn page_line(model: &PaperModel, pdf_bytes: usize) -> String {
+    let page = model
+        .resolved_page_mm()
+        .unwrap_or_else(|| panic!("the drawing states no page and has no ink to measure"));
+    format!(
+        "primitives {} segments_written_page_mm {:.2} {:.2} bytes {}",
+        model.primitives.len(),
+        page[0],
+        page[1],
+        pdf_bytes
+    )
+}
+
+/// Start `pid_plot` on `drawing` with an empty corpus of `case`'s own named
+/// on the command line, and check the export went as far as this machine lets
+/// any export go. Returns what the run left, the library's layout of the same
+/// drawing against the same corpus, and the corpus.
+///
+/// The corpus is a directory, so the program takes it; neither it nor the
+/// directory it sits in holds a `Ref`, a `RefData~*.zip` or a backup package,
+/// so no border template is in reach and the page is bare. With a font
+/// directory to hand the run exits 0 and the file is the page the library
+/// lays out — the same primitives, none of them a frame's. Without one it
+/// stops at the first face the drawing letters in, exit 1, with nothing
+/// written.
+fn export_against_a_corpus_with_no_templates(
+    case: &str,
+    drawing: &Path,
+) -> (Outcome, PaperModel, PathBuf) {
+    let dir = scratch(case);
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", corpus.display()));
+    let out = unwritten(&dir, "page.pdf");
+    let fonts = fonts_for_a_child();
+    let mut command = pid_plot();
+    if let Ok(fonts) = &fonts {
+        command.env("PID_PLOT_FONTS", fonts);
+    }
+    // The child's layout is held against one made here, so it is handed the
+    // symbol library this process would search; see the D06 export below.
+    if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+        command.env("PID_SYMBOL_LIBRARY", library);
+    }
+    let outcome = run(command.arg(drawing).arg(&out).arg(&corpus));
+    let model = lay_out_drawing(drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert!(
+        model.template.is_none(),
+        "{} found a border template under the empty corpus {}",
+        drawing.display(),
+        corpus.display()
+    );
+    match fonts {
+        Ok(_) => {
+            assert_eq!(outcome.code, Some(0), "{outcome}");
+            let pdf = std::fs::read(&out)
+                .unwrap_or_else(|error| panic!("{}: {error}\n{outcome}", out.display()));
+            assert_eq!(
+                outcome.stdout.lines().next(),
+                Some(page_line(&model, pdf.len()).as_str()),
+                "the command line did not report the bare page the library lays out\n{outcome}"
+            );
+            let ink = read_plot(&pdf)
+                .unwrap_or_else(|error| panic!("{}: read back: {error}", out.display()));
+            assert!(
+                !ink.segments.is_empty(),
+                "{}: the page carries no ink at all",
+                out.display()
+            );
+        }
+        Err(searched) => {
+            eprintln!(
+                "{case}: no font directory is present (searched {searched}), so the run \
+                 can only get as far as the first missing face"
+            );
+            assert_eq!(outcome.code, Some(1), "{outcome}");
+            assert!(
+                !out.exists(),
+                "{} was written by a run that failed",
+                out.display()
+            );
+        }
+    }
+    (outcome, model, corpus)
+}
+
+/// A sheet that names its border template wears only that template, so a
+/// corpus that cannot answer the name leaves the page with no frame and no
+/// title block. The export goes on as it would for any bare page; what is
+/// missing, and where it was looked for, is one warning on stderr.
+#[test]
+fn a_named_template_the_corpus_lacks_is_one_warning_and_the_export_goes_on() {
+    let drawing = d06();
+    let (outcome, model, corpus) =
+        export_against_a_corpus_with_no_templates("template-absent", &drawing);
+    // The library's own account of the gap: the stems `D06`'s two link
+    // records spell, the 8.3 short name `CPECCH~2.IGR` and the long
+    // `CPECCHB-SQ-A2.igr`.
+    assert_eq!(
+        model.missing_templates,
+        ["CPECCH", "CPECCHB-SQ-A2"],
+        "the library names another gap for D06"
+    );
+    let warned = warnings(&outcome.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "a template that was named and not found is exactly one warning\n{outcome}"
+    );
+    let line = warned[0];
+    assert!(
+        line.contains(&drawing.display().to_string()),
+        "the warning does not say which drawing it is about\n{outcome}"
+    );
+    for stem in &model.missing_templates {
+        assert!(
+            line.contains(stem.as_str()),
+            "the warning does not name the template {stem}\n{outcome}"
+        );
+    }
+    // Where the file would have to be, in the order it is looked for: the
+    // corpus's own template directory comes first.
+    let places = border_template_places(&drawing, &corpus);
+    assert_eq!(
+        places.directories.first(),
+        Some(&corpus.join("Ref").join("Template Files")),
+        "the first place a template is looked for is not the corpus's own"
+    );
+    for directory in &places.directories {
+        assert!(
+            line.contains(&directory.display().to_string()),
+            "the warning does not name the searched directory {}\n{outcome}",
+            directory.display()
+        );
+    }
+}
+
+/// The other half of the rule above: a sheet whose frame links no template
+/// has named nothing, so the same empty corpus is not worth a word about one.
+#[test]
+fn a_drawing_that_names_no_template_draws_no_warning() {
+    let (outcome, model, _) = export_against_a_corpus_with_no_templates("template-unnamed", &a01());
+    assert!(
+        model.missing_templates.is_empty(),
+        "A01 names a template after all: {:?}",
+        model.missing_templates
+    );
+    assert!(
+        warnings(&outcome.stderr).is_empty(),
+        "a sheet that names no template drew a warning\n{outcome}"
     );
 }
 
@@ -373,16 +550,9 @@ fn d06_exports_the_page_the_library_lays_out() {
     // The first line is the page's own account: how many primitives were laid
     // out, on what sheet, into how many bytes. Each figure is held against the
     // thing it describes — the library's model, and the file on disk.
-    let expected = format!(
-        "primitives {} segments_written_page_mm {:.2} {:.2} bytes {}",
-        model.primitives.len(),
-        page[0],
-        page[1],
-        pdf.len()
-    );
     assert_eq!(
         outcome.stdout.lines().next(),
-        Some(expected.as_str()),
+        Some(page_line(&model, pdf.len()).as_str()),
         "the command line did not report the page the library lays out\n{outcome}"
     );
 

@@ -4,15 +4,21 @@
 //! the drawing could not be read, a typeface is missing, the file could not
 //! be written. `2` is a command line that cannot be run as given: too few
 //! arguments, or a `[corpus]` that is not a directory.
+//!
+//! A page can be written and still lack something the drawing asked for. Two
+//! such gaps are a `warning:` line on stderr and leave the exit code and the
+//! file alone: no corpus was named and the fallback is not a directory, and
+//! the drawing names a border template that no file in reach of the corpus
+//! answers, so the page carries no frame and no title block.
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
-use pid_plot::model::lay_out_drawing;
+use pid_plot::model::{PaperModel, TemplatePlaces, border_template_places, lay_out_drawing};
 use pid_plot::write::{PlotFont, write_plot_audited};
 
 /// What a command line has to look like; printed with every argument error.
@@ -60,13 +66,24 @@ fn main() -> ExitCode {
             fallback
         }
     };
-    let model = match lay_out_drawing(PathBuf::from(&pid).as_path(), &corpus) {
+    let model = match lay_out_drawing(Path::new(&pid), &corpus) {
         Ok(model) => model,
         Err(error) => {
             eprintln!("{pid}: {error}");
             return ExitCode::from(1);
         }
     };
+    // A sheet that names its border template wears only that template, so a
+    // corpus that cannot answer the name leaves the page with no frame and no
+    // title block — and the file written looks like a finished export of a
+    // bare sheet. The page is the drawing's own ink either way and is written
+    // all the same; what is missing and where it was looked for is said here,
+    // before a typeface is asked for, so a run that stops there has said it
+    // too. A sheet that names no template has nothing missing.
+    if !model.missing_templates.is_empty() {
+        let places = border_template_places(Path::new(&pid), &corpus);
+        eprintln!("{}", missing_template_warning(&pid, &model, &places));
+    }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {
@@ -150,6 +167,57 @@ fn main() -> ExitCode {
     // the number a reader has to see to know the page balanced.
     println!("{}", ledger.summary());
     ExitCode::SUCCESS
+}
+
+/// The one line that says the border template `pid` names was not found.
+///
+/// `PaperModel::missing_templates` holds the stems the drawing's link records
+/// spell, and a template answers one when its file name begins with it — an
+/// 8.3 short name such as `CPECCH~2.IGR` keeps only the first six characters
+/// — so each is printed as the `<stem>*.igr` it stands for. The places are
+/// the library's own account of where it reads templates from, and the count
+/// of `.igr` files is what the search saw there: none means the corpus holds
+/// no template at all, some means it holds other sheets' templates.
+fn missing_template_warning(pid: &str, model: &PaperModel, places: &TemplatePlaces) -> String {
+    let listed = |paths: &[PathBuf]| -> String {
+        if paths.is_empty() {
+            return "none".to_string();
+        }
+        paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let names: Vec<String> = model
+        .missing_templates
+        .iter()
+        .map(|stem| format!("{stem}*.igr"))
+        .collect();
+    let line = format!(
+        "warning: {pid} names its border template ({}) and none of that name and the \
+         sheet's size was found, so the page carries no frame and no title block; \
+         template directories searched: {}; RefData archives searched: {}; \
+         .igr files seen there: {}",
+        names.join(", "),
+        listed(&places.directories),
+        listed(&places.archives),
+        model.ledger.sources.templates.len()
+    );
+    let unreadable: Vec<String> = model
+        .ledger
+        .template_unreadable
+        .iter()
+        .map(|source| match &source.archive {
+            Some(archive) => format!("{} in {archive}", source.name),
+            None => source.name.clone(),
+        })
+        .collect();
+    if unreadable.is_empty() {
+        line
+    } else {
+        format!("{line}; could not be read: {}", unreadable.join(", "))
+    }
 }
 
 fn default_corpus() -> PathBuf {
