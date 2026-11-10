@@ -1,4 +1,9 @@
 //! Write one `.pid` drawing to a PDF.
+//!
+//! Exit code `0` means a page was written and `1` that the export failed —
+//! the drawing could not be read, a typeface is missing, the file could not
+//! be written. `2` is a command line that cannot be run as given: too few
+//! arguments, or a `[corpus]` that is not a directory.
 
 use std::env;
 use std::fs;
@@ -10,18 +15,51 @@ use pid_plot::ledger::ExportLedger;
 use pid_plot::model::lay_out_drawing;
 use pid_plot::write::{PlotFont, write_plot_audited};
 
+/// What a command line has to look like; printed with every argument error.
+const USAGE: &str = "usage: pid_plot <drawing.pid> <out.pdf> [corpus]";
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(pid) = args.next() else {
-        eprintln!("usage: pid_plot <drawing.pid> <out.pdf> [corpus]");
+        eprintln!("{USAGE}");
         eprintln!("typefaces come from PID_PLOT_FONTS, then <corpus>/fonts");
         return ExitCode::from(2);
     };
     let Some(out) = args.next() else {
-        eprintln!("usage: pid_plot <drawing.pid> <out.pdf> [corpus]");
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    let corpus = args.next().map_or_else(default_corpus, PathBuf::from);
+    // The corpus is where the sheet's border template, the symbol library and
+    // the typefaces are looked for. One named on the command line is the
+    // caller's own statement, and the layout takes any path without complaint
+    // — against one that is not a directory it just draws a page with no
+    // frame and no title block — so the mistake is refused here, before a
+    // file is written that looks like a finished export. The fallback is only
+    // a guess about this machine and a drawing exports without it, so its
+    // absence is said and the run goes on.
+    let corpus = match args.next() {
+        Some(named) => {
+            let named = PathBuf::from(named);
+            if !named.is_dir() {
+                eprintln!("corpus {} is not a directory", named.display());
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+            named
+        }
+        None => {
+            let fallback = default_corpus();
+            if !fallback.is_dir() {
+                eprintln!(
+                    "warning: no corpus was named and the fallback {} is not a directory, \
+                     so it supplies no border template, symbol library or typefaces; \
+                     name one as [corpus] or in PID_PARSE_SELF_CHECK_DIR",
+                    fallback.display()
+                );
+            }
+            fallback
+        }
+    };
     let model = match lay_out_drawing(PathBuf::from(&pid).as_path(), &corpus) {
         Ok(model) => model,
         Err(error) => {
