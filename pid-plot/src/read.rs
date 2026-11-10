@@ -7,6 +7,10 @@
 //! only the pieces the pattern inks, so a dash and the gap beside it read the
 //! way they print. A piece that leaves the clip in force contributes only what
 //! lies inside it, because what lies outside prints nothing.
+//!
+//! Colour is the one thing [`read_plot`] does not read that way: a path painted
+//! in the paper's own white is read like any other, though it prints nothing.
+//! [`read_plot_painted`] reads the ink and the paper-coloured paint apart.
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -93,7 +97,34 @@ impl std::fmt::Display for PlotReadError {
 
 impl std::error::Error for PlotReadError {}
 
+/// Which of a page's painted paths and glyphs a reading keeps.
+///
+/// A plot is ink on white paper, and a path painted white leaves none: the
+/// eleven `验收数据` reference plots each stroke two to twenty-five short
+/// paths in `1 G` — the origin marks of `Remarks.sym` and
+/// `Item Note & Label.sym`, whose style states the colour word `0x8000_0000`
+/// — and nothing shows where they lie. [`read_plot`] has always read those as
+/// ink, which is why a comparison built on it cannot tell a page that prints
+/// them black from one that does not print them at all. The split is stated
+/// here rather than folded into [`read_plot`] so that every reading taken so
+/// far keeps its meaning; see
+/// `docs/analysis/2026-11-10-the-acceptance-gate-reads-paint-not-ink.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Painted {
+    /// Every path and glyph, whatever it is painted in. What [`read_plot`]
+    /// reads.
+    All,
+    /// What leaves ink: everything except what is painted in the paper's own
+    /// colour.
+    Inked,
+    /// Only what is painted in the paper's own colour.
+    Paper,
+}
+
 /// Read the first page of a PDF into paper-space ink and text.
+///
+/// Every painted path is read, a white one included; [`read_plot_painted`]
+/// says which to keep.
 pub fn read_plot(pdf_bytes: &[u8]) -> Result<PlotInk, PlotReadError> {
     read_plot_with_faces(pdf_bytes).map(|(ink, _)| ink)
 }
@@ -108,6 +139,20 @@ pub fn read_plot(pdf_bytes: &[u8]) -> Result<PlotInk, PlotReadError> {
 /// is the whole span's. The name is empty where the interpreter has none: a
 /// Type 3 font, a Type 1 program, a font that is not embedded.
 pub fn read_plot_with_faces(pdf_bytes: &[u8]) -> Result<(PlotInk, Vec<String>), PlotReadError> {
+    read_painted_with_faces(pdf_bytes, Painted::All)
+}
+
+/// [`read_plot`], keeping only the paths and glyphs `painted` names.
+pub fn read_plot_painted(pdf_bytes: &[u8], painted: Painted) -> Result<PlotInk, PlotReadError> {
+    read_painted_with_faces(pdf_bytes, painted).map(|(ink, _)| ink)
+}
+
+/// [`read_plot_with_faces`], keeping only the paths and glyphs `painted`
+/// names.
+fn read_painted_with_faces(
+    pdf_bytes: &[u8],
+    painted: Painted,
+) -> Result<(PlotInk, Vec<String>), PlotReadError> {
     let pdf = Pdf::new(pdf_bytes.to_vec()).map_err(|_| PlotReadError::InvalidPdf)?;
     let pages = pdf.pages();
     let page = pages.first().ok_or(PlotReadError::NoPage)?;
@@ -131,6 +176,7 @@ pub fn read_plot_with_faces(pdf_bytes: &[u8]) -> Result<(PlotInk, Vec<String>), 
     );
     let mut device = InkDevice {
         page_pt: [width_pt, height_pt],
+        painted,
         segments: Vec::new(),
         glyphs: Vec::new(),
         clips: Vec::new(),
@@ -159,8 +205,22 @@ struct RawGlyph {
     face: String,
 }
 
+/// Whether `paint` is the paper's own colour: opaque white, in whatever
+/// colour space the file states it (`1 G`, `1 1 1 RG`, `0 0 0 0 K`).
+///
+/// Exactly white, read at eight bits a channel. A pale grey still prints, so
+/// it is ink; a pattern is never the paper's colour.
+fn paints_paper(paint: &Paint<'_>) -> bool {
+    match paint {
+        Paint::Color(colour) => colour.to_rgba().to_rgba8() == [255, 255, 255, 255],
+        Paint::Pattern(_) => false,
+    }
+}
+
 struct InkDevice {
     page_pt: [f64; 2],
+    /// Which paint this reading keeps.
+    painted: Painted,
     segments: Vec<InkSegment>,
     glyphs: Vec<RawGlyph>,
     /// The clip in force, innermost last, page-view points: each entry is
@@ -175,6 +235,15 @@ struct InkDevice {
 }
 
 impl InkDevice {
+    /// Whether this reading keeps what `paint` paints.
+    fn keeps(&self, paint: &Paint<'_>) -> bool {
+        match self.painted {
+            Painted::All => true,
+            Painted::Inked => !paints_paper(paint),
+            Painted::Paper => paints_paper(paint),
+        }
+    }
+
     fn push_segment(&mut self, start: Point, end: Point, width_pt: f64) {
         if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite()
         {
@@ -240,9 +309,12 @@ impl<'a> Device<'a> for InkDevice {
         &mut self,
         path: &BezPath,
         transform: Affine,
-        _: &Paint<'a>,
+        paint: &Paint<'a>,
         draw_mode: &PathDrawMode,
     ) {
+        if !self.keeps(paint) {
+            return;
+        }
         let scale = transform_scale(transform);
         let (width_pt, dash_pt, offset_pt) = match draw_mode {
             PathDrawMode::Stroke(stroke) => (
@@ -304,9 +376,12 @@ impl<'a> Device<'a> for InkDevice {
         glyph: &Glyph<'a>,
         transform: Affine,
         glyph_transform: Affine,
-        _: &Paint<'a>,
+        paint: &Paint<'a>,
         _: &GlyphDrawMode,
     ) {
+        if !self.keeps(paint) {
+            return;
+        }
         let text = match glyph.as_unicode() {
             Some(BfString::Char(ch)) => ch.to_string(),
             Some(BfString::String(text)) => text,
@@ -698,7 +773,10 @@ impl OpenSpan {
 mod tests {
     use kurbo::{Point, Rect};
 
-    use super::{DashWalk, clip_segment, read_plot, sheet_edge_mm, view_pt_to_paper_mm};
+    use super::{
+        DashWalk, Painted, clip_segment, read_plot, read_plot_painted, sheet_edge_mm,
+        view_pt_to_paper_mm,
+    };
 
     /// Pattern used by the sheet pen: 7 mm on, 1.75 off, 0.35 on, 1.75 off.
     const PEN: [f64; 4] = [7.0, 1.75, 0.35, 1.75];
@@ -855,6 +933,56 @@ mod tests {
         );
         let open = read_plot(&one_page_pdf(&format!("q {paths} Q"), 100.0)).expect("read");
         assert_eq!(open.segments.len(), 3, "{:?}", open.segments);
+    }
+
+    #[test]
+    fn a_path_painted_in_the_paper_colour_is_paint_but_not_ink() {
+        // The I井场 reference strokes a `Remarks.sym` origin mark this way:
+        // `1 G` and three short pieces, between black strokes at `0 G`. The
+        // same white is stated here in grey and in RGB, stroked and filled.
+        let content = "0.48 w \
+            0 G 10 10 m 60 10 l S \
+            1 G 10 30 m 60 30 l S \
+            1 1 1 RG 10 50 m 60 50 l S \
+            0 0 0 RG 10 70 m 60 70 l S \
+            1 g 10 80 m 60 80 l 60 85 l h f \
+            0 g 10 90 m 60 90 l 60 95 l h f";
+        let pdf = one_page_pdf(content, 100.0);
+        let row = |segment: &super::InkSegment| (segment.start_mm[1] * 72.0 / 25.4).round();
+
+        // The reading every comparison has used so far: paint is ink.
+        let all = read_plot(&pdf).expect("read");
+        assert_eq!(all.segments.len(), 4 + 2 * 3, "{:?}", all.segments);
+        assert_eq!(read_plot_painted(&pdf, Painted::All).expect("read"), all);
+
+        // What prints: the two black strokes and the black fill's outline.
+        let inked = read_plot_painted(&pdf, Painted::Inked).expect("read");
+        let rows: Vec<f64> = inked.segments.iter().map(row).collect();
+        assert_eq!(inked.segments.len(), 2 + 3, "{rows:?}");
+        assert!(
+            rows.iter().all(|y| [10.0, 70.0, 90.0, 95.0].contains(y)),
+            "{rows:?}"
+        );
+
+        // What does not: the two white strokes and the white fill's outline.
+        let paper = read_plot_painted(&pdf, Painted::Paper).expect("read");
+        let rows: Vec<f64> = paper.segments.iter().map(row).collect();
+        assert_eq!(paper.segments.len(), 2 + 3, "{rows:?}");
+        assert!(
+            rows.iter().all(|y| [30.0, 50.0, 80.0, 85.0].contains(y)),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_light_grey_is_ink() {
+        // Only the paper's own colour inks nothing. A pale stroke still
+        // prints, so it is not dropped for being nearly white.
+        let pdf = one_page_pdf("0.48 w 0.99 G 10 10 m 60 10 l S", 100.0);
+        let inked = read_plot_painted(&pdf, Painted::Inked).expect("read");
+        assert_eq!(inked.segments.len(), 1, "{:?}", inked.segments);
+        let paper = read_plot_painted(&pdf, Painted::Paper).expect("read");
+        assert!(paper.segments.is_empty(), "{:?}", paper.segments);
     }
 
     /// A one-page PDF, `side` points square, that runs `content`.
