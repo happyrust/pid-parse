@@ -250,6 +250,18 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
         chainless, 0,
         "records of 0x0010 / 0x0030 decoded from sheets whose chains carry neither"
     );
+    // What was held, in the log: a run that skipped prints the line above
+    // and not this one.
+    eprintln!(
+        "plant backup census: {} drawings under {}; undecoded {undecoded:?}, refused {refused:?}, \
+         {} native-skipped over {} type codes, {smart_frames} igSmartFrame2d, {chainless} of \
+         0x0010 / 0x0030, {} ComplexString, {groups} Group",
+        pids.len(),
+        backup.display(),
+        skipped.values().sum::<usize>(),
+        skipped.len(),
+        complex_strings.len()
+    );
     let Some((points, closed)) = ef_ring else {
         panic!("EF井场's oid 52844 projects no boundary ring");
     };
