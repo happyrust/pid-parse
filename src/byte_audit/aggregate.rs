@@ -959,7 +959,12 @@ mod tests {
 
     #[test]
     fn sheet_typed_decoders_claim_known_record_ranges() {
+        // A sheet stream as a file carries one: the 8-byte header (magic and
+        // record count), then the chain. A family decodes a record only
+        // where that chain starts one, so the record sits at `+8`.
         let mut data = Vec::new();
+        data.extend_from_slice(&0x6C90_F544u32.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&0x005Eu16.to_le_bytes());
         data.extend_from_slice(&34u32.to_le_bytes());
         data.extend_from_slice(&1u32.to_le_bytes()); // oid
@@ -975,8 +980,8 @@ mod tests {
         let summary = &report.per_stream["/Sheet6"];
 
         assert_eq!(summary.parser_name.as_deref(), Some("probe_sheet_stream"));
-        assert_eq!(summary.total_bytes, 40);
-        assert_eq!(summary.consumed_bytes, 40);
+        assert_eq!(summary.total_bytes, 48);
+        assert_eq!(summary.consumed_bytes, 48);
         assert_eq!(summary.leftover_bytes, 0);
 
         let trace = report
@@ -984,13 +989,16 @@ mod tests {
             .iter()
             .find(|trace| trace.stream_path == "/Sheet6")
             .expect("expected Sheet trace");
-        assert_eq!(
-            trace
-                .ranges_by_confidence
-                .get(&TraceConfidence::Decoded)
-                .cloned()
-                .unwrap_or_default(),
-            vec![ByteRange::new(0, 40)]
+        let decoded = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            decoded
+                .iter()
+                .any(|range| range.start <= 8 && range.end == 48),
+            "the point record at +8..+48 is claimed as decoded: {decoded:?}"
         );
     }
 

@@ -71,6 +71,18 @@ const SKIPPED: &[(u16, usize)] = &[
     (0x00FA, 370),
 ];
 
+/// `igSmartFrame2d` records on the 53 drawings' sheet chains: one page frame
+/// on each of 49 sheets, two on `Q井场`, none on the three sheets that hold no
+/// border.
+///
+/// The parser used to report 61. The other ten started inside a text box, a
+/// symbol placement or a dependency object, wherever a field's value was 61
+/// (`3D 00 00 00`, the family's type code) and what followed read as a
+/// length — each claiming 65 to 394 KiB of the stream. See
+/// `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.3.
+const SMART_FRAMES: usize = 51;
+
 /// The census the parser keeps for the backup's sheet streams is the one the
 /// probe measures on their chains, and `EF井场`'s dot fills.
 ///
@@ -92,6 +104,9 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
     let mut refused_boundaries = Vec::new();
     let mut ef_ring = None;
+    let mut smart_frames = 0usize;
+    // Records of the three families no sheet chain carries a type code for.
+    let mut chainless = 0usize;
     for path in &pids {
         let doc = PidParser::new()
             .parse_file(path)
@@ -100,6 +115,10 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
             let Some(geometry) = sheet.geometry.as_ref() else {
                 continue;
             };
+            smart_frames += geometry.decoded_igsmartframes.len();
+            chainless += geometry.decoded_jstyle_overrides.len()
+                + geometry.decoded_sub_records_0x0010.len()
+                + geometry.decoded_attribute_fragments.len();
             for row in &geometry.undecoded_type_codes {
                 *undecoded.entry(row.type_code).or_default() += row.count;
             }
@@ -150,6 +169,17 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     assert!(
         refused_boundaries.is_empty(),
         "igBoundary2d refused on {refused_boundaries:?}"
+    );
+    assert_eq!(
+        smart_frames, SMART_FRAMES,
+        "igSmartFrame2d records on the sheets' chains"
+    );
+    // 72 010 before a family read the chain: 51 692 "0x0010 sub-records",
+    // 9 626 "attribute fragments" and 10 649 "JStyleOverride", none of which
+    // started a record.
+    assert_eq!(
+        chainless, 0,
+        "records of 0x0010 / 0x0030 decoded from sheets whose chains carry neither"
     );
     let Some((points, closed)) = ef_ring else {
         panic!("EF井场's oid 52844 projects no boundary ring");

@@ -144,28 +144,42 @@ pub struct SheetGeometry {
     /// historical Phase 14 `PrimitiveArc` compatibility field; new
     /// consumers should use this field for `0x0030` records. See
     /// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+    ///
+    /// **Empty on every sheet stream measured.** A family decodes the
+    /// records its stream's chain starts, and no sheet chain carries a
+    /// `0x0030` record: what used to fill this field was the length word
+    /// of the block a `DependencyObject` ends with, read as a type word
+    /// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    /// §3.2). A drawing's real `JStyleOverride` records are in its
+    /// `StyleCluster` ([`crate::style_link`]).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord>,
-    /// Audit-only PSM `0x0010` sub-record records emitted by
+    /// Audit-only PSM `0x0010` records emitted by
     /// [`crate::parsers::sheet_records::decode_sub_records_0x0010`]
     /// (Phase 18). The 6-byte PSM header is exposed verbatim and the
-    /// variable payload is preserved as raw bytes; no sub-kind
-    /// discrimination is attempted because IDA reverse engineering
-    /// has not yet pinned the real class identity. Some entries may
-    /// be embedded fragments inside larger parent records rather than
-    /// standalone 0x0010 records. These records intentionally do not
-    /// produce normalized geometry entities.
+    /// variable payload is preserved as raw bytes. These records
+    /// intentionally do not produce normalized geometry entities.
+    ///
+    /// **Empty on every sheet stream measured**, for the same reason as
+    /// [`Self::decoded_jstyle_overrides`]: no sheet chain carries a
+    /// `0x0010` record. The "sub-records" this field used to hold were a
+    /// graphic record's own sub-type word (`+12`, `0x0010` on most
+    /// records) and the style id after it, read as a record header — the
+    /// "embedded fragments inside larger parent records" an earlier note
+    /// here suspected, and all of them (same document, §3.1).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record>,
     /// Phase 26 additive, audit-only attribute-fragment view of PSM
     /// `0x0010` records, emitted by
     /// [`crate::parsers::sheet_records::decode_attribute_fragments`].
     /// Decodes the `marker(4) + aux(8) + [u16 len + UTF-16LE]*`
-    /// structure to extract `SmartPlant` attribute text (instrument tags,
-    /// line numbers, nominal sizes, drawing references, annotation
-    /// labels). Coexists with [`Self::decoded_sub_records_0x0010`] (raw,
-    /// unchanged) and produces no normalized geometry entity. See
-    /// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
+    /// structure. Coexists with [`Self::decoded_sub_records_0x0010`] and
+    /// produces no normalized geometry entity.
+    ///
+    /// **Empty on every sheet stream measured**: the same envelope, so the
+    /// same absence. The text it used to extract was the text of the
+    /// `igTextBox` each fragment sat inside, which
+    /// [`Self::decoded_igtextboxes`] carries.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_attribute_fragments: Vec<DecodedAttributeFragment>,
     /// PSM `0x0020` `igRectangle2d` records emitted by

@@ -360,3 +360,61 @@ igLine2d  +34753  载荷：98 0d 00 00 | 48 11 00 00 | 0c 00 00 00 | 10 00 | 46 
 | 图框偏移 | 6 张（+ `EF井场` 未平移） | **还不知道** | §7.4：缺原厂出图 |
 | 出页标签 | 1 条 | **还不知道** | §7.5：缺 `N井场` 的原厂出图 |
 | ComplexString 的拐角连接 | 8 条记录的拐角 | **还不知道** | §2.1：比对看不出端帽与连接 |
+
+## 10. 修复之后
+
+每一小节是一次提交。读数出自同样的探针与门禁；账本基线每次重写都逐项列出动了哪些计数。
+
+### 10.1 每个族只在记录链上解码（§3 的四个幻影族）
+
+`PsmRecordDecoder::scan` 原先逐字节滑动，现在只在流的记录链起点上调用 `decode_at`
+（`sheet_record_starts`），与 8 月给 `GLine2d`、`igLine2d` 等八个族加的门是同一个。链走不通的流不解码，
+不退回滑动扫描。三个整族是幻影的记录族（`SubRecord0x0010`、`AttributeFragment`、`JStyleOverride`）
+的注册表行、字段与 DTO 还在，只是在每一条量过的流上都解不出东西；把它们连同三个公开字段一起撤掉是
+另一次改动。
+
+| 读数 | 之前 | 之后 |
+|---|---:|---:|
+| 不在链上的解码（86 个文档，118 条 Sheet 流 + 147 个缓存） | 92 405 | 0 |
+| 备份 53 张：`igSmartFrame2d` | 61 | 51 |
+| 备份 53 张：`SubRecord0x0010` / `AttributeFragment` / `JStyleOverride` | 51 692 / 9 626 / 10 649 | 0 / 0 / 0 |
+| 夹具 7 张：同上三族（含 DWG-0201 模板里的 2 条 `JStyleOverride`、XA 模板里的 11 条 `0x0010`） | 1 109 / 214 / 228 | 0 / 0 / 0 |
+| 账本实体总数（备份 / 夹具） | 109 580 / 8 881 | 98 931 / 8 653 |
+| 账本有意项，门禁口径（备份 / 夹具） | 208 906 / 5 536 | 136 929 / 3 985 |
+| 账本可疑项（备份 / 夹具） | 48 / 12 | 48 / 12 |
+| 未归因 | 0 | 0 |
+
+页面没有变：`probe_export_bytes_unchanged` 把 71 页（备份 53、夹具 7、验收 11）修复前后的 PDF 与
+`PaperModel` 逐页比哈希，0 处不同；7 张夹具的模型金样逐字节不变。
+
+**备份账本基线的差异**（`docs/baselines/export-ledger-backup.json`，263 个计数，6 类，文件头不变）：
+
+| 计数 | 之前 | 之后 | 页数 | 是什么 |
+|---|---:|---:|---:|---|
+| `drawing/parse` `record_audit_only_family` `SubRecord0x0010` | 51 692 | 0 | 51 | §3.1 |
+| `drawing/parse` `record_audit_only_family` `AttributeFragment` | 9 626 | 0 | 51 | §3.1 |
+| `drawing/parse` `record_audit_only_family` `igSmartFrame2d` | 18 | 8 | 8 | §3.3 的 10 条（A、B、J K、600td、低温C、换热器EF 各 2 → 1，G H1 H2、I 各 3 → 1） |
+| `drawing/entities/dropped` `kind_unknown` | 11 447 | 798 | 51 | §3.2 的 10 649 个 `JStyleOverride` 实体 |
+| `drawing/entities/cross` `unknown/probe_only/kind_unknown` | 11 447 | 798 | 51 | 同上，交叉表里的同一批 |
+| `drawing/entities/total` | 97 530 | 86 881 | 51 | 同上，实体总数 |
+
+（「之前 / 之后」只合计动了的那些页；没动的页不在内。）
+
+**夹具账本基线的差异**（`export-ledger-fixtures.json`，39 个计数，9 类，文件头不变）：图纸域
+`SubRecord0x0010` 1 098 → 0、`AttributeFragment` 214 → 0、`kind_unknown`（丢弃与交叉表）328 → 102、实体总数
+2 769 → 2 543；家具域 `SubRecord0x0010` 11 → 0（XA 模板）、`kind_unknown` 9 → 7 与实体总数 35 → 33
+（DWG-0201 的模板）。
+
+**几何金样**（`tests/golden/geometry/*.json`，6 个文件）：少 131 个实体（d06 3、dwg-0201 20、dwg-0202 30、
+gongyi-guandao-1 47、publish-a01 1、publish-dwg-0202 30），全部是 `record_kind = j_style_override`、
+`confidence = probe_only`；没有新增，留下的实体内容与次序都不变。这 131 个实体的「oid」只有
+1、2、4、65538–65541 这几个值——不是对象标识，是尾块头四个字节。
+
+**连带的一处读数**：`tests/semantic_join.rs` 里 DWG-0202「与发布对象连上的实体」从 41 变成 39。少的两个是
+「oid」读成 1 的两个 `JStyleOverride` 幻影：8 个已发布聚合的尾部里恰好有一个值为 1 的字，两跳规则就把它们
+连上了。剩下 39 个正好一个发布表示一个（27 个直接连上，12 个经聚合）。
+
+`tests/parse_real_files.rs` 里原来钉着这三族条数的四个用例（98、582、分布、84）改成钉它们是什么：
+98 条命中全部落在 `DependencyObject` 收尾块的长度字上并越过宿主末尾；582 条里 581 条落在宿主的 `+12`、
+声明的长度等于宿主的样式号；84 条「属性片段」里 77 条的文字与宿主文字框自己解出的文字相同，7 条落在
+符号放置里。

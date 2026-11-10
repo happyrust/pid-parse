@@ -3138,9 +3138,16 @@ impl GeometryEmitter for IgLine2dEmitter {
 /// spell a plausible small double. The record's real doubles are further in.
 /// See `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
 ///
-/// The record is still surfaced, because it is in the file and its byte
-/// provenance is sound, but as probe evidence rather than as an annotation
-/// with a position no renderer should trust.
+/// A record of this family is surfaced as probe evidence rather than as an
+/// annotation with a position no renderer should trust.
+///
+/// On every sheet stream measured there is none to surface. The entities
+/// this emitter used to produce — 13 671 across the corpora — came from
+/// decodes that started inside `DependencyObject` records, on the length
+/// word of the block each one ends with; a family now decodes only what its
+/// stream's chain starts, and no sheet chain carries a `0x0030` record
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.2).
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {

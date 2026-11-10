@@ -328,6 +328,16 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // The next three rows decode nothing on any sheet stream measured: no
+    // sheet chain carries a `0x0030` or a `0x0010` record, and a family
+    // decodes only what the chain starts. What they used to report — 13 671
+    // overrides, 66 190 sub-records, 12 531 fragments — were fields of other
+    // records read as record headers by a byte-sliding walk
+    // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    // §3). The rows are still here because retiring them takes three public
+    // `SheetGeometry` fields and their DTOs with them, which is a change of
+    // its own; until then they are rows whose decoders have never been handed
+    // a record.
     SheetRecordFamily {
         name: "JStyleOverride",
         type_code: 0x0030,
