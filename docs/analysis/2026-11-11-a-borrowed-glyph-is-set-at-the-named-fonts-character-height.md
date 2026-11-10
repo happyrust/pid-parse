@@ -12,8 +12,10 @@
 2. **本机 GDI 能逐像素复现**：经 Arial Narrow（`lfHeight = 24`）用 `TextOutW` 画 `动` 和 `℃`，
    画出来的位图与直接选 新宋体、em 20 画出来的完全相同。
 3. **字符高是基础字体自己的设备度量，不是字格的比例。** 同一台 GDI 上，Arial Narrow 的字格
-   22、23、25、27、29 对应的字符高是 17、19、21、23、24，Arial 的字格 24 对应 21。参考图上
-   借字的 16 条标签全在「Arial Narrow、字格 24」这一档，所以参考图只证得了这一档。
+   22、23、25、27、29 对应的字符高是 17、19、21、23、24，Arial 的字格 24 对应 21。这个数也
+   写在字体文件里：`VDMX` 表中 `yMax − yMin` 等于字格的那一行的 `yPelHeight`（Arial Narrow
+   字格 24 → 20），与 GDI 的读数逐档一致。参考图上借字的 16 条标签全在「Arial Narrow、字格 24」
+   这一档，所以参考图只证得了这一档。
 4. **实现只做到有参考图的这一档**：Arial Narrow、字格 24 个单位、正排、图纸自己的标签、没有
    字宽系数，借来的字是整条标签或标签的最后一个字——借来的字画成 20 个单位，整条借字的标签
    每个字按 Arial Narrow `?` 的步进走（9 个单位，字形相叠，与参考图一样）。别的情形保持原样，
@@ -96,6 +98,13 @@ Arial Narrow（`ARIALN.TTF`）：`unitsPerEm` 2048，`usWinAscent` 1888，`usWin
 - 基础字体按字格选入时，GDI 给出的 `tmInternalLeading` 不是 `字格 − em` 的四舍五入（24 − 21.195
   ≈ 3），而是 4；`tmHeight` 也不总等于请求的字格（Arial 请求 29 得 28，Arial Narrow 请求 18、19
   都得 17）。这是字体自带的设备度量表（`VDMX`）给的整数行，不是按比例算的。
+- **不经过 GDI，从字体文件也读得出同一个数。** `ARIALN.TTF` 的 `VDMX` 表（1:1 那一组）逐行列出
+  「em 为 `yPelHeight` 个像素时，带 hint 的字形最高到 `yMax`、最低到 `yMin`」。GDI 实现的字格是
+  `yMax − yMin` 不超过所要字格的最高那一行，字符高就是那一行的 `yPelHeight`。`yMax − yMin = 24`
+  的只有一行：`yPelHeight 20`、`yMax 19`、`yMin −5`——正是上表里 24 / 19 / 5、字符高 20 的那一档。
+  把字格从 8 扫到 72，逐档拿 GDI 量到的字符高去对表：Arial Narrow 落在表内的 60 档（13 起）全部
+  对得上，Arial 的 63 档（10 起）全部对得上；表里有两行同高时（Arial Narrow 字格 22：17 / 18）
+  GDI 量到的是其中之一。字格比表的第一行还矮的几档（Arial Narrow 8–12，Arial 8–9）表里没有行。
 - 关联字体就实现在这个整数字符高上。PDF 驱动把基础字体写成按字格换算的 `Tf 10.17`，把关联
   字体写成它的 em：20 个单位，`Tf 9.6`。
 - 用 `TextOutA`（GBK 字节）画同一个字得到的不是这个结果（前进 10，不是关联字体的字形），所以
@@ -226,6 +235,13 @@ Arial 字格 29 → 25 个单位），但没有参考图可以对，这次不写
   probe_which_label_a_paired_run_is_read_against`。现在读 24 段、12 对没有标签、50 条超限、
   0 对字型不同（改之前是 64 条超限、14 对字型不同）。
 - 单张与成批：`probe_does_a_sheet_letter_alone_as_in_a_batch`（五组语料 76 张，0 张不同）。
-- 第三节的 GDI 实测是在仓库外用 `ctypes` 直接调 `gdi32` 做的（`CreateFontIndirectW`、
-  `GetTextMetricsW`、`GetTextExtentPoint32W`、`TextOutW`、`CreateDIBSection`），第七节的清单来自
-  临时示例 `tmp_borrow_scan`；两者都没有入库。
+- 第三节的 GDI 实测：`tools/gdi_font_association.py`（`ctypes` 直接调 `gdi32`，只在内存 DC 上画，
+  要在关联字体是新宋体的中文 Windows 上跑）。三种读法：
+  - `python -X utf8 tools/gdi_font_association.py bitmap --cells 24,22,23,25,27,29`：经 Arial Narrow
+    画 `动`、`℃`，找位图相同的新宋体 em（`--face Arial --cells 24,29` 是 Arial 那两档）；
+  - `… sweep "Arial Narrow" 8 72 --vdmx <字体目录>\ARIALN.TTF`：逐档的度量、字符高、全宽字的前进，
+    并与字体文件的 `VDMX` 表对照；
+  - `… reference`：`REFERENCE_CAP_PX` 各行的两个读数，含新加的新宋体那一行。
+- 第七节的清单来自临时示例 `tmp_borrow_scan`，没有入库：它在仓库外把「够得到 / 够不到」又判了
+  一遍，与写出器的判定是两份。要把这份清单变成能复跑的读数，应当让写出器自己说出每条借字是
+  按哪一种画的（`write/borrowed.rs` 的 `witnessed_run` 已经知道），再由门禁或探针去数。
