@@ -261,7 +261,9 @@ struct Loans {
 
 /// Which face lends each character the face it is named in cannot draw.
 ///
-/// Every character of a label is named in a face ([`named_faces`]). The ones
+/// Every character a label letters is named in a face ([`named_faces`]) —
+/// the blanks inside the line with the rest, since each is set for its
+/// advance, and not the trailing pad, which the writer drops. The ones
 /// that face cannot draw go to the label's two lenders in [`borrow_order`]:
 /// the first is given every such character its program draws, and the second
 /// is asked only when that leaves some over. It is then given every one *it*
@@ -297,11 +299,19 @@ fn loans(
                 continue;
             }
             let own = typeface_key(font.as_deref(), value);
+            // Only what the page letters. The writer drops a trailing pad
+            // before it sets a label, so a character there is never drawn
+            // and asks nothing of a lender; every character before it is
+            // set, a blank included — it inks nothing and still takes its
+            // advance, so a face has to carry it. `动　火　点` spaces its
+            // characters with U+3000, which Arial Narrow does not draw.
+            let inked = value.trim_end().chars().count();
             let mut lacking: BTreeSet<char> = BTreeSet::new();
-            for (ch, named) in value.chars().zip(named_faces(value, own, spans)) {
-                if ch.is_whitespace() {
-                    continue;
-                }
+            for (ch, named) in value
+                .chars()
+                .zip(named_faces(value, own, spans))
+                .take(inked)
+            {
                 // A run's face this machine has no file for is not loaded,
                 // and the label letters that stretch in its own face.
                 let (key, face) = match loaded(faces, named) {
@@ -911,6 +921,60 @@ mod tests {
             carries(&faces, "Arial", 'Ω'),
             "Arial, the face the run names, was not given the run's character"
         );
+    }
+
+    /// A blank the named face does not draw is borrowed like any other
+    /// character: the writer sets it for its advance, so some program has to
+    /// hold it. `动　火　点` spaces its characters with U+3000, which Arial
+    /// Narrow lacks, and SimSun — the lender of a label with a Han character
+    /// — carries the space with the three characters, for the sheet alone as
+    /// beside a sheet whose own 宋体 label holds it.
+    #[test]
+    fn a_space_the_named_face_cannot_draw_is_given_to_the_lender() {
+        let narrow = ascii_only();
+        let song = drawing("动火点审定\u{3000}");
+        let dir = scratch_dir(
+            "borrowed-space",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        );
+        let borrowing = sheet(&[("动\u{3000}火\u{3000}点", "Arial Narrow")]);
+        let naming = sheet(&[("审\u{3000}定", "宋体")]);
+        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
+            for ch in "动\u{3000}火点".chars() {
+                assert!(
+                    carries(faces, "SimSun", ch),
+                    "prepared {prepared}: SimSun does not carry {ch:?} of the label it lends to"
+                );
+            }
+        }
+    }
+
+    /// Only what the page letters is borrowed. A trailing pad is dropped
+    /// before a label is set, so a blank there that the named face does not
+    /// draw asks no lender for anything — a face loaded for it would be
+    /// embedded and never used.
+    #[test]
+    fn a_trailing_pad_the_named_face_cannot_draw_asks_no_lender() {
+        let narrow = ascii_only();
+        let song = drawing("\u{3000}");
+        let dir = scratch_dir(
+            "trailing-pad",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        );
+        let padded = sheet(&[("AB\u{3000}", "Arial Narrow")]);
+        let faces = prepare_fonts(&[&padded], &[dir]).expect("the label's own face is enough");
+        let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(keys, vec!["Arial Narrow"], "nothing is borrowed for a pad");
     }
 
     #[test]

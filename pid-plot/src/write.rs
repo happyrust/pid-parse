@@ -4977,6 +4977,62 @@ mod tests {
         }
     }
 
+    /// A blank is lettered like any other character: it inks nothing and
+    /// still takes its advance, so a face has to carry it. `动　火　点` spaces
+    /// its characters with the ideographic space U+3000, which Arial Narrow
+    /// does not draw, so the string is borrowed whole, spaces and all; in a
+    /// label the named face partly draws, the space alone is borrowed. The
+    /// sheet prepared alone letters both the way it does beside a sheet whose
+    /// own 宋体 label holds the same space.
+    #[test]
+    fn a_space_the_named_face_cannot_draw_is_borrowed_alone_and_in_a_batch() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let narrow = ascii_only();
+        let song = drawing("动火点审定\u{3000}");
+        let dirs = [scratch_dir(
+            "write-borrowed-space",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        )];
+        let borrowing = lettered_sheet(&[
+            ("动\u{3000}火\u{3000}点", "Arial Narrow"),
+            ("A\u{3000}B", "Arial Narrow"),
+        ]);
+        let naming = lettered_sheet(&[("审\u{3000}定", "宋体")]);
+        let expected = vec![
+            lettered(
+                "动\u{3000}火\u{3000}点",
+                "Arial Narrow",
+                &[("SimSun", "动\u{3000}火\u{3000}点")],
+            ),
+            lettered(
+                "A\u{3000}B",
+                "Arial Narrow",
+                &[
+                    ("Arial Narrow", "A"),
+                    ("FangSong", "\u{3000}"),
+                    ("Arial Narrow", "B"),
+                ],
+            ),
+        ];
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one whose own 宋体 label holds the space"
+        );
+    }
+
     /// A label its named face draws none of goes whole to one lender, and
     /// where the first lender draws only part of it that is the second: `甲乙`
     /// asks SimSun first, this SimSun draws `甲` alone, and FangSong draws
