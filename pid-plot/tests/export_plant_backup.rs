@@ -20,32 +20,41 @@
 //!   face for `U+000D`, and one such label took the whole page down;
 //! - no placement falls back to a placeholder box: a symbol the `.sym`
 //!   libraries lack is still drawn from the body the `.pid` carries itself
-//!   (`missing_boxes` is empty on all 53 — the 18 library gaps are drawn);
+//!   (`missing_boxes` is empty on all 53 — the 22 library gaps the sheets
+//!   report between them are drawn);
 //! - every library gap is one of the known ones below, and no gap grows;
 //! - every sheet wearing a border template wears the `.igr` it links at the size
-//!   and stroke count that file states, its strokes start at the page origin,
-//!   and each symbol its title block places sits at the point the `.igr` states
-//!   — on every sheet wearing it, since a placement is the template's;
+//!   and stroke count that file states, its strokes start where the sheet's
+//!   border frame places the template, and each symbol its title block places
+//!   sits at the point the `.igr` states — on every sheet wearing it, since a
+//!   placement is the template's;
 //! - every label that template letters is the same characters, at the same
 //!   insertion point and the same body height, cell by cell — 225 cells over
 //!   the seven templates, pinned per template and required to agree sheet by
 //!   sheet, so a re-authored title block that drifts a cell or respells the
 //!   company name fails even though its stroke count, extent and placements
-//!   are untouched. How many of those 225 a run actually reads is the corpus's
-//!   business, not the pin's: a share carries the five `CPE*` templates and so
-//!   compares 175 cells, a backup package carries all seven and compares 225
-//!   (see the corpus split below);
+//!   are untouched. The 53 sheets wear five of the seven, so a run holds 175
+//!   of the 225 against a page, whichever corpus it reads; the other 50 are
+//!   the cells of `A0-W - New.igr` and `A1-W - New.igr`, which no sheet wears
+//!   (see `What the 53 sheets exercise` below);
+//! - how many sheets wear each pinned template, exactly — zero for the two no
+//!   sheet wears — and which three wear none, with the 175 cells and the 64
+//!   placements that comes to: a pinned template going unread is then a stated
+//!   number rather than a silence, and the first sheet to wear one fails here
+//!   until what it is held to has been looked at ([`TEMPLATE_SHEETS`],
+//!   [`BARE_SHEETS`]);
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
 //!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
-//!   fix each page is 175–846 KiB (an empty sheet is 722 B), before it
-//!   6.6–7.1 MiB;
+//!   fix each page is 492–856 KiB (the lightest is `D03`, which has no object
+//!   of its own and carries its template alone), before it 6.6–7.1 MiB;
 //! - `D04`'s own `igSymbol2d` placements reach the page: `test/U01/D04.pid`
 //!   writes its placement matrix tag's third byte `0x27` rather than the
 //!   corpus-wide `0xA7`, and a drawing with 0 decoded `igSymbol2d` and 5
 //!   refused `0x00CE` would still lay out and export (the refusal is
 //!   invisible to every other pin above) — `d04_igsymbol2d_refused_count_is_zero`
-//!   pins the refused count itself rather than any derived page effect.
+//!   pins the two counts themselves, 5 decoded and 0 refused, rather than any
+//!   derived page effect.
 //!
 //! Soft-skips when the extracted backup is absent, which is the case on CI.
 //! It does not soft-skip once the backup is there and no face directory is:
@@ -54,19 +63,22 @@
 //!
 //! # Two corpora, two variables
 //!
-//! Which templates get picked — and so how much of the pin above is exercised —
-//! depends on the corpus, and the two kinds of corpus need different variables:
+//! Where the templates and the faces are read from depends on the corpus, and
+//! the two kinds of corpus need different variables:
 //!
 //! - **A share**, the default (`D:\work\cad\PID自研软件验证`): templates come
 //!   from `<share>/Ref/Template Files`, faces from `<share>/fonts`. Naming
 //!   `PID_PARSE_SELF_CHECK_DIR` is all it takes.
-//! - **A backup package** (`D:\work\cad\pid-test-data`): the `.igr` templates
-//!   come out of the package's own `RefData~4~682.zip`, and `A0-W - New.igr` /
-//!   `A1-W - New.igr` enter the pick only here — a share's `Ref/Template Files`
-//!   holds the five `CPE*` files and neither of those two. The package carries
-//!   no `fonts/`, so the share's faces have to be named a second time. Both
-//!   variables, or the gate refuses to pass for want of a face rather than
-//!   reporting the written-page pins unread:
+//! - **A backup package** (`D:\work\cad\pid-test-data`, or the copy at
+//!   `D:\work\plant-code\cad\pid-test-data`): the `.igr` templates come out of
+//!   the package's own `RefData~4~682.zip`, which also holds `A0-W - New.igr`
+//!   and `A1-W - New.igr` — a share's `Ref/Template Files` holds the five
+//!   `CPE*` files and neither of those two. A backup writes no `fonts/` into
+//!   its package: the first directory has none, so the share's faces have to
+//!   be named a second time, while the second keeps a `fonts/` beside its
+//!   archives and needs no second variable. Setting both suits either, and
+//!   with no face in reach the gate refuses to pass rather than reporting the
+//!   written-page pins unread:
 //!
 //! ```text
 //! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\pid-test-data \
@@ -80,14 +92,40 @@
 //! root: it is one of the places `backup-plant-data` is looked for, beside the
 //! corpus and the two `pid-test-data` paths listed in [`backup_dir`].
 //!
-//! The label pin splits the same way, and the two readings are not
-//! interchangeable: 34 cells each on `CPE-SQ-A0/A1/A2`, 37 on
-//! `CPECCHB-SQ-A1`, 36 on `CPECCHB-SQ-A2` — **175 cells on a share** — then 25
-//! each on `A0-W - New.igr` and `A1-W - New.igr`, which only a package's
-//! `RefData~4~682.zip` supplies, so **225 in a package**. The pin's own total
-//! is the 225; a share reading 225 would mean it had found the two `W` files
-//! it does not have. (`7f202e9`'s commit message reported 225 for both corpora;
-//! the share's figure is 175 — see the CHANGELOG erratum.)
+//! The corpus also decides what the ledger gate at the end compares. Its
+//! baseline, `docs/baselines/export-ledger-backup.json`, names a package's
+//! `RefData~*.zip` archives as the sources of its symbols and templates, so
+//! only a package run has its 53 pages' counts compared with it. A share reads
+//! both from directories, and the gate then reports the count comparison as
+//! skipped while still holding the unattributed and cross-check rules.
+//!
+//! # What the 53 sheets exercise
+//!
+//! The template pins do not split by corpus: a share and a package draw the
+//! same furniture on the same sheets. 8 sheets wear `CPE-SQ-A0`, 22
+//! `CPE-SQ-A1`, 7 `CPE-SQ-A2`, 4 `CPECCHB-SQ-A1` and 9 `CPECCHB-SQ-A2` — 50 in
+//! all, the other three bare — and those five templates letter 34, 34, 34, 37
+//! and 36 cells, so **175 cells are held against a page in either corpus**.
+//!
+//! The pin's own total is 225. The remaining 50 cells are the 25 each of
+//! `A0-W - New.igr` and `A1-W - New.igr`, and no sheet wears either file — in a
+//! package, which carries both, no more than in a share, which carries
+//! neither. The pick is why: a sheet that names a template wears only a file
+//! whose name begins with the stem its link spells (`template_named_by` in
+//! `model.rs`), and a link to the template's drawing (`CPE-SQ~2.PID`) is a
+//! name as much as one to its `.igr`. All 50 templated sheets spell `CPE-SQ`
+//! or `CPECCH`, which neither `W` name begins with; the three that name
+//! nothing state no page either, and a sheet whose page had to be measured
+//! wears furniture only if it names some. A `W` file lands only on a sheet
+//! that names it or — being the size of its `CPE-SQ` sibling — on one that
+//! states an A0 or A1 page and names nothing, and the backup holds neither
+//! kind.
+//!
+//! So the two `W` rows and their label tables stay pinned for a sheet that
+//! wears one, and nothing in a run compares them. [`TEMPLATE_SHEETS`] pins
+//! that as a number — zero sheets on each — so the day one is worn the gate
+//! fails and names the template, and its cells get checked against that page
+//! before the count moves.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -139,6 +177,18 @@ fn describe(primitive: &PaperPrimitive) -> String {
     }
 }
 
+/// A drawing's path under the backup directory, `/`-separated on every
+/// platform: the key the ledger baseline files a page under, and the form
+/// [`BARE_SHEETS`] names a sheet in.
+fn page_key(path: &Path, backup: &Path) -> String {
+    path.strip_prefix(backup)
+        .unwrap_or(path)
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -181,8 +231,10 @@ const KNOWN_LIBRARY_GAPS: [&str; 7] = [
     r"c:\users\admini~1.win\appdata\local\temp\qiufa.sym",
 ];
 
-/// `PlantData~2~711.zip` holds 53 sheets. A ratchet floor, not an equality:
-/// a fuller extraction supersedes this one rather than failing the gate.
+/// `PlantData~2~711.zip` holds 53 sheets. A ratchet floor, not an equality: it
+/// only refuses an extraction that lost sheets. The exact account of the 53 is
+/// [`TEMPLATE_SHEETS`] and [`BARE_SHEETS`] — 50 on a template, 3 on none — so a
+/// fuller extraction passes here and is asked to re-measure there.
 const BACKUP_SHEETS: usize = 53;
 
 /// Every page is a few hundred KiB once the faces are subset. The bitmap
@@ -242,6 +294,10 @@ const CONDENSED_RUNS: usize = 0;
 /// neither branch above — it names `CPECCH~3.IGR` and gets the sheet its own
 /// inked extent lands on, which is CCHB's A1. `换热器CD` states no page either
 /// and names nothing, so it stays bare, as its reference plot is.
+///
+/// The floor is what a corpus with no template in reach fails on, all 50 at
+/// once. Which template each of the 50 wears is pinned exactly, template by
+/// template, in [`TEMPLATE_SHEETS`], whose counts add up to this number.
 const TEMPLATED_SHEETS: usize = 50;
 
 /// One symbol a pinned template places, as the `.igr` states it: the file name
@@ -532,11 +588,16 @@ static CPECCHB_SQ_A2_LABELS: [PinnedLabel; 36] = [
 
 /// The 25 cells `A0-W - New.igr` letters.
 ///
-/// A third furniture family, reachable only when the corpus is a backup
-/// package: its title block letters `项目经理` and a wide-spaced `审  定`,
-/// and its sign-off column letters a bare `签署` where the `CPE-SQ` family
-/// letters `签     署`. Both W files letter the same 25 strings at their own
-/// page size, and both place no symbol at all (`TEMPLATE_PLACEMENTS` below).
+/// A third furniture family: its title block letters `项目经理` and a
+/// wide-spaced `审  定`, and its sign-off column letters a bare `签署` where
+/// the `CPE-SQ` family letters `签     署`. Both W files letter the same 25
+/// strings at their own page size, and both place no symbol at all
+/// (`TEMPLATE_PLACEMENTS` below).
+///
+/// Only a backup package's `RefData~4~682.zip` carries the two files, and none
+/// of the 53 sheets wears either one — [`TEMPLATE_SHEETS`] pins both at zero
+/// and says why — so no run compares these cells or [`A1_W_LABELS`]' with a
+/// page. They are what the first sheet to wear a `W` file is held to.
 static A0_W_LABELS: [PinnedLabel; 25] = [
     ("专业", [20.213572, 674.384346], 3.000000),
     ("专业", [20.187827, 751.052526], 3.000000),
@@ -609,17 +670,16 @@ static A1_W_LABELS: [PinnedLabel; 25] = [
 /// and not the extraction's — a fuller backup moves nothing here, while a
 /// template that starts placing something else fails.
 ///
-/// Two of the seven only reach a page when the corpus can read the backup's own
-/// `RefData~*.zip` (`A0-W - New.igr` on `A井场`, `A1-W - New.igr` on `稳定塔
-/// (600td)`): same extent as their `CPE-SQ` siblings, so the pick's last key —
-/// the file name on disk — decides, and the archive offers both. Neither title
-/// block places a symbol; the two are pinned so the gate holds whichever corpus
-/// it is run against — `PID_PARSE_SELF_CHECK_DIR` at a share (`Ref/Template
-/// Files` first) or at a backup package, whose templates then come out of its
-/// own `RefData~4~682.zip`. A backup package is not a share: it carries no
-/// `fonts/`, so that run also has to name the share's faces in `PID_PLOT_FONTS`
-/// — otherwise the gate refuses to pass for want of a face (see
-/// [`require_faces`]) instead of reporting these two pins unread.
+/// Two of the seven, `A0-W - New.igr` and `A1-W - New.igr`, are in no share —
+/// only a backup package's `RefData~4~682.zip` carries them — and no sheet
+/// wears either, whichever corpus the gate is run against. They have the
+/// extent of their `CPE-SQ` siblings, so between the two the pick's last key —
+/// the file name — would decide for a sheet that states that page and names no
+/// template; every sheet here that states a page names `CPE-SQ` or `CPECCH`,
+/// and a named sheet wears only a file of that name. Neither title block
+/// places a symbol. The two rows are what a sheet wearing a `W` file would be
+/// held to, and [`TEMPLATE_SHEETS`] pins that there is none, so they cannot
+/// start being read unnoticed.
 ///
 /// The second number is `BorderTemplate::extent_mm` — the template's own ink
 /// box, the size its outer frame spans. The pick already refuses a template
@@ -638,14 +698,15 @@ static A1_W_LABELS: [PinnedLabel; 25] = [
 /// column plus the `比例` cell it does not have.)
 ///
 /// The extent is the template's, not the sheet's: `CPECCHB-SQ-A2` is authored
-/// 593.939 mm wide on a 594.3 mm page, and `A1-W - New.igr` is 841 × 594 on the
-/// `600td` sheet's 842.54 × 595.54 page — both inside the pick's tolerance, so
-/// pinning the sheet here instead would be pinning the wrong number.
+/// 593.939 mm wide on a 594.3 mm page, and `CPE-SQ-A1.igr` is 841 × 594 on the
+/// `稳定塔 (600td)` sheet's 842.54 × 595.54 page — both inside the pick's
+/// tolerance, so pinning the sheet here instead would be pinning the wrong
+/// number.
 ///
 /// The fourth number is where each placement sits, in paper millimetres, paired
 /// with the symbol's file name and sorted by it. It belongs to the template the
 /// same way its extent does: the `.igr` states its placements, the sheet only
-/// says which `.igr` it wears, so every one of the twenty-one A1 sheets that
+/// says which `.igr` it wears, so every one of the twenty-two A1 sheets that
 /// wear `CPE-SQ-A1` carries its 比例 wave at the same point. A title block whose
 /// cell moved — a re-authored template, a nibble read one field off — shows up
 /// here and nowhere else, because the placement list alone still matches.
@@ -702,6 +763,64 @@ const TEMPLATE_PLACEMENTS: [PinnedTemplate; 7] = [
     ("A0-W - New.igr", [1189.0, 841.0], 105, &[], &A0_W_LABELS),
     ("A1-W - New.igr", [841.0, 594.0], 101, &[], &A1_W_LABELS),
 ];
+
+/// How many of the backup's sheets wear each pinned template, row for row with
+/// [`TEMPLATE_PLACEMENTS`].
+///
+/// Unlike that table's numbers these are the extraction's, not the template's,
+/// and each is an equality: `8 + 22 + 7 + 4 + 9` is the 50 of
+/// [`TEMPLATED_SHEETS`], and with the three [`BARE_SHEETS`] that is every one
+/// of the 53. The counts are the same whether the templates are read from a
+/// share's `Ref/Template Files` or out of a package's `RefData~4~682.zip`.
+///
+/// The two zeroes are why the table is written out. `A0-W - New.igr` and
+/// `A1-W - New.igr` are pinned above, 25 label cells each, and no sheet wears
+/// either: a sheet that names a template wears only a file whose name begins
+/// with the stem its link spells — a `.PID` link to the template's drawing
+/// counts as much as one to its `.igr` — and every templated sheet here spells
+/// `CPE-SQ` or `CPECCH`; the three sheets that name nothing state no page, so
+/// nothing picks furniture for them by size. A pinned template no sheet wears
+/// is a pin no run reads, and without a number here that would look the same
+/// as one that is read and agrees. With it, the first sheet to wear a `W` file
+/// fails the gate by the template's name, and the cells it is held to get
+/// looked at before the count moves; so does a sheet that changes template or
+/// loses its furniture.
+const TEMPLATE_SHEETS: [(&str, usize); 7] = [
+    ("CPE-SQ-A0.igr", 8),
+    ("CPE-SQ-A1.igr", 22),
+    ("CPE-SQ-A2.igr", 7),
+    ("CPECCHB-SQ-A1.igr", 4),
+    ("CPECCHB-SQ-A2.igr", 9),
+    ("A0-W - New.igr", 0),
+    ("A1-W - New.igr", 0),
+];
+
+/// The sheets that wear no template, by their path under the backup directory.
+///
+/// All three state no page and link no template, so the pick has neither a
+/// size nor a name to go on and the page stays bare — as `换热器CD`'s
+/// reference plot is. Listed rather than counted: a sheet that loses its
+/// furniture while one of these gains some leaves the count at three.
+const BARE_SHEETS: [&str; 3] = [
+    "00/00/D井场 注采阀组工艺及自控流程图.pid",
+    "00/00/集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图.pid",
+    "00/02/集注站 凝析油一级闪蒸分离器B气相出口改造工艺及自控流程图.pid",
+];
+
+/// Label cells a run holds against a page: the cells of each template some
+/// sheet wears, counted once per template.
+///
+/// `34 × 3 + 37 + 36`, the five worn templates' lists. The seven pinned lists
+/// hold 225; the 50 between the two numbers are the two `W` templates' cells,
+/// which [`TEMPLATE_SHEETS`] pins as worn by no sheet.
+const COMPARED_LABEL_CELLS: usize = 175;
+
+/// Symbols the templates place, summed over every sheet wearing one.
+///
+/// One `BLFH.sym` on each of the 37 `CPE-SQ` sheets, none on the four
+/// `CPECCHB-SQ-A1` sheets and three on each of the nine `CPECCHB-SQ-A2`
+/// sheets: `37 + 0 + 27`.
+const TEMPLATE_SYMBOL_PLACEMENTS: usize = 64;
 
 /// How far a pinned placement point may drift before the gate speaks, in
 /// millimetres.
@@ -1004,13 +1123,14 @@ fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathB
 
 /// Refuse to pass for want of a face, naming what the page pins never saw.
 ///
-/// A backup package keeps its templates in `RefData~*.zip` but not the
-/// licensed faces, so the archive configuration has no `fonts/` under its
-/// corpus. The layout pins all read without one — how many sheets drew
-/// furniture, which template, its extent, its strokes, what it placed — but
-/// every pin that needs a written PDF does not, and this used to be an
-/// `eprintln!` and a `return`, which the harness reports as a pass. It did, for
-/// one run.
+/// A backup writes its templates into `RefData~*.zip` but no licensed faces,
+/// so the archive configuration has a `fonts/` under its corpus only where one
+/// is kept beside the archives: `D:\work\plant-code\cad\pid-test-data` has
+/// one, `D:\work\cad\pid-test-data` does not. The layout pins all read without
+/// a face — how many sheets drew furniture, which template, its extent, its
+/// strokes, what it placed — but every pin that needs a written PDF does not,
+/// and this used to be an `eprintln!` and a `return`, which the harness
+/// reports as a pass. It did, for one run.
 ///
 /// The two configurations, and the command each one takes, are in this file's
 /// module docs under `Two corpora, two variables`; the panic repeats the
@@ -1039,6 +1159,17 @@ fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
 
 #[test]
 fn every_backup_drawing_exports_a_readable_page() {
+    // Read before the corpus is looked for, since it needs none: a template
+    // pinned in one table and absent from the other would be a row nothing
+    // counts the sheets of.
+    assert!(
+        TEMPLATE_PLACEMENTS
+            .iter()
+            .map(|(file, ..)| *file)
+            .eq(TEMPLATE_SHEETS.iter().map(|(file, _)| *file)),
+        "TEMPLATE_SHEETS has to count the sheets of every template TEMPLATE_PLACEMENTS pins, \
+         row for row"
+    );
     let corpus = corpus_dir();
     let Some(backup) = backup_dir() else {
         eprintln!("skipping the backup export; no backup-plant-data directory is present");
@@ -1094,6 +1225,16 @@ fn every_backup_drawing_exports_a_readable_page() {
     // collect-then-report shape are the placement account's, not a new rule.
     let mut by_template_labels: BTreeMap<String, LabelAccount> = BTreeMap::new();
     let mut mislettered: BTreeMap<String, String> = BTreeMap::new();
+    // Who wears what: the sheets on each pinned template, by its pinned file
+    // name, and the sheets on none. Tallied as a sheet's template is
+    // identified and before anything about it is compared, so the count is of
+    // the sheets wearing a template and not of those that agreed with it.
+    //
+    // A bare sheet keeps its `missing_templates` beside its key — the stems it
+    // named that no file answered — which is what tells a sheet this corpus
+    // could not give furniture from one that asked for none.
+    let mut worn: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut bare: Vec<(String, &[String])> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
         assert!(
@@ -1105,6 +1246,7 @@ fn every_backup_drawing_exports_a_readable_page() {
             model.missing_symbols
         );
         let Some(template) = model.template.as_ref() else {
+            bare.push((page_key(path, &backup), model.missing_templates.as_slice()));
             continue;
         };
         templated += 1;
@@ -1120,6 +1262,7 @@ fn every_backup_drawing_exports_a_readable_page() {
                 template.path
             );
         };
+        *worn.entry(*file).or_insert(0) += 1;
         for axis in 0..2 {
             assert!(
                 (template.extent_mm[axis] - extent[axis]).abs() < TEMPLATE_EXTENT_SLACK_MM,
@@ -1285,15 +1428,34 @@ fn every_backup_drawing_exports_a_readable_page() {
             format_placements(measured)
         );
     }
+    // A pinned template no sheet wears is said out loud: its row and its label
+    // table were held against nothing in this run.
+    for (file, _, _, _, labels) in TEMPLATE_PLACEMENTS
+        .iter()
+        .filter(|(file, ..)| !worn.contains_key(file))
+    {
+        eprintln!(
+            "  {file}: 0 sheets, its {} pinned labels held against no page",
+            labels.len()
+        );
+    }
     eprintln!("  {offset_sheets} of {templated} templated sheets wear a frame offset");
+    eprintln!(
+        "  {} sheets wear no template: {}",
+        bare.len(),
+        bare.iter()
+            .map(|(sheet, _)| sheet.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     assert!(
         templated >= TEMPLATED_SHEETS,
         "{templated} sheets drew furniture; {TEMPLATED_SHEETS} did when this ratchet was set"
     );
-    // No "one placement per sheet" equality: it held of the two templates the
-    // corpus had and not of the six it has now — `CPECCHB-SQ-A1` places none
-    // and `CPECCHB-SQ-A2` places three. What each template places is pinned
-    // above, per sheet, which is where that fact belongs.
+    // No "one placement per sheet" equality: `CPECCHB-SQ-A1` places none and
+    // `CPECCHB-SQ-A2` places three. What each template places is pinned above,
+    // per sheet, which is where that fact belongs; the sum over the sheets is
+    // held to `TEMPLATE_SYMBOL_PLACEMENTS` below.
     let cells: usize = by_template_labels
         .values()
         .map(|(labels, _)| labels.len())
@@ -1303,6 +1465,57 @@ fn every_backup_drawing_exports_a_readable_page() {
          {placements} placements, {cells} labels, {gap_named} with a named gap",
         templated - templated_from_archive,
         templated_from_archive
+    );
+    // The account of which sheet wears which template, held to its pins in one
+    // report: a sheet that changes template moves the count of the one it
+    // left, the count of the one it took and both totals, and those lines
+    // belong side by side.
+    let mut off_pin: Vec<String> = Vec::new();
+    for (file, pinned) in &TEMPLATE_SHEETS {
+        let measured = worn.get(file).copied().unwrap_or(0);
+        if measured != *pinned {
+            off_pin.push(format!(
+                "  {file}: {measured} sheet(s) wear it, {pinned} pinned in TEMPLATE_SHEETS"
+            ));
+        }
+    }
+    for (sheet, unanswered) in &bare {
+        if !BARE_SHEETS.contains(&sheet.as_str()) {
+            off_pin.push(format!(
+                "  {sheet}: wears no template (unanswered template names: {unanswered:?}) \
+                 and is not in BARE_SHEETS"
+            ));
+        }
+    }
+    for sheet in BARE_SHEETS {
+        if !bare.iter().any(|(measured, _)| measured == sheet) {
+            off_pin.push(format!(
+                "  {sheet}: is in BARE_SHEETS and is not one of the {} sheet(s) wearing no \
+                 template",
+                bare.len()
+            ));
+        }
+    }
+    if cells != COMPARED_LABEL_CELLS {
+        off_pin.push(format!(
+            "  {cells} label cells were held against a page, {COMPARED_LABEL_CELLS} pinned in \
+             COMPARED_LABEL_CELLS"
+        ));
+    }
+    if placements != TEMPLATE_SYMBOL_PLACEMENTS {
+        off_pin.push(format!(
+            "  {placements} symbols were placed by the sheets' templates, \
+             {TEMPLATE_SYMBOL_PLACEMENTS} pinned in TEMPLATE_SYMBOL_PLACEMENTS"
+        ));
+    }
+    assert!(
+        off_pin.is_empty(),
+        "the account of which sheet wears which template left its pins in {} place(s):\n{}\n\
+         find which sheet changed and why before moving a pin; a template that gains its \
+         first sheet has its pinned row and label cells compared with a page for the first \
+         time, so check them against that sheet as well",
+        off_pin.len(),
+        off_pin.join("\n")
     );
     // Last, because every pin above reads without a face and should speak
     // first: a template that moved is worth knowing about before a missing
@@ -1405,14 +1618,7 @@ fn every_backup_drawing_exports_a_readable_page() {
             cross.is_empty(),
             "{name}: the ledger disagrees with the counts the code already keeps: {cross:#?}"
         );
-        let page_key = path
-            .strip_prefix(&backup)
-            .unwrap_or(path)
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/");
-        ledger_pages.push((page_key, ledger));
+        ledger_pages.push((page_key(path, &backup), ledger));
         clipped_at_floor += audit.runs_clipped_at_the_condensation_floor;
         deepest_clip_mm = deepest_clip_mm.max(audit.deepest_clip_mm);
         condensed += audit.runs_condensed;
@@ -1447,8 +1653,11 @@ fn every_backup_drawing_exports_a_readable_page() {
             );
         }
         if model.primitives.is_empty() {
-            // `D03` is an authored but empty sheet: a declared page with no
-            // objects. It exports a blank page rather than failing.
+            // A sheet with nothing on it at all exports a blank page rather
+            // than failing. None of the 53 is one: `D03`, the sheet with no
+            // object of its own, links `CPECCHB-SQ-A2.igr` and so carries that
+            // template's 116 furniture primitives, which the two assertions
+            // below read like any other page's ink and lettering.
             assert!(ink.segments.is_empty(), "{name}: unexpected ink");
             continue;
         }
@@ -1570,6 +1779,10 @@ fn same_account_without_font_marks(written: &ExportLedger, face_free: &ExportLed
     written_primitives == face_free_primitives
 }
 
+/// `igSymbol2d` (`0x00CE`) records `D04` decodes: the five live placements on
+/// `/Sheet6`, its one sheet stream.
+const D04_DECODED_IGSYMBOLS: usize = 5;
+
 /// `D04` pins `0` refused `igSymbol2d` (`0x00CE`) records directly, not
 /// through any page effect. `every_backup_drawing_exports_a_readable_page`
 /// lays `D04` out along with the other 52 drawings, but a refused
@@ -1579,6 +1792,11 @@ fn same_account_without_font_marks(written: &ExportLedger, face_free: &ExportLed
 /// `decode_igsymbols` learned `D04`'s own matrix-tag variant. This test
 /// pins the refusal count where a regression in that acceptance would
 /// actually show up.
+///
+/// The decoded count is pinned beside it, because no refusal is also what a
+/// drawing reports when its placements were never walked at all — a sheet
+/// stream that yields no geometry, or records counted under another heading
+/// than refused. Five decoded is what tells "none refused" from "none seen".
 #[test]
 fn d04_igsymbol2d_refused_count_is_zero() {
     let Some(backup) = backup_dir() else {
@@ -1605,5 +1823,16 @@ fn d04_igsymbol2d_refused_count_is_zero() {
     assert!(
         igsymbol_refusals.is_empty(),
         "D04 should refuse 0 igSymbol2d (0x00CE) records, found {igsymbol_refusals:?}"
+    );
+    let decoded_igsymbols: usize = doc
+        .sheet_streams
+        .iter()
+        .filter_map(|sheet| sheet.geometry.as_ref())
+        .map(|geometry| geometry.decoded_igsymbols.len())
+        .sum();
+    assert_eq!(
+        decoded_igsymbols, D04_DECODED_IGSYMBOLS,
+        "D04 decodes {decoded_igsymbols} igSymbol2d (0x00CE) records over its sheet streams; \
+         {D04_DECODED_IGSYMBOLS} are pinned"
     );
 }
