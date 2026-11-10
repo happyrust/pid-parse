@@ -1707,5 +1707,11 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             );
         }
     }
+    // The package places four off-page connectors on DWG-0202GP06-01 and
+    // none has a `ToFromText`. The reference writes `IOffpageConnector`
+    // only with one, never as an empty element.
+    let data = std::fs::read_to_string(out_dir.join("DWG-0202GP06-01_Data.xml")).expect("data");
+    assert_eq!(data.matches("<PIDBranchPoint>").count(), 4, "{data}");
+    assert!(!data.contains("<IOffpageConnector"), "{data}");
     let _ = std::fs::remove_dir_all(&out_dir);
 }

@@ -335,9 +335,11 @@ fn write_opc_point(buf: &mut String, point: &PidOpcPoint) -> std::fmt::Result {
     }
     writeln!(buf, "      <IObject {object}/>")?;
     writeln!(buf, "      <IPIDBranchPoint/>")?;
-    if point.to_from_text.is_empty() {
-        writeln!(buf, "      <IOffpageConnector/>")?;
-    } else {
+    // The reference states `IOffpageConnector` only with a `ToFromText`:
+    // of the 142 off-page connectors in the thirteen reference drawings,
+    // 123 carry one and the other 19 leave the element out; none writes
+    // it empty.
+    if !point.to_from_text.is_empty() {
         writeln!(
             buf,
             r#"      <IOffpageConnector ToFromText="{}"/>"#,
@@ -1316,6 +1318,14 @@ mod tests {
         assert!(xml.contains(r#"      <IRel UID1="R1" UID2="OPC" DefUID="DrawingItems"/>"#));
         assert!(xml.contains(r#"      <IRel UID1="OPC" UID2="RUN" DefUID="PipingEnd2Conn"/>"#));
         assert_eq!(connectivity_rel_counts(&drawing), (1, 0));
+
+        drawing.opc_points[0].to_from_text.clear();
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(r#"      <IObject UID="OPC" Name="565" Description="去G井场"/>"#));
+        assert!(
+            !xml.contains("IOffpageConnector"),
+            "no ToFromText, no IOffpageConnector element: {xml}"
+        );
     }
 
     #[test]
