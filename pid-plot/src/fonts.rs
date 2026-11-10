@@ -64,6 +64,14 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
 /// A2 sheet's two `动火点` in SimSun, every borrowed `℃` in FangSong — stated
 /// so that a sheet prepared on its own gets the same answer.
 ///
+/// Only the first half of it is the reference's lettering. The reference
+/// plots set every borrowed run of those sheets in NSimSun, the two `动火点`
+/// and all fourteen `℃` alike, so a Han label's SimSun is the reference's
+/// family and the `℃`'s FangSong is not: that half is this crate's own batch
+/// lettering, kept because changing it rewrites the delivered pages. The
+/// acceptance gate counts the borrowed runs that are in the reference's
+/// family, so the day the order changes its reading has to rise.
+///
 /// The four that follow are the other faces [`typeface_key`] knows, by name.
 /// They answer for a character neither lender draws: Latin beyond what the
 /// two carry — Arial has `Ż`, SimSun does not — or a Han character of
