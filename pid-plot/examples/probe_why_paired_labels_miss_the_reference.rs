@@ -7,7 +7,9 @@
 //! missing-symbol boxes — and flags the ones whose anchor point (the baseline
 //! start for a left anchor, its middle or end for a centred or right one) lands
 //! more than 0.15 mm from the reference's, or whose run is more than 0.05 mm
-//! wider or narrower.
+//! wider or narrower. The gate pins how many labels each page has past those
+//! two limits (`WholePage::text_off`); this is where each of them gets its
+//! cause.
 //!
 //! Each pair carries the evidence that names its cause: both sides' face,
 //! body size, horizontal scale and per-glyph letter spacing, read back off the
@@ -91,9 +93,9 @@ const WIDTH_MM: f64 = 0.05;
 /// `0.7857` leaves up to `0.024 pt` on one gap of `CADD号` — while a two-glyph
 /// run spaced by `lpDx` differs from an unspaced one by `0.1 pt` or more.
 const TC_PT: f64 = 0.05;
-/// How far a paper-table label may sit from our run when the comparison's own
-/// 20 mm source window missed it, millimetres. A boxed field or a long centred
-/// title puts its insertion point further than that from the run's start.
+/// How far a paper-table label may sit from our run, millimetres: four times
+/// the 20 mm the comparison's own source lookup reaches, so a pair that lookup
+/// leaves `unknown` still gets the nearest label that spells it or holds it.
 const WIDE_SOURCE_MM: f64 = 80.0;
 
 const MM_PER_PT: f64 = 25.4 / 72.0;
@@ -399,9 +401,12 @@ fn anchor_fraction(anchor: TextAnchor) -> f64 {
 /// insertion point sits nearest where its own anchor hangs that run — the
 /// run's start, middle or end.
 ///
-/// The comparison's own source is the nearest same-spelled label to the run's
-/// *start*, which for a centred label can be its neighbour: two ` 1001701A`
-/// tags a few millimetres apart swap insertion points that way.
+/// The comparison's own source is measured the same way, from where the
+/// label's anchor hangs the runs, so two ` 1001701A` tags a few millimetres
+/// apart each keep their own insertion point there too. This lookup differs
+/// in how far it reaches and in taking a label that only holds the run's
+/// text, by its characters alone; the comparison reads a piece against the
+/// label its line spells.
 fn find_label(model: &PaperModel, pair: &TextPair, ours: &PlotInk, fit: &Fit) -> Option<Label> {
     let first = &ours.spans[*pair.our_runs.first()?];
     let wanted = normalize(&first.text);

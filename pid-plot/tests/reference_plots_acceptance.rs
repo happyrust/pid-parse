@@ -92,16 +92,28 @@
 //! plot. The A2 page reads 0.9881, 208.840 mm uncovered and 187.091 mm extra,
 //! with 250 of 261 labels paired: every furniture label pairs, and the eleven
 //! that miss are the ones the masked view misses.
+//!
+//! A paired label is held two ways (2026-11-10,
+//! `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`).
+//! Every lettering class of a page — in the masked view and on the whole
+//! page, whatever its size, `unknown` included — reads inside the two class
+//! thresholds, except the pieces of the labels that end in a borrowed `℃`,
+//! which are pinned at the +0.0294 they read on the eight pages that have
+//! one. A class mean cannot see a single label, so the labels whose anchor
+//! point lands more than 0.15 mm from the reference's or whose run is more
+//! than 0.05 mm wider or narrower are counted on the whole page and pinned:
+//! 64 over the eleven pages, the text census's own count, each with a cause
+//! on record.
 
 use std::path::PathBuf;
 
 use pid_plot::compare::{
-    MaskRect, UnpairedReason, UnpairedStroke, compare_plots_with_model, template_masks,
-    write_overlay, write_report,
+    CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
+    compare_plots_with_model, template_masks, write_overlay, write_report,
 };
 use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::model::{PaperModel, lay_out_drawing};
-use pid_plot::read::read_plot;
+use pid_plot::model::{PaperModel, TextAnchor, lay_out_drawing};
+use pid_plot::read::{PlotInk, read_plot};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
@@ -153,6 +165,9 @@ struct WholePage {
     max_extra_mm: f64,
     min_text_matched: usize,
     text_reference: usize,
+    /// Paired labels past [`LABEL_POSITION_MM`] or [`LABEL_WIDTH_MM`], an
+    /// equality: one more is a label that moved, one fewer a pin to lower.
+    text_off: usize,
 }
 
 /// One bridge's worth of slack above the reading, as `plot_compare.rs` holds
@@ -160,28 +175,84 @@ struct WholePage {
 /// does not.
 const EXTRA_SLACK_MM: f64 = 0.5;
 
-/// Smallest lettering class whose mean down-shift is gated, in labels.
-const CLASS_MIN_COUNT: usize = 10;
-
 /// Largest mean down-shift a lettering class may show, in body heights.
 ///
-/// Every class of ten or more labels on the eleven pages reads within
-/// ±0.026. The valve and motor `M` (`symbol/Middle`, 14–29 labels on each A0
-/// wellsite) read +0.094…+0.098 while a symbol body's ascent-measured height
-/// was stepped down as if it were a cap height; this is the gate that would
-/// have caught it.
+/// Held on every class a page has — a class of one label and `unknown` with
+/// the rest — in the masked view and on the whole page. No class on the
+/// eleven pages reads past ±0.016 (A2's `Left/Middle`, twelve labels, and its
+/// one `Left/Top` label). The valve and motor `M` (`symbol/Middle`, 14–29
+/// labels on each A0 wellsite) read +0.094…+0.098 while a symbol body's
+/// ascent-measured height was stepped down as if it were a cap height; this
+/// is the gate that would have caught it.
 const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 
 /// Largest mean width difference a lettering class may show, in body heights.
 ///
-/// Every class of ten or more labels on the eleven pages reads within
-/// ±0.009 (the widest is A2's `Center/Middle`). Every `Center` class read
-/// about +0.028 while an upright two-glyph run kept its natural advance
-/// rather than the whole-pixel `lpDx` steps the plotter spaces it by, and
-/// the A2 `Left/Ascender` class read −0.320 while its 8 pt Arial line
-/// labels were lettered at the style size rather than the reference's
-/// `Tf 11.16`.
+/// Held on every class, as [`CLASS_DOWN_HEIGHTS`] is. Apart from
+/// [`SPLIT_LABEL_CLASS`], which is pinned at its reading, no class reads past
+/// ±0.015: the widest are the two fused valve tags left in `J K`'s `unknown`
+/// and a title block's two `Right/Bottom` certificate captions. Every
+/// `Center` class read about +0.028 while an upright two-glyph run kept its
+/// natural advance rather than the whole-pixel `lpDx` steps the plotter
+/// spaces it by, and the A2 `Left/Ascender` class read −0.320 while its 8 pt
+/// Arial line labels were lettered at the style size rather than the
+/// reference's `Tf 11.16`.
 const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
+
+/// The one lettering class that reads past [`CLASS_ADVANCE_HEIGHTS`]: the
+/// pieces of the alarm-limit labels that end in `℃`.
+///
+/// The style's Arial Narrow cannot draw `℃`, so `L=35℃` prints as two runs
+/// on both pages: `L=35`, and a `℃` in a borrowed face. The reference
+/// letters that `℃` in NSimSun at `Tf 9.6`; ours borrows FangSong at the
+/// label's own 10.17 pt, and its run is 0.201 mm wider on a 3.387 mm body —
+/// +0.0594 body heights, on every one of the twelve such labels the eleven
+/// pages pair. Beside the Latin half, which reads about −0.0005, the class
+/// comes to +0.0294 on each page that has one, in either view. That is a
+/// lettering difference, not a reading to widen a threshold for, so it is
+/// pinned where it reads until the borrowed run is sized as the reference
+/// sizes it.
+const SPLIT_LABEL_CLASS: &str = "Left/Ascender part";
+
+/// What [`SPLIT_LABEL_CLASS`] reads for its mean width difference, in body
+/// heights, to four decimals. A ceiling: the class may not read wider.
+const SPLIT_LABEL_ADVANCE: f64 = 0.0294;
+
+/// Half of the last decimal place [`SPLIT_LABEL_ADVANCE`] is stated to.
+const SPLIT_LABEL_ROUNDING: f64 = 0.00005;
+
+/// The pages that letter a `℃` after Arial Narrow digits, and so carry
+/// [`SPLIT_LABEL_CLASS`] past the width threshold. A page that stops reading
+/// past it has to leave this list, so the pin cannot outlive the difference.
+const SPLIT_LABEL_PAGES: [&str; 8] = [
+    "I井场 注采阀组工艺及自控流程图",
+    "L M井场 注采阀组工艺及自控流程图",
+    "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
+    "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
+    "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
+    "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
+    "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
+    "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+];
+
+/// How far a paired label's anchor point — the start of a left-anchored run,
+/// the middle of a centred one, the end of a right-anchored one — may land
+/// from the reference's before the label is counted in
+/// [`WholePage::text_off`], millimetres.
+///
+/// A class mean cannot see one label: a class of two hundred averages a
+/// label half a millimetre out down to nothing. This limit and
+/// [`LABEL_WIDTH_MM`] are the text census's
+/// (`probe_why_paired_labels_miss_the_reference`), which names a cause for
+/// each of the 64 labels past them
+/// (`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`).
+/// Counted here with the comparison's own lookup, the eleven pages come to
+/// the same 64, page for page.
+const LABEL_POSITION_MM: f64 = 0.15;
+
+/// How much wider or narrower than the reference's a paired label's run may
+/// be before the label is counted in [`WholePage::text_off`], millimetres.
+const LABEL_WIDTH_MM: f64 = 0.05;
 
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 
@@ -209,6 +280,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 583,
             text_reference: 583,
+            text_off: 8,
         },
     },
     Pin {
@@ -234,6 +306,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 813,
             text_reference: 813,
+            text_off: 7,
         },
     },
     Pin {
@@ -259,6 +332,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 959,
             text_reference: 959,
+            text_off: 8,
         },
     },
     Pin {
@@ -284,6 +358,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 3478.898 + EXTRA_SLACK_MM,
             min_text_matched: 155,
             text_reference: 155,
+            text_off: 0,
         },
     },
     Pin {
@@ -309,6 +384,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 161,
             text_reference: 161,
+            text_off: 6,
         },
     },
     Pin {
@@ -334,6 +410,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 3478.694 + EXTRA_SLACK_MM,
             min_text_matched: 171,
             text_reference: 171,
+            text_off: 2,
         },
     },
     Pin {
@@ -359,6 +436,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 253,
             text_reference: 253,
+            text_off: 2,
         },
     },
     Pin {
@@ -389,6 +467,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 326,
             text_reference: 326,
+            text_off: 8,
         },
     },
     Pin {
@@ -416,6 +495,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
+            text_off: 8,
         },
     },
     Pin {
@@ -443,6 +523,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
+            text_off: 8,
         },
     },
     Pin {
@@ -481,6 +562,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 187.091 + EXTRA_SLACK_MM,
             min_text_matched: 250,
             text_reference: 261,
+            text_off: 7,
         },
     },
 ];
@@ -766,25 +848,7 @@ fn eleven_reference_plots_hold_their_readings() {
             0,
             "{name} an unpaired stroke lies in a missing-symbol box"
         );
-        for class in &report.text_offsets {
-            if class.count < CLASS_MIN_COUNT || class.class == "unknown" {
-                continue;
-            }
-            assert!(
-                class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
-                "{name} {} down {:+.3} body heights over {} labels",
-                class.class,
-                class.mean_down_heights,
-                class.count
-            );
-            assert!(
-                class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
-                "{name} {} advance {:+.3} body heights over {} labels",
-                class.class,
-                class.mean_advance_heights,
-                class.count
-            );
-        }
+        assert_classes_hold(name, "masked", &report.text_offsets);
         let missing_now: Vec<&str> = model.missing_symbols.iter().map(String::as_str).collect();
         assert_eq!(
             missing_now, pin.missing_symbols,
@@ -822,7 +886,116 @@ fn eleven_reference_plots_hold_their_readings() {
             whole.text_matched,
             floor.min_text_matched
         );
+        // The furniture's lettering is in no class of the masked view at all,
+        // so the same two thresholds are held again here, where it is.
+        assert_classes_hold(name, "whole-page", &whole.text_offsets);
+        let off = labels_off(&whole, &reference);
+        assert!(
+            off.len() <= floor.text_off,
+            "{name} whole-page: {} paired labels land more than {LABEL_POSITION_MM} mm from \
+             the reference's or are more than {LABEL_WIDTH_MM} mm wider or narrower, {} are \
+             pinned; one of these is new:\n{}",
+            off.len(),
+            floor.text_off,
+            off.join("\n")
+        );
+        assert!(
+            off.len() >= floor.text_off,
+            "{name} whole-page: {} paired labels are past the label limits where {} are \
+             pinned; lower `text_off` to what is left:\n{}",
+            off.len(),
+            floor.text_off,
+            off.join("\n")
+        );
     }
 
     deliver_plots(&corpus, &delivered);
+}
+
+/// Hold every lettering class of one comparison to the two class thresholds.
+///
+/// No class is left out for being small or for being `unknown`: a class of
+/// one label is that label's own reading, and the thresholds are wide of
+/// every one of them. [`SPLIT_LABEL_CLASS`] is the exception on the pages of
+/// [`SPLIT_LABEL_PAGES`]: its width reading is held to the value it is pinned
+/// at instead, and has to still be past the threshold — a page it has come
+/// back inside on is asked to leave the list.
+fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
+    let pinned_page = SPLIT_LABEL_PAGES.contains(&name);
+    for class in classes {
+        assert!(
+            class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
+            "{name} {view} {} down {:+.4} body heights over {} labels, past ±{CLASS_DOWN_HEIGHTS}",
+            class.class,
+            class.mean_down_heights,
+            class.count
+        );
+        if pinned_page && class.class == SPLIT_LABEL_CLASS {
+            assert!(
+                class.mean_advance_heights <= SPLIT_LABEL_ADVANCE + SPLIT_LABEL_ROUNDING,
+                "{name} {view} {} advance {:+.4} body heights over {} labels; it is pinned at \
+                 {SPLIT_LABEL_ADVANCE:+.4} and may not read wider",
+                class.class,
+                class.mean_advance_heights,
+                class.count
+            );
+            assert!(
+                class.mean_advance_heights > CLASS_ADVANCE_HEIGHTS,
+                "{name} {view} {} advance {:+.4} body heights over {} labels is inside \
+                 ±{CLASS_ADVANCE_HEIGHTS} now; take the page out of SPLIT_LABEL_PAGES",
+                class.class,
+                class.mean_advance_heights,
+                class.count
+            );
+            continue;
+        }
+        assert!(
+            class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
+            "{name} {view} {} advance {:+.4} body heights over {} labels, past \
+             ±{CLASS_ADVANCE_HEIGHTS}",
+            class.class,
+            class.mean_advance_heights,
+            class.count
+        );
+    }
+    assert!(
+        !pinned_page || classes.iter().any(|class| class.class == SPLIT_LABEL_CLASS),
+        "{name} {view} has no {SPLIT_LABEL_CLASS} class and is in SPLIT_LABEL_PAGES; the page \
+         no longer letters a label in pieces, so take it out of the list"
+    );
+}
+
+/// The paired labels of `report` past [`LABEL_POSITION_MM`] or
+/// [`LABEL_WIDTH_MM`], one line each: its class, the reference's runs, how
+/// far its anchor point is from the reference's and how much wider it is.
+///
+/// A label's anchor point is where its paper-table source says it hangs from,
+/// so a centred run that is wider than the reference's by some amount and
+/// starts half that amount early has not moved. A pair with no source is
+/// measured from its start.
+fn labels_off(report: &CompareReport, reference: &PlotInk) -> Vec<String> {
+    report
+        .text_pairs
+        .iter()
+        .filter_map(|pair| {
+            let fraction = match pair.source.as_ref().map(|source| source.anchor) {
+                Some(TextAnchor::Center) => 0.5,
+                Some(TextAnchor::Right) => 1.0,
+                Some(TextAnchor::Left) | None => 0.0,
+            };
+            let position_mm = (pair.along_mm + fraction * pair.advance_mm).hypot(pair.down_mm);
+            if position_mm <= LABEL_POSITION_MM && pair.advance_mm.abs() <= LABEL_WIDTH_MM {
+                return None;
+            }
+            let runs: Vec<&str> = pair
+                .reference_runs
+                .iter()
+                .map(|index| reference.spans[*index].text.as_str())
+                .collect();
+            Some(format!(
+                "  {} {runs:?}: {position_mm:.4} mm off, {:+.4} mm wide",
+                pair.class, pair.advance_mm
+            ))
+        })
+        .collect()
 }

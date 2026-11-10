@@ -28,6 +28,9 @@ const EXTRA_JOIN_LATERAL_MM: f64 = 0.2;
 const COVER_MM: f64 = 0.5;
 const SAMPLE_MM: f64 = 0.5;
 const TEXT_MM: f64 = 1.0;
+/// How far a paper-table label's insertion point may sit from the run it is
+/// read as the source of, millimetres, measured from the point of the run's
+/// baseline the label's anchor hangs it from ([`Reach`]).
 const SOURCE_MM: f64 = 20.0;
 const ATTRIB_MM: f64 = 15.0;
 const LONG_MM: f64 = 8.0;
@@ -236,6 +239,13 @@ pub struct TextOffsetClass {
     /// The lettering rule the run obeyed: `Left/Middle`,
     /// `symbol/Ascender`, or `unknown` when no paper-table source was within
     /// reach of the run.
+    ///
+    /// A run that is one piece of a label — the plot starts a new run where
+    /// the face changes, so `L=35℃` prints as `L=35` and `℃` — is classed
+    /// under its label's rule with ` part` after it (`Left/Ascender part`).
+    /// A piece is placed by that rule and by the width of the pieces before
+    /// it, and its own width is the face it was lettered in, so its readings
+    /// are kept out of the mean of the labels lettered whole.
     pub class: String,
     /// Labels paired in this class.
     pub count: usize,
@@ -273,8 +283,9 @@ pub struct TextPair {
     pub our_runs: Vec<usize>,
     /// The lettering class, named as [`TextOffsetClass::class`] names it.
     pub class: String,
-    /// The paper-table lettering our first run came from, when one was within
-    /// reach of it.
+    /// The paper-table label our runs spell, when its insertion point is
+    /// within reach of them — or, for a ` part` class, the label they are a
+    /// piece of.
     pub source: Option<TextSource>,
     /// Shift of our first run's baseline start along the reference run's
     /// writing direction, millimetres. Positive overshoots to the right.
@@ -1516,11 +1527,37 @@ fn record_offset(
         ours_in_ref[1] - first_reference.origin_mm[1],
     ];
     let direction = first_reference.direction;
-    let source = find_source(ours_in_ref, &first_ours.text, sources, fit);
+    // The label is what the whole chain spells: `2"` + `NC` on our side is the
+    // paper table's `2"NC`. Where the paper table holds the two as labels of
+    // their own and the reference fused them, the pair is measured from the
+    // first, so the first is its label. A run that spells no label may still
+    // be a piece of one — the plot starts a new run where the face changes —
+    // and is then read against the label it is a piece of.
+    let whole = find_source(
+        Reach::of(&our_spans, fit),
+        &joined_text(ours, ours_chain, ours_chain.len()),
+        sources,
+        fit,
+    )
+    .or_else(|| {
+        find_source(
+            Reach::of(&[first_ours], fit),
+            &[normalize(&first_ours.text)],
+            sources,
+            fit,
+        )
+    });
+    let (source, part) = match whole {
+        Some(source) => (Some(source), false),
+        None => (
+            find_label_spelled_through(ours_chain[0], ours, sources, fit),
+            true,
+        ),
+    };
     Some(TextPair {
         reference_runs: reference_chain.to_vec(),
         our_runs: ours_chain.to_vec(),
-        class: offset_class(source),
+        class: offset_class(source, part),
         source: source.cloned(),
         along_mm: delta[0] * direction[0] + delta[1] * direction[1],
         down_mm: delta[0] * direction[1] - delta[1] * direction[0],
@@ -1578,15 +1615,17 @@ fn chain_advance(chain: &[&TextSpan]) -> f64 {
         .fold(first.advance_mm, f64::max)
 }
 
-/// Which lettering rule produced our run, as a stable label.
-fn offset_class(source: Option<&TextSource>) -> String {
+/// Which lettering rule produced our run, as a stable label. `part` marks a
+/// run that is one piece of `source` rather than the whole of it.
+fn offset_class(source: Option<&TextSource>, part: bool) -> String {
     let Some(source) = source else {
         return "unknown".to_string();
     };
-    match source.symbol {
+    let rule = match source.symbol {
         Some(_) => format!("symbol/{:?}", source.line),
         None => format!("{:?}/{:?}", source.anchor, source.line),
-    }
+    };
+    if part { format!("{rule} part") } else { rule }
 }
 
 /// Pair reference text runs with ours, and report what did not pair.
@@ -1740,7 +1779,12 @@ fn match_text(
             continue;
         }
         let origin = into_reference(span.origin_mm, fit);
-        let source = find_source(origin, &span.text, sources, fit);
+        let source = find_source(
+            Reach::of(&[span], fit),
+            &[normalize(&span.text)],
+            sources,
+            fit,
+        );
         unmatched_ours.push(UnmatchedText {
             text: normalize(&span.text),
             origin_mm: origin,
@@ -1894,24 +1938,149 @@ fn unmatched(span: &TextSpan) -> UnmatchedText {
     }
 }
 
-fn find_source<'a>(
-    origin: [f64; 2],
-    text: &str,
+/// Where a chain of our runs lies: the stretch of baseline it covers, from
+/// the first run's origin to the chain's far end, in reference millimetres.
+///
+/// A label's insertion point is where its anchor says — the start of a
+/// left-anchored run, the middle of a centred one, the end of a right-anchored
+/// one — so how far a label is from the runs it letters is measured from that
+/// point of the stretch. Measured from the start whatever the anchor, every
+/// right-anchored or centred label longer than the source window was out of
+/// reach of its own insertion point, and of two centred labels of one text
+/// lettered side by side each was nearer the other's.
+#[derive(Clone, Copy)]
+struct Reach {
+    start: [f64; 2],
+    end: [f64; 2],
+}
+
+impl Reach {
+    /// The reach of `chain`, first run first, as spans of our plot.
+    fn of(chain: &[&TextSpan], fit: &Fit) -> Self {
+        let Some(first) = chain.first() else {
+            // No run reaches anything: every distance from it is `NAN`.
+            return Self {
+                start: [f64::NAN; 2],
+                end: [f64::NAN; 2],
+            };
+        };
+        let advance = chain_advance(chain);
+        let end = [
+            first.origin_mm[0] + first.direction[0] * advance,
+            first.origin_mm[1] + first.direction[1] * advance,
+        ];
+        Self {
+            start: into_reference(first.origin_mm, fit),
+            end: into_reference(end, fit),
+        }
+    }
+
+    /// How far `source`'s insertion point is from where its own anchor would
+    /// hang this stretch: its start, its middle or its end.
+    fn distance_to(&self, source: &TextSource, fit: &Fit) -> f64 {
+        let fraction = match source.anchor {
+            TextAnchor::Left => 0.0,
+            TextAnchor::Center => 0.5,
+            TextAnchor::Right => 1.0,
+        };
+        let hung_from = [
+            self.start[0] + (self.end[0] - self.start[0]) * fraction,
+            self.start[1] + (self.end[1] - self.start[1]) * fraction,
+        ];
+        hypot(hung_from, into_reference(source.origin_mm, fit))
+    }
+}
+
+/// The paper-table label nearest `reach` among those `admits` lets through,
+/// if its insertion point is within [`SOURCE_MM`] of it.
+fn nearest_source<'a>(
+    reach: Reach,
     sources: &'a [TextSource],
     fit: &Fit,
+    admits: impl Fn(&str) -> bool,
 ) -> Option<&'a TextSource> {
-    let wanted = normalize(text);
     let mut best: Option<(f64, &TextSource)> = None;
     for source in sources {
-        if normalize(&source.text) != wanted {
+        if !admits(&normalize(&source.text)) {
             continue;
         }
-        let distance = hypot(origin, into_reference(source.origin_mm, fit));
+        let distance = reach.distance_to(source, fit);
         if distance <= SOURCE_MM && best.is_none_or(|(best_distance, _)| distance < best_distance) {
             best = Some((distance, source));
         }
     }
     best.map(|(_, source)| source)
+}
+
+/// The paper-table label that spells one of `spelled` — the ways the runs at
+/// `reach` read, whitespace collapsed — and sits within reach of them.
+fn find_source<'a>(
+    reach: Reach,
+    spelled: &[String],
+    sources: &'a [TextSource],
+    fit: &Fit,
+) -> Option<&'a TextSource> {
+    nearest_source(reach, sources, fit, |text| {
+        spelled.iter().any(|wanted| wanted == text)
+    })
+}
+
+/// The paper-table label that `run`, an index into `ours`, is one piece of:
+/// the label that the runs continuing each other through `run` spell
+/// together.
+///
+/// The plot starts a new run where a label changes face, so `L=35℃` is the
+/// runs `L=35` and `℃` on both pages and each of them pairs on its own.
+/// Neither spells the label; the chain they form does, and it is found the
+/// way the pairing finds one ([`run_chain`]): a run that starts where another
+/// ends, on its line. The characters alone are not asked, because a piece
+/// shares them with labels it is no part of — the `℃` of `H=40℃` is nearer the
+/// insertion point of the `SP:30℃` under it than its own label's.
+fn find_label_spelled_through<'a>(
+    run: usize,
+    ours: &[TextSpan],
+    sources: &'a [TextSource],
+    fit: &Fit,
+) -> Option<&'a TextSource> {
+    let piece = &ours[run];
+    let free = vec![false; ours.len()];
+    for (start, first) in ours.iter().enumerate() {
+        // A chain reaches `run` only along its first run's own line, so a run
+        // that does not write the same way, sits off that line by more than a
+        // chain can step, or starts after `run` begins no chain through it.
+        // Asked before the chain is walked: this is every run of the page.
+        let same_way =
+            first.direction[0] * piece.direction[0] + first.direction[1] * piece.direction[1];
+        if same_way < 0.99 {
+            continue;
+        }
+        let delta = [
+            piece.origin_mm[0] - first.origin_mm[0],
+            piece.origin_mm[1] - first.origin_mm[1],
+        ];
+        let along = delta[0] * first.direction[0] + delta[1] * first.direction[1];
+        let across = delta[1] * first.direction[0] - delta[0] * first.direction[1];
+        let height = first.height_mm.max(piece.height_mm).max(0.5);
+        if along < -RUN_GAP_HEIGHTS * height
+            || across.abs() > RUNS_PER_LABEL as f64 * RUN_ACROSS_HEIGHTS * height
+        {
+            continue;
+        }
+        let chain = run_chain(ours, start, &free);
+        let Some(position) = chain.iter().position(|index| *index == run) else {
+            continue;
+        };
+        // Every stretch of the chain that takes `run` in and is more than
+        // `run` alone, shortest first.
+        for cuts in (position + 1).max(2)..=chain.len() {
+            let spans: Vec<&TextSpan> = chain[..cuts].iter().map(|index| &ours[*index]).collect();
+            let spelled = joined_text(ours, &chain, cuts);
+            if let Some(source) = find_source(Reach::of(&spans, fit), &spelled, sources, fit) {
+                return Some(source);
+            }
+        }
+    }
+    None
 }
 
 fn normalize(text: &str) -> String {
@@ -3315,6 +3484,263 @@ mod tests {
         );
         assert_eq!(report.text_offsets.len(), 1);
         assert_eq!(report.text_offsets[0].class, "Right/Ascender");
+        assert_eq!(report.text_offsets[0].count, 1);
+    }
+
+    /// A sheet label of the paper table, for the lettering-class tests.
+    fn label(
+        text: &str,
+        origin: [f64; 2],
+        anchor: super::TextAnchor,
+        line: super::TextLine,
+    ) -> super::TextSource {
+        super::TextSource {
+            text: text.to_string(),
+            origin_mm: origin,
+            stream_path: None,
+            byte_range: None,
+            confidence: "decoded".to_string(),
+            symbol: None,
+            anchor,
+            line,
+        }
+    }
+
+    /// The classes of a page lettered the same on both sides, with the count
+    /// of labels in each.
+    fn classes_of(spans: Vec<TextSpan>, sources: &[super::TextSource]) -> Vec<(String, usize)> {
+        let reference = ink(vec![], spans.clone());
+        let ours = ink(vec![], spans);
+        super::compare_plots_with_sources(&reference, &ours, &[], sources)
+            .text_offsets
+            .into_iter()
+            .map(|class| (class.class, class.count))
+            .collect()
+    }
+
+    #[test]
+    fn a_long_label_is_classed_by_its_rule_wherever_its_anchor_is() {
+        // Both labels are 60 mm long. One hangs from its right end and one
+        // from its middle, so their insertion points are 60 and 30 mm from
+        // where the runs start — past the source window from the start, and
+        // on the run itself.
+        let classes = classes_of(
+            vec![
+                run("DWG-0000-05-07", [20.0, 50.0], 60.0),
+                run("FLOW DIAGRAM A", [20.0, 80.0], 60.0),
+            ],
+            &[
+                label(
+                    "DWG-0000-05-07",
+                    [80.0, 51.0],
+                    super::TextAnchor::Right,
+                    super::TextLine::Middle,
+                ),
+                label(
+                    "FLOW DIAGRAM A",
+                    [50.0, 82.0],
+                    super::TextAnchor::Center,
+                    super::TextLine::Ascender,
+                ),
+            ],
+        );
+        assert_eq!(
+            classes,
+            [
+                ("Center/Ascender".to_string(), 1),
+                ("Right/Middle".to_string(), 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_label_out_of_reach_of_the_run_is_not_its_source() {
+        // The same characters, lettered from a point 21 mm past where the run
+        // starts: another label of that text, not this run's.
+        let classes = classes_of(
+            vec![run("Ab", [20.0, 50.0], 10.0)],
+            &[label(
+                "Ab",
+                [41.0, 50.0],
+                super::TextAnchor::Left,
+                super::TextLine::Middle,
+            )],
+        );
+        assert_eq!(classes, [("unknown".to_string(), 1)]);
+    }
+
+    #[test]
+    fn two_centred_labels_of_one_text_keep_their_own_insertion_points() {
+        // Two tags of the same text lettered end to end, each hung from its
+        // middle, the second the wider. The second run starts 6.6 mm from the
+        // first label's insertion point and 10 mm from its own, which is at
+        // its middle.
+        let classes = classes_of(
+            vec![
+                run("1001701A", [20.0, 50.0], 13.2),
+                run("1001701A", [33.2, 50.0], 20.0),
+            ],
+            &[
+                label(
+                    "1001701A",
+                    [26.6, 50.0],
+                    super::TextAnchor::Center,
+                    super::TextLine::Middle,
+                ),
+                label(
+                    "1001701A",
+                    [43.2, 50.0],
+                    super::TextAnchor::Center,
+                    super::TextLine::Bottom,
+                ),
+            ],
+        );
+        assert_eq!(
+            classes,
+            [
+                ("Center/Bottom".to_string(), 1),
+                ("Center/Middle".to_string(), 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_piece_of_a_label_is_classed_as_part_of_its_rule() {
+        // `L=35℃` prints as two runs on both pages, cut where the face
+        // changes, so neither run spells the label the paper table stores —
+        // with the padding it stores it with.
+        let classes = classes_of(
+            vec![run("L=35", [20.0, 50.0], 6.0), run("℃", [26.2, 50.0], 2.4)],
+            &[label(
+                "L=35℃ ",
+                [20.0, 52.0],
+                super::TextAnchor::Left,
+                super::TextLine::Ascender,
+            )],
+        );
+        assert_eq!(classes, [("Left/Ascender part".to_string(), 2)]);
+    }
+
+    #[test]
+    fn a_piece_belongs_to_the_label_its_own_line_spells() {
+        // Two labels a line apart, each cut before its `℃`. The upper `℃`
+        // ends its own line, and the insertion point of the label under it —
+        // one that hangs from its middle rather than its ascender — is the
+        // nearer of the two. It is still a piece of the label its line spells.
+        let classes = classes_of(
+            vec![
+                run("H=40", [20.4, 50.0], 6.5),
+                run("℃", [27.1, 50.0], 2.6),
+                run("SP:30", [20.4, 46.0], 7.5),
+                run("℃", [28.1, 46.0], 2.6),
+            ],
+            &[
+                label(
+                    "H=40℃ ",
+                    [20.0, 53.3],
+                    super::TextAnchor::Left,
+                    super::TextLine::Ascender,
+                ),
+                label(
+                    "SP:30℃",
+                    [20.4, 47.1],
+                    super::TextAnchor::Left,
+                    super::TextLine::Middle,
+                ),
+            ],
+        );
+        assert_eq!(
+            classes,
+            [
+                ("Left/Ascender part".to_string(), 2),
+                ("Left/Middle part".to_string(), 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn two_labels_the_reference_fused_are_classed_by_the_first() {
+        // The reference prints the grid pair `B2B5` as one run; the paper
+        // table holds `B2` and `B5` as labels of their own and we draw both.
+        // No label spells `B2B5`, and the pair is measured from `B2`.
+        let reference = ink(vec![], vec![run("B2B5", [100.0, 50.0], 8.0)]);
+        let ours = ink(
+            vec![],
+            vec![run("B2", [100.0, 50.0], 3.6), run("B5", [104.4, 50.0], 3.6)],
+        );
+        let report = super::compare_plots_with_sources(
+            &reference,
+            &ours,
+            &[],
+            &[
+                label(
+                    "B2",
+                    [100.0, 50.0],
+                    super::TextAnchor::Left,
+                    super::TextLine::Bottom,
+                ),
+                label(
+                    "B5",
+                    [104.4, 50.0],
+                    super::TextAnchor::Left,
+                    super::TextLine::Bottom,
+                ),
+            ],
+        );
+        assert_eq!(report.text_offsets.len(), 1);
+        assert_eq!(report.text_offsets[0].class, "Left/Bottom");
+        assert_eq!(report.text_offsets[0].count, 1);
+    }
+
+    #[test]
+    fn a_run_that_spells_a_whole_label_is_not_a_piece_of_another() {
+        // A lone `℃` label beside `L=35℃`: the run that spells it is that
+        // label, whole, however close the longer one is.
+        let classes = classes_of(
+            vec![run("℃", [26.2, 50.0], 2.4)],
+            &[
+                label(
+                    "L=35℃",
+                    [26.0, 50.0],
+                    super::TextAnchor::Left,
+                    super::TextLine::Ascender,
+                ),
+                label(
+                    "℃",
+                    [27.4, 50.0],
+                    super::TextAnchor::Center,
+                    super::TextLine::Middle,
+                ),
+            ],
+        );
+        assert_eq!(classes, [("Center/Middle".to_string(), 1)]);
+    }
+
+    #[test]
+    fn a_label_we_split_into_runs_is_classed_by_what_the_runs_spell() {
+        // The reference printed `2"NC` as one run and we drew it as two. The
+        // paper table's label is what the two spell together, not the first.
+        let reference = ink(vec![], vec![run("2\"NC", [100.0, 50.0], 4.8)]);
+        let ours = ink(
+            vec![],
+            vec![
+                run("2\"", [100.0, 50.0], 2.2),
+                run("NC", [102.6, 50.0], 2.6),
+            ],
+        );
+        let report = super::compare_plots_with_sources(
+            &reference,
+            &ours,
+            &[],
+            &[label(
+                "2\"NC",
+                [102.4, 50.0],
+                super::TextAnchor::Center,
+                super::TextLine::Middle,
+            )],
+        );
+        assert_eq!(report.text_offsets.len(), 1);
+        assert_eq!(report.text_offsets[0].class, "Center/Middle");
         assert_eq!(report.text_offsets[0].count, 1);
     }
 
