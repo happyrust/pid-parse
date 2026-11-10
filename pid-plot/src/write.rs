@@ -4916,6 +4916,67 @@ mod tests {
         );
     }
 
+    /// The writer asks the label's own two lenders in the label's own order,
+    /// and not the embedded faces in the order they were handed over. The two
+    /// part ways only where a batch has put the borrowed characters into both
+    /// lenders' programs, which the batch above does not: its FangSong holds
+    /// `点` alone, so the list's order and the label's give the same answer.
+    ///
+    /// Here one batch letters all of `动火点℃` in a 仿宋 label and in a 宋体
+    /// one, so FangSong — ahead of SimSun in the list — could draw the whole
+    /// of `动火点` too; another names only 宋体, so SimSun stands in the list
+    /// ahead of a FangSong that is there to lend, and holds `℃` as well.
+    /// Either way `动火点` borrows from SimSun and the `℃` of `120℃` from
+    /// FangSong, as the sheet does prepared alone.
+    #[test]
+    fn a_borrowed_label_keeps_its_lender_when_both_lenders_hold_its_characters() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let narrow = ascii_only();
+        let song = drawing("动火点℃");
+        let dirs = [scratch_dir(
+            "write-borrow-both-lenders-hold",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        )];
+        let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
+        let expected = vec![
+            lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
+            lettered(
+                "120℃",
+                "Arial Narrow",
+                &[("Arial Narrow", "120"), ("FangSong", "℃")],
+            ),
+        ];
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        for (naming, batch) in [
+            (
+                lettered_sheet(&[("动火点℃", "仿宋"), ("动火点℃", "宋体")]),
+                "a sheet that letters the same characters in 仿宋 and in 宋体",
+            ),
+            (
+                lettered_sheet(&[("动火点℃", "宋体")]),
+                "a sheet that letters the same characters in 宋体 alone",
+            ),
+        ] {
+            let together =
+                crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+            assert_eq!(
+                lettered_faces(&borrowing, &plot_fonts(&together)),
+                expected,
+                "the sheet prepared with {batch}"
+            );
+        }
+    }
+
     /// A label its named face draws none of goes whole to one lender, and
     /// where the first lender draws only part of it that is the second: `甲乙`
     /// asks SimSun first, this SimSun draws `甲` alone, and FangSong draws
