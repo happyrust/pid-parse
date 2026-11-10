@@ -28,7 +28,8 @@
 //!   pattern (`JStyleSimpleDashType` fit mode 2) is restarted on every vertex
 //!   and stretched to each straight piece the way `style.dll` lays it out
 //!   (`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`).
-//! * The A2 sheet reads 0.9819 / 210.712 mm because it is the first A2 page
+//! * The A2 sheet read 0.9819 / 210.712 mm on that date (it is pinned below at
+//!   the 0.9829 / 187.091 mm it reads today) because it is the first A2 page
 //!   this crate has ever had a reference for, and its furniture is a third
 //!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
 //!   `pid-plot/assets/template-masks.json` had no A2 entry before this round,
@@ -444,7 +445,8 @@ const PINS: [Pin; 11] = [
         // no extra ink at all: see `docs/plans/2026-11-02-the-a1-stem.md`.
         // The air cooler's two fan ovals are `0x0063 igEllipse2d` records in
         // both the `.sym` and the cached body; drawing them took uncovered
-        // from 23.031 to 5.757 mm (plan §7).
+        // from 23.031 to 5.757 mm (plan §7), and fitting the signal dash to
+        // every straight piece took the rest to 0.000.
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
         min_coverage: 0.9999,

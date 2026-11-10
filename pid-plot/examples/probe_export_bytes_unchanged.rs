@@ -21,23 +21,31 @@
 //!
 //! # The three batches, and the two corpora
 //!
-//! The pages are laid out exactly the way their own gates lay them out, because
-//! a page laid out differently is a different page:
+//! A recording is of three batches, each laid out one way, so that two
+//! recordings taken under the same variables differ only by what the code
+//! between them changed:
 //!
 //! - **backup** (53) — `<corpus>/backup-plant-data/**/*.pid`, laid out with
-//!   `lay_out_drawing(path, corpus)`, faces prepared over all 53 at once, the
-//!   way `export_plant_backup` does it. The backup directory is found the way
-//!   that gate finds it (see [`backup_dir`]).
-//! - **fixtures** (7) — `test-file/**/*.pid`, the way `export_every_fixture`
-//!   does it: `lay_out_drawing(path, corpus)` with the same corpus, faces
-//!   prepared over all 7.
+//!   `lay_out_drawing(path, corpus)`, faces prepared over all 53 at once. The
+//!   backup directory is found the way `export_plant_backup` finds it (see
+//!   [`backup_dir`]).
+//! - **fixtures** (7) — `test-file/**/*.pid`, laid out with
+//!   `lay_out_drawing(path, corpus)` against the same corpus, faces prepared
+//!   over all 7.
 //! - **reference** (11) — `PID_ACCEPTANCE_CORPUS/<name>.pid` for the eleven
 //!   names the acceptance gate pins, laid out against the acceptance corpus
 //!   itself and lettered with that gate's font search order.
 //!
-//! `PID_PARSE_SELF_CHECK_DIR` names the share corpus (default
-//! `D:\work\cad\PID自研软件验证`). Two recordings taken under different values
-//! are **not** comparable — see the next section.
+//! `PID_PARSE_SELF_CHECK_DIR` names the corpus of the first two batches
+//! (default: the share, `D:\work\cad\PID自研软件验证`). Two recordings taken
+//! under different values are **not** comparable — see the next section.
+//!
+//! The first two batches are not the pages their gates pin by default. With
+//! no corpus named, `export_plant_backup` lays the 53 out against the backup
+//! package they were shelled out of, where this probe reads the share; name
+//! the package in the variable to record those pages. `export_every_fixture`
+//! lays the seven out with `lay_out_with_symbol_roots` from the committed
+//! sources under `test-file`, whatever the variable says.
 //!
 //! # Three fields make the model hash environment-dependent
 //!

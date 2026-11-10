@@ -2,6 +2,8 @@
 
 出图记账（pdf-export-ledger）设计文档。结构标题沿用规格模板的英文，正文用中文；代码标识符、路径、类型名保持英文。代码位置按 2026-11-04 磁盘上的工作树核对，行号写作「约 N 行」：他人的并发改动会让行号漂移，以函数名为准。
 
+> **实现注记的读法。** 正文是设计当时的决定，不改写。实现后来与正文不同的地方，在原文旁边用「实现注记（日期）」标出，写的是那一天代码里核对过的现状；行号的漂移不在此列。
+
 ## Overview
 
 出图记账给每一页记一本账（Export_Ledger）：页上的每条图形记录、每个实体、每个页面图元、每一段笔画，要么上页，要么落到附录 A 的一个原因码，差额单列为未归因。账本只观测，写出的 PDF 字节与 `PaperModel` 已有字段都不变。
@@ -23,6 +25,7 @@
 下列事实决定了上面的取舍，均已在当前磁盘内容上核对。
 
 - **仓库语料取不干净。** `lay_out_drawing`（`pid-plot/src/model.rs` 约 931 行）经 `symbol_library()`（约 1456 行）找符号库：设了 `PID_SYMBOL_LIBRARY` 就整体替换搜索路径；否则只要目录存在，就追加被 gitignore 的 `test-file/symbols-full`，而 CI 上没有这个目录。夹具门禁因此改用 `lay_out_with_symbol_roots`，符号来源显式给 `test-file/symbols` 与 `test-file/backup-test/{DWG-0202GP06-01_p,TEST02_p}/RefData~*.zip`。
+  > 实现注记（2026-11-10）：夹具门禁的符号目录是两个，`test-file/symbols` 与 `test-file/Ref/Symbols`（`export_ledger_fixtures.rs` 的 `symbol_roots`）；后者放的是夹具 `工艺管道及仪表流程-1` 点名的项目符号（`Xa …` 一组）。压缩包仍取 `test-file/backup-test` 下每个 `*_p` 目录里的 `RefData~*.zip`。
 - **模板来源由语料目录决定。** `border_template_sources(corpus, package)`（约 1609 行）查 `corpus/Ref/Template Files`、`corpus/Ref`、上一级的同名目录、`corpus` 与上一级的 `RefData~*.zip`，以及 `drawing_package_dir`（约 1797 行）找到的 `<图名>_p` 包。取 `corpus = test-file` 时命中入库的 4 个 `.igr`；两张 DWG-0202 图另经包目录找到 `test-file/backup-test/DWG-0202GP06-01_p` 的包内模板。`test-file/*.zip` 被 gitignore，本机若在那里放了 `RefData~*.zip` 会改变模板候选，这种差异由语料描述抓出（需求 13.7）。
 - **写出器的丢弃判据都不依赖字体。** `show_text`（`pid-plot/src/write.rs` 约 955 行）在约 962、966、979 行的三处早退只看文本、原点、旋转与高度；`paint_primitive`（约 573 行）与 `stroke_runs`（约 702 行）只看几何与笔宽。要量字宽的只有压缩与尾部裁切，即 `PlotAudit` 的两个计数。`write_plot_audited`（约 241 行）在页面有可写文字而没给字体时报错，CI 上没有字体。
 - **`PlotAudit` 是 `Copy`**（约 203 行），放不下表。`write_plot_audited` 只有三个调用方：`write_plot`（约 197 行）、`pid-plot/tests/export_plant_backup.rs` 约 1330 行、`pid-plot/src/bin/pid_plot.rs` 约 59 行。
@@ -33,6 +36,7 @@
 - **CI 上有能用的测试字体。** `write.rs` 的单测用 `pdfcraft_fonts::INTER_REGULAR` 作兜底字型（`key` 为空字符串），CI 上能真实写出 PDF。判定与写出一致性的性质测试用它。
 - **有并发改动。** `git status` 显示 `pid-plot/src/{model,write,compare,fonts,witness}.rs`、`pid-plot/tests/reference_plots_acceptance.rs`、若干探针与 `docs/analysis` 有他人尚未提交的修改。
 - **默认运行与基线语料不同。** `export_plant_backup` 不设变量时用共享语料 `D:\work\cad\PID自研软件验证`，模板来自它的 `Ref/Template Files`；附录 B.5 的基线在备份包语料 `D:\work\cad\pid-test-data` 下取，模板来自包内 `RefData~4~682.zip`。两者的语料描述不同，默认运行会跳过 53 页的计数比对。53 张图本身在 `D:\work\plant-code\cad\pid-test-data\backup-plant-data`，由 `backup_dir()` 的查找顺序找到。
+  > 实现注记（2026-11-10）：默认已经改了。不设 `PID_PARSE_SELF_CHECK_DIR` 时，`export_plant_backup` 找到的 `backup-plant-data` 的上一级目录若带 `RefData~*.zip`，就拿它作语料（`corpus_for`），本机因此默认按包语料逐页比 53 页；上一级不是包时才用共享语料。默认选中包而语料描述仍与基线不同时，测试失败，不再跳过后通过；点了名的语料照旧按需求 13.7 跳过并通过。
 
 ## 需求偏差（Requirement Deviations）
 
@@ -284,6 +288,7 @@ pub fn write_ledger(model: &PaperModel) -> Result<WriteLedger, PlotWriteError>; 
 `ExportLedger::assemble(model: &PaperModel, write: &WriteLedger) -> ExportLedger` 按下面的步骤合账：
 
 1. **图元。** 最终图元 `i` 的实体是 `ledger.primitive_origin[i]`，结局是 `write.fates[i]`；被 `retain` 移除的图元按 `ledger.off_sheet` 记 `OffSheet`。`past_the_edge` 由 `model.primitives_past_the_edge(0.5)`（`model.rs` 约 297 行）给出，按指针对回下标；0.5 mm 即 `export_plant_backup` 的 `EDGE_SLACK_MM`。
+   > 实现注记（2026-11-10）：这两个不是同一个数。账本用自己的常量 `PAST_THE_EDGE_SLACK_MM = 0.5`（`ledger/assemble.rs`，需求 5.4 / 8.7 的 0.5 mm）；`export_plant_backup` 的 `EDGE_SLACK_MM` 是 0.1，是那道门禁数「出页图元」用的容差。`assemble.rs` 的单测 `past_the_edge_uses_half_mm_not_the_gates_tenth` 把两者分开钉住。
 2. **实体（需求 1）。**
    - 排版层已判丢弃 → 该原因（1.3）；
    - 否则至少一个图元上页 → `on_page`（1.2），符合 I2 的另记部分上页（1.7）；
@@ -305,6 +310,8 @@ pub fn write_ledger(model: &PaperModel) -> Result<WriteLedger, PlotWriteError>; 
 | 段 | `total = written + Σ 段原因 + unattributed` | `shape_chain(shape)` 的窗口数 |
 
 输入数都独立于结局记录取得，所以一处没登记的丢弃会显成大于 0 的差额，不会被算术抹平。`ExportLedger::conservation_breaches()` 列出每页每域每层非零的差额，门禁据此失败（需求 6.5）。
+
+> 实现注记（2026-11-10）：页面图元一行在代码里写作 `laid_out = on_page + Σ dropped + unattributed`。`off_sheet` 不是单独的一项：它记在 `PrimitiveAccount::dropped` 的 `off_sheet` 键下，与 A.5 各码同在一张表里，守恒式只读这张表一次；`PrimitiveAccount::off_sheet` 字段另存同一个数，供需求 8.2 的核对用。两种写法算出的差额相同。
 
 **与已有计数核对（需求 8）。** `ExportLedger::cross_check(model, audit: Option<&PlotAudit>, geometry: Option<&NormalizedPidGeometry>) -> Vec<String>`：
 
@@ -370,6 +377,8 @@ pub fn run_gate(input: GateInput<'_>) -> GateReport;
 impl GateReport { pub fn passed(&self) -> bool; pub fn render(&self) -> String; }
 ```
 
+> 实现注记（2026-11-10）：`GateReport` 多一个 `counts_compared(&self) -> bool`。语料描述不同（13.7）、基线缺失或读不出、schema 不同、或这次是重写基线时，它为假；`passed()` 在 13.7 的跳过之后仍为真，单看它分不出「比过且一致」与「没比」。两道门禁各自怎么用它，见组件 8 的注记。
+
 ```mermaid
 flowchart TD
     S[run_gate] --> F{有页排版或写出失败}
@@ -422,12 +431,20 @@ flowchart TD
 5. 序列化后的基线不得含仓库根目录、`CARGO_MANIFEST_DIR`、用户主目录或盘符路径（需求 12.4 的本机路径部分；不含图面文字由类型保证：账本里没有承载文字的字段）。
 6. 调 `run_gate`，`corpus = fixtures`，基线 `docs/baselines/export-ledger-fixtures.json`。
 
+> 实现注记（2026-11-10）：夹具门禁有三处与上面不同。
+> 第 1 步：缺页不跳过。七张夹具全部入库，缺哪一张测试就失败（`… is a committed fixture and is missing from this checkout`）；`backup-test` 下列不出任何 `RefData~*.zip` 也失败。
+> 第 2 步：`roots = [test-file/symbols, test-file/Ref/Symbols]`，`library` 标签相应是这两个相对路径。
+> 第 6 步：`run_gate` 因语料描述不同而跳过比对时仍返回通过，夹具门禁另外断言 `counts_compared()`（重写基线的那次除外）——语料全部入库，描述不同只可能是仓库里多了、少了或改名了文件，跳过即失败。
+> 另：页键是相对 `test-file` 的路径（`D06.pid`、`export-test/publish-data/A01/A01.pid`），不带 `test-file/` 前缀。
+
 **备份门禁**（改 `pid-plot/tests/export_plant_backup.rs`，本机有备份时才跑；需求 13.1、13.2、11.3）：
 
 1. 写出循环（约 1330 行）改为取 `WrittenPlot`，`audit` 照旧累计，原有断言与钉住的常量不动（需求 9.4）。
 2. 每页 `ExportLedger::assemble(model, &written.ledger)` 与 `cross_check(model, Some(&written.audit), None)`；`written.ledger.mismatches` 必须为空。再用 `write_ledger(model)` 求一遍无字体账，除两个字体标记外必须与写出账相等（需求 5.5、5.6 在真实语料上的核对）。
 3. 页键为相对 `backup-plant-data` 目录的路径，以 `/` 分隔。
 4. 循环结束后调 `run_gate`：`corpus = backup`，基线 `docs/baselines/export-ledger-backup.json`，`font_faces` 取本次 `prepare_fonts` 结果的键名。备份目录不在时整个测试照旧软跳过并打印原因（已有逻辑，需求 13.2）。
+
+> 实现注记（2026-11-10）：备份门禁按哪个语料排版，现在由 `corpus_for` 决定：点了名的（`PID_PARSE_SELF_CHECK_DIR`）以点名为准；没点名时，`backup-plant-data` 的上一级目录带 `RefData~*.zip` 就用它（包语料），否则用共享语料。默认选中包语料的运行另外断言 `counts_compared()`：语料描述与基线不同、一页没比成时失败。点名的语料照旧跳过并通过。基线的 `symbol_sources` 里记着被 gitignore 的 `test-file/symbols-full`，没有这个目录的检出默认跑会停在这条断言上。当前的调用命令在 `docs/baselines/README.md`。
 
 ### 9. CLI 汇总行
 
@@ -452,6 +469,8 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 - `compare <before> <after>`：逐页比对，任一页不同或页集合不同，就列出这些页并以非零码退出（需求 9.2）。
 - 只用实施前后都存在、签名不变的公开 API（`lay_out_drawing`、`font_dirs`、`prepare_fonts`、`write_plot`），同一份源码在实施前后都能编译。
 - SHA-256 用 `sha2`（pid-plot 的 dev-dependency）。
+
+> 实现注记（2026-11-10）：探针仍按上面写的做——备份与夹具两批都用 `lay_out_drawing(path, corpus)`，`corpus` 取 `PID_PARSE_SELF_CHECK_DIR` 或默认共享语料。它对照的两道门禁后来各自改了排法：`export_plant_backup` 没点名语料时默认用包语料；`export_every_fixture` 改用 `lay_out_with_symbol_roots`，来源是入库的 `test-file/symbols`、`test-file/Ref/Symbols` 与 `backup-test` 的压缩包。所以探针记下的是「按共享语料（或点名语料）排版」的那些页，前后对照仍然成立；它不再等于这两道门禁默认钉住的页面。
 
 ### 11. 挂钩点总表
 
@@ -765,6 +784,7 @@ pub struct CorpusDescriptor {
 
 - `docs/baselines/export-ledger-backup.json`：Backup_Corpus 53 页，页键相对 `backup-plant-data`。
 - `docs/baselines/export-ledger-fixtures.json`：Fixture_Set 7 页，页键相对仓库根（如 `test-file/D06.pid`）。
+  > 实现注记（2026-11-10）：入库的基线里，页键相对 `test-file`（`D06.pid`、`export-test/publish-data/A01/A01.pid`），不带 `test-file/` 前缀；上面 JSON 示例里的 `test-file/D06.pid` 同此。
 - 两个文件名只含 ASCII（需求 12.1）；页键可以含中文，路径分隔一律写 `/`。
 
 ## Correctness Properties

@@ -46,8 +46,8 @@ impl Tier {
 
 /// The layer of the pipeline a drop happened at.
 ///
-/// The first four map one-to-one onto the four conservation equations; the
-/// last two are the page facts and the text normalizer, which have no
+/// The first five map one-to-one onto the five conservation equations; the
+/// last two are the text normalizer and the page facts, which have no
 /// conservation equation of their own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
