@@ -1515,11 +1515,13 @@ fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
 // package and `SmartPlant` reference are all committed, so these run
 // wherever the repository is checked out.
 //
-// The package is a later revision of the plant than the reference: its
-// `T_PIPERUN` rows carry tag sequences (`565`, `01`) and item tags
-// (`OD-50 mm-03-565-1.6AR12-WE50mm`) the reference does not, so the
-// `--oracle-exp` figure keeps its pipeline findings. The pins below record
-// what each mode prints; a slice that closes a difference moves them.
+// The `.pid` is the reference's revision of the drawing and the package a
+// later state of the plant: its `T_PIPERUN` rows carry tag sequences
+// (`565`, `01`) and item tags (`OD-50 mm-03-565-1.6AR12-WE50mm`) the
+// reference does not, so the `--oracle-exp` figure keeps its pipeline
+// findings. The pins below are the finding lines each mode prints, line
+// for line: a finding traded for another one fails them, and a slice that
+// closes a difference moves them.
 // ---------------------------------------------------------------------
 
 const DWG_DIR: &str = "test-file/export-test/publish-data/DWG-0202GP06-01";
@@ -1553,39 +1555,97 @@ fn dwg_diff(oracle_exp: bool) -> (Option<i32>, String, String) {
     )
 }
 
-/// The printed finding lines, tallied by their first word (`missing value`
-/// and `missing rel` count apart from a missing object).
-fn finding_kinds(stdout: &str) -> BTreeMap<String, usize> {
-    let mut kinds = BTreeMap::new();
-    for line in stdout.lines() {
-        let kind = if line.starts_with("missing value ") {
-            "missing value"
-        } else if line.starts_with("missing rel ") {
-            "missing rel"
-        } else if line.starts_with("missing ") {
-            "missing"
-        } else if line.starts_with("extra ") {
-            "extra"
-        } else if line.starts_with("class ") {
-            "class"
-        } else if line.starts_with("value ") {
-            "value"
-        } else if line.starts_with("rel (") {
-            "rel"
-        } else {
-            continue;
-        };
-        *kinds.entry(kind.to_string()).or_insert(0) += 1;
-    }
-    kinds
-}
-
-fn kinds(pairs: &[(&str, usize)]) -> BTreeMap<String, usize> {
-    pairs
-        .iter()
-        .map(|(kind, count)| ((*kind).to_string(), *count))
+/// The finding lines of a `--diff-against` run, in the order printed: every
+/// object, value or relation the run reports as extra, missing, of another
+/// class or stated otherwise.
+fn finding_lines(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .filter(|line| {
+            ["missing ", "extra ", "class ", "value ", "rel ("]
+                .iter()
+                .any(|kind| line.starts_with(kind))
+        })
         .collect()
 }
+
+// The 17 reference values on objects both modes publish that neither
+// states and no exclusion covers. Each is an attribute the plant database
+// holds: the data map names the item attribute behind it, the dump's own
+// dictionary names its column, and sixteen of the seventeen cells are
+// filled in the package's dump.
+//
+//   InsulThickSrc x6         T_PIPERUN.INSULATIONTHKSOURCE = 3
+//   TotalInsulThick x6       T_PIPERUN.INSULTHICK = `50mm`,
+//                            SP_INSULTHICKSI = 0.05
+//   SlopedPipeDirection      T_PIPERUN.SLOPEDIRECTION = 2
+//   SlopedPipingAngle        T_PIPERUN.SLOPE = `0.3 %`,
+//                            SP_SLOPESI = 0.0029999910000486
+//   HeightRelativeToGrade    T_EQUIPMENT.HEIGHT = `3m`, SP_HEIGHTSI = 3
+//   ProcessVessel_VesselVolumetricCapacity
+//                            T_VESSEL.VOLUMERATING = `27m^3`,
+//                            SP_VOLUMERATINGSI = 27
+//   CatalogPartNumber        T_PLANTITEM.SP_PARTNO, NULL in this later state
+//
+// No stage follows those columns yet, so the values are missing with the
+// dump as without it (plan S9).
+const DWG_VALUES_NOT_STATED: [&str; 17] = [
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipeDirection: "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipingAngle: "2.9999910000486E-03 rad" not in generated"#,
+    r#"missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPartOcc.CatalogPartNumber: "A3" not in generated"#,
+    r#"missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IPBSItem.HeightRelativeToGrade: "3 m" not in generated"#,
+    r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IProcessVessel.ProcessVessel_VesselVolumetricCapacity: "27 m^3" not in generated"#,
+];
+
+// What `--oracle-exp` prints beyond those values.
+//
+// Six pipelines with their six `PipingConnectors` relations are extra and
+// the reference's five pipelines are missing: the dump names a run's
+// pipeline by its item tag as the package's later state spells it, the
+// reference by the tag of its own revision
+// (`A3jqz0301-OD-50 mm-1.6AR12-WE-50mm`), and a pipeline pairs by name.
+//
+// The missing `PIDBranchPoint` is another matter. `799B9008...` (`278`) is
+// an off-page connector the reference publishes with no representation and
+// no relation. In the dump its pair `9B50CC42...` is in this drawing's
+// stockpile (`T_REPRESENTATION.INSTOCKPILE` 2, which the dump's own
+// codelist reads `True`; no `GRAPHICOID`), and this line publishes an
+// off-page connector only through a representation the `.pid` draws. The
+// dump as it stands accounts for the reference, so this is an open rule
+// rather than a difference of revision; with one sample it stays open
+// (plan S12).
+const DWG_EXP_OBJECT_AND_REL_FINDINGS: [&str; 18] = [
+    r#"extra PIDPipeline 21D922A9687A59B29FAEEE92442380DC name "OD-50 mm-03-0201-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 266578B3F91156A38745A8A9B1369429 name "OD-50 mm-03-565-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 3B5898FB5A385C07A6B15B86E7CBC8BC name "OD-100 mm-06-0101-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 80BA4A7AC26D5E1AB8834902B13CA57D name "LFL-80 mm-06-0201-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline B0175A5AC8525E93BC80DC7325B1B2AF name "OD-50 mm-03-0401-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline F968D84B23F95F8BBFB45B8A32D20406 name "OD-50 mm-03-0101-1.6AR12-WE50mm""#,
+    r#"rel ("PCN-4C2F232018CE42E8B7FFCABD553BDBC4-3B5898FB5A385C07A6B15B86E7CBC8BC", "4C2F232018CE42E8B7FFCABD553BDBC4", "3B5898FB5A385C07A6B15B86E7CBC8BC", "PipingConnectors")"#,
+    r#"rel ("PCN-61BA43D9FA854B8EBE6E0FACBCBC64BD-21D922A9687A59B29FAEEE92442380DC", "61BA43D9FA854B8EBE6E0FACBCBC64BD", "21D922A9687A59B29FAEEE92442380DC", "PipingConnectors")"#,
+    r#"rel ("PCN-7042E6B0A1A944E390A08A5A44771C46-B0175A5AC8525E93BC80DC7325B1B2AF", "7042E6B0A1A944E390A08A5A44771C46", "B0175A5AC8525E93BC80DC7325B1B2AF", "PipingConnectors")"#,
+    r#"rel ("PCN-9CE3F6FAD0F949DDBE8630B0A0DB5993-F968D84B23F95F8BBFB45B8A32D20406", "9CE3F6FAD0F949DDBE8630B0A0DB5993", "F968D84B23F95F8BBFB45B8A32D20406", "PipingConnectors")"#,
+    r#"rel ("PCN-C7C3E09265174C91AC008F3CE02E9653-266578B3F91156A38745A8A9B1369429", "C7C3E09265174C91AC008F3CE02E9653", "266578B3F91156A38745A8A9B1369429", "PipingConnectors")"#,
+    r#"rel ("PCN-ED053C1B662D45F887952F3C5968A094-80BA4A7AC26D5E1AB8834902B13CA57D", "ED053C1B662D45F887952F3C5968A094", "80BA4A7AC26D5E1AB8834902B13CA57D", "PipingConnectors")"#,
+    r#"missing PIDPipeline 1AC9974272E54B6CA8D4E095F6EEAEA2"#,
+    r#"missing PIDPipeline 2D010BCE5F9848048BFED35D63AF18BD"#,
+    r#"missing PIDPipeline 7779C14F6FCD4259A741ADF5552607C1"#,
+    r#"missing PIDBranchPoint 799B9008DB6848F28127C78AC745C5A8"#,
+    r#"missing PIDPipeline 81C620DDE0A044BF94EDC1DF7C7FF237"#,
+    r#"missing PIDPipeline B3D0A6FD8F07493AB43C5DDAE20F32E1"#,
+];
 
 #[test]
 fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
@@ -1597,13 +1657,8 @@ fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
                 (different 0, not in reference 0), rels 81 (not in reference 0)"),
         "{stdout}"
     );
-    // No value reads otherwise; 17 reference values on published objects
-    // are neither stated nor on the exclusion list.
-    assert_eq!(
-        finding_kinds(&stdout),
-        kinds(&[("missing value", 17)]),
-        "{stdout}"
-    );
+    // No value reads otherwise and nothing else is reported.
+    assert_eq!(finding_lines(&stdout), DWG_VALUES_NOT_STATED, "{stdout}");
     // The vessel's `Description` label is its material description.
     assert!(
         !stdout.contains("F1081777313D41ABB14B7B18FA210D83 IObject.Description"),
@@ -1612,12 +1667,17 @@ fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
 }
 
 #[test]
-fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
+fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     let (code, stdout, stderr) = dwg_diff(true);
     assert!(
         !stderr.contains("error:"),
         "the package's dump must read: {stderr}"
     );
+    // Five of the six runs carry fluid code 493. That row of codelist 19
+    // states `OD` as its `CODELIST_TEXT` and has no `CODELIST_SHORT_TEXT`,
+    // and the pipeline stage spells a code from the short text alone, so it
+    // counts the five as missing. Nothing published turns on it here: each
+    // of the six runs has a plant item, whose `ITEMTAG` is the name.
     assert!(
         stderr.contains(
             "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, \
@@ -1631,19 +1691,12 @@ fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
                 (different 0, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
-    // The six pipelines and their six connector rels are the dump's own
-    // revision of the run tags; the reference's five pipelines and one
-    // off-page connector are the six missing objects.
-    assert_eq!(
-        finding_kinds(&stdout),
-        kinds(&[
-            ("extra", 6),
-            ("missing", 6),
-            ("missing value", 17),
-            ("rel", 6),
-        ]),
-        "{stdout}"
-    );
+    let expected: Vec<&str> = DWG_EXP_OBJECT_AND_REL_FINDINGS
+        .iter()
+        .chain(&DWG_VALUES_NOT_STATED)
+        .copied()
+        .collect();
+    assert_eq!(finding_lines(&stdout), expected, "{stdout}");
     assert_eq!(code, Some(1), "{stdout}\n{stderr}");
 }
 
@@ -1685,9 +1738,15 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             );
         }
     }
-    // The package places four off-page connectors on DWG-0202GP06-01 and
+    // The package draws four off-page connectors on DWG-0202GP06-01 and
     // none has a `ToFromText`. The reference writes `IOffpageConnector`
     // only with one, never as an empty element.
+    //
+    // Four is what this line publishes from the package, not a count the
+    // vendor is known to publish: the same dump keeps a fifth off-page
+    // connector in this drawing's stockpile, and the one reference of the
+    // drawing publishes that pair as a `PIDBranchPoint` no relation names
+    // (see `DWG_EXP_OBJECT_AND_REL_FINDINGS`; plan S12).
     let data = std::fs::read_to_string(out_dir.join("DWG-0202GP06-01_Data.xml")).expect("data");
     assert_eq!(data.matches("<PIDBranchPoint>").count(), 4, "{data}");
     assert!(!data.contains("<IOffpageConnector"), "{data}");
