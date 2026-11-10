@@ -1616,15 +1616,19 @@ fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
     assert!(
         stdout.lines().any(|line| line
             == "pid export diff: objects 78 (extra 0, wrong class 0), values 71 \
-                (different 2, not in reference 0), rels 81 (not in reference 0)"),
+                (different 1, not in reference 0), rels 81 (not in reference 0)"),
         "{stdout}"
     );
-    // Two values read otherwise (a note's line break, the vessel's
-    // description); 18 reference values on published objects are neither
-    // stated nor on the exclusion list.
+    // One value reads otherwise (a note's line break); 17 reference values
+    // on published objects are neither stated nor on the exclusion list.
     assert_eq!(
         finding_kinds(&stdout),
-        kinds(&[("missing value", 18), ("value", 2)]),
+        kinds(&[("missing value", 17), ("value", 1)]),
+        "{stdout}"
+    );
+    // The vessel's `Description` label is its material description.
+    assert!(
+        !stdout.contains("F1081777313D41ABB14B7B18FA210D83 IObject.Description"),
         "{stdout}"
     );
 }
@@ -1646,7 +1650,7 @@ fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
     assert!(
         stdout.lines().any(|line| line
             == "pid export diff: objects 108 (extra 6, wrong class 0), values 99 \
-                (different 2, not in reference 0), rels 133 (not in reference 6)"),
+                (different 1, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
     // The six pipelines and their six connector rels are the dump's own
@@ -1657,9 +1661,9 @@ fn the_dwg_fixture_reads_its_own_packages_exp_dump() {
         kinds(&[
             ("extra", 6),
             ("missing", 6),
-            ("missing value", 18),
+            ("missing value", 17),
             ("rel", 6),
-            ("value", 2),
+            ("value", 1),
         ]),
         "{stdout}"
     );

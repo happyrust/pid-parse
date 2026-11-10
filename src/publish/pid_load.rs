@@ -647,10 +647,27 @@ fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
 }
 
 /// The published attribute a label property fills on an item of `class`.
+///
+/// `Description` follows the plant's data map (`SPPIDDataMap.xml`, one file
+/// in all three backup packages on hand): an equipment item's `Description`
+/// publishes as its material description, because `IObject.Description` on
+/// equipment is the item's `Name` (`SPMP_Vessel_Name`, `SPMP_Exchanger_Name`,
+/// `SPMP_EquipmentOther_Name` and `SPMP_Mechanical_Name` all map to
+/// `Description`). `SPMP_Mechanical_Description` and
+/// `SPMP_ItemNote_Description` map to nothing, so those labels are not
+/// published. Every other class keeps `Description` on `IObject`.
 fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'static str)> {
     let instrument = INSTRUMENT_CLASSES.contains(&class);
     let equipment = EQUIPMENT_CLASSES.contains(&class);
     match property {
+        "Description" => match class {
+            "PIDProcessVessel" | "PIDHeatTransferEquipment" => {
+                Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+            }
+            "PIDProcessEquipment" => Some(("ISpecifiedMatlItem", "LongMaterialDescription3")),
+            "PIDMechanicalEquipment" | "PIDNote" => None,
+            _ => Some(("IObject", "Description")),
+        },
         "MeasuredVariableCode" if instrument => Some(("INamedInstrument", "MeasuredVariable")),
         "TagSequenceNo" if instrument => Some(("INamedInstrument", "InstrTagSequenceNo")),
         "TagSequenceNo" if class == "PIDPipingConnector" => {
@@ -660,7 +677,6 @@ fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'s
         "TagPrefix" if equipment => Some(("INamedEquipment", "EquipPrefix")),
         "PipingMaterialsClass" => Some(("IPipingSpecifiedItem", "PipingMaterialsClass")),
         "InsulationSpec" => Some(("IInsulatedItem", "InsulSpec")),
-        "Description" => Some(("IObject", "Description")),
         "ToFromText" => Some(("IOffpageConnector", "ToFromText")),
         "Note.Body" => Some(("INote", "NoteText")),
         _ => None,
@@ -1229,6 +1245,42 @@ mod tests {
             published_attribute("NominalDiameter", "PIDPipingConnector"),
             None
         );
+    }
+
+    // `SPPIDDataMap.xml`: `SPMP_Vessel_Description` and
+    // `SPMP_Exchanger_Description` map to `LongMaterialDescription`,
+    // `SPMP_EquipmentOther_Description` to `LongMaterialDescription3`,
+    // `SPMP_Mechanical_Description` and `SPMP_ItemNote_Description` to
+    // nothing; the run, component, nozzle and instrument maps keep
+    // `Description`.
+    #[test]
+    fn a_description_lands_where_the_data_map_sends_the_class() {
+        let description = |class| published_attribute("Description", class);
+        assert_eq!(
+            description("PIDProcessVessel"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+        );
+        assert_eq!(
+            description("PIDHeatTransferEquipment"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+        );
+        assert_eq!(
+            description("PIDProcessEquipment"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription3"))
+        );
+        assert_eq!(description("PIDMechanicalEquipment"), None);
+        assert_eq!(description("PIDNote"), None);
+        for class in [
+            "PIDPipingConnector",
+            "PIDPipingComponent",
+            "PIDNozzle",
+            "PIDSignalConnector",
+            "PIDInstrument",
+            "PIDInlineInstrument",
+            "PIDControlSystemFunction",
+        ] {
+            assert_eq!(description(class), Some(("IObject", "Description")));
+        }
     }
 
     #[test]
