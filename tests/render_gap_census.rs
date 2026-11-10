@@ -22,8 +22,15 @@
 //! and `examples/probe_phase40_render_gap_census`.
 //!
 //! Fixtures soft-skip when absent, mirroring `tests/parse_real_files.rs`.
+//!
+//! No fixture carries a refused graphic record, so the two tests about how a
+//! refusal is worded also read [`REFUSING_BACKUP_SHEET`], the one drawing of
+//! the plant backup that does. That half skips, and says so, on a machine
+//! without the backup, which is what CI sees.
 
-use pid_parse::{build_normalized_geometry, PidParser};
+use std::path::{Path, PathBuf};
+
+use pid_parse::{build_normalized_geometry, NormalizedPidGeometry, PidParser};
 
 /// `(fixture, refused graphic records, undecoded graphic records)` — both
 /// counted in records, not in `(stream, type code)` groups.
@@ -278,15 +285,115 @@ fn the_corpus_line_counts_include_what_the_retired_rule_refused() {
     }
 }
 
+/// The one drawing of the 53-sheet plant backup with a refused graphic
+/// record: a 36-byte `DependencyObject` with no member on its `/Sheet6`, the
+/// same record `tests/plant_backup_census.rs` pins as that backup's whole
+/// refusal census.
+const REFUSING_BACKUP_SHEET: &str = "A井场 注采阀组工艺及自控流程图.pid";
+
+/// The extracted plant backup, if this machine has one: under
+/// `PID_TEST_DATA_DIR`, then the two local copies of `pid-test-data` — the
+/// lookup `tests/plant_backup_census.rs` makes.
+fn backup_dir() -> Option<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
+        roots.push(PathBuf::from(dir));
+    }
+    roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
+    roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    roots
+        .into_iter()
+        .map(|root| root.join("backup-plant-data"))
+        .find(|candidate| candidate.is_dir())
+}
+
+/// The file called `name` under `dir`, at whatever depth the backup's own
+/// directory layout keeps it.
+fn find_drawing(dir: &Path, name: &str) -> Option<PathBuf> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    paths.sort();
+    paths.into_iter().find_map(|path| {
+        if path.is_dir() {
+            find_drawing(&path, name)
+        } else {
+            path.file_name()
+                .is_some_and(|leaf| leaf == name)
+                .then_some(path)
+        }
+    })
+}
+
+/// The geometry of [`REFUSING_BACKUP_SHEET`], or `None` — after saying so —
+/// on a machine with no plant backup.
+///
+/// A backup that is present and lacks the sheet is not a reason to skip: the
+/// refusal checks would go back to passing on nothing, so that panics.
+fn refusing_backup_sheet() -> Option<NormalizedPidGeometry> {
+    let Some(backup) = backup_dir() else {
+        eprintln!(
+            "skipping {REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present, so no \
+             refusal warning is read"
+        );
+        return None;
+    };
+    let path = find_drawing(&backup, REFUSING_BACKUP_SHEET)
+        .unwrap_or_else(|| panic!("{} carries no {REFUSING_BACKUP_SHEET}", backup.display()));
+    let parsed = PidParser::new()
+        .parse_file(&path)
+        .unwrap_or_else(|err| panic!("{} should parse: {err}", path.display()));
+    Some(build_normalized_geometry(&parsed))
+}
+
+/// Panics unless every row of the drawing's refused-graphic list is named in
+/// a warning worded as a refusal; returns how many rows it held against one.
+fn refused_rows_named_in_a_warning(drawing: &str, geometry: &NormalizedPidGeometry) -> usize {
+    for refused in &geometry.refused_graphic_records {
+        let code = format!("0x{:04X}", refused.type_code);
+        assert!(
+            geometry.warnings.iter().any(|warning| {
+                warning.contains(&code)
+                    && warning.contains(&refused.stream_path)
+                    && warning.contains(&format!("{} record(s)", refused.count))
+                    && warning.contains("refuses")
+            }),
+            "{drawing}: {} refused {code} record(s) in {} are not named in any warning: {:?}",
+            refused.count,
+            refused.stream_path,
+            geometry.warnings
+        );
+    }
+    geometry.refused_graphic_records.len()
+}
+
+/// Panics if a warning worded as a refusal is also worded as a missing
+/// decoder; returns how many refusal warnings the drawing carries.
+fn refusal_warnings_read_as_refusals(drawing: &str, geometry: &NormalizedPidGeometry) -> usize {
+    let refusals: Vec<_> = geometry
+        .warnings
+        .iter()
+        .filter(|warning| warning.contains("refuses"))
+        .collect();
+    for warning in &refusals {
+        assert!(
+            !warning.contains("have no decoder"),
+            "{drawing}: a refusal must not read as a missing decoder: {warning}"
+        );
+    }
+    refusals.len()
+}
+
 #[test]
 fn every_refused_graphic_record_is_named_in_a_warning() {
     // The structured list and the prose must not drift apart: a consumer
     // reading either one has to see the same missing content.
-    let mut checked = 0usize;
-
     for (fixture, _, _) in EXPECTED {
         let path = format!("test-file/{fixture}");
         if !std::path::Path::new(&path).exists() {
+            eprintln!("skipping: fixture {path} not found");
             continue;
         }
         let parsed = PidParser::new()
@@ -294,40 +401,40 @@ fn every_refused_graphic_record_is_named_in_a_warning() {
             .unwrap_or_else(|err| panic!("fixture {path} should parse: {err}"));
         let geometry = build_normalized_geometry(&parsed);
 
-        for refused in &geometry.refused_graphic_records {
-            checked += 1;
-            let code = format!("0x{:04X}", refused.type_code);
-            assert!(
-                geometry.warnings.iter().any(|warning| {
-                    warning.contains(&code)
-                        && warning.contains(&refused.stream_path)
-                        && warning.contains(&format!("{} record(s)", refused.count))
-                        && warning.contains("refuses")
-                }),
-                "{fixture}: {} refused {code} record(s) in {} are not named in any warning: {:?}",
-                refused.count,
-                refused.stream_path,
-                geometry.warnings
-            );
-        }
+        // No fixture has a refused graphic record, so none has a row to hold
+        // against a warning. That is asserted, not left to an empty loop: a
+        // fixture passing here was read and found to have nothing to compare.
+        // A refusal turning up on one is still held against its warning
+        // first, and then trips the count.
+        let checked = refused_rows_named_in_a_warning(fixture, &geometry);
+        assert_eq!(
+            checked, 0,
+            "{fixture}: this fixture's refused-graphic list is expected to be empty: {:?}",
+            geometry.refused_graphic_records
+        );
     }
 
-    // The corpus's graphic refusals went to zero when the coincident-vertex
-    // linestrings decoded (2026-10-15); `checked` may legitimately be 0 now.
-    // The loop above is what matters whenever refusals do occur.
-    let _ = checked;
+    // The backup sheet is where the comparison has a row to make.
+    let Some(geometry) = refusing_backup_sheet() else {
+        return;
+    };
+    let checked = refused_rows_named_in_a_warning(REFUSING_BACKUP_SHEET, &geometry);
+    assert!(
+        checked > 0,
+        "{REFUSING_BACKUP_SHEET}: no refused graphic record is left to hold against a warning; \
+         this check needs a drawing that still carries one"
+    );
 }
 
 #[test]
 fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
-    // DWG-0202 used to carry one of each — refused text on /Sheet6, an
-    // undecodable rectangle on /Sheet6615 — so the two wordings met in one
-    // file. The rectangle has a decoder now (it is the parent of four edge
-    // lines and emits nothing), so on this fixture only refusals remain, and
-    // the fixture's missing-decoder list must be empty: a reader who cannot
-    // tell the two apart cannot tell "write a decoder" from "re-measure the
-    // one you have", and the synthetic pair in `geometry.rs` keeps the two
-    // wordings apart where both still occur.
+    // A reader who cannot tell the two wordings apart cannot tell "write a
+    // decoder" from "re-measure the one you have". DWG-0202 carries neither:
+    // its /Sheet6615 rectangle has a decoder (it is the parent of four edge
+    // lines and emits nothing) and none of its records is refused, so both of
+    // its lists are empty and it has no refusal wording to read. The backup
+    // sheet below has a refusal and no missing decoder, and the synthetic
+    // pair in `geometry.rs` keeps the two wordings apart where both occur.
     let path = "test-file/DWG-0202GP06-01.pid";
     if !std::path::Path::new(path).exists() {
         eprintln!("skipping: fixture {path} not found");
@@ -338,11 +445,6 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         .expect("fixture should parse");
     let geometry = build_normalized_geometry(&parsed);
 
-    let refusals: Vec<_> = geometry
-        .warnings
-        .iter()
-        .filter(|warning| warning.contains("refuses"))
-        .collect();
     let missing: Vec<_> = geometry
         .warnings
         .iter()
@@ -354,10 +456,35 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         "every graphic record of DWG-0202 has a decoder now; the /Sheet6615 rectangle was the \
          last without one: {missing:?}"
     );
-    for warning in &refusals {
-        assert!(
-            !warning.contains("have no decoder"),
-            "a refusal must not read as a missing decoder: {warning}"
-        );
-    }
+    assert_eq!(
+        refusal_warnings_read_as_refusals("DWG-0202", &geometry),
+        0,
+        "DWG-0202 is expected to carry no refusal warning: {:?}",
+        geometry.warnings
+    );
+
+    // The refusal wording, on the one sheet that has it. The sheet's only gap
+    // is that refusal, so nothing on it may be reported as a missing decoder
+    // either, in the prose or in the structured list.
+    let Some(geometry) = refusing_backup_sheet() else {
+        return;
+    };
+    let refusals = refusal_warnings_read_as_refusals(REFUSING_BACKUP_SHEET, &geometry);
+    assert!(
+        refusals > 0,
+        "{REFUSING_BACKUP_SHEET}: no refusal warning is left to read; this check needs a \
+         drawing that still carries one: {:?}",
+        geometry.warnings
+    );
+    let missing: Vec<_> = geometry
+        .warnings
+        .iter()
+        .filter(|warning| warning.contains("have no decoder"))
+        .collect();
+    assert!(
+        missing.is_empty() && geometry.dropped_graphic_records.is_empty(),
+        "{REFUSING_BACKUP_SHEET}: a sheet whose only gap is a refusal reports a missing \
+         decoder: {missing:?} {:?}",
+        geometry.dropped_graphic_records
+    );
 }

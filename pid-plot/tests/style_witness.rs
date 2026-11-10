@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 
 use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::witness::{Dimension, Witness};
+use pid_plot::write::pen_width_mm;
 
 const PEN_WIDTHS: [&str; 10] = [
     "0.0100", "0.1300", "0.1800", "0.2500", "0.3500", "0.7000", "0.7071", "1.0606", "1.1313",
@@ -81,6 +82,11 @@ const TEMPLATES: [&str; 3] = ["CPE-SQ-A0.igr", "CPE-SQ-A1.igr", "CPECCHB-SQ-A2.i
 ///   straight-stroke tally did not name a declaration between them, so the
 ///   interval is not tighter than this. `0.7500` and `0.7999` sit inside it
 ///   and no validated page declares either.
+///
+/// The gate holds each listed width to that: the nearest widths a validated
+/// page declares on either side of it print on different pens
+/// ([`pen_width_mm`]). For `0.7500` and `0.7999` the nearest one below is the
+/// witnessed `0.7071`, which prints thick as `0.7000` does.
 const WIDENED_BY_THE_BOUNDARY: [&str; 4] = ["0.3000", "0.5000", "0.7500", "0.7999"];
 
 fn corpus_dir() -> PathBuf {
@@ -152,6 +158,40 @@ fn validated_sheets(dir: &Path) -> Vec<PathBuf> {
     collect_pids(dir, &mut paths);
     paths.retain(|path| path.with_extension("pdf").is_file());
     paths
+}
+
+/// A pen width in millimetres, from the four-decimal spelling the witness
+/// compares widths by.
+fn millimetres(width: &str) -> f64 {
+    width
+        .parse()
+        .unwrap_or_else(|error| panic!("{width} is not a width in millimetres: {error}"))
+}
+
+/// The widths of `witnessed` nearest `width` on either side of it, the
+/// narrower one first; `None` on a side where no validated page declares one.
+///
+/// The nearest pair is the one that decides whether the references settle a
+/// width's pen. The pen table only ever steps up, so two neighbours on one pen
+/// put everything between them on that pen, and two neighbours on different
+/// pens leave the step somewhere between them.
+fn witnessed_either_side<'a>(
+    witnessed: &[&'a str],
+    width: &str,
+) -> (Option<&'a str>, Option<&'a str>) {
+    let width = millimetres(width);
+    let by_width = |left: &&str, right: &&str| millimetres(left).total_cmp(&millimetres(right));
+    let below = witnessed
+        .iter()
+        .copied()
+        .filter(|candidate| millimetres(candidate) < width)
+        .max_by(by_width);
+    let above = witnessed
+        .iter()
+        .copied()
+        .filter(|candidate| millimetres(candidate) > width)
+        .min_by(by_width);
+    (below, above)
 }
 
 #[test]
@@ -250,10 +290,41 @@ fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
              would re-pen"
         );
     }
+
+    // What `WIDENED_BY_THE_BOUNDARY` says of each width, read off the witness
+    // and the pen table. The nearest width a validated page declares below it
+    // prints on a thinner pen than the nearest one above it, so the boundary
+    // between those two pens lies in the open interval the width sits in, and
+    // no validated page declares anything inside that interval to say on
+    // which side of the width.
+    let witnessed_widths = witness.values(Dimension::PenWidth);
+    let mut open_intervals = BTreeSet::new();
+    for width in WIDENED_BY_THE_BOUNDARY {
+        let (Some(below), Some(above)) = witnessed_either_side(&witnessed_widths, width) else {
+            panic!(
+                "{width} mm has no witnessed width on one side of it, so the references bound \
+                 no interval around it"
+            );
+        };
+        let thinner = pen_width_mm(millimetres(below));
+        let wider = pen_width_mm(millimetres(above));
+        assert!(
+            thinner < wider,
+            "{width} mm sits between the witnessed {below} and {above}, which print on the \
+             {thinner} mm and the {wider} mm pen: no boundary lies between them, so the \
+             references settle this width's pen"
+        );
+        open_intervals.insert((below, above));
+    }
     assert_eq!(
-        WIDENED_BY_THE_BOUNDARY.len(),
-        4,
-        "three boundaries, four widths the references cannot settle"
+        open_intervals.len(),
+        3,
+        "three boundaries, four widths the references cannot settle: {open_intervals:?}"
+    );
+    assert_eq!(
+        widths.keys().copied().collect::<Vec<_>>(),
+        WIDENED_BY_THE_BOUNDARY,
+        "the widths a boundary widens are the unexercised ones, and no others"
     );
 
     let mut dashes: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
