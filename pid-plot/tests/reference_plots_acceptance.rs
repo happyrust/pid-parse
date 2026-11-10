@@ -495,7 +495,10 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 326,
             text_reference: 326,
-            text_off: 7,
+            // `SP:` was the seventh: its colon is 21 units after the label
+            // here, as the reference's is, since each run of a record starts
+            // on its own whole pixel (`write::record_run_start_px`).
+            text_off: 6,
             borrowed: 1,
             borrowed_in_family: 1,
         },
@@ -525,7 +528,8 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
-            text_off: 7,
+            // `SP:` was the seventh, as on the A sheet.
+            text_off: 6,
             borrowed: 1,
             borrowed_in_family: 1,
         },
@@ -555,7 +559,8 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
-            text_off: 7,
+            // `SP:` was the seventh, as on the A sheet.
+            text_off: 6,
             borrowed: 1,
             borrowed_in_family: 1,
         },

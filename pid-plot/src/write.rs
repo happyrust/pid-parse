@@ -1404,6 +1404,143 @@ fn text_segments<'a>(
     segments
 }
 
+/// Where the runs of a label's record start, other than its first: character
+/// offsets into `inked`, ascending.
+///
+/// The record's partition is kept whatever the runs' styles are. `SP:` is the
+/// one label of the eleven reference sheets that states one — `SP` and `:`,
+/// both in the same face at the same height.
+fn record_run_starts(text: &ShownText<'_>, inked: &str) -> Vec<usize> {
+    let leading = |value: &str| value.chars().take_while(|c| c.is_whitespace()).count();
+    let lead = leading(text.value).saturating_sub(leading(inked));
+    let end = lead + inked.chars().count();
+    let mut starts: Vec<usize> = text
+        .spans
+        .iter()
+        .map(|span| usize::from(span.start))
+        .filter(|start| *start > lead && *start < end)
+        .map(|start| start - lead)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
+/// Cut `runs` where a run of the record starts, and say which of the
+/// resulting runs open one.
+///
+/// `starts` are character offsets into the label the runs spell out in
+/// order ([`record_run_starts`]). A run with no start inside it is handed
+/// back as it was; so is one whose pieces its face will not encode apart.
+fn cut_at_record_runs<'a>(
+    runs: Vec<(f64, FaceRun<'a>)>,
+    starts: &[usize],
+) -> (Vec<(f64, FaceRun<'a>)>, Vec<bool>) {
+    let mut cut = Vec::with_capacity(runs.len());
+    let mut opens = Vec::with_capacity(runs.len());
+    // Characters of the label before the run in hand.
+    let mut at = 0usize;
+    for (size_pt, run) in runs {
+        let chars: Vec<char> = run.text.chars().collect();
+        let end = at + chars.len();
+        let begins = starts.contains(&at);
+        let mut ends: Vec<usize> = starts
+            .iter()
+            .filter(|start| **start > at && **start < end)
+            .map(|start| start - at)
+            .collect();
+        ends.push(chars.len());
+        let mut parts: Vec<(String, Vec<u8>)> = Vec::with_capacity(ends.len());
+        let mut from = 0;
+        for until in ends {
+            let part: String = chars[from..until].iter().collect();
+            match run.face.metrics.encode(&part) {
+                Some(bytes) => parts.push((part, bytes)),
+                None => {
+                    parts.clear();
+                    break;
+                }
+            }
+            from = until;
+        }
+        if parts.len() < 2 {
+            opens.push(begins);
+            cut.push((size_pt, run));
+        } else {
+            for (index, (part, bytes)) in parts.into_iter().enumerate() {
+                opens.push(index > 0 || begins);
+                cut.push((
+                    size_pt,
+                    FaceRun {
+                        face: run.face,
+                        bytes,
+                        text: part,
+                        borrowed: run.borrowed,
+                    },
+                ));
+            }
+        }
+        at = end;
+    }
+    (cut, opens)
+}
+
+/// What the plotter measures a run at, in its own pixels, before any glyph is
+/// put on a whole one: the sum [`run_advance`] rounds glyph by glyph.
+///
+/// `sx` is the horizontal scale of the label's text matrix and `device` the
+/// scale of the plotter's own sheet, as [`run_advance`] takes them. A run the
+/// reference font has no cell for is measured at its own glyphs' widths.
+#[allow(clippy::too_many_arguments)]
+fn measured_width_px(
+    face: &ReadyFace<'_>,
+    bytes: &[u8],
+    text: &str,
+    basis: TextHeightBasis,
+    height_mm: f64,
+    size_pt: f64,
+    width_permille: Option<u16>,
+    sx: f64,
+    device: f64,
+) -> f64 {
+    if whole_pixel_cell(face.heights, basis, height_mm).is_none() {
+        return run_width_mm(&face.metrics, size_pt, bytes) * sx * device / (25.4 / PLOT_DPI);
+    }
+    let cell = face.heights.ascent + face.heights.descent;
+    let a8 = reference_scale(face.key, face.heights, basis, height_mm * device);
+    let wf_scale = wf_reference_scale(face.heights, width_permille);
+    let mut chars = text.chars();
+    face.metrics
+        .codes(bytes)
+        .iter()
+        .map(|(code, _)| {
+            let unicode = chars.next().map_or(*code, u32::from);
+            reference_advance_px(face.key, unicode, face.metrics.width(*code), cell, wf_scale) * a8
+        })
+        .sum()
+}
+
+/// How many of the plotter's pixels after the label's own start a later run
+/// of its record starts.
+///
+/// The plotter puts every text object on a whole pixel by itself, from where
+/// the object starts on the sheet, not from where the object before it
+/// ended up. `start_px` is the label's start before it is rounded and
+/// `before_px` what the plotter measures the runs before this one at, also
+/// unrounded ([`measured_width_px`]); the label starts on `round(start_px)`
+/// and this run on `round(start_px + before_px)`.
+///
+/// `SP:` is the case. Its `S` and `P` each measure 10.9756 pixels, so the
+/// colon starts 22 pixels after the label on six reference sheets and 21 on
+/// the three air-cooler sheets, whose label starts at 2281.523: the start
+/// rounds up and the colon's 2303.474 rounds down. Stepping `S` and `P` by
+/// their own whole pixels, 11 and 11, put it at 22 on every sheet.
+fn record_run_start_px(start_px: f64, before_px: f64) -> i64 {
+    #[allow(clippy::cast_possible_truncation)]
+    let pixels = ((start_px + before_px).round() - start_px.round()) as i64;
+    pixels
+}
+
 /// How far a run may advance from `start` along `direction` before it leaves
 /// the page, in millimetres.
 ///
@@ -1566,6 +1703,17 @@ fn show_text(
     if let Some(index) = as_the_reference {
         runs[index].0 = borrowed::size_pt();
     }
+    // Two runs of the record in one style are one stretch above, and one
+    // string on the page would start the second where the first one's
+    // whole-pixel steps end. The plotter gives each run of the record its own
+    // start ([`record_run_start_px`]), so the stretch is cut back where the
+    // record cuts it. A label the borrowing samples letter is left as it is.
+    let (runs, starts_record_run) = if upright && as_the_reference.is_none() {
+        cut_at_record_runs(runs, &record_run_starts(&text, inked))
+    } else {
+        let whole = vec![false; runs.len()];
+        (runs, whole)
+    };
     // The reference plot letters a border template's text one glyph narrower
     // than the em it sets it in, and letters the sheet's own text at the full
     // em. Height is *not* touched by this: the two sides' glyph boxes are the
@@ -1607,6 +1755,11 @@ fn show_text(
     // cannot hold at its stated width, already the rarest path through
     // this function.
     let mut emitted: Vec<LetteredPiece<'_, '_>> = Vec::with_capacity(runs.len());
+    // For each piece that opens a run of the record, what the plotter
+    // measures everything before it at, in its own pixels and before any
+    // glyph is put on a whole one.
+    let mut opens_after_px: Vec<Option<f64>> = Vec::with_capacity(runs.len());
+    let mut measured_px = 0.0;
     let mut width_mm = 0.0;
     let device = device_scale(page).unwrap_or(1.0);
     for (index, (size_pt, run)) in runs.into_iter().enumerate() {
@@ -1616,6 +1769,18 @@ fn show_text(
             text: run_text,
             ..
         } = run;
+        let opens = starts_record_run[index].then_some(measured_px);
+        measured_px += measured_width_px(
+            face,
+            &bytes,
+            &run_text,
+            text.height_basis,
+            height_mm,
+            size_pt,
+            text.width_permille,
+            plate,
+            device,
+        );
         let advance = match named_face {
             // The run the reference shows steps by the face the label names.
             Some(named) if as_the_reference == Some(index) => borrowed::advance(
@@ -1668,8 +1833,10 @@ fn show_text(
             head.truncate(split);
             emitted.push((size_pt, face, head, advance.tc_pt, Vec::new()));
             emitted.push((size_pt, face, tail, 0.0, Vec::new()));
+            opens_after_px.extend([opens, None]);
         } else {
             emitted.push((size_pt, face, bytes, advance.tc_pt, advance.steps_px));
+            opens_after_px.push(opens);
         }
     }
     let laid_out_mm = width_mm * plate;
@@ -1757,6 +1924,12 @@ fn show_text(
         below_mm,
         text.anchor,
     );
+    // Where the label starts on the plotter's grid before it is put on a
+    // whole pixel: what each later run of the record is placed from. A run
+    // the page had to condense is not on the plotter's steps at all.
+    let unrounded_px = device_scale(page)
+        .filter(|_| upright && condense == 1.0)
+        .map(|sheet| origin_mm[0] * sheet / (25.4 / PLOT_DPI));
     let origin_mm =
         device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
     ops.push(Op::new("BT", Vec::new()));
@@ -1778,7 +1951,24 @@ fn show_text(
     // own — including back to zero for a lone glyph that follows one that
     // needed it. A rotated run instead sets each glyph on its own whole-pixel
     // step ([`glyph_by_glyph`]).
-    for (size, face, bytes, tc_pt, steps_px) in &emitted {
+    // How far the text line's start has been moved from the label's, in the
+    // plotter's pixels.
+    let mut line_px: i64 = 0;
+    for ((size, face, bytes, tc_pt, steps_px), opens) in emitted.iter().zip(&opens_after_px) {
+        if let (Some(start_px), Some(before_px)) = (unrounded_px, opens) {
+            let at_px = record_run_start_px(start_px, *before_px);
+            // `Td` moves from the line's start, in text space: the label's
+            // `Tm` scales it by `scale` on its way to the page. A pixel is
+            // the page's own here, as it is for every glyph's step
+            // ([`stepped_advance`]).
+            #[allow(clippy::cast_precision_loss)]
+            let along_pt = (at_px - line_px) as f64 * (72.0 / PLOT_DPI) / scale;
+            ops.push(Op::new(
+                "Td",
+                vec![Object::Real(along_pt), Object::Real(0.0)],
+            ));
+            line_px = at_px;
+        }
         ops.push(Op::new("Tc", vec![Object::Real(*tc_pt)]));
         ops.push(Op::new(
             "Tf",
@@ -3041,6 +3231,146 @@ mod tests {
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
         assert!((points(PEN_WIDE_MM) - 2.88).abs() < 0.005);
         assert!((points(PEN_HEAVY_MM) - 3.84).abs() < 0.005);
+    }
+
+    /// `SP:` states two runs in one style, `SP` and `:`. The reference writes
+    /// them as two text objects and puts each on a whole pixel from where it
+    /// starts on the sheet, so the colon is 22 pixels after the label on six
+    /// of the nine sheets that letter it and 21 on the three whose label
+    /// starts at a fraction in `[0.5, 0.5488)`.
+    #[test]
+    fn a_later_run_of_the_record_starts_on_its_own_whole_pixel() {
+        // The nine reference starts, in device units, and the colon's place
+        // after each: two glyphs of 10.9756 units lie before it.
+        for (start_px, after) in [
+            (4668.299, 22),
+            (5017.359, 22),
+            (4366.591, 22),
+            (2008.960, 22),
+            (1913.635, 22),
+            (2281.523, 21),
+        ] {
+            assert_eq!(
+                super::record_run_start_px(start_px, 2.0 * 10.9756),
+                after,
+                "{start_px}"
+            );
+        }
+
+        // On a written page: the same label with and without the record's
+        // partition, at a start where the two rules agree and at one where
+        // they part.
+        let scale = super::device_scale([841.0, 594.0]).expect("A1 is a standard sheet");
+        let pixel_mm = 25.4 / super::PLOT_DPI;
+        let label = |x: f64, y: f64, partitioned: bool| {
+            let span = |start: u16, len: u16| PaperTextSpan {
+                start,
+                len,
+                height_mm: None,
+                font: None,
+            };
+            primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [x, y],
+                    height_mm: Some(2.54),
+                    rotation: 0.0,
+                    value: "SP:".to_string(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    height_basis: crate::model::TextHeightBasis::Cap,
+                    width_permille: None,
+                    paragraph: None,
+                    spans: if partitioned {
+                        vec![span(0, 2), span(2, 1)]
+                    } else {
+                        Vec::new()
+                    },
+                },
+            )
+        };
+        // What the plotter measures `SP` at in this face, and the whole
+        // pixels its two glyphs step by on their own.
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, "SP");
+        let heights = super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let cell = heights.ascent + heights.descent;
+        let a8 = super::reference_scale("", heights, basis, 2.54 * scale);
+        let measured: Vec<f64> = metrics
+            .codes(&bytes)
+            .iter()
+            .zip("SP".chars())
+            .map(|((code, _), ch)| {
+                super::reference_advance_px("", u32::from(ch), metrics.width(*code), cell, 1.0) * a8
+            })
+            .collect();
+        let before_px: f64 = measured.iter().sum();
+        let stepped: i64 = super::pixel_steps(measured.iter().copied()).iter().sum();
+        // A start whose own rounding leaves the colon where the steps put
+        // it, and one where it does not.
+        let start_at = |agrees: bool| {
+            (0..2000)
+                .map(|step| 20.0 + f64::from(step) * 0.001)
+                .find(|x| {
+                    let start_px = x * scale / pixel_mm;
+                    (super::record_run_start_px(start_px, before_px) == stepped) == agrees
+                })
+                .expect("both kinds of start within two millimetres")
+        };
+        let (same, apart) = (start_at(true), start_at(false));
+        let mut model = one_page(label(same, 40.0, false), [841.0, 594.0]);
+        model.primitives.extend([
+            label(same, 50.0, true),
+            label(apart, 60.0, false),
+            label(apart, 70.0, true),
+        ]);
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+                subset: false,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let advance = |y: f64| {
+            let y = super::on_the_device_grid([20.0, y], scale)[1];
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
+                .unwrap_or_else(|| panic!("no run at y = {y}: {:?}", ink.spans))
+                .advance_mm
+        };
+        // Where the rules agree the partition leaves the run as long as it
+        // was, to the hundredth of a millimetre one string's `Tc` drifts on
+        // the 1/2400 in grid: the colon's own start has none.
+        assert!(
+            (advance(50.0) - advance(40.0)).abs() < 0.01,
+            "{} against {}",
+            advance(50.0),
+            advance(40.0)
+        );
+        // Where they part the unpartitioned label is what it was …
+        assert!(
+            (advance(60.0) - advance(40.0)).abs() < 1e-6,
+            "{} against {}",
+            advance(60.0),
+            advance(40.0)
+        );
+        // … and the partitioned one's colon is a whole pixel off the steps,
+        // and the run's end with it.
+        let moved_px = super::record_run_start_px(apart * scale / pixel_mm, before_px) - stepped;
+        assert_eq!(moved_px.abs(), 1, "one pixel apart");
+        #[allow(clippy::cast_precision_loss)]
+        let moved_mm = moved_px as f64 * pixel_mm;
+        assert!(
+            (advance(70.0) - advance(50.0) - moved_mm).abs() < 1e-4,
+            "{} against {} + {moved_mm}",
+            advance(70.0),
+            advance(50.0)
+        );
     }
 
     /// A page of straight strokes in drawing order: whether each is the
