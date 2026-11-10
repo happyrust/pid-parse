@@ -26,9 +26,10 @@
 //! read off the label — [`crate::fonts::borrow_order`]: SimSun first for a
 //! label with a Han character, FangSong first for any other — and never off
 //! what the programs in hand happen to hold, so a sheet letters the same
-//! whether its faces were prepared for it alone or for a batch of sheets. At
-//! a 2.5 mm body that borrowed run is pitched at 1.524 mm a glyph, the spacing
-//! the reference uses for that one label; every other height stays one em.
+//! whether its faces were prepared for it alone or for a batch of sheets. A
+//! string borrowed whole from a 2.5 mm label that names Arial Narrow is
+//! pitched at 1.524 mm a glyph, the spacing the reference uses for that one
+//! label; every other height, and every other named face, stays one em.
 //! A style height is written at the `Tf` the reference plotter would size it
 //! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
 //! `plotted_size_pt`). Every face must be a static TrueType or
@@ -1402,17 +1403,28 @@ fn wf_reference_scale(heights: FaceHeights, width_permille: Option<u16>) -> f64 
     if denom > 0.0 { lw_ref / denom } else { 1.0 }
 }
 
-/// Advance of one glyph, as a fraction of the em, when the named face can
-/// draw none of a 2.5 mm label and the whole string is handed to another face.
+/// Advance of one glyph, as a fraction of the em, when a 2.5 mm label names
+/// Arial Narrow, that face can draw none of it, and the whole string is
+/// handed to another face.
 ///
 /// The only such labels on the eleven acceptance sheets are the two
 /// `动火点` runs. The reference pitches them at 4.32 pt (1.524 mm) in a
 /// 9.6 pt NSimSun, and centres on that pitch. `1.524 / 2.5` is that pitch
 /// over the style height, and [`show_text`] applies it to the em the run is
-/// set in, so the pitch stays 1.524 mm whatever `Tf` the run carries. A
-/// different body size is not multiplied: nothing
-/// else on those sheets takes this path, so there is no second height to
-/// measure. `120℃` is not this path either — its named face still draws the
+/// set in, so the pitch stays 1.524 mm whatever `Tf` the run carries.
+///
+/// The pitch is a reading of the named face, not of the characters: nine
+/// 150 dpi pixels are Arial Narrow's `?` at this body
+/// (`round(28 × a8)`, [`ARIAL_NARROW_72PX`] and [`reference_scale`]), the
+/// advance the plotter measures a character that face does not carry at
+/// ([`reference_extent_mm`]). So it is held to the face and the body it was
+/// read at. A label that names another face is not pitched — the reference
+/// has none to read one off, and `DWG-0202GP06-01`'s 2.5 mm `施工图`, named
+/// in SimSun-ExtB, would be squeezed to 43% of its width beside rows of
+/// 2.54 mm that keep theirs. A different body size is not multiplied:
+/// nothing else on those sheets takes this path, so there is no second
+/// height to measure. A lone glyph steps to no neighbour and keeps its
+/// width. `120℃` is not this path either — its named face still draws the
 /// digits. See
 /// `docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`.
 const BORROWED_HAN_ADVANCE: f64 = 1.524 / 2.5;
@@ -1469,11 +1481,17 @@ fn show_text(
     // 4.5 mm styles on both sheets; what differs is only the horizontal
     // advance [`permille_scale`] computes.
     //
-    // A 2.5 mm string whose named face draws nothing is the A2 `动火点`
-    // class: the reference pitches it at 1.524 mm a glyph and centres on
-    // that width. Any other body, or a string the named face still partly
-    // draws (`120℃`), stays one em. See [`BORROWED_HAN_ADVANCE`].
-    let han_pitch = if !text.furniture && borrowed_whole && (height_mm - 2.5).abs() < 1e-3 {
+    // A 2.5 mm string named in Arial Narrow, which draws none of it, is the
+    // A2 `动火点` class: the reference pitches it at 1.524 mm a glyph and
+    // centres on that width. Any other body, any other named face, a lone
+    // glyph, or a string the named face still partly draws (`120℃`), stays
+    // one em. See [`BORROWED_HAN_ADVANCE`].
+    let han_pitch = if !text.furniture
+        && borrowed_whole
+        && text.typeface == "Arial Narrow"
+        && (height_mm - 2.5).abs() < 1e-3
+        && inked.chars().nth(1).is_some()
+    {
         // The pitch is a length on the page, so it is taken against the em
         // the run is actually set in, not the style height.
         let set_pt = segments.first().map_or(0.0, |segment| segment.size_pt);
@@ -4706,19 +4724,13 @@ mod tests {
         }
     }
 
-    /// The faces `model`'s labels are lettered in under `fonts`, for every
-    /// label the page letters, in primitive order.
-    ///
-    /// Read off the `Tf` and `Tj` operators [`super::show_text`] emits, so it
-    /// is what the page says and not a second reading of the rule. Neighbouring
-    /// runs in one face are joined: a run is also cut where only its spacing
-    /// changes, which is not a change of face.
-    fn lettered_faces(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<Lettered> {
-        use super::Object;
+    /// One label the page letters: its text, the face its style names, and
+    /// the operators [`super::show_text`] emits for it.
+    type ShownLabel = (String, &'static str, Vec<super::Op>);
 
-        let mut doc = Document::new_empty();
-        let mut font_resources = Dict::new();
-        let faces = super::embed_faces(&mut doc, &mut font_resources, fonts).expect("embed");
+    /// Every label `model` letters under `faces`, in primitive order, as the
+    /// operators the page shows it with.
+    fn shown_labels(model: &PaperModel, faces: &[super::ReadyFace<'_>]) -> Vec<ShownLabel> {
         let page = model.resolved_page_mm().expect("the model states a page");
         let mut labels = Vec::new();
         for primitive in &model.primitives {
@@ -4746,7 +4758,7 @@ mod tests {
             let mut audit = super::PlotAudit::default();
             let shown = super::show_text(
                 &mut ops,
-                &faces,
+                faces,
                 ShownText {
                     typeface: named,
                     origin_mm: *origin_mm,
@@ -4765,9 +4777,28 @@ mod tests {
                 &mut audit,
             )
             .unwrap_or_else(|error| panic!("{value:?}: {error}"));
-            if !shown.wrote_run {
-                continue;
+            if shown.wrote_run {
+                labels.push((value.clone(), named, ops));
             }
+        }
+        labels
+    }
+
+    /// The faces `model`'s labels are lettered in under `fonts`, for every
+    /// label the page letters, in primitive order.
+    ///
+    /// Read off the `Tf` and `Tj` operators [`super::show_text`] emits, so it
+    /// is what the page says and not a second reading of the rule. Neighbouring
+    /// runs in one face are joined: a run is also cut where only its spacing
+    /// changes, which is not a change of face.
+    fn lettered_faces(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<Lettered> {
+        use super::Object;
+
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let faces = super::embed_faces(&mut doc, &mut font_resources, fonts).expect("embed");
+        let mut labels = Vec::new();
+        for (value, named, ops) in shown_labels(model, &faces) {
             let mut runs: Vec<(String, String)> = Vec::new();
             let mut face: Option<&super::ReadyFace<'_>> = None;
             for op in &ops {
@@ -4803,13 +4834,40 @@ mod tests {
                     _ => {}
                 }
             }
-            labels.push(Lettered {
-                value: value.clone(),
-                named,
-                runs,
-            });
+            labels.push(Lettered { value, named, runs });
         }
         labels
+    }
+
+    /// How `model`'s labels are set under `fonts`, for every label the page
+    /// letters, in primitive order: the label's text, the horizontal scale of
+    /// its `Tm`, and the size of its first `Tf` in points.
+    fn lettered_scales(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<(String, f64, f64)> {
+        use super::Object;
+
+        let real = |operand: Option<&Object>| match operand {
+            Some(Object::Real(value)) => *value,
+            other => panic!("expected a number, found {other:?}"),
+        };
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let faces = super::embed_faces(&mut doc, &mut font_resources, fonts).expect("embed");
+        shown_labels(model, &faces)
+            .into_iter()
+            .map(|(value, _, ops)| {
+                let matrix = ops
+                    .iter()
+                    .find(|op| op.op.as_slice() == b"Tm")
+                    .expect("a label sets its text matrix");
+                let scale = real(matrix.operands.first()).hypot(real(matrix.operands.get(1)));
+                let size = ops
+                    .iter()
+                    .find(|op| op.op.as_slice() == b"Tf")
+                    .map(|op| real(op.operands.get(1)))
+                    .expect("a label selects a face");
+                (value, scale, size)
+            })
+            .collect()
     }
 
     /// The A2 acceptance sheet's two `动火点` labels name Arial Narrow, which
@@ -4933,6 +4991,74 @@ mod tests {
             lettered_faces(&spanned, &plot_fonts(&batch)),
             expected,
             "the sheet prepared with one that names Arial"
+        );
+    }
+
+    /// The 1.524 mm pitch is Arial Narrow's `?` at a 2.5 mm body, the step the
+    /// reference sets a string that face draws none of at: nine pixels, on
+    /// the A2 sheet's two `动火点`. A label that names another face has no
+    /// such reading behind it — `DWG-0202GP06-01`'s title block names
+    /// SimSun-ExtB for a 2.5 mm `施工图`, and at that pitch its three
+    /// characters are squeezed to 43% of their width while the 2.54 mm rows
+    /// beside it keep theirs. A lone borrowed glyph has no neighbour to step
+    /// to, so it is not narrowed either.
+    #[test]
+    fn the_borrowed_pitch_is_for_a_string_named_in_arial_narrow() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let latin = ascii_only();
+        let han = drawing("动火点施工图℃");
+        let dirs = [scratch_dir(
+            "write-borrowed-pitch",
+            &[
+                ("ARIALN.TTF", &latin),
+                ("arial.ttf", &latin),
+                ("simsunb.ttf", &latin),
+                ("simsun.ttf", &han),
+                ("simfang.ttf", &han),
+            ],
+        )];
+        let mut sheet = lettered_sheet(&[
+            ("动火点", "Arial Narrow"),
+            ("施工图", "SimSun-ExtB"),
+            ("动火点", "Arial"),
+            ("℃", "Arial Narrow"),
+            ("动火点", "Arial Narrow"),
+        ]);
+        // The last label is the first one again at the 2.54 mm of the rows
+        // beside `施工图`: the pitch is read at 2.5 mm and nowhere else.
+        if let PaperShape::Text { height_mm, .. } = &mut sheet.primitives[4].shape {
+            *height_mm = Some(2.54);
+        }
+        let prepared = crate::fonts::prepare_fonts(&[&sheet], &dirs).expect("fonts");
+        let set = lettered_scales(&sheet, &plot_fonts(&prepared));
+        let texts: Vec<&str> = set.iter().map(|(value, ..)| value.as_str()).collect();
+        assert_eq!(texts, ["动火点", "施工图", "动火点", "℃", "动火点"]);
+        let (_, pitched, size_pt) = &set[0];
+        let pitch_mm = pitched * size_pt / super::PT_PER_MM;
+        assert!(
+            (pitch_mm - 1.524).abs() < 1e-9,
+            "a 2.5 mm string named in Arial Narrow steps {pitch_mm:.4} mm an em, not 1.524 \
+             (Tm scale {pitched:.4} at Tf {size_pt:.2})"
+        );
+        let narrowed: Vec<String> = [
+            (1, "a 2.5 mm string named in SimSun-ExtB"),
+            (2, "a 2.5 mm string named in Arial"),
+            (3, "a lone borrowed glyph"),
+            (4, "a 2.54 mm string named in Arial Narrow"),
+        ]
+        .into_iter()
+        .filter_map(|(index, what)| {
+            let (value, scale, _) = &set[index];
+            ((scale - 1.0).abs() >= 1e-12)
+                .then(|| format!("  {what} ({value:?}) is set at {scale:.4} of its width"))
+        })
+        .collect();
+        assert!(
+            narrowed.is_empty(),
+            "only a string of two or more glyphs named in Arial Narrow at 2.5 mm takes the \
+             pitch:\n{}",
+            narrowed.join("\n")
         );
     }
 
