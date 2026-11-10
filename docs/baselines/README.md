@@ -191,7 +191,10 @@ cargo test --locked -p pid-parse --test publish_diff_accepted_baseline
 - **跳过比对之后，两道门禁的处理不同。** `run_gate` 跳过比对时仍返回通过，
   `GateReport::counts_compared()` 为假。夹具语料全部入库，描述不同只可能是
   仓库里多了、少了或改名了文件，所以夹具门禁断言它为真，**跳过即失败**。
-  备份门禁照旧通过：它的语料在仓库外，换一种配置是常事。
+  备份门禁的语料在仓库外，按这次运行怎么选的语料分两种：点了名的语料
+  （`PID_PARSE_SELF_CHECK_DIR`）换一种配置是常事，跳过后照旧通过；默认选中的
+  备份包是为了逐页比才选的，跳过即失败。重写基线的那次运行
+  （`UPDATE_EXPORT_LEDGER=1`）不比，也不查这一条。
 - **未归因必须为 0。** 任何一页任何一层（解析、排版、符号体、写出、段）的
   `unattributed` 大于 0 即失败。
 
@@ -223,7 +226,11 @@ cargo test --locked -p pid-plot --test export_plant_backup -- --nocapture
 - **不设 `PID_PARSE_SELF_CHECK_DIR`**：找到的 `backup-plant-data` 的上一级目录
   若带 `RefData~*.zip`（它本身是一个备份包），就拿它作语料，53 页逐项比基线；
   否则用共享语料。本机的备份在 `D:\work\plant-code\cad\pid-test-data` 里，所以
-  默认就是包语料。
+  默认就是包语料。默认选中了包、语料描述却仍与基线不同时，门禁失败并打印逐项
+  差异，不再「没比也算过」。两种情形会走到这里：包里的压缩包不是基线那一套；
+  或者这个检出没有 `test-file/symbols-full`——它被 gitignore，新建的 worktree
+  里没有，而基线的 `symbol_sources` 记着它。要在那样的检出里跑，补上该目录，
+  或者把语料点名。
 - **设了 `PID_PARSE_SELF_CHECK_DIR`**：以它为准。指向包目录就逐页比；指向共享
   语料时模板来自它的 `Ref/Template Files`，语料描述与基线不同，53 页照常导出、
   读回并过全部钉值，账本只查未归因为 0 与核对，然后通过。跳过的提示
