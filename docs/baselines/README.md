@@ -161,13 +161,14 @@ cargo test --locked -p pid-parse --test publish_diff_accepted_baseline
 | 文件 | 语料 | 页数 | 门禁 |
 |---|---|---:|---|
 | `export-ledger-fixtures.json` | 仓库 `test-file/` 的 7 张夹具 + `test-file/symbols` + `test-file/Ref/Symbols` + `test-file/backup-test/*_p/RefData~*.zip` | 7 | `pid-plot/tests/export_ledger_fixtures.rs`（**CI 与本机都真跑**） |
-| `export-ledger-backup.json` | 备份包语料 `backup-plant-data/**/*.pid`（53 张），模板与符号来自包内 `RefData~*.zip`，字型来自 `PID_PLOT_FONTS` | 53 | `pid-plot/tests/export_plant_backup.rs` 的账本段（无备份时软跳过） |
+| `export-ledger-backup.json` | 备份包语料 `backup-plant-data/**/*.pid`（53 张）。模板来自包内 `RefData~4~682.zip`；符号按文件头 `symbol_sources` 的次序取自包的 `Ref/Symbols`、本机的 `test-file/symbols-full`（被 gitignore）、`test-file/Ref/Symbols` 与包内压缩包；字型来自 `PID_PLOT_FONTS` | 53 | `pid-plot/tests/export_plant_backup.rs` 的账本段（无备份时软跳过） |
 
 页键是**相对语料根的路径**（`/` 分隔，可含中文），文件头记 `schema`、
 `corpus`、`CorpusDescriptor`（符号来源、模板来源、字型键名）与 `fonts_measured`。
 基线只含原因码、计数、流路径、类型码（`0xNNNN`）、oid、字节范围、模板文件名与
-页路径 —— **不含图面文字内容，也不含本机绝对路径**（门禁会扫描仓库根、
-`CARGO_MANIFEST_DIR`、用户主目录与盘符路径）。
+页路径 —— **不含图面文字内容，也不含本机绝对路径**。夹具门禁对每页的账和语料
+描述头做扫描：仓库根、`CARGO_MANIFEST_DIR`、用户主目录，任意盘符路径与 UNC
+路径，原样与 JSON 转义两种写法都查。备份门禁不做这项扫描。
 
 ### 比对规则
 
@@ -187,6 +188,10 @@ cargo test --locked -p pid-parse --test publish_diff_accepted_baseline
   （`text_condensed`、`text_clipped_at_floor`）；符号或模板部分不同时跳过整页
   计数比对，打印以 `export-ledger:` 开头的醒目段落（逐项差异 + 应设的变量），
   但未归因与核对照常执行，未归因大于 0 仍失败。
+- **跳过比对之后，两道门禁的处理不同。** `run_gate` 跳过比对时仍返回通过，
+  `GateReport::counts_compared()` 为假。夹具语料全部入库，描述不同只可能是
+  仓库里多了、少了或改名了文件，所以夹具门禁断言它为真，**跳过即失败**。
+  备份门禁照旧通过：它的语料在仓库外，换一种配置是常事。
 - **未归因必须为 0。** 任何一页任何一层（解析、排版、符号体、写出、段）的
   `unattributed` 大于 0 即失败。
 
@@ -205,6 +210,12 @@ cargo test --locked -p pid-plot --test export_plant_backup
 `export_plant_backup` 的账本段复用同一次运行的 `PaperModel` 与写出结果，
 不重复排版、不重复写出。备份目录不在时整个测试照旧软跳过。
 
+**不设上面两个变量时，备份门禁一页计数都不比。** 默认语料是共享目录，模板
+来自它的 `Ref/Template Files`，语料描述与基线不同：53 页照常导出、读回并过
+全部钉值，账本只查未归因为 0，然后通过。跳过的提示
+（`export-ledger: corpus descriptor differs — count comparison skipped`）只有带
+`-- --nocapture` 才看得到。要让 53 页逐项比基线，必须按上面的命令设这两个变量。
+
 ### 重写方法与拒绝条件
 
 设 `UPDATE_EXPORT_LEDGER=1` 重写对应基线：
@@ -221,7 +232,7 @@ Remove-Item Env:UPDATE_EXPORT_LEDGER
 拒绝写入并失败，列出这些计数，文件保持原样。以下情形同样拒绝：
 
 - 基线文件读不出、解析失败或 `schema` 不同 → 提示删除后重建；
-- 语料描述的符号或模板部分与旧基线不同；
+- 语料描述的符号或模板部分与旧基线不同 → 有意换了语料时，先删掉基线文件再重写；
 - 有失败页、未归因大于 0 或核对不符。
 
 重写两次逐字节相同（`serde_json::to_string_pretty` + 末尾换行 + `std::fs::write`，
