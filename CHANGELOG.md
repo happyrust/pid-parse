@@ -8,7 +8,8 @@
 7 张图的 `--oracle-exp` 仍然 exit 0，但这一轮量出来它们只写出参考里 56–58 % 的接口元素和约 50 % 的非空值，其余被豁免清单整类放过；
 接下来怎么补在 `docs/plans/2026-11-10-publish-export-completion.md`，等批复。这一条只记已经修掉的四处，前三处出在此前没有任何门看着的 DWG-0202GP06-01 上：
 
-- **Oracle `exp` 的五张表改成逐格读。** `T_PIPERUN` / `T_PIPINGPOINT` / `T_SIGNALPOINT` / `T_SIGNALRUN` / `CODELISTS` 原来用严格读法，遇到第一个非整数的 `NUMBER` 就整表拒绝。`DWG-0202GP06-01_p` 的第一条管段 `SLOPE = 0.3`，`--oracle-exp` 与整包目录都退出 1、一个文件不写。现在没人跟的列读到什么都行；跟的列若没被读出来（非 AL16UTF16 的字符列）会被点名拒绝，不当成空值。（`80a5f73`）
+- **Oracle `exp` 的五张表改成逐格读。** `T_PIPERUN` / `T_PIPINGPOINT` / `T_SIGNALPOINT` / `T_SIGNALRUN` / `CODELISTS` 原来用严格读法，遇到第一个非整数的 `NUMBER` 就整表拒绝。`DWG-0202GP06-01_p` 的第一条管段保温 50 mm，`SP_INSULTHICKSI = 0.05`，`--oracle-exp` 与整包目录都退出 1、一个文件不写。现在没人跟的列读到什么都行；跟的列若没被读出来（非 AL16UTF16 的字符列）会被点名拒绝，不当成空值。（`80a5f73`）
+  更正：这一条原先写的是「第一条管段 `SLOPE = 0.3`」，`80a5f73` 的提交说明也这样写，错了。`SLOPE` 是字符列，值是 `0.3 %`；让旧读法停下的格子在偏移 `0x7a4c07`，是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`。提交说明没法改，以这一句为准。
 - **设备的 `Description` 标签按数据映射发。** 三个备份包里是同一份 `SPPIDDataMap.xml`：容器、换热器的 `Description` 发成 `ISpecifiedMatlItem.LongMaterialDescription`，其它设备发成 `LongMaterialDescription3`，机械设备与注释不发；设备的 `IObject.Description` 是它的 `Name`。原来一律写到 `IObject.Description`，DWG 的容器因此写成 `"新建"`（参考是 `"污水池"`）。（`a796323`）
 - **注释正文的换行。** 标签缓存的正文行尾只有 `\r`，库里的 `T_NOTE.BODY` 和原厂发布的都是 `\r\n`；`INote.NoteText` 现在把落单的 `\r` 写成 `\r\n`。13 份参考里带换行的注释只有 DWG 这一条。（`a0f075f`）
 - **没有 `ToFromText` 的 OPC 不再写空的 `<IOffpageConnector/>`。** 13 份参考的 142 个 `PIDBranchPoint` 里 123 个带 `ToFromText`、19 个没有这个元素，没有一个写空的。我方在轻烃分离器I 上多写了 14 个、DWG 上 4 个；门禁不比接口元素，所以一直是 clean。（`dc78a7c`）

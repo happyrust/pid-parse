@@ -155,7 +155,9 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 
 ### 3.1 读不进来（已修，S1）
 
-`ExpTables::read` 对 `T_PIPERUN`、`T_PIPINGPOINT`、`T_SIGNALPOINT`、`T_SIGNALRUN`、`CODELISTS` 用的是严格读法：任何 `NUMBER` 不是整数就整表拒绝。`DWG-0202GP06-01_p` 的第一条管段 `SLOPE = 0.3`，于是报 `T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer`，`--oracle-exp` 与整包两种模式都退出 1、一个文件不写。53 张那个包没有踩到，是因为它这五张表里没有一个非整数的 `NUMBER`（严格读法读得通）。归类：**读错**（读法过严），与 publish 用不用这一列无关：`T_PIPERUN` 有 293 列，publish 只跟其中 7 列。
+`ExpTables::read` 对 `T_PIPERUN`、`T_PIPINGPOINT`、`T_SIGNALPOINT`、`T_SIGNALRUN`、`CODELISTS` 用的是严格读法：任何 `NUMBER` 不是整数就整表拒绝。`DWG-0202GP06-01_p` 的第一条管段保温 50 mm，`SP_INSULTHICKSI = 0.05`，于是报 `T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer`，`--oracle-exp` 与整包两种模式都退出 1、一个文件不写。53 张那个包没有踩到，是因为它这五张表里没有一个非整数的 `NUMBER`（严格读法读得通）。归类：**读错**（读法过严），与 publish 用不用这一列无关：`T_PIPERUN` 有 293 列，publish 只跟其中 7 列。
+
+更正（2026-11-10，独立审查指出）：上一段原先写的是「第一条管段 `SLOPE = 0.3`」，`80a5f73` 的提交说明、代码注释与 CHANGELOG 也这样写，错了。偏移 `0x7a4c07` 上是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`（0.05）。`SLOPE` 是字符列，值是 `0.3 %`，在第 21、28 行；它的数值列 `SP_SLOPESI` 是 `0.0029999910000486`。这张表一共 10 个非整数的 `NUMBER`：`SP_INSULTHICKSI` 8 个、`SP_SLOPESI` 2 个，另外四张表（`T_PIPINGPOINT`、`T_SIGNALPOINT`、`T_SIGNALRUN`、`CODELISTS`）一个都没有。用自己写的读法复核过（`target/publish-audit/review2/unread_cells.py`）。这两列正是 DWG 那 17 个缺值里 7 个的来源：6 个 `TotalInsulThick "50 mm"` 和 1 个 `SlopedPipingAngle "2.9999910000486E-03 rad"`。
 
 ### 3.2 写错（已修，S2 / S3 / S3b）
 
@@ -167,6 +169,14 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 归类：**读对了、写到了错的位置 / 写法不同**。
 
 还有一处是门禁看不见、普查看得见的：没有 `ToFromText` 的 OPC，我方写了一个空的 `<IOffpageConnector/>`，参考对象没有这个元素。13 份参考的 142 个 `PIDBranchPoint` 里 123 个带 `ToFromText`、19 个没有这个元素、0 个写空的；我方在轻烃分离器I 上多写 14 个、DWG 上 4 个，是 7 + 1 张图里唯一「我方有、参考对象没有」的接口元素（已修，S3b）。
+
+**这三条规则各自站在多少样本上**（独立审查提出；本轮用自己的脚本重数，`target/publish-audit/review2/item9_samples.py`，结论相同）：
+
+| 规则 | 有的样本 | 没有样本的部分 |
+|---|---|---|
+| `Description` 标签按数据映射发 | 13 张参考图上挂到对象的 `Description` 标签一共 3 个：DWG 的容器 1 个（参考放在 `LongMaterialDescription`），轻烃分离器I 的管件 2 个（参考在 `IObject.Description`）。库侧的旁证：7 张同版图里 34 个 `PIDProcessEquipment` 的 `T_MODELITEM.DESCRIPTION` 全部（34 / 34）等于参考的 `LongMaterialDescription3`；设备的 `T_PLANTITEM.NAME` 等于参考的 `IObject.Description`（`PIDProcessEquipment` 17 / 17、`PIDMechanicalEquipment` 6 / 6、DWG 的容器 1 / 1） | 换热器、机械设备、注释三条分支是 0 例：这三类参考对象在库里的 `DESCRIPTION` 全空（3、15、178 个对象），53 张整包的 `.pid` 上这几类也没有 `Description` 标签。只有数据映射作证，没有反例 |
+| 落单的 `\r` 写成 `\r\n` | 1 例，DWG 的注释 `6A2C6590…`。13 份参考里带换行的属性值一共 2 个，另一个是同一张图的 `IDocument.DocTitle`（也是 `\r\n`，我方不写这个属性）。两个 dump 的 `T_NOTE.BODY` 非空 481 条（8 + 473），带换行的只有这一条 | 落单的 `\n` 原样保留，没有样本；别的文本属性不套这条规则，也没有样本 |
+| 没有 `ToFromText` 的 OPC 不写 `IOffpageConnector` | 142 个 `PIDBranchPoint`：123 个带 `ToFromText`，19 个没有这个元素，0 个写空的 | 那 19 个只来自 2 张图（轻烃分离器I 14 个、DWG 5 个） |
 
 ### 3.3 版本差（修不了，要数据）
 

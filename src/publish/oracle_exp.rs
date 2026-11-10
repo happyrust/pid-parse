@@ -124,10 +124,11 @@ pub struct DrawingPorts {
 /// [`ExpError::FormatUnpinned`] and the other tables are not read.
 ///
 /// Every other table is read cell by cell without judging the columns no
-/// stage follows: `T_PIPERUN` alone has 293 columns, and a plant that fills
-/// `SLOPE` or `INSULTHICK` writes a fraction or database-charset text
-/// there. A `NUMBER` that is not an integer, a `DATE` that does not decode
-/// and a character cell that is not AL16UTF16 are kept unread. A projection
+/// stage follows: `T_PIPERUN` alone has 293 columns, and a run that is
+/// insulated or sloped states the thickness or the slope in SI units
+/// beside its text (`SP_INSULTHICKSI` 0.05 for `50mm`), a `NUMBER` that is
+/// not an integer. Such a `NUMBER`, a `DATE` that does not decode and a
+/// character cell that is not AL16UTF16 are kept unread. A projection
 /// refuses a column it follows when any cell of it was not read, whether it
 /// requires the column or only uses it when the dump has one, so an unread
 /// cell never passes for an empty one. A column the dump lacks is not an
@@ -2407,13 +2408,18 @@ mod tests {
         ]
     }
 
-    // DWG-0202GP06-01_p states `SLOPE` 0.3 on its first pipe run; a plant
-    // also writes dates and database-charset text into the table's other
-    // columns. None of those is a column a stage follows, so the run reads.
+    // DWG-0202GP06-01_p's first pipe run is insulated 50 mm, which its
+    // `SP_INSULTHICKSI` states as 0.05; a plant also writes dates and
+    // database-charset text into the table's other columns. None of those
+    // is a column a stage follows, so the run reads.
     #[test]
     fn a_pipe_run_reads_past_the_columns_no_stage_follows() {
         let mut columns = pipe_run_columns();
-        columns.extend([num("SLOPE"), date("DATECREATED"), ch_db("REMARKS")]);
+        columns.extend([
+            num("SP_INSULTHICKSI"),
+            date("DATECREATED"),
+            ch_db("REMARKS"),
+        ]);
         let mut dump = pinned();
         dump.extend(table(
             "T_PIPERUN",
@@ -2426,8 +2432,8 @@ mod tests {
                 Some(utf16("0101")),
                 None,
                 None,
-                // 0.3: one base-100 digit, 30, at exponent -1.
-                Some(vec![0xc0, 0x1f]),
+                // 0.05: one base-100 digit, 5, at exponent -1.
+                Some(vec![0xc0, 0x06]),
                 Some(vec![120, 126, 4, 25, 20, 12, 1]),
                 Some(b"x".to_vec()),
             ])],

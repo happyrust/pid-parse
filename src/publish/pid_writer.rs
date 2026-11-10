@@ -338,7 +338,7 @@ fn write_opc_point(buf: &mut String, point: &PidOpcPoint) -> std::fmt::Result {
     // The reference states `IOffpageConnector` only with a `ToFromText`:
     // of the 142 off-page connectors in the thirteen reference drawings,
     // 123 carry one and the other 19 leave the element out; none writes
-    // it empty.
+    // it empty. The 19 are on two drawings, 14 on one and 5 on the other.
     if !point.to_from_text.is_empty() {
         writeln!(
             buf,

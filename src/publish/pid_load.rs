@@ -656,6 +656,18 @@ fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
 /// `Description`). `SPMP_Mechanical_Description` and
 /// `SPMP_ItemNote_Description` map to nothing, so those labels are not
 /// published. Every other class keeps `Description` on `IObject`.
+///
+/// How much the corpus says about each branch, over the thirteen reference
+/// drawings and the two Oracle dumps at hand: three `Description` labels
+/// reach an item at all. One is on a vessel (DWG-0202GP06-01), where the
+/// reference states it as `LongMaterialDescription`; two are on piping
+/// components and stay on `IObject`. No label sits on a heat exchanger, on
+/// mechanical equipment, on other equipment or on a note, so those four
+/// branches rest on the data map. For other equipment the plant database
+/// bears the map out: all 34 `T_MODELITEM.DESCRIPTION` values of reference
+/// objects are the reference's `LongMaterialDescription3`. The heat
+/// exchanger, mechanical and note branches have no sample of any kind, and
+/// nothing in the corpus contradicts a branch.
 fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'static str)> {
     let instrument = INSTRUMENT_CLASSES.contains(&class);
     let equipment = EQUIPMENT_CLASSES.contains(&class);
@@ -691,6 +703,12 @@ fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'s
 /// (DWG-0202GP06-01, note `6A2C6590…`: the dump's `BODY` and the reference
 /// both read `…5m。\r\n2、…`, the label `…5m。\r2、…`). A carriage return that
 /// already has its line feed is left alone.
+///
+/// That note is the one sample. It is the only note with a line break in
+/// the thirteen reference drawings, and the only one among the 481 non-empty
+/// `T_NOTE.BODY` cells of the two Oracle dumps at hand. A line feed with no
+/// carriage return before it is left as it is, on no evidence either way,
+/// and no other text attribute goes through this.
 fn note_body_line_breaks(text: &str) -> String {
     let mut body = String::with_capacity(text.len() + 2);
     let mut chars = text.chars().peekable();
