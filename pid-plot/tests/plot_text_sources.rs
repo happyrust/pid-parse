@@ -1,4 +1,11 @@
 //! S3: unmatched lettering keeps its paper-table source, and I井场 is grouped.
+//!
+//! The five pages compared are the ones this build writes: each is laid out,
+//! written with the faces `font_dirs` finds and read back here, not read from
+//! the `plot/<name>.pdf` an earlier `write_five_drawings` run left behind.
+//! Every page has to pair 99 in 100 of the labels its reference counts. The
+//! rules about sources, uncovered groups and the signature column are held on
+//! I井场 alone.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -6,8 +13,10 @@ use std::path::PathBuf;
 use pid_plot::compare::{
     MaskRect, compare_plots_with_model, template_masks, text_sources, write_report,
 };
-use pid_plot::model::lay_out_drawing;
+use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::read::read_plot;
+use pid_plot::write::{PlotFont, write_plot};
 
 const DRAWINGS: [&str; 5] = [
     "I井场 注采阀组工艺及自控流程图",
@@ -35,15 +44,40 @@ fn five_drawings_keep_text_sources() {
         );
         return;
     }
-    let out_dir = corpus.join("plot/compare");
+    let dirs = font_dirs(Some(&corpus));
+    if !dirs.iter().any(|dir| dir.is_dir()) {
+        eprintln!("skipping sourced compare; no font directory is present");
+        return;
+    }
+    let out_dir = corpus.join("plot").join("compare");
     std::fs::create_dir_all(&out_dir).expect("mkdir compare");
+    // Our pages are written here, from this build's models, rather than read
+    // from `plot/<name>.pdf`. A stored page is as old as the last
+    // `write_five_drawings` run, so a rule held on it says nothing about the
+    // lettering this build places.
+    let models: Vec<PaperModel> = DRAWINGS
+        .iter()
+        .map(|name| {
+            lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus)
+                .unwrap_or_else(|error| panic!("{name}: {error}"))
+        })
+        .collect();
+    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs)
+        .unwrap_or_else(|error| panic!("fonts: {error}"));
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
     let mut summary = Vec::new();
-    for name in DRAWINGS {
+    for (name, model) in DRAWINGS.into_iter().zip(&models) {
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
-        let our_bytes = std::fs::read(corpus.join(format!("plot/{name}.pdf"))).expect("ours");
         let reference = read_plot(&reference_bytes).expect("read reference");
+        let our_bytes = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         let ours = read_plot(&our_bytes).expect("read ours");
-        let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
             .missing_boxes
@@ -54,14 +88,14 @@ fn five_drawings_keep_text_sources() {
                 max_mm: box_.max_mm,
             })
             .collect();
-        let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
+        let report = compare_plots_with_model(&reference, &ours, &template, &missing, model);
         write_report(&out_dir.join(format!("{name}.json")), &report).expect("json");
         let sourced = report
             .unmatched_our_text
             .iter()
             .filter(|run| run.stream_path.is_some() || run.symbol.is_some())
             .count();
-        summary.push(format!(
+        let readings = format!(
             "{name}\ncoverage {:.4} extra {:.0} inside {:.0} outside {:.0} text {}/{} sourced {sourced}/{} fit {}",
             report.coverage,
             report.extra_length_mm,
@@ -71,13 +105,24 @@ fn five_drawings_keep_text_sources() {
             report.text_reference,
             report.unmatched_our_text.len(),
             report.fit.within_threshold,
-        ));
+        );
+        eprintln!("{readings}");
+        summary.push(readings);
+        // Every page pairs 99 in 100 of the labels its reference counts,
+        // whichever sheet it is: a page that stops matching fails on that
+        // alone, before any question of where its loose runs came from.
+        assert!(
+            report.text_matched * 100 >= report.text_reference * 99,
+            "{name} text {}/{} matched",
+            report.text_matched,
+            report.text_reference
+        );
         if name.starts_with("I井场") {
             // The sourced rule has nothing to say about a drawing whose every
             // run matched: `0 of 0` is not a failing share. Guarded rather
             // than dropped so a run that does come loose still has to name its
-            // source — and paired with a floor on the match itself, so the
-            // vacuous case cannot hide a drawing that stopped matching.
+            // source — and paired with the floor on the match itself, above, so
+            // the vacuous case cannot hide a drawing that stopped matching.
             if !report.unmatched_our_text.is_empty() {
                 assert!(
                     sourced * 2 > report.unmatched_our_text.len(),
@@ -85,12 +130,6 @@ fn five_drawings_keep_text_sources() {
                     report.unmatched_our_text.len()
                 );
             }
-            assert!(
-                report.text_matched * 100 >= report.text_reference * 99,
-                "text {}/{} matched",
-                report.text_matched,
-                report.text_reference
-            );
             // Every reference stroke on this sheet is covered once the signal
             // dash is fitted to each piece, so any group here is a regression.
             assert!(
@@ -109,7 +148,7 @@ fn five_drawings_keep_text_sources() {
                         || run.text.contains("会签"))
             });
             assert!(!leaked, "signature column still compared");
-            summary.push(i_wellsite_notes(&report, &model));
+            summary.push(i_wellsite_notes(&report, model));
         }
     }
     std::fs::write(out_dir.join("s3-summary.txt"), summary.join("\n\n")).expect("summary");

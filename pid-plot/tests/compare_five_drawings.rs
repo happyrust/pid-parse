@@ -1,4 +1,26 @@
-//! Write the five plot-comparison reports and overlays.
+//! The five plots stored under the self-check corpus are each that drawing's
+//! own plot.
+//!
+//! `<corpus>/plot/<name>.pdf` is the copy of a page a reader opens, and
+//! `write_five_drawings::five_drawings_round_trip_through_pdf` is what writes
+//! it. This gate reads the five stored files back and compares each with the
+//! reference plot of the same name: the page has to be the reference's sheet,
+//! the long-line fit has to land inside its threshold, and 99 in 100 of the
+//! reference's labels have to pair. A file stored under another drawing's name
+//! fails one of the three, as does a page that has lost its content; a file
+//! that no longer reads fails before any of them.
+//!
+//! The stored files are as new as the last `write_five_drawings` run, which
+//! may be older than the build under test, so nothing here is an exact
+//! reading. The writer under test is held to its floors by
+//! `plot_compare::five_drawings_hold_the_ratchet`, on pages it writes itself.
+//! A stored set that fails here is put right by running `write_five_drawings`
+//! again, which rewrites all five.
+//!
+//! Each comparison's report and overlay go to
+//! `<corpus>/plot/compare/<name>.json` and `.png`. `plot_compare` and
+//! `plot_text_sources` write theirs to the same paths, so the files on disk
+//! describe whichever of the three ran last.
 
 use std::path::PathBuf;
 
@@ -26,19 +48,57 @@ fn corpus_dir() -> PathBuf {
 #[test]
 fn five_drawings_write_compare_reports() {
     let corpus = corpus_dir();
-    let ours = corpus.join(format!("plot/{}.pdf", DRAWINGS[0]));
-    let reference = corpus.join(format!("{}.pdf", DRAWINGS[0]));
-    if !ours.is_file() || !reference.is_file() {
-        eprintln!("skipping plot compare; {} is absent", ours.display());
+    let first_reference = corpus.join(format!("{}.pdf", DRAWINGS[0]));
+    if !first_reference.is_file() {
+        eprintln!(
+            "skipping plot compare; {} is absent",
+            first_reference.display()
+        );
         return;
     }
-    let out_dir = corpus.join("plot/compare");
+    let plot_dir = corpus.join("plot");
+    // A corpus `write_five_drawings` has not written to stores nothing to
+    // check. One that stores some of the five and not the rest is a broken
+    // set, and that is a failure rather than a reason to skip.
+    let absent: Vec<&str> = DRAWINGS
+        .iter()
+        .copied()
+        .filter(|name| !plot_dir.join(format!("{name}.pdf")).is_file())
+        .collect();
+    if absent.len() == DRAWINGS.len() {
+        eprintln!(
+            "skipping plot compare; no plot is stored under {} (`write_five_drawings` writes them)",
+            plot_dir.display()
+        );
+        return;
+    }
+    assert!(
+        absent.is_empty(),
+        "{} stores no plot for {absent:?}",
+        plot_dir.display()
+    );
+    let out_dir = plot_dir.join("compare");
     std::fs::create_dir_all(&out_dir).expect("mkdir compare");
     for name in DRAWINGS {
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
-        let our_bytes = std::fs::read(corpus.join(format!("plot/{name}.pdf"))).expect("ours");
         let reference = read_plot(&reference_bytes).expect("read reference");
-        let ours = read_plot(&our_bytes).expect("read ours");
+        let stored = plot_dir.join(format!("{name}.pdf"));
+        let our_bytes = std::fs::read(&stored)
+            .unwrap_or_else(|error| panic!("read {}: {error}", stored.display()));
+        let ours = read_plot(&our_bytes)
+            .unwrap_or_else(|error| panic!("{name}: the stored plot does not read back: {error}"));
+        // The stored page is the reference's sheet, to the millimetre
+        // `reference_plots_acceptance` holds a page to its reference's. A plot
+        // of a drawing on another sheet size stops here, before any ink is
+        // compared.
+        for axis in 0..2 {
+            assert!(
+                (ours.page_mm[axis] - reference.page_mm[axis]).abs() < 1.0,
+                "{name}: the stored plot's page {:?} is not the reference's {:?}",
+                ours.page_mm,
+                reference.page_mm
+            );
+        }
         let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
@@ -55,15 +115,6 @@ fn five_drawings_write_compare_reports() {
         let png_path = out_dir.join(format!("{name}.png"));
         write_report(&json_path, &report).expect("json");
         write_overlay(&png_path, &reference, &ours, &report.fit).expect("overlay");
-        assert!(json_path.is_file(), "{name} json");
-        assert!(
-            png_path.metadata().expect("png meta").len() > 100,
-            "{name} png"
-        );
-        assert!(report.coverage.is_finite());
-        if !report.fit.within_threshold {
-            assert!(report.fit.finding.is_some(), "{name} fit finding");
-        }
         eprintln!(
             "{name} coverage {:.4} extra {:.0} mm text {}/{} fit {}",
             report.coverage,
@@ -72,50 +123,29 @@ fn five_drawings_write_compare_reports() {
             report.text_reference,
             report.fit.within_threshold
         );
-    }
-}
-
-#[test]
-fn survey_margin_text_once() {
-    let corpus = corpus_dir();
-    let reference = corpus.join(format!("{}.pdf", DRAWINGS[0]));
-    if !reference.is_file() {
-        eprintln!("skip survey");
-        return;
-    }
-    for name in DRAWINGS {
-        let bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("pdf");
-        let ink = read_plot(&bytes).expect("read");
-        let page = ink.page_mm;
-        eprintln!("PAGE {name} {:.1} x {:.1}", page[0], page[1]);
-        let mut edge: Vec<(&str, [f64; 2])> = Vec::new();
-        for span in &ink.spans {
-            let x = span.origin_mm[0];
-            let y = span.origin_mm[1];
-            let from_edge = x.min(page[0] - x).min(y).min(page[1] - y);
-            if from_edge <= 55.0 {
-                edge.push((span.text.trim(), span.origin_mm));
-            }
-        }
-        edge.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]).then(a.1[1].total_cmp(&b.1[1])));
-        eprintln!("  edge spans {}", edge.len());
-        let mut band: Vec<(&str, [f64; 2])> = Vec::new();
-        for span in &ink.spans {
-            let x = span.origin_mm[0];
-            let y = span.origin_mm[1];
-            if x < 90.0 || y < 120.0 || x > page[0] - 220.0 {
-                band.push((span.text.trim(), span.origin_mm));
-            }
-        }
-        band.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]).then(a.1[1].total_cmp(&b.1[1])));
-        let plot_dir = corpus.join("plot");
-        std::fs::create_dir_all(&plot_dir).expect("mkdir plot");
-        let dump = plot_dir.join(format!("edge-{name}.txt"));
-        let mut lines = Vec::new();
-        for (text, origin) in &band {
-            lines.push(format!("{:.2}\t{:.2}\t{text}", origin[0], origin[1]));
-        }
-        std::fs::write(&dump, lines.join("\n")).expect("dump");
-        eprintln!("  dumped {}", band.len());
+        assert!(json_path.is_file(), "{name} json");
+        assert!(
+            png_path.metadata().expect("png meta").len() > 100,
+            "{name} png"
+        );
+        assert!(report.coverage.is_finite());
+        // Another drawing on the same sheet size does not line up with this
+        // reference's long lines: `换热器CD`'s plot under `低温分离器A`'s name
+        // fits at scale 1.037.
+        assert!(
+            report.fit.within_threshold,
+            "{name}: the stored plot does not fit its reference: {:?}",
+            report.fit
+        );
+        // The floor `plot_text_sources` holds this build's pages to, and the
+        // one check left when the fit lands anyway. Flash drum B's plot under
+        // A's name fits A's reference and pairs 84 of its 151 labels; a blank
+        // page fits at identity, for want of lines to fit, and pairs none.
+        assert!(
+            report.text_matched * 100 >= report.text_reference * 99,
+            "{name}: the stored plot pairs {} of the reference's {} labels",
+            report.text_matched,
+            report.text_reference
+        );
     }
 }
