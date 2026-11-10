@@ -239,6 +239,11 @@ pub const OVERRIDE_STATES_DASH: u32 = 0x80;
 /// copies it across unconditionally. This crate has no layer colour to
 /// hand back, so an override stating it keeps the base style's colour. Six
 /// corpus overrides — symbol-body strokes, all of them — state it.
+///
+/// What the word draws is on the vendor's plots: every stroke stating it is
+/// painted in the paper's own white there, so the resolved style carries it
+/// as [`LineSymbology::paper`] beside the base's colour. The name is the
+/// compose routine's; the reading is the plots'.
 const OVERRIDE_COLOUR_BY_LAYER: u32 = 0x8000_0000;
 
 /// Offset of the line width, an `f64` in metres, within a
@@ -779,6 +784,18 @@ pub struct LineSymbology {
     /// Colour as the raw Win32 `COLORREF` word from
     /// [`SIMPLE_LINE_COLOUR_OFFSET`], i.e. `0x00BBGGRR`.
     pub colour: u32,
+    /// Whether an override on the way states the colour word `0x8000_0000`
+    /// under [`OVERRIDE_STATES_COLOUR`]: the stroke is drawn in the page's
+    /// own colour, which on a plot is the paper's white, so it leaves no
+    /// ink. [`Self::colour`] is still the base style's.
+    ///
+    /// Level: reference plots. The strokes stating it on the eleven
+    /// `验收数据` sheets are the origin marks of the label symbols —
+    /// `Remarks.sym`, `Remarks Chinese_large.sym`, `Item Note & Label.sym`,
+    /// 261 strokes, every one placed under `As Drawn` — and the vendor's
+    /// plots paint each of them `1 G`. See
+    /// `docs/analysis/2026-11-10-the-acceptance-gate-reads-paint-not-ink.md`.
+    pub paper: bool,
 }
 
 impl LineSymbology {
@@ -1226,6 +1243,10 @@ pub struct StyleRecord {
     /// sentinel. Meaningful only with [`OVERRIDE_STATES_COLOUR`] set in
     /// [`Self::override_mask`]; the field is read regardless.
     pub override_colour: Option<u32>,
+    /// Whether a `JStyleOverride`'s colour word is `0x8000_0000` — the page's
+    /// own colour, see [`LineSymbology::paper`]. Meaningful only with
+    /// [`OVERRIDE_STATES_COLOUR`] set.
+    pub override_states_paper: bool,
     /// The width in metres a `JStyleOverride` states, when it reads
     /// plausibly (the same gate as [`Self::symbology`]). Meaningful only
     /// with [`OVERRIDE_STATES_WIDTH`] set.
@@ -1618,6 +1639,9 @@ impl DocumentStyleTable {
                     base_reference: read_base_reference(payload),
                     override_mask: read_override_mask(type_code, payload),
                     override_colour: read_override_colour(type_code, payload),
+                    override_states_paper: type_code == PSM_TYPE_CODE_JSTYLE_OVERRIDE
+                        && u32_at(payload, OVERRIDE_COLOUR_OFFSET)
+                            == Some(OVERRIDE_COLOUR_BY_LAYER),
                     override_width_m: read_override_width(type_code, payload),
                     override_dash_reference: read_reference_of(
                         type_code,
@@ -1825,6 +1849,9 @@ impl DocumentStyleTable {
             if mask & OVERRIDE_STATES_COLOUR != 0 {
                 if let Some(colour) = record.override_colour {
                     symbology.colour = colour;
+                    symbology.paper = false;
+                } else if record.override_states_paper {
+                    symbology.paper = true;
                 }
             }
             let (dash, complex_dash) = if mask & OVERRIDE_STATES_DASH != 0 {
@@ -2087,7 +2114,11 @@ fn read_symbology(type_code: u16, payload: &[u8]) -> Option<LineSymbology> {
     {
         return None;
     }
-    Some(LineSymbology { width_m, colour })
+    Some(LineSymbology {
+        width_m,
+        colour,
+        paper: false,
+    })
 }
 
 fn read_char_height(type_code: u16, payload: &[u8]) -> Option<f64> {
@@ -4625,6 +4656,48 @@ mod tests {
         let resolved = table.resolve_line_style(21).expect("id 21 is defined");
         assert_eq!(resolved.symbology.rgb(), [0x80, 0x80, 0x00]);
         assert!((resolved.symbology.width_mm() - 0.01).abs() < 1e-9);
+    }
+
+    /// The same overrides again: `0x80000000` is the page's own colour, and
+    /// the eleven reference plots paint every stroke stating it white. The
+    /// resolved style says so, while its colour stays the base's; an override
+    /// stating a colour of its own, or none at all, does not.
+    #[test]
+    fn an_override_stating_the_by_layer_colour_is_drawn_in_the_pages_colour() {
+        let data = stream(&[
+            simple_line(1, 0.000_35, 0x0000_8080),
+            override_stating(
+                21,
+                1,
+                OVERRIDE_STATES_COLOUR | OVERRIDE_STATES_WIDTH,
+                OVERRIDE_COLOUR_BY_LAYER,
+                0.000_01,
+                0,
+            ),
+            // White is a colour like any other here.
+            override_stating(22, 1, OVERRIDE_STATES_COLOUR, 0x00FF_FFFF, 0.0, 0),
+            // The word is there, but the mask does not say a colour is stated.
+            override_stating(
+                23,
+                1,
+                OVERRIDE_STATES_WIDTH,
+                OVERRIDE_COLOUR_BY_LAYER,
+                0.000_01,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let paper = |id: u32| {
+            table
+                .resolve_line_style(id)
+                .expect("defined")
+                .symbology
+                .paper
+        };
+        assert!(paper(21), "the override states the page's own colour");
+        assert!(!paper(1), "the base states a colour");
+        assert!(!paper(22), "white is stated, not the page's colour");
+        assert!(!paper(23), "the mask states no colour");
     }
 
     /// A stated width that cannot be a width — a framing slip's enormous

@@ -446,7 +446,13 @@ pub struct PaperPrimitive {
 /// resolved style states them.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaperStroke {
-    /// Stroke colour.
+    /// The colour the stroke shows in on the sheet.
+    ///
+    /// The colour its style states, with the two exceptions a white sheet
+    /// makes: `[255, 255, 255]` here is the paper's own colour — a stroke
+    /// whose style states the page's colour, which leaves no ink — and a
+    /// stroke whose style states white carries `[0, 0, 0]`, the contrast
+    /// colour it prints in (see `sheet_colour`).
     pub rgb: [u8; 3],
     /// Stroke width in millimetres.
     pub width_mm: f64,
@@ -2942,10 +2948,41 @@ fn entity_style<'a>(
     line_styles.get(&(stream.clone(), oid))
 }
 
+/// The colour a stated stroke colour shows in on the white sheet.
+///
+/// Two stated colours are not what the sheet shows, and the vendor's plots
+/// treat them in opposite ways:
+///
+/// * A stroke whose style states the page's own colour (`0x8000_0000`,
+///   [`pid_parse::style_link::LineSymbology::paper`]) is the sheet's white.
+///   It leaves no ink: the eleven reference plots paint every such stroke
+///   `1 G` — the origin marks of the label symbols.
+/// * A stroke stated *white* (`0x00FF_FFFF`) is drawn in the contrast colour
+///   instead. The `.igr` border templates state white for their title-block
+///   and sign-off rules, their frames and the symbols they place, and the
+///   reference plots print every one of those black.
+///
+/// White comes out of here meaning one thing only — paper — which is the one
+/// colour the writer does not ink (`write::plot_ink`). Every other colour is
+/// left as stated; the writer inks them all black, as the plots do.
+///
+/// A fill is not passed through this: none of the seventy-one pages this
+/// crate exports fills a region in white or in the page's colour, so no plot
+/// says what either would print.
+fn sheet_colour(rgb: [u8; 3], paper: bool) -> [u8; 3] {
+    if paper {
+        [255, 255, 255]
+    } else if rgb == [255, 255, 255] {
+        [0, 0, 0]
+    } else {
+        rgb
+    }
+}
+
 /// The pen a resolved line style draws with.
 fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
     PaperStroke {
-        rgb: style.symbology.rgb(),
+        rgb: sheet_colour(style.symbology.rgb(), style.symbology.paper),
         width_mm: style.symbology.width_mm(),
         dash_mm: style
             .dash
@@ -2991,10 +3028,20 @@ fn body_stroke(
     // The pen comes from the placement unless the placement names no pen —
     // its style is the drawing's `As Drawn` placeholder.
     let stated_pen = placement_style.filter(|_| !as_drawn);
+    // A body stroke stated in the page's own colour stays that under a
+    // placement that names no pen. Those are the only placements any page
+    // has one under — 261 strokes on the eleven reference sheets, 1321 on
+    // the plant backup, 72 on the fixtures, all `As Drawn` — so what a
+    // stated pen would do to such a stroke is a case no plot shows; there
+    // the placement's colour paints it, as it paints the rest of the body.
+    let paper = stated_pen.is_none() && body_style.is_some_and(|style| style.paper);
     Some(PaperStroke {
-        rgb: placement_style.map_or_else(
-            || body_style.map_or([0, 0, 0], |style| style.rgb),
-            |style| style.symbology.rgb(),
+        rgb: sheet_colour(
+            placement_style.map_or_else(
+                || body_style.map_or([0, 0, 0], |style| style.rgb),
+                |style| style.symbology.rgb(),
+            ),
+            paper,
         ),
         width_mm: stated_pen
             .filter(|style| carries_a_pen(style.symbology.width_mm()))
@@ -4134,6 +4181,7 @@ mod tests {
         SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape, body_stroke,
         canonical_rect_chain, complex_dash_cells, complex_dash_glyph_span_mm,
         complex_dash_positions, place_metres, push_entity, push_symbol_primitive, shape_points,
+        sheet_colour, stroke_of,
     };
 
     fn stroke(start: (f64, f64), end: (f64, f64)) -> MarkerStroke {
@@ -6371,6 +6419,7 @@ mod tests {
             symbology: pid_parse::style_link::LineSymbology {
                 width_m: width_mm / 1000.0,
                 colour: 0x0077_A7FF,
+                paper: false,
             },
             dash: None,
             marker: None,
@@ -6385,6 +6434,7 @@ mod tests {
             rgb: [0, 0, 0],
             width_mm: 0.13,
             dash_mm: Vec::new(),
+            paper: false,
         };
         // The valve's own pen: nothing placed, and every pen a placement can
         // carry, keeps the body's outline as the body draws it.
@@ -6415,6 +6465,47 @@ mod tests {
         assert!((bare.width_mm - 0.25).abs() < 1e-9, "{} mm", bare.width_mm);
     }
 
+    /// The sheet is white. A stroke stated in the page's own colour shows on
+    /// it nowhere — the reference plots paint the origin marks of
+    /// `Remarks.sym` and `Item Note & Label.sym` `1 G` — and a stroke stated
+    /// white is drawn in the contrast colour: every white rule of the `.igr`
+    /// border templates prints black.
+    #[test]
+    fn a_white_rule_inks_and_a_stroke_in_the_pages_colour_does_not() {
+        assert_eq!(sheet_colour([255, 255, 255], false), [0, 0, 0]);
+        assert_eq!(sheet_colour([0, 0, 0], true), [255, 255, 255]);
+        assert_eq!(sheet_colour([255, 167, 119], false), [255, 167, 119]);
+
+        // A template rule: its own style states white.
+        let mut rule = placement_style(0.35);
+        rule.symbology.colour = 0x00FF_FFFF;
+        assert_eq!(stroke_of(&rule).rgb, [0, 0, 0], "a white rule inks");
+        // The same style stating the page's own colour over a black base.
+        let mut mark = placement_style(0.01);
+        mark.symbology.colour = 0;
+        mark.symbology.paper = true;
+        assert_eq!(stroke_of(&mark).rgb, [255, 255, 255], "paper is paper");
+
+        // A label's origin mark: the body states the page's colour and the
+        // placement names no pen (`As Drawn`), so the mark stays paper.
+        let origin_mark = PrimitiveStyle {
+            rgb: [0, 0, 0],
+            width_mm: 0.01,
+            dash_mm: Vec::new(),
+            paper: true,
+        };
+        let mut as_drawn = placement_style(0.35);
+        as_drawn.symbology.colour = 0;
+        let unplaced = body_stroke(Some(&origin_mark), Some(&as_drawn), true).expect("a pen");
+        assert_eq!(unplaced.rgb, [255, 255, 255], "the mark inks nothing");
+        let bare = body_stroke(Some(&origin_mark), None, false).expect("a pen");
+        assert_eq!(bare.rgb, [255, 255, 255], "nor with no placement style");
+        // Under a placement that does name a pen the body is repainted with
+        // it, colour and all — no reference plot shows the other reading.
+        let placed = body_stroke(Some(&origin_mark), Some(&as_drawn), false).expect("a pen");
+        assert_eq!(placed.rgb, [0, 0, 0], "a stated pen paints the body");
+    }
+
     #[test]
     fn a_placement_naming_as_drawn_states_no_pen_so_the_body_keeps_its_own() {
         // The five drawings' `As Drawn` records drift: `0.35 mm` black on two,
@@ -6425,6 +6516,7 @@ mod tests {
             rgb: [0, 0, 0],
             width_mm: 0.01,
             dash_mm: Vec::new(),
+            paper: false,
         };
         for placeholder_pen in [0.35, 0.50] {
             let stroke = body_stroke(Some(&circle), Some(&placement_style(placeholder_pen)), true)
