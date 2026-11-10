@@ -294,6 +294,13 @@ pub struct PrimitiveStyle {
     /// that draws solid -- which is what most of either corpus says.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dash_mm: Vec<f64>,
+    /// Whether the stroke is drawn in the page's own colour — its style
+    /// states the colour word `0x8000_0000`
+    /// ([`crate::style_link::LineSymbology::paper`]). On a plot that is the
+    /// paper's white, so such a stroke leaves no ink; [`Self::rgb`] is the
+    /// base style's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paper: bool,
 }
 
 impl PrimitiveStyle {
@@ -308,6 +315,7 @@ impl PrimitiveStyle {
                 .as_ref()
                 .map(crate::style_link::DashPattern::segments_mm)
                 .unwrap_or_default(),
+            paper: resolved.symbology.paper,
         }
     }
 
