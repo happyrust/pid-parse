@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 use pid_parse::symbol_library::NameMiss;
 use pid_plot::model::{SymbolBodySource, lay_out_with_symbol_roots};
 
+#[path = "../src/scratch.rs"]
+mod scratch;
+
 const A1_DRAWING: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
 
 fn corpus_dir() -> PathBuf {
@@ -26,18 +29,6 @@ fn corpus_dir() -> PathBuf {
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file")
-}
-
-fn scratch_root(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let path = std::env::temp_dir().join(format!(
-        "pid-plot-template-gap-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&path).expect("scratch root");
-    path
 }
 
 /// The one `BLFH.sym` placement the A1 template carries.
@@ -94,8 +85,9 @@ fn the_gap_tells_a_missing_file_from_a_name_the_library_carries_twice() {
         .unwrap_or_else(|error| panic!("layout: {error}"))
     };
 
-    // A root that holds nothing: the name is simply not in the library.
-    let root = scratch_root("absent");
+    // A root that holds nothing: the name is simply not in the library. The
+    // root is this test's own and goes when the test does, passed or failed.
+    let root = scratch::ScratchDir::new("template-gap-absent");
     let model = lay_out(&root);
     let symbol = blfh(&model);
     assert_eq!(symbol.body, SymbolBodySource::Cached, "the cache drew it");
@@ -126,6 +118,4 @@ fn the_gap_tells_a_missing_file_from_a_name_the_library_carries_twice() {
     assert_eq!(symbol.body, SymbolBodySource::Cached);
     assert!(symbol.library_available, "the one remaining copy answers");
     assert_eq!(symbol.name_gap, None);
-
-    std::fs::remove_dir_all(&root).ok();
 }

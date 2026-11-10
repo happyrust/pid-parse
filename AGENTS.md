@@ -437,6 +437,14 @@ one directory under `CARGO_HOME\targets` regardless — the sharing above,
 with no variable that opts out. Run the toolchain's own cargo there,
 `rustup run nightly cargo …`, which honours `CARGO_TARGET_DIR`.
 
+A `pid-plot` test that needs files of its own makes them in a `ScratchDir`
+(`pid-plot/src/scratch.rs`; the integration tests include the same file by
+path): a directory under the temporary directory named
+`pid-plot-<name>-<process id>-<count>`, removed when the guard is dropped —
+when the test ends, passed or failed. A whole `cargo test -p pid-plot` leaves
+no `pid-plot-*` entry in `TEMP` (it left eight a run before 2026-11-11), so
+do not join a fixed name onto `std::env::temp_dir()` in a new test.
+
 ## Pre-commit gates (CI mirrors these)
 
 Run **all five** before `git push`. CI (`.github/workflows/ci.yml`)

@@ -8,6 +8,9 @@ use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
 use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
 
+#[path = "../src/scratch.rs"]
+mod scratch;
+
 const DRAWINGS: [&str; 5] = [
     "I井场 注采阀组工艺及自控流程图",
     "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
@@ -228,11 +231,14 @@ fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
 }
 
 fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
-    let stamp = std::process::id();
-    let script = std::env::temp_dir().join(format!("pid-plot-pymupdf-check-{stamp}.py"));
+    // The script and the text it looks for live in a directory that goes
+    // when this call returns — whether the check passed, failed, or python
+    // could not be started.
+    let dir = scratch::ScratchDir::new("pymupdf-check");
+    let script = dir.join("check.py");
     std::fs::write(&script, PYMUPDF_PY).expect("write pymupdf script");
     let joined = texts.join("\n");
-    let expect = std::env::temp_dir().join(format!("pid-plot-expect-text-{stamp}.txt"));
+    let expect = dir.join("expected-text.txt");
     std::fs::write(&expect, &joined).expect("write expected text");
     let status = Command::new("python")
         .arg(&script)
@@ -240,8 +246,6 @@ fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
         .arg(&expect)
         .status()
         .unwrap_or_else(|error| panic!("python: {error}"));
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_file(&expect);
     assert!(
         status.success(),
         "pymupdf check failed for {}",

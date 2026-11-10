@@ -1045,14 +1045,13 @@ mod tests {
         }
     }
 
-    fn temp_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pid-plot-ledger-gate-{}-{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        dir.join("export-ledger.json")
+    /// Where a test keeps its baseline: a file not yet written, in a
+    /// directory of the test's own that is removed with the guard returned
+    /// beside the path — when the test ends, passed or failed.
+    fn temp_path(name: &str) -> (crate::scratch::ScratchDir, std::path::PathBuf) {
+        let dir = crate::scratch::ScratchDir::new(&format!("ledger-gate-{name}"));
+        let path = dir.join("export-ledger.json");
+        (dir, path)
     }
 
     /// // Feature: pdf-export-ledger, Property 9: 基线往返与确定性
@@ -1104,7 +1103,7 @@ mod tests {
     /// that pinned the baseline compared nothing.
     #[test]
     fn gate_classifies_rise_fall_and_hold() {
-        let path = temp_path("classify");
+        let (_scratch, path) = temp_path("classify");
         let descriptor = CorpusDescriptor::default();
         // First, pin the baseline.
         let pinned = a_ledger(2, 3, 0);
@@ -1194,7 +1193,7 @@ mod tests {
     /// only at the suspect counts that would rise, never at every key.
     #[test]
     fn rewrite_refuses_any_suspect_rise() {
-        let path = temp_path("refuse");
+        let (_scratch, path) = temp_path("refuse");
         let descriptor = CorpusDescriptor::default();
         let report = run_gate(an_input(
             &path,
@@ -1240,7 +1239,7 @@ mod tests {
 
     #[test]
     fn rewrite_is_deterministic() {
-        let path = temp_path("deterministic");
+        let (_scratch, path) = temp_path("deterministic");
         let descriptor = CorpusDescriptor::default();
         for _ in 0..2 {
             let report = run_gate(an_input(
@@ -1264,7 +1263,7 @@ mod tests {
 
     #[test]
     fn descriptor_diff_skips_counts_but_still_fails_on_unattributed() {
-        let path = temp_path("descriptor");
+        let (_scratch, path) = temp_path("descriptor");
         let pinned_descriptor = CorpusDescriptor {
             symbol_sources: vec![SourceName {
                 kind: crate::ledger::layout::SourceKind::Directory,
@@ -1321,7 +1320,7 @@ mod tests {
 
     #[test]
     fn font_only_diff_skips_the_two_font_marks() {
-        let path = temp_path("fonts");
+        let (_scratch, path) = temp_path("fonts");
         let mut pinned = a_ledger(2, 3, 0);
         pinned.fonts_measured = true;
         pinned
@@ -1379,7 +1378,7 @@ mod tests {
     /// of the three ways it can fail to be read is a comparison.
     #[test]
     fn baseline_missing_or_corrupt_or_schema_mismatch_fails() {
-        let path = temp_path("broken");
+        let (_scratch, path) = temp_path("broken");
         let descriptor = CorpusDescriptor::default();
         // Missing.
         let report = run_gate(an_input(
@@ -1454,7 +1453,7 @@ mod tests {
 
     #[test]
     fn a_page_in_only_one_run_is_an_account_change() {
-        let path = temp_path("pages");
+        let (_scratch, path) = temp_path("pages");
         let descriptor = CorpusDescriptor::default();
         let report = run_gate(an_input(
             &path,
