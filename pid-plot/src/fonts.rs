@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::model::{PaperModel, PaperShape};
+use crate::model::{PaperModel, PaperShape, PaperTextSpan};
 
 /// One face ready to embed. `key` is the name [`typeface_key`] returns.
 pub struct PreparedFont {
@@ -37,8 +37,8 @@ pub struct PreparedFont {
 /// damaged spelling of `宋体`, documented on
 /// [`pid_parse::style_link::TEXT_CHAR_FONT_NAME_OFFSET`]. Anything else
 /// with a Han character uses FangSong; Latin-only lettering uses Arial
-/// Narrow. Individual characters the chosen face cannot encode borrow
-/// another loaded face, one character at a time — see
+/// Narrow. Individual characters the chosen face cannot encode borrow one
+/// of the two faces [`borrow_order`] names, one character at a time — see
 /// [`crate::write`].
 #[must_use]
 pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
@@ -51,6 +51,33 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
         "FangSong"
     } else {
         "Arial Narrow"
+    }
+}
+
+/// The two faces a label borrows from, in the order they are asked.
+///
+/// A character the face a label names cannot draw — Han in an Arial Narrow
+/// style, the `℃` after its digits — is lettered in SimSun or FangSong, and
+/// which of the two is read off the label alone: a label that holds a Han
+/// character asks SimSun first, any other asks FangSong first. That is what
+/// the eleven acceptance sheets letter when they are prepared together — the
+/// A2 sheet's two `动火点` in SimSun, every borrowed `℃` in FangSong — stated
+/// so that a sheet prepared on its own gets the same answer.
+///
+/// Reading it off the programs in hand instead would make the answer follow
+/// the batch. Those are subsets cut to the labels of whichever sheets were
+/// prepared together, so the first program that holds `动火点` is FangSong
+/// for the A2 sheet alone and SimSun beside a sheet whose own 宋体 label
+/// holds the same three characters. [`prepare_fonts`] gives each lender what
+/// this order sends it, judged against the lender's whole program, and the
+/// writer asks in the same order, so the two agree whatever else was
+/// prepared with the sheet.
+#[must_use]
+pub fn borrow_order(label: &str) -> [&'static str; 2] {
+    if label.chars().any(is_cjk) {
+        ["SimSun", "FangSong"]
+    } else {
+        ["FangSong", "SimSun"]
     }
 }
 
@@ -79,9 +106,13 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 /// formatting **run** names is optional — the label draws in its own face
 /// where the run's face is absent, the way it did before the partition was
 /// read — since one missing typeface must not refuse a whole export.
-/// Characters no loaded face covers pull the CJK fallback faces (`FangSong`,
-/// `SimSun`) in too — the run keeps its named face for everything it can
-/// encode and only the uncovered characters borrow.
+/// A character the face it is named in cannot draw borrows one of the two
+/// faces [`borrow_order`] names for its label, and that lender is loaded, or
+/// its program widened, to carry it — the run keeps its named face for
+/// everything that face draws and only the rest borrows. Which lender
+/// carries a character is settled against the lenders' whole programs, never
+/// against the subsets this call builds, so a sheet's faces carry the same
+/// characters whether it is prepared alone or with any other sheets.
 ///
 /// # Errors
 ///
@@ -110,15 +141,8 @@ pub fn prepare_fonts(
         }
     }
     let mut faces: Vec<PreparedFont> = Vec::new();
-    let mut covered = String::new();
     for (key, text) in &wanted {
         let (bytes, subset) = load_face(dirs, key, text)?;
-        for ch in text.chars() {
-            let mut buf = [0u8; 4];
-            if pdfcraft_fonts::embedding::covers(&bytes, ch.encode_utf8(&mut buf)) {
-                covered.push(ch);
-            }
-        }
         faces.push(PreparedFont {
             key: (*key).to_string(),
             bytes,
@@ -128,11 +152,10 @@ pub fn prepare_fonts(
     // A run inside a label may name a face the label's own style does not —
     // `Wastewater Pit.sym` letters one `*` in 宋体 inside an Arial line, and a
     // sheet label may mix them the same way. Those faces are **optional**: a
-    // machine without the file draws that stretch in the face the encoder
-    // falls back to, which is what the page did before partitions were read,
-    // while demanding it would refuse a whole export over one missing
-    // typeface. A file that is present but unusable is skipped for the same
-    // reason.
+    // machine without the file draws that stretch in the label's own face,
+    // which is what the page did before partitions were read, while
+    // demanding it would refuse a whole export over one missing typeface. A
+    // file that is present but unusable is skipped for the same reason.
     let mut run_faces: BTreeMap<&'static str, String> = BTreeMap::new();
     for model in models {
         for primitive in &model.primitives {
@@ -172,68 +195,229 @@ pub fn prepare_fonts(
             subset,
         });
     }
-    // A character no named face covers borrows a CJK fallback.
-    let uncovered: BTreeSet<char> = wanted
-        .values()
-        .flat_map(|text| text.chars())
-        .filter(|ch| !covered.contains(*ch) && !ch.is_whitespace())
+    // A character the face it is named in cannot draw is borrowed, and the
+    // lender's program has to hold it. Which lender that is comes from the
+    // label and from the lenders' whole programs ([`loans`]), so it is the
+    // same whichever other sheets share this call.
+    let mut programs: BTreeMap<&'static str, Option<Vec<u8>>> = BTreeMap::new();
+    let lending = loans(models, &faces, dirs, &mut programs)?;
+    for (lender, lent) in &lending.lent {
+        let held = faces.iter().position(|face| face.key == *lender);
+        if held.is_some_and(|index| lent.iter().all(|ch| draws(&faces[index].bytes, *ch))) {
+            continue;
+        }
+        let Some(program) = whole_program(&mut programs, dirs, lender)? else {
+            continue;
+        };
+        // The lender is often already on the page because the drawing names
+        // it — FangSong is the default for Han lettering — and then its one
+        // program has to carry the borrowed characters as well. Pushing a
+        // second entry for the same face embeds one typeface twice, once per
+        // subset: the I drawing's export carried two `/FangSong` resources
+        // for one name and `pdffonts` listed both.
+        let mut text = wanted
+            .get(lender)
+            .or_else(|| run_faces.get(lender))
+            .cloned()
+            .unwrap_or_default();
+        text.extend(lent);
+        let (bytes, subset) = subset_or_whole(lender, program, &text)?;
+        match held {
+            Some(index) => {
+                faces[index].bytes = bytes;
+                faces[index].subset = subset;
+            }
+            None => faces.push(PreparedFont {
+                key: (*lender).to_string(),
+                bytes,
+                subset,
+            }),
+        }
+    }
+    // Neither lender draws these. A face loaded for another reason may, and
+    // the writer takes it as a last resort; with none the export is refused.
+    let still: String = lending
+        .unplaced
+        .iter()
+        .copied()
+        .filter(|ch| !face_covers(&faces, *ch))
         .collect();
-    if !uncovered.is_empty() {
-        for fallback in ["FangSong", "SimSun"] {
-            let still: Vec<char> = uncovered
-                .iter()
-                .copied()
-                .filter(|ch| !face_covers(&faces, *ch))
-                .collect();
-            if still.is_empty() {
-                break;
-            }
-            let Some(bytes) = face_file(dirs, fallback)? else {
-                continue;
-            };
-            // The fallback is often already on the page because the drawing
-            // names it — FangSong is the default for Han lettering — and then
-            // its one program has to carry the borrowed characters as well.
-            // Pushing a second entry for the same face embeds one typeface
-            // twice, once per subset: the I drawing's export carried two
-            // `/FangSong` resources for one name and `pdffonts` listed both.
-            let mut text = wanted.get(fallback).cloned().unwrap_or_default();
-            text.extend(still);
-            let (bytes, subset) = subset_or_whole(fallback, &bytes, &text)?;
-            match faces.iter().position(|face| face.key == fallback) {
-                Some(index) => {
-                    faces[index].bytes = bytes;
-                    faces[index].subset = subset;
-                }
-                None => faces.push(PreparedFont {
-                    key: fallback.to_string(),
-                    bytes,
-                    subset,
-                }),
-            }
-        }
-        let still: String = uncovered
-            .iter()
-            .copied()
-            .filter(|ch| !face_covers(&faces, *ch))
-            .collect();
-        if !still.is_empty() {
-            return Err(format!(
-                "no loaded face can draw {still:?} (searched {})",
-                searched_dirs(dirs)
-            ));
-        }
+    if !still.is_empty() {
+        return Err(format!(
+            "no loaded face can draw {still:?} (searched {})",
+            searched_dirs(dirs)
+        ));
     }
     Ok(faces)
 }
 
+/// What the lenders have to carry for a set of drawings.
+struct Loans {
+    /// The characters each face is asked for beyond the labels that name it.
+    lent: BTreeMap<&'static str, BTreeSet<char>>,
+    /// The characters neither of their label's two lenders draws.
+    unplaced: BTreeSet<char>,
+}
+
+/// Which face lends each character the face it is named in cannot draw.
+///
+/// Every character of a label is named in a face ([`named_faces`]). The ones
+/// that face cannot draw go to the label's two lenders in [`borrow_order`]:
+/// the first is given every such character its program draws, and the second
+/// is asked only when that leaves some over. It is then given every one *it*
+/// draws, not just the remainder, because the writer hands a stretch its
+/// named face draws none of to one lender whole, and when the first cannot
+/// take all of it the second has to be able to.
+///
+/// A lender is judged by its whole program (`programs`), never by a subset:
+/// a subset holds a character only where some label prepared in the same call
+/// needed it, so it would answer for the batch instead of for the face.
+fn loans(
+    models: &[&PaperModel],
+    faces: &[PreparedFont],
+    dirs: &[PathBuf],
+    programs: &mut BTreeMap<&'static str, Option<Vec<u8>>>,
+) -> Result<Loans, String> {
+    let mut loans = Loans {
+        lent: BTreeMap::new(),
+        unplaced: BTreeSet::new(),
+    };
+    for model in models {
+        for primitive in &model.primitives {
+            if !crate::write::is_plotted(primitive.confidence) {
+                continue;
+            }
+            let PaperShape::Text {
+                value, font, spans, ..
+            } = &primitive.shape
+            else {
+                continue;
+            };
+            if value.trim().is_empty() {
+                continue;
+            }
+            let own = typeface_key(font.as_deref(), value);
+            let mut lacking: BTreeSet<char> = BTreeSet::new();
+            for (ch, named) in value.chars().zip(named_faces(value, own, spans)) {
+                if ch.is_whitespace() {
+                    continue;
+                }
+                // A run's face this machine has no file for is not loaded,
+                // and the label letters that stretch in its own face.
+                let (key, face) = match loaded(faces, named) {
+                    Some(face) => (named, face),
+                    None => match loaded(faces, own) {
+                        Some(face) => (own, face),
+                        None => continue,
+                    },
+                };
+                if draws(&face.bytes, ch) {
+                    continue;
+                }
+                // A face is subset to the labels that name it as their own,
+                // so a run that names it may hold a character its program
+                // draws and its subset lacks. The face then needs the
+                // character itself; nothing is borrowed.
+                if key != own
+                    && whole_program(programs, dirs, key)?.is_some_and(|program| draws(program, ch))
+                {
+                    loans.lent.entry(key).or_default().insert(ch);
+                    continue;
+                }
+                lacking.insert(ch);
+            }
+            if lacking.is_empty() {
+                continue;
+            }
+            let [first, second] = borrow_order(value);
+            let from_first = drawn_by(programs, dirs, first, &lacking)?;
+            if !from_first.is_empty() {
+                loans.lent.entry(first).or_default().extend(&from_first);
+            }
+            if from_first.len() == lacking.len() {
+                continue;
+            }
+            let from_second = drawn_by(programs, dirs, second, &lacking)?;
+            loans.unplaced.extend(
+                lacking
+                    .iter()
+                    .filter(|ch| !from_first.contains(*ch) && !from_second.contains(*ch)),
+            );
+            if !from_second.is_empty() {
+                loans.lent.entry(second).or_default().extend(&from_second);
+            }
+        }
+    }
+    Ok(loans)
+}
+
+/// The face each character of a label is named in: its run's, where a run
+/// names one, and the label's own otherwise.
+///
+/// A later run overrides an earlier one over the characters they share, and
+/// a run that names no face puts its characters back in the label's own —
+/// the same reading the writer cuts the label by.
+fn named_faces(value: &str, own: &'static str, spans: &[PaperTextSpan]) -> Vec<&'static str> {
+    let mut named = vec![own; value.chars().count()];
+    for span in spans {
+        let face = span
+            .font
+            .as_deref()
+            .map_or(own, |font| typeface_key(Some(font), value));
+        let start = usize::from(span.start);
+        let stop = start.saturating_add(usize::from(span.len));
+        for slot in named.iter_mut().take(stop).skip(start) {
+            *slot = face;
+        }
+    }
+    named
+}
+
+/// The loaded face `key` names, if one is.
+fn loaded<'f>(faces: &'f [PreparedFont], key: &str) -> Option<&'f PreparedFont> {
+    faces.iter().find(|face| face.key == key)
+}
+
+/// The whole program of face `key`, read from `dirs` once and kept; `None`
+/// when this machine has no file for it.
+fn whole_program<'p>(
+    programs: &'p mut BTreeMap<&'static str, Option<Vec<u8>>>,
+    dirs: &[PathBuf],
+    key: &'static str,
+) -> Result<Option<&'p [u8]>, String> {
+    if !programs.contains_key(key) {
+        let program = face_file(dirs, key)?;
+        programs.insert(key, program);
+    }
+    Ok(programs.get(key).and_then(Option::as_deref))
+}
+
+/// The characters of `wanted` the whole program of face `key` draws.
+fn drawn_by(
+    programs: &mut BTreeMap<&'static str, Option<Vec<u8>>>,
+    dirs: &[PathBuf],
+    key: &'static str,
+    wanted: &BTreeSet<char>,
+) -> Result<BTreeSet<char>, String> {
+    let Some(program) = whole_program(programs, dirs, key)? else {
+        return Ok(BTreeSet::new());
+    };
+    Ok(wanted
+        .iter()
+        .copied()
+        .filter(|ch| draws(program, *ch))
+        .collect())
+}
+
+/// Whether a font program draws `ch`.
+fn draws(program: &[u8], ch: char) -> bool {
+    let mut buf = [0u8; 4];
+    pdfcraft_fonts::embedding::covers(program, ch.encode_utf8(&mut buf))
+}
+
 /// Whether any loaded face encodes `ch`.
 fn face_covers(faces: &[PreparedFont], ch: char) -> bool {
-    let mut buf = [0u8; 4];
-    let text = ch.encode_utf8(&mut buf);
-    faces
-        .iter()
-        .any(|face| pdfcraft_fonts::embedding::covers(&face.bytes, text))
+    faces.iter().any(|face| draws(&face.bytes, ch))
 }
 
 /// The face `key`'s file, subset to the run's characters when the source
@@ -377,11 +561,71 @@ fn is_cjk(ch: char) -> bool {
     )
 }
 
+/// Faces and font directories for tests that have to run where no licensed
+/// font file is: Inter, which pdfcraft carries, under the file names the
+/// loader looks for.
+#[cfg(test)]
+pub(crate) mod test_faces {
+    use std::path::PathBuf;
+
+    /// A scratch directory holding each face under the name the loader looks
+    /// for, so a test needs no licensed fonts on the machine.
+    pub(crate) fn scratch_dir(name: &str, faces: &[(&str, &[u8])]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pid-plot-fonts-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        for (file, bytes) in faces {
+            std::fs::write(dir.join(file), bytes).expect("scratch face");
+        }
+        dir
+    }
+
+    /// Inter cut down to printable ASCII: a face whose file is present and
+    /// which draws nothing a label would have to borrow — what Arial Narrow
+    /// is to a Han label.
+    pub(crate) fn ascii_only() -> Vec<u8> {
+        let (bytes, subset) = super::subset_or_whole("Inter", pdfcraft_fonts::INTER_REGULAR, "")
+            .expect("Inter subsets");
+        assert!(
+            subset,
+            "Inter came back whole, so it still draws everything"
+        );
+        bytes
+    }
+
+    /// Inter with every character of `extra` it has no glyph for mapped onto
+    /// the glyph of `A`: a face that draws those characters as far as a
+    /// character map can tell, which is all the loader and the writer ask of
+    /// one. It stands in for SimSun and FangSong, whose files cannot be
+    /// committed.
+    pub(crate) fn drawing(extra: &str) -> Vec<u8> {
+        use fontcull_skrifa::{FontRef, MetadataProvider};
+        use fontcull_write_fonts::FontBuilder;
+        use fontcull_write_fonts::tables::cmap::Cmap;
+
+        let font = FontRef::new(pdfcraft_fonts::INTER_REGULAR).expect("Inter parses");
+        let charmap = font.charmap();
+        let stand_in = charmap.map('A').expect("Inter draws A");
+        let lacking = extra.chars().filter(|ch| charmap.map(*ch).is_none());
+        let mappings = charmap
+            .mappings()
+            .filter_map(|(code, glyph)| char::from_u32(code).map(|ch| (ch, glyph)))
+            .chain(lacking.map(|ch| (ch, stand_in)));
+        let cmap = Cmap::from_mappings(mappings).expect("no character is mapped twice");
+        FontBuilder::new()
+            .add_table(&cmap)
+            .expect("the character map serializes")
+            .copy_missing_tables(font)
+            .build()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{font_dirs, prepare_fonts, subset_or_whole, typeface_key};
+    use super::test_faces::{ascii_only, drawing, scratch_dir};
+    use super::{borrow_order, font_dirs, prepare_fonts, subset_or_whole, typeface_key};
     use crate::model::{
         PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
     };
@@ -466,16 +710,76 @@ mod tests {
         }
     }
 
-    /// A scratch directory holding one face under the name the loader looks
-    /// for, so these two tests need no licensed fonts on the machine.
-    fn scratch_dir(name: &str, faces: &[(&str, &[u8])]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pid-plot-fonts-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        for (file, bytes) in faces {
-            std::fs::write(dir.join(file), bytes).expect("scratch face");
+    /// A sheet of plain labels, each `(value, the font its style names)`.
+    fn sheet(labels: &[(&str, &str)]) -> PaperModel {
+        let mut model = labelled(Vec::new());
+        let template = model.primitives.remove(0);
+        for (value, named) in labels {
+            let mut primitive = template.clone();
+            if let PaperShape::Text {
+                value: text, font, ..
+            } = &mut primitive.shape
+            {
+                *text = (*value).to_string();
+                *font = Some((*named).to_string());
+            }
+            model.primitives.push(primitive);
         }
-        dir
+        model
+    }
+
+    /// Whether the program `faces` loaded under `key` draws `ch`.
+    fn carries(faces: &[super::PreparedFont], key: &str, ch: char) -> bool {
+        let mut buf = [0u8; 4];
+        faces.iter().any(|face| {
+            face.key == key
+                && pdfcraft_fonts::embedding::covers(&face.bytes, ch.encode_utf8(&mut buf))
+        })
+    }
+
+    /// The A2 acceptance sheet letters two `动火点` labels in a style that
+    /// names Arial Narrow, which draws no Han, so the three characters are
+    /// borrowed. The program that carries them must not depend on the other
+    /// sheets prepared in the same call — FangSong for the sheet alone, and
+    /// no program at all beside a sheet whose own 宋体 label already holds
+    /// them, which leaves the writer to find them in SimSun. A label that
+    /// holds a Han character borrows from SimSun first, and SimSun's program
+    /// carries what it lends whatever else the batch letters; `℃`, in a label
+    /// with no Han character, goes to FangSong the same way.
+    #[test]
+    fn a_borrowed_character_is_given_to_the_same_face_alone_and_in_a_batch() {
+        let narrow = ascii_only();
+        let song = drawing("动火点℃");
+        let dir = scratch_dir(
+            "borrow-alone-and-batch",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        );
+        let borrowing = sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
+        let naming = sheet(&[("动火点", "宋体"), ("点", "仿宋")]);
+        let alone = prepare_fonts(&[&borrowing], std::slice::from_ref(&dir)).expect("alone");
+        let batch = prepare_fonts(&[&borrowing, &naming], &[dir]).expect("in a batch");
+        for (prepared, faces) in [("alone", &alone), ("in a batch", &batch)] {
+            for ch in "动火点".chars() {
+                assert!(
+                    carries(faces, "SimSun", ch),
+                    "prepared {prepared}: SimSun, which a Han label borrows from first, \
+                     does not carry {ch:?}"
+                );
+            }
+            assert!(
+                carries(faces, "FangSong", '℃'),
+                "prepared {prepared}: FangSong, which a label with no Han character borrows \
+                 from first, does not carry '℃'"
+            );
+        }
+        assert!(
+            !"动火".chars().any(|ch| carries(&alone, "FangSong", ch)),
+            "prepared alone, FangSong was given Han it lends to no label"
+        );
     }
 
     /// `Wastewater Pit.sym` letters one `*` in 宋体 inside an Arial label: the
@@ -572,6 +876,53 @@ mod tests {
                 .map(|face| face.key.as_str())
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// A run may name a face that another label on the sheet names as its
+    /// own. That face is subset to the labels that own it, so the run's
+    /// character has to be added to its program: `Ω` here is drawn by Arial,
+    /// which the second label's run names, and no Arial label holds it. Left
+    /// out, the character would be looked for among the lenders — and with
+    /// neither on this machine the export would be refused, although the same
+    /// label exports when the Arial label is not on the sheet.
+    #[test]
+    fn a_run_naming_a_face_another_label_owns_gets_its_character_into_that_face() {
+        let narrow = ascii_only();
+        let dir = scratch_dir(
+            "run-names-an-owned-face",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("arial.ttf", pdfcraft_fonts::INTER_REGULAR),
+            ],
+        );
+        let mut model = sheet(&[("AB", "Arial"), ("XΩ", "Arial Narrow")]);
+        if let PaperShape::Text { spans, .. } = &mut model.primitives[1].shape {
+            spans.push(PaperTextSpan {
+                start: 1,
+                len: 1,
+                height_mm: Some(2.5),
+                font: Some("Arial".into()),
+            });
+        }
+        let faces = prepare_fonts(&[&model], &[dir]).expect("the run's own face draws Ω");
+        let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(keys, vec!["Arial", "Arial Narrow"], "nothing is borrowed");
+        assert!(
+            carries(&faces, "Arial", 'Ω'),
+            "Arial, the face the run names, was not given the run's character"
+        );
+    }
+
+    #[test]
+    fn a_label_with_a_han_character_borrows_from_simsun_first() {
+        assert_eq!(borrow_order("动火点"), ["SimSun", "FangSong"]);
+        assert_eq!(borrow_order("LNG至  总  体"), ["SimSun", "FangSong"]);
+    }
+
+    #[test]
+    fn a_label_without_a_han_character_borrows_from_fangsong_first() {
+        assert_eq!(borrow_order("120℃"), ["FangSong", "SimSun"]);
+        assert_eq!(borrow_order("L=-18℃ "), ["FangSong", "SimSun"]);
     }
 
     #[test]

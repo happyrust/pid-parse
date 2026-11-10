@@ -22,8 +22,12 @@
 //! borrows a CJK face), so an unsupported character never moves the
 //! encodable characters' widths. A named face that can encode none of the
 //! characters hands the whole string to one face that can, so a label is not
-//! split because an earlier face happens to carry its last character. At a
-//! 2.5 mm body that borrowed run is pitched at 1.524 mm a glyph, the spacing
+//! split where the first lender draws only part of it. Which face lends is
+//! read off the label — [`crate::fonts::borrow_order`]: SimSun first for a
+//! label with a Han character, FangSong first for any other — and never off
+//! what the programs in hand happen to hold, so a sheet letters the same
+//! whether its faces were prepared for it alone or for a batch of sheets. At
+//! a 2.5 mm body that borrowed run is pitched at 1.524 mm a glyph, the spacing
 //! the reference uses for that one label; every other height stays one em.
 //! A style height is written at the `Tf` the reference plotter would size it
 //! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
@@ -48,7 +52,7 @@ use pdfcraft_cos::{Dict, Document, Object, PdfString, Stream};
 use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
-use crate::fonts::typeface_key;
+use crate::fonts::{borrow_order, typeface_key};
 use crate::model::PaperTextSpan;
 use crate::model::{
     DashFit, PaperModel, PaperShape, PaperStroke, STANDARD_SHEETS_MM, TextAnchor, TextHeightBasis,
@@ -327,36 +331,7 @@ pub fn write_plot_audited(
 
     let mut doc = Document::new_empty();
     let mut font_resources = Dict::new();
-    let mut ready = Vec::new();
-    for font in fonts {
-        let (family, _) = embedding::names(font.bytes).map_err(PlotWriteError::Font)?;
-        let resource = embed(&mut doc, &mut font_resources, font.bytes, &family)
-            .map_err(PlotWriteError::Font)?;
-        let font_ref = font_resources
-            .get(resource.as_bytes())
-            .cloned()
-            .ok_or_else(|| {
-                PlotWriteError::Font("embedded font is missing from the resource dict".into())
-            })?;
-        if font.subset {
-            let Object::Ref(reference) = &font_ref else {
-                return Err(PlotWriteError::Font(
-                    "embedded font is not a reference".into(),
-                ));
-            };
-            declare_subset(&mut doc, *reference, &family, font.bytes)?;
-        }
-        let font_dict = doc
-            .dict(&font_ref)
-            .ok_or_else(|| PlotWriteError::Font("embedded font is not a dictionary".into()))?;
-        ready.push(ReadyFace {
-            key: font.key,
-            resource,
-            metrics: Metrics::from_dict(&doc, &font_dict),
-            heights: FaceHeights::of(font.bytes),
-        });
-    }
-    let fonts = ready;
+    let fonts = embed_faces(&mut doc, &mut font_resources, fonts)?;
 
     let decoded_ocg = add_ocg(&mut doc, "Decoded");
     let inferred_ocg = add_ocg(&mut doc, "Inferred");
@@ -437,6 +412,47 @@ pub fn write_plot_audited(
     let pdf = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
         .map_err(|error| PlotWriteError::Save(error.to_string()))?;
     Ok(WrittenPlot { pdf, audit, ledger })
+}
+
+/// Embed `fonts` in `doc`, filing each under `font_resources`, and hand them
+/// back the way the page letters with them: the key a run asks for, the
+/// resource name `Tf` selects, the metrics read back off what was embedded and
+/// the face's own heights. The order is the caller's.
+fn embed_faces<'a>(
+    doc: &mut Document,
+    font_resources: &mut Dict,
+    fonts: &[PlotFont<'a>],
+) -> Result<Vec<ReadyFace<'a>>, PlotWriteError> {
+    let mut ready = Vec::new();
+    for font in fonts {
+        let (family, _) = embedding::names(font.bytes).map_err(PlotWriteError::Font)?;
+        let resource =
+            embed(doc, font_resources, font.bytes, &family).map_err(PlotWriteError::Font)?;
+        let font_ref = font_resources
+            .get(resource.as_bytes())
+            .cloned()
+            .ok_or_else(|| {
+                PlotWriteError::Font("embedded font is missing from the resource dict".into())
+            })?;
+        if font.subset {
+            let Object::Ref(reference) = &font_ref else {
+                return Err(PlotWriteError::Font(
+                    "embedded font is not a reference".into(),
+                ));
+            };
+            declare_subset(doc, *reference, &family, font.bytes)?;
+        }
+        let font_dict = doc
+            .dict(&font_ref)
+            .ok_or_else(|| PlotWriteError::Font("embedded font is not a dictionary".into()))?;
+        ready.push(ReadyFace {
+            key: font.key,
+            resource,
+            metrics: Metrics::from_dict(doc, &font_dict),
+            heights: FaceHeights::of(font.bytes),
+        });
+    }
+    Ok(ready)
 }
 
 /// Declare an embedded program a subset in the PDF's own names.
@@ -1062,21 +1078,46 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Ve
 /// CID instead.
 type FaceRuns<'a> = Vec<(&'a ReadyFace<'a>, Vec<u8>, String)>;
 
-/// Split `value` into runs that share one face, preferring the face
-/// `typeface_key` names. A character the named face cannot encode moves to
-/// the first face that can — only that character moves, so `120℃` keeps its
-/// digits in the narrow face instead of dragging the whole run to a
-/// fallback whose Latin is wider.
+/// The faces a label's characters are borrowed from, in the order they are
+/// asked: the two [`borrow_order`] names for the label, where they are
+/// embedded, and then every embedded face as it was handed over.
 ///
-/// A named face that encodes nothing in `value` is a different case. The
-/// first face that happens to own one character would cut the label apart
-/// (`动火` in SimSun, `点` in an earlier FangSong that has only that
-/// character), and the reader then sees two runs where the record states
-/// one. The whole string goes to the first face that can draw every
-/// character, and that run is reported as borrowed so the caller can pitch
-/// it. A named face that draws any character keeps the per-character split.
+/// The first two are the rule. Which of them lends is read off the label,
+/// and [`crate::fonts::prepare_fonts`] has put into each what that order
+/// sends it, so the answer does not turn on what else a batch of sheets
+/// happened to put in a program. The rest is a last resort for a character
+/// neither of the two draws, and for a caller that hands over faces of its
+/// own; only there does the order of the list decide.
+fn lenders<'f, 'a>(
+    faces: &'f [ReadyFace<'a>],
+    label: &str,
+) -> impl Iterator<Item = &'f ReadyFace<'a>> {
+    borrow_order(label)
+        .into_iter()
+        .filter_map(move |key| faces.iter().find(|face| face.key == key))
+        .chain(faces)
+}
+
+/// Split `value`, a stretch of `label` named in the face `key`, into runs
+/// that share one face, preferring that face. A character the named face
+/// cannot encode moves to the first of the label's [`lenders`] that can —
+/// only that character moves, so `120℃` keeps its digits in the narrow face
+/// instead of dragging the whole run to a lender whose Latin is wider.
+///
+/// A named face that encodes nothing in `value` is a different case. Taking
+/// each character from the first lender that owns it could cut the label
+/// apart where the first lender draws only some of it, and the reader then
+/// sees two runs where the record states one. The whole string goes to the
+/// first lender that can draw every character, and that run is reported as
+/// borrowed so the caller can pitch it. A named face that draws any
+/// character keeps the per-character split.
+///
+/// A run may name a face that is not embedded — the file is optional, and a
+/// machine may lack it. That stretch is lettered as the label's own face
+/// would letter it, so `key` then stands for `label.typeface`.
 fn encode_runs<'a>(
     faces: &'a [ReadyFace<'a>],
+    label: &ShownText<'_>,
     key: &str,
     value: &str,
 ) -> Result<(FaceRuns<'a>, bool), PlotWriteError> {
@@ -1084,26 +1125,21 @@ fn encode_runs<'a>(
         let mut buf = [0u8; 4];
         face.metrics.encode(ch.encode_utf8(&mut buf)).is_some()
     };
-    let named = faces.iter().find(|face| face.key == key);
+    let named = faces
+        .iter()
+        .find(|face| face.key == key)
+        .or_else(|| faces.iter().find(|face| face.key == label.typeface));
     let named_draws_any = named.is_some_and(|face| value.chars().any(|ch| char_encodes(face, ch)));
     if !named_draws_any
-        && let Some((face, bytes)) = faces
-            .iter()
+        && let Some((face, bytes)) = lenders(faces, label.value)
             .find_map(|face| face.metrics.encode(value).map(|bytes| (face, bytes)))
     {
         return Ok((vec![(face, bytes, value.to_string())], true));
     }
     let face_for_char = |ch: char| -> Option<&'a ReadyFace<'a>> {
-        let mut buf = [0u8; 4];
-        let text = ch.encode_utf8(&mut buf);
-        faces
-            .iter()
-            .find(|face| face.key == key && face.metrics.encode(text).is_some())
-            .or_else(|| {
-                faces
-                    .iter()
-                    .find(|face| face.metrics.encode(text).is_some())
-            })
+        named
+            .filter(|face| char_encodes(face, ch))
+            .or_else(|| lenders(faces, label.value).find(|face| char_encodes(face, ch)))
     };
     let mut runs: Vec<(&ReadyFace<'_>, String)> = Vec::new();
     for ch in value.chars() {
@@ -1177,21 +1213,20 @@ fn text_segments<'a>(
 ) -> Vec<TextSegment<'a>> {
     let size_in = |typeface: &str, height_mm: f64| {
         // The named face is sized by its own tables; a named face the
-        // embedded set does not carry sizes off whichever face
-        // [`encode_runs`] actually draws it with (the first face able to
-        // encode the string), because `Tf`'s size and the reference-font
-        // model in `run_advance` both read `height_basis` off *a* face's
-        // own `FaceHeights`, and the two have to be the same face or the
-        // size and the glyph widths stop agreeing. Only a face list with
-        // nothing able to draw the string at all falls back to
-        // [`FaceHeights::ARIAL`].
+        // embedded set does not carry sizes off the face [`encode_runs`]
+        // letters it with — the label's own, and failing that the first of
+        // the label's [`lenders`] able to encode the string — because
+        // `Tf`'s size and the reference-font model in `run_advance` both
+        // read `height_basis` off *a* face's own `FaceHeights`, and the two
+        // have to be the same face or the size and the glyph widths stop
+        // agreeing. Only a face list with nothing able to draw the string at
+        // all falls back to [`FaceHeights::ARIAL`].
         let heights = faces
             .iter()
             .find(|face| face.key == typeface)
+            .or_else(|| faces.iter().find(|face| face.key == text.typeface))
             .or_else(|| {
-                faces
-                    .iter()
-                    .find(|face| face.metrics.encode(text.value).is_some())
+                lenders(faces, text.value).find(|face| face.metrics.encode(text.value).is_some())
             })
             .map_or(FaceHeights::ARIAL, |face| face.heights);
         plotted_size_pt(heights, text.height_basis, height_mm)
@@ -1420,7 +1455,7 @@ fn show_text(
     let mut runs: Vec<(f64, &ReadyFace<'_>, Vec<u8>, String)> = Vec::new();
     let mut borrowed_whole = !segments.is_empty();
     for segment in &segments {
-        let (segment_runs, borrowed) = encode_runs(faces, segment.typeface, &segment.text)?;
+        let (segment_runs, borrowed) = encode_runs(faces, &text, segment.typeface, &segment.text)?;
         borrowed_whole &= borrowed;
         for (face, bytes, run_text) in segment_runs {
             runs.push((segment.size_pt, face, bytes, run_text));
@@ -4594,6 +4629,421 @@ mod tests {
         assert!(
             (retreat - half_box).abs() < 0.05,
             "120℃ retreats {retreat:.3} mm, half of `120?` is {half_box:.3}"
+        );
+    }
+
+    /// A page of plain 2.5 mm labels, one under the other, each `(text, the
+    /// font its style names)`.
+    fn lettered_sheet(labels: &[(&str, &str)]) -> PaperModel {
+        let primitives = labels
+            .iter()
+            .zip((0u8..).map(f64::from))
+            .map(|((value, font), row)| {
+                primitive(
+                    "decoded",
+                    PaperShape::Text {
+                        origin_mm: [40.0, 20.0 + 10.0 * row],
+                        height_mm: Some(2.5),
+                        rotation: 0.0,
+                        value: (*value).to_string(),
+                        font: Some((*font).to_string()),
+                        anchor: TextAnchor::Left,
+                        line: TextLine::Bottom,
+                        height_basis: crate::model::TextHeightBasis::Cap,
+                        width_permille: None,
+                        paragraph: None,
+                        spans: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+        PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 200.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives,
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
+        }
+    }
+
+    fn plot_fonts(prepared: &[crate::fonts::PreparedFont]) -> Vec<PlotFont<'_>> {
+        prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect()
+    }
+
+    /// One label as the page letters it.
+    #[derive(Debug, PartialEq)]
+    struct Lettered {
+        /// The label's text.
+        value: String,
+        /// The face its style names, as [`super::typeface_key`] reads it.
+        named: &'static str,
+        /// Each run's face and the characters that face draws.
+        runs: Vec<(String, String)>,
+    }
+
+    fn lettered(value: &str, named: &'static str, runs: &[(&str, &str)]) -> Lettered {
+        Lettered {
+            value: value.to_string(),
+            named,
+            runs: runs
+                .iter()
+                .map(|(face, text)| ((*face).to_string(), (*text).to_string()))
+                .collect(),
+        }
+    }
+
+    /// The faces `model`'s labels are lettered in under `fonts`, for every
+    /// label the page letters, in primitive order.
+    ///
+    /// Read off the `Tf` and `Tj` operators [`super::show_text`] emits, so it
+    /// is what the page says and not a second reading of the rule. Neighbouring
+    /// runs in one face are joined: a run is also cut where only its spacing
+    /// changes, which is not a change of face.
+    fn lettered_faces(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Vec<Lettered> {
+        use super::Object;
+
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let faces = super::embed_faces(&mut doc, &mut font_resources, fonts).expect("embed");
+        let page = model.resolved_page_mm().expect("the model states a page");
+        let mut labels = Vec::new();
+        for primitive in &model.primitives {
+            if !super::is_plotted(primitive.confidence) {
+                continue;
+            }
+            let PaperShape::Text {
+                origin_mm,
+                height_mm,
+                rotation,
+                value,
+                font,
+                anchor,
+                line,
+                height_basis,
+                width_permille,
+                paragraph,
+                spans,
+            } = &primitive.shape
+            else {
+                continue;
+            };
+            let named = super::typeface_key(font.as_deref(), value);
+            let mut ops = Vec::new();
+            let mut audit = super::PlotAudit::default();
+            let shown = super::show_text(
+                &mut ops,
+                &faces,
+                ShownText {
+                    typeface: named,
+                    origin_mm: *origin_mm,
+                    height_mm: *height_mm,
+                    rotation: *rotation,
+                    value,
+                    anchor: *anchor,
+                    line: *line,
+                    height_basis: *height_basis,
+                    width_permille: *width_permille,
+                    paragraph: *paragraph,
+                    spans,
+                    furniture: primitive.furniture,
+                },
+                page,
+                &mut audit,
+            )
+            .unwrap_or_else(|error| panic!("{value:?}: {error}"));
+            if !shown.wrote_run {
+                continue;
+            }
+            let mut runs: Vec<(String, String)> = Vec::new();
+            let mut face: Option<&super::ReadyFace<'_>> = None;
+            for op in &ops {
+                match op.op.as_slice() {
+                    b"Tf" => {
+                        face = op
+                            .operands
+                            .first()
+                            .and_then(Object::as_name)
+                            .and_then(|name| {
+                                faces.iter().find(|face| face.resource.as_bytes() == name)
+                            });
+                    }
+                    b"Tj" | b"TJ" => {
+                        let face = face.expect("a run names its face before it shows text");
+                        let mut text = String::new();
+                        for operand in &op.operands {
+                            let shown: &[Object] = match operand {
+                                Object::Array(items) => items,
+                                other => std::slice::from_ref(other),
+                            };
+                            for item in shown {
+                                if let Object::String(string) = item {
+                                    text.push_str(&face.metrics.decode(&string.bytes));
+                                }
+                            }
+                        }
+                        match runs.last_mut() {
+                            Some((key, run)) if key == face.key => run.push_str(&text),
+                            _ => runs.push((face.key.to_string(), text)),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            labels.push(Lettered {
+                value: value.clone(),
+                named,
+                runs,
+            });
+        }
+        labels
+    }
+
+    /// The A2 acceptance sheet's two `动火点` labels name Arial Narrow, which
+    /// draws no Han, so the whole label is borrowed. Taking the lender to be
+    /// the first program in the list that holds the three characters would
+    /// make it follow the batch: FangSong for the sheet prepared alone, SimSun
+    /// beside a sheet whose own 宋体 label holds the same characters. A label
+    /// with a Han character borrows from SimSun and one without from FangSong
+    /// (`120℃`'s `℃`); that is read off the label, so the sheet letters the
+    /// same either way.
+    #[test]
+    fn a_borrowed_label_is_lettered_in_the_same_face_alone_and_in_a_batch() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let narrow = ascii_only();
+        let song = drawing("动火点℃");
+        let dirs = [scratch_dir(
+            "write-borrow-alone-and-batch",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simfang.ttf", &song),
+                ("simsun.ttf", &song),
+            ],
+        )];
+        let borrowing = lettered_sheet(&[("动火点", "Arial Narrow"), ("120℃", "Arial Narrow")]);
+        let naming = lettered_sheet(&[("动火点", "宋体"), ("点", "仿宋")]);
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+        let expected = vec![
+            lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]),
+            lettered(
+                "120℃",
+                "Arial Narrow",
+                &[("Arial Narrow", "120"), ("FangSong", "℃")],
+            ),
+        ];
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one whose own labels hold the same characters"
+        );
+    }
+
+    /// A label its named face draws none of goes whole to one lender, and
+    /// where the first lender draws only part of it that is the second: `甲乙`
+    /// asks SimSun first, this SimSun draws `甲` alone, and FangSong draws
+    /// both. FangSong therefore has to be given `甲` as well as `乙`, or the
+    /// label is cut in two — and it has to be given it whether or not another
+    /// sheet in the batch happens to letter `甲` in FangSong.
+    #[test]
+    fn a_label_the_first_lender_draws_part_of_goes_whole_to_the_second() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let narrow = ascii_only();
+        let dirs = [scratch_dir(
+            "write-second-lender",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("simsun.ttf", &drawing("甲")),
+                ("simfang.ttf", &drawing("甲乙")),
+            ],
+        )];
+        let borrowing = lettered_sheet(&[("甲乙", "Arial Narrow")]);
+        let naming = lettered_sheet(&[("甲", "宋体")]);
+        let alone = crate::fonts::prepare_fonts(&[&borrowing], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&borrowing, &naming], &dirs).expect("in a batch");
+        let expected = vec![lettered("甲乙", "Arial Narrow", &[("FangSong", "甲乙")])];
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&borrowing, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one that letters 甲 in SimSun"
+        );
+    }
+
+    /// A run may name a face this machine has no file for, and the label then
+    /// letters that stretch in its own face. Taking the first program in the
+    /// list that can draw it instead would follow the batch: the label's own
+    /// face while the sheet is prepared alone, another sheet's Arial once a
+    /// batch has put that ahead of it.
+    #[test]
+    fn a_run_whose_face_is_absent_letters_in_the_labels_own_face() {
+        use crate::fonts::test_faces::{ascii_only, scratch_dir};
+
+        let narrow = ascii_only();
+        let dirs = [scratch_dir(
+            "write-absent-run-face",
+            &[
+                ("ARIALN.TTF", &narrow),
+                ("arial.ttf", pdfcraft_fonts::INTER_REGULAR),
+            ],
+        )];
+        let mut spanned = lettered_sheet(&[("AB", "Arial Narrow")]);
+        if let PaperShape::Text { spans, .. } = &mut spanned.primitives[0].shape {
+            spans.push(PaperTextSpan {
+                start: 0,
+                len: 1,
+                height_mm: Some(2.5),
+                font: Some("宋体".into()),
+            });
+        }
+        let naming = lettered_sheet(&[("CD", "Arial")]);
+        let alone = crate::fonts::prepare_fonts(&[&spanned], &dirs).expect("alone");
+        let batch = crate::fonts::prepare_fonts(&[&spanned, &naming], &dirs).expect("in a batch");
+        let expected = vec![lettered("AB", "Arial Narrow", &[("Arial Narrow", "AB")])];
+        assert_eq!(
+            lettered_faces(&spanned, &plot_fonts(&alone)),
+            expected,
+            "the sheet prepared alone"
+        );
+        assert_eq!(
+            lettered_faces(&spanned, &plot_fonts(&batch)),
+            expected,
+            "the sheet prepared with one that names Arial"
+        );
+    }
+
+    /// Every acceptance sheet letters each label in the same faces whether its
+    /// faces are prepared for it alone — what `pid_plot` does with one drawing
+    /// — or for all the sheets of the corpus together, which is what the
+    /// acceptance gate does with the eleven. The A2 sheet is the one a lender
+    /// that followed the batch would show on: its two `动火点` labels name
+    /// Arial Narrow and borrow all three characters. Both preparations letter
+    /// them in SimSun, the face the gate's eleven pages carry.
+    #[test]
+    fn an_acceptance_sheet_letters_alone_as_it_does_among_the_eleven() {
+        const A2_SHEET: &str = "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图";
+        let corpus = std::env::var_os("PID_ACCEPTANCE_CORPUS").map_or_else(
+            || std::path::PathBuf::from(r"D:\work\cad\pid-test-data\验收数据"),
+            std::path::PathBuf::from,
+        );
+        let mut drawings: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "pid"))
+            .collect();
+        drawings.sort();
+        if drawings.is_empty() {
+            eprintln!(
+                "skipping the acceptance sheets' faces; no .pid is under {}",
+                corpus.display()
+            );
+            return;
+        }
+        // The acceptance corpus ships no faces; the gate reads the share's.
+        let mut dirs = crate::fonts::font_dirs(Some(&corpus));
+        dirs.push(std::path::PathBuf::from(
+            "D:/work/cad/PID自研软件验证/fonts",
+        ));
+        let ready = |name: &str| dirs.iter().any(|dir| dir.join(name).is_file());
+        if !ready("simsun.ttf") || !ready("simfang.ttf") || !ready("ARIALN.TTF") {
+            eprintln!(
+                "skipping the acceptance sheets' faces; FangSong, SimSun or Arial Narrow is absent"
+            );
+            return;
+        }
+        let sheets: Vec<(String, PaperModel)> = drawings
+            .iter()
+            .map(|path| {
+                let name = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let model = crate::model::lay_out_drawing(path, &corpus)
+                    .unwrap_or_else(|error| panic!("{name}: layout: {error}"));
+                (name, model)
+            })
+            .collect();
+        let models: Vec<&PaperModel> = sheets.iter().map(|(_, model)| model).collect();
+        let together = crate::fonts::prepare_fonts(&models, &dirs).expect("fonts for the corpus");
+        let mut borrowed_han = 0usize;
+        for (name, model) in &sheets {
+            let alone = crate::fonts::prepare_fonts(&[model], &dirs)
+                .unwrap_or_else(|error| panic!("{name}: fonts: {error}"));
+            let lettered_alone = lettered_faces(model, &plot_fonts(&alone));
+            let lettered_together = lettered_faces(model, &plot_fonts(&together));
+            assert_eq!(
+                lettered_alone.len(),
+                lettered_together.len(),
+                "{name}: the page letters a different number of labels under the two preparations"
+            );
+            let differing: Vec<String> = lettered_alone
+                .iter()
+                .zip(&lettered_together)
+                .filter(|(alone, together)| alone != together)
+                .map(|(alone, together)| {
+                    format!(
+                        "  {:?} in {}: alone {:?}, with the corpus {:?}",
+                        alone.value, alone.named, alone.runs, together.runs
+                    )
+                })
+                .collect();
+            assert!(
+                differing.is_empty(),
+                "{name}: {} label(s) are lettered in other faces when the sheet is prepared \
+                 alone than when the {} sheets are prepared together:\n{}",
+                differing.len(),
+                sheets.len(),
+                differing.join("\n")
+            );
+            if name == A2_SHEET {
+                let expected = lettered("动火点", "Arial Narrow", &[("SimSun", "动火点")]);
+                for label in &lettered_together {
+                    if label.value.trim() == "动火点" && label.named == "Arial Narrow" {
+                        assert_eq!(
+                            label.runs, expected.runs,
+                            "{name}: a `动火点` its style's face cannot draw is borrowed whole \
+                             from SimSun"
+                        );
+                        borrowed_han += 1;
+                    }
+                }
+            }
+        }
+        if sheets.iter().any(|(name, _)| name == A2_SHEET) {
+            assert_eq!(
+                borrowed_han, 2,
+                "the A2 sheet letters two `动火点` in a borrowed SimSun"
+            );
+        }
+        eprintln!(
+            "{} acceptance sheets letter alone as they do together",
+            sheets.len()
         );
     }
 
