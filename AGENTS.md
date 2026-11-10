@@ -56,7 +56,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/publish_xml_cli.rs` | End-to-end CLI | `test-file/…/Export.mdf` |
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
-| `tests/publish_from_pid.rs` | `.pid` / `--oracle-exp` / whole-package publish pins | `D:\work\cad\PID自研软件验证` + `D:\work\cad\pid-test-data` (soft-skips absent) |
+| `tests/publish_from_pid.rs` | `.pid` / `--oracle-exp` / whole-package publish pins; DWG-0202GP06-01 against its committed reference in three modes (`.pid` alone, with the package's own Oracle `exp` dump and data map, the package directory: 7 drawings, none failed), pinning the summary line and the findings each mode prints — no wrong value, 17 reference values left out, and in `--oracle-exp` mode the pipeline findings of a package that is a later revision than the reference | `D:\work\cad\PID自研软件验证` + `D:\work\cad\pid-test-data` (soft-skips absent); `test-file/export-test/publish-data/DWG-0202GP06-01` + `test-file/backup-test/DWG-0202GP06-01_p` (committed, so the three DWG cases run on every checkout) |
 | `tests/publish_{attribute,interface,rel,dwg_generated}_parity.rs` / `publish_writer_coverage.rs` / `publish_backlog_inventory.rs` / `publish_dwg_mirror.rs` | DB-line parity + writer coverage + backlog inventory | A01 ref + optional DWG fixture |
 | `tests/publish_diff_accepted_baseline.rs` | Reads `docs/baselines/publish-diff-accepted.json` and classifies every line a `--diff-against` run prints as registered / disappeared / unregistered: A01, I井场, and six `验收数据` drawings (J K / L M井场, 轻烃分离器I, 空冷器A/B/C) each in `.pid`-alone and `--oracle-exp` mode, plus each figure's `FluidSystem` line against the per-`DocUID` bound in `FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` | `test-file/…/A01` + `D:\work\cad\PID自研软件验证` + `PID_ACCEPTANCE_CORPUS` (default `D:\work\cad\pid-test-data\验收数据`) + `PID_TEST_DATA_DIR` (default `D:\work\cad\pid-test-data`, for `Export.dmp` / `RefData~4~804.zip`) (soft-skips absent) |
 | `tests/plant_backup_census.rs` | What the 53-sheet plant backup leaves off its pages (census: `examples/probe_which_records_reach_no_page.rs`): the parser's sheet census over all 53 drawings pinned by type code (undecoded `0x0019`×5 + `0x0021`×1 on `D04`, refused `0x00FA`×1 on `A井场`, 1549 records the native reader skips) — read on each stream's own chain, so no phantom code out of the stream header — and `EF井场`'s hand-drawn dot (oid 52844, a `0x73` circle member) projecting as a 26-point fill ring | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR` or either `pid-test-data` (soft-skips when absent) |
@@ -80,6 +80,10 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364` | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
+That file cannot be produced from the committed package: its `Export.dmp` is an Oracle `exp` dump, not an
+MTF backup an MDF can be stripped from, so those 14 cases (4 in `publish_dwg_generated_parity`, 5 in
+`publish_dwg_mirror`, 2 in `publish_meta_parity`, 3 in `publish_rel_parity`) have never run. The DWG
+reference is exercised through the Oracle line instead, by the three cases in `tests/publish_from_pid.rs`.
 
 ### CI 覆盖：pid-plot 的测试文件哪些真跑、哪些软跳过
 
