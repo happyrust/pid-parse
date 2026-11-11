@@ -193,6 +193,15 @@ pub struct PidDocument {
     /// geometry decode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<PidLayoutModel>,
+    /// The chain streams — `Sheet*` streams and symbol caches — whose own
+    /// framing does not hold: a wrong magic, a record chain that stops
+    /// before the stream's end, or a header whose record count is not the
+    /// chain's. Symbol caches first, then sheets, each in the order the
+    /// parser read them. Empty on every document of the corpora; a stream
+    /// listed here was read as far as its chain holds and no further, so
+    /// what it draws may be incomplete. See [`StreamChainFault`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_faults: Vec<StreamChainFault>,
 }
 
 /// Summary inventory of P&ID objects in the drawing.
@@ -265,6 +274,7 @@ impl Default for PidDocument {
             object_graph: None,
             cross_reference: None,
             layout: None,
+            chain_faults: vec![],
         }
     }
 }

@@ -1942,6 +1942,212 @@ impl From<crate::parsers::sheet_records::SheetJStyleOverrideDecoded>
     }
 }
 
+/// Why a chain stream's record walk stopped before the stream's end.
+/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamChainStopReason {
+    /// The stream is shorter than the eight-byte header a chain stream
+    /// opens with.
+    ShortHeader,
+    /// Fewer than six bytes are left at the stop: too few for a record's
+    /// envelope.
+    ShortEnvelope,
+    /// The record at the stop states a length of zero.
+    ZeroLength,
+    /// The record at the stop states more bytes than the stream has left.
+    PastEnd,
+}
+
+/// Where a chain stream's record walk stopped, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamChainStop {
+    /// Offset of the first byte the walk did not read as a record.
+    pub offset: usize,
+    /// Why it stopped there.
+    pub reason: StreamChainStopReason,
+    /// The length the record at the stop states, when the stop is a record
+    /// stating a length the stream does not hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_len: Option<u32>,
+}
+
+/// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
+/// whose own framing does not hold, as
+/// [`crate::parsers::sheet_records::SheetChain`] read it.
+///
+/// Three things can be wrong, alone or together: the stream does not open
+/// with the chain magic; the walk from record to record stops before the
+/// stream's end; the walk reaches the end and holds a different number of
+/// live records than the header states (a stream cut off at a record
+/// boundary reads like that, and nothing else about it does).
+///
+/// The records before a stop are decoded as on any stream, and no record
+/// family decodes anything from the stop on: what the stream draws is then
+/// what the file holds less what the stop hid, and this is where a reader
+/// finds out. [`crate::build_normalized_geometry`] says each fault in a
+/// warning, and keeps the list in
+/// [`crate::NormalizedPidGeometry::chain_faults`].
+///
+/// One record a stop can hide decides more than its own ink: the sheet's
+/// border frame, which states the page and where the drawing sits on it.
+/// A drawing re-saved several times keeps its live frame after the
+/// superseded copies — `DWG-0201GP06-01.pid` as the last record of the
+/// stream — so a chain that stops short of it is projected as a drawing
+/// with no frame is: the page from the template's name, if it names a
+/// size, and no frame placement.
+///
+/// The heuristic probes — text runs, coordinate pairs, endpoint records —
+/// are not chain readers and still scan the whole stream; what they find is
+/// `ProbeOnly` and inferred evidence, as on any stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamChainFault {
+    /// Path of the stream.
+    pub stream_path: String,
+    /// The stream's length in bytes.
+    pub stream_len: usize,
+    /// The stream's first word, when it is not the magic a chain stream
+    /// opens with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrong_magic: Option<u32>,
+    /// Where the record walk stopped, when it stopped before the stream's
+    /// end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<StreamChainStop>,
+    /// Bytes from the stop to the stream's end, which the walk did not
+    /// reach and no record family decodes; zero when the walk reached the
+    /// end.
+    pub unread_bytes: usize,
+    /// Records the walk read. They are decoded as on any stream.
+    pub records_read: usize,
+    /// Of those, the ones the native reader reads: no `0x8000` in the type
+    /// word.
+    pub live_records_read: usize,
+    /// The live-record count the stream's header states, when the stream is
+    /// long enough to have a header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stated_records: Option<u32>,
+}
+
+impl StreamChainFault {
+    /// What is wrong with the chain stream at `stream_path`, or `None` when
+    /// it is sound ([`crate::parsers::sheet_records::SheetChain::is_sound`]).
+    #[must_use]
+    pub fn of(
+        stream_path: &str,
+        chain: &crate::parsers::sheet_records::SheetChain,
+    ) -> Option<Self> {
+        use crate::parsers::sheet_records::SheetChainStop;
+        if chain.is_sound() {
+            return None;
+        }
+        let stop = chain.stop.map(|stop| {
+            let (reason, record_len) = match stop {
+                SheetChainStop::ShortHeader => (StreamChainStopReason::ShortHeader, None),
+                SheetChainStop::ShortEnvelope => (StreamChainStopReason::ShortEnvelope, None),
+                SheetChainStop::ZeroLength => (StreamChainStopReason::ZeroLength, Some(0)),
+                SheetChainStop::PastEnd { stated } => {
+                    (StreamChainStopReason::PastEnd, Some(stated))
+                }
+            };
+            StreamChainStop {
+                offset: chain.end,
+                reason,
+                record_len,
+            }
+        });
+        Some(Self {
+            stream_path: stream_path.to_string(),
+            stream_len: chain.len,
+            wrong_magic: chain.wrong_magic(),
+            stop,
+            unread_bytes: chain.unread_bytes(),
+            records_read: chain.starts.len(),
+            live_records_read: chain.live_records,
+            stated_records: chain.stated_records,
+        })
+    }
+
+    /// [`Self::of`], straight from a stream's bytes.
+    #[must_use]
+    pub fn of_stream(stream_path: &str, data: &[u8]) -> Option<Self> {
+        Self::of(
+            stream_path,
+            &crate::parsers::sheet_records::SheetChain::walk(data),
+        )
+    }
+
+    /// Whether the header's live-record count differs from what the walk
+    /// read. On a walk that stopped short it usually does, and the stop is
+    /// the reason; on one that reached the stream's end it is the fault.
+    #[must_use]
+    pub fn count_differs(&self) -> bool {
+        self.stated_records
+            .is_some_and(|stated| usize::try_from(stated).ok() != Some(self.live_records_read))
+    }
+
+    /// The fault in one sentence, naming the stream and, when the walk
+    /// stopped short, the offset it stopped at and the bytes left unread.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(found) = self.wrong_magic {
+            parts.push(format!(
+                "the stream opens with 0x{found:08X}, not the chain magic 0x{:08X}",
+                crate::parsers::sheet_records::SHEET_STREAM_MAGIC
+            ));
+        }
+        match &self.stop {
+            Some(stop) => {
+                let why = match stop.reason {
+                    StreamChainStopReason::ShortHeader => {
+                        "the stream is shorter than the 8-byte header a chain opens with"
+                            .to_string()
+                    }
+                    StreamChainStopReason::ShortEnvelope => format!(
+                        "{} byte(s) are left, fewer than the 6 of a record's envelope",
+                        self.unread_bytes
+                    ),
+                    StreamChainStopReason::ZeroLength => {
+                        "a record states a length of zero".to_string()
+                    }
+                    StreamChainStopReason::PastEnd => format!(
+                        "a record states {} byte(s) of payload and {} are left",
+                        stop.record_len.unwrap_or_default(),
+                        self.unread_bytes.saturating_sub(6)
+                    ),
+                };
+                parts.push(format!(
+                    "it stops at +{} of {} bytes, where {why}, so the {} record(s) before the \
+                     stop are decoded and the {} byte(s) from it on are not",
+                    stop.offset, self.stream_len, self.records_read, self.unread_bytes
+                ));
+                if let Some(stated) = self.stated_records {
+                    parts.push(format!(
+                        "the stream's header states {stated} live record(s) and {} are on the \
+                         chain before the stop",
+                        self.live_records_read
+                    ));
+                }
+            }
+            None => {
+                if let Some(stated) = self.stated_records.filter(|_| self.count_differs()) {
+                    parts.push(format!(
+                        "it runs to the stream's end with {} live record(s) where the header \
+                         states {stated}",
+                        self.live_records_read
+                    ));
+                }
+            }
+        }
+        format!(
+            "the record chain of {} does not hold: {}; what the stream draws may be incomplete",
+            self.stream_path,
+            parts.join("; ")
+        )
+    }
+}
+
 /// Stable text run DTO for Sheet streams.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SheetText {

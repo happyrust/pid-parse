@@ -2231,54 +2231,221 @@ pub fn parse_live_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
 /// header (`magic` + `record_count`) precedes the chain.
 pub const SHEET_STREAM_HEADER_LEN: usize = 8;
 
-/// Every offset a record actually starts at, by walking the stream as the
-/// chain it is: `u16` type word, `u32 bytes_to_follow`, payload, repeat.
+/// The word every chain stream opens with: the cluster magic.
+pub const SHEET_STREAM_MAGIC: u32 = crate::parsers::cluster_header::CLUSTER_MAGIC;
+
+/// Why a chain walk stopped before the end of its stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SheetChainStop {
+    /// The stream is shorter than the eight-byte header a chain stream opens
+    /// with.
+    ShortHeader,
+    /// Fewer than six bytes are left at the stop: too few for a record's
+    /// envelope.
+    ShortEnvelope,
+    /// The record at the stop states that no byte follows its envelope. A
+    /// record holds at least its own oid, and six bytes on from here is the
+    /// middle of whatever this one really held.
+    ZeroLength,
+    /// The record at the stop states more bytes than the stream has left.
+    PastEnd {
+        /// The `bytes_to_follow` it states.
+        stated: u32,
+    },
+}
+
+/// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
+/// read by its own framing: the eight-byte header (`magic`, live-record
+/// count) and then records end to end, `u16` type word, `u32
+/// bytes_to_follow`, payload, repeat.
 ///
-/// This is what tells a record from a byte pattern that merely looks like
-/// one, and it is where every family decodes ([`PsmRecordDecoder::scan`]).
-/// A walk that tries every offset and slides a byte on rejection accepts a
-/// header shape occurring *inside* another record's payload as a record —
-/// which is how `0x3FE6 GLine2d` came to have three corpus "records" that
-/// are really the top two bytes of an `igSmartFrame2d` page-ratio `f64` (see
+/// The walk is what tells a record from a byte pattern that merely looks
+/// like one, and it is where every family decodes
+/// ([`PsmRecordDecoder::scan`]). A walk that tries every offset and slides a
+/// byte on rejection accepts a header shape occurring *inside* another
+/// record's payload as a record — which is how `0x3FE6 GLine2d` came to have
+/// three corpus "records" that are really the top two bytes of an
+/// `igSmartFrame2d` page-ratio `f64` (see
 /// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`),
 /// and how three whole families came to decode nothing but such patterns
 /// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
 /// §3).
 ///
-/// Returns an empty vector unless the walk consumes the stream exactly. A
-/// partial walk means the stream is not the chain this assumes, and half a
-/// chain is worse evidence than none: a caller gating on membership would
-/// silently drop every record past the stall.
+/// A stream whose framing does not hold is read as far as it holds and no
+/// further. The records before a stop are records — each one's length came
+/// from the record before it, back to the header — so they decode as on any
+/// stream; what follows the stop is not searched for a place to pick the
+/// chain up again. `examples/probe_can_a_stopped_chain_be_picked_up_again`
+/// measures what such a search would find if each record of each intact
+/// sheet stream in turn were the one the walk stops on. Of the 173 982
+/// records of the corpora's sheet streams that have another after them,
+/// 21 214 hold an offset inside themselves from which a chain walks exactly
+/// to the stream's end; held to the header's live-record count as well, the
+/// search still lands inside the record, short of the next record's start,
+/// on 743. A payload read as records of its own is geometry no file holds
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §15). Instead the stop is stated — [`Self::stop`], [`Self::unread_bytes`]
+/// — for the caller to report, which is what
+/// [`crate::model::StreamChainFault`] is for.
+///
+/// The header is held to the chain as well: on every chain stream of the
+/// corpora — the 1 684 sheet streams and 171 symbol caches of their 856
+/// distinct files, 259 821 records, `tests/sheet_chain_faults.rs` — the
+/// first word is the magic and the second is the number of records the
+/// native reader reads (those without `0x8000` in the type word). A stream
+/// cut off at a record boundary walks cleanly to its new end, and only that
+/// count says records are missing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetChain {
+    /// The stream's length in bytes.
+    pub len: usize,
+    /// The stream's first word, when it has four bytes.
+    pub magic: Option<u32>,
+    /// The live-record count the header states, when the stream has a
+    /// header.
+    pub stated_records: Option<u32>,
+    /// Offset of every record the walk read, in stream order.
+    pub starts: Vec<usize>,
+    /// How many of them the native reader reads: the ones whose type word
+    /// does not carry [`PSM_TYPE_FLAG_NATIVE_SKIP`].
+    pub live_records: usize,
+    /// The first offset the walk did not read as a record: [`Self::len`]
+    /// when it read the stream to its end.
+    pub end: usize,
+    /// Why the walk stopped at [`Self::end`], when that is short of the
+    /// stream's end.
+    pub stop: Option<SheetChainStop>,
+}
+
+impl SheetChain {
+    /// Walk `data` as a chain stream.
+    ///
+    /// Panic-free on arbitrary input. An empty stream reads as an empty
+    /// chain with nothing wrong with it: there is no byte it failed to read.
+    #[must_use]
+    pub fn walk(data: &[u8]) -> Self {
+        let word = |at: usize| {
+            data.get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let mut chain = Self {
+            len: data.len(),
+            magic: word(0),
+            stated_records: word(4),
+            starts: Vec::new(),
+            live_records: 0,
+            end: data.len().min(SHEET_STREAM_HEADER_LEN),
+            stop: None,
+        };
+        if data.is_empty() {
+            return chain;
+        }
+        if data.len() < SHEET_STREAM_HEADER_LEN {
+            chain.end = 0;
+            chain.stop = Some(SheetChainStop::ShortHeader);
+            return chain;
+        }
+        let mut at = SHEET_STREAM_HEADER_LEN;
+        while at < data.len() {
+            let Some(header) = parse_psm_header(data, at) else {
+                chain.stop = Some(SheetChainStop::ShortEnvelope);
+                break;
+            };
+            if header.bytes_to_follow == 0 {
+                chain.stop = Some(SheetChainStop::ZeroLength);
+                break;
+            }
+            let end = header
+                .body_start
+                .checked_add(header.bytes_to_follow as usize)
+                .filter(|end| *end <= data.len());
+            let Some(end) = end else {
+                chain.stop = Some(SheetChainStop::PastEnd {
+                    stated: header.bytes_to_follow,
+                });
+                break;
+            };
+            chain.starts.push(at);
+            if !header.native_reader_skips() {
+                chain.live_records += 1;
+            }
+            at = end;
+        }
+        chain.end = at;
+        chain
+    }
+
+    /// Bytes from where the walk stopped to the stream's end: read as
+    /// nothing. Zero when the walk read the stream to its end.
+    #[must_use]
+    pub fn unread_bytes(&self) -> usize {
+        self.len.saturating_sub(self.end)
+    }
+
+    /// Whether the stream's first word is not the chain magic. An empty
+    /// stream has no first word to be wrong.
+    #[must_use]
+    pub fn wrong_magic(&self) -> Option<u32> {
+        match self.magic {
+            Some(SHEET_STREAM_MAGIC) => None,
+            Some(found) => Some(found),
+            // One to three bytes: a header cut short, which `stop` says.
+            None => None,
+        }
+    }
+
+    /// Whether the chain runs to the stream's end and holds a different
+    /// number of live records than the header states.
+    #[must_use]
+    pub fn count_differs(&self) -> bool {
+        self.stop.is_none()
+            && self
+                .stated_records
+                .is_some_and(|stated| usize::try_from(stated).ok() != Some(self.live_records))
+    }
+
+    /// Whether the stream is what it says it is: the magic, a chain that
+    /// runs to the last byte, and as many live records as the header
+    /// states. An empty stream is sound.
+    #[must_use]
+    pub fn is_sound(&self) -> bool {
+        self.stop.is_none() && self.wrong_magic().is_none() && !self.count_differs()
+    }
+}
+
+/// Every offset a record starts at in a chain stream that walks to its last
+/// byte, and nothing for one that does not.
+///
+/// This is the all-or-nothing reading, for a caller that tests membership
+/// of the chain or that has no way to say a stream was cut short: the
+/// publish line's row reader, the semantic join, the probes. The record
+/// families read [`SheetChain::walk`] instead — the records before a stop
+/// are still records — and what stopped the walk is reported beside them.
+/// Neither reading holds the header to the chain; [`SheetChain::is_sound`]
+/// does.
 #[must_use]
 pub fn sheet_record_starts(data: &[u8]) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut at = SHEET_STREAM_HEADER_LEN;
-    while at < data.len() {
-        let Some(header) = parse_psm_header(data, at) else {
-            return Vec::new();
-        };
-        let Some(end) = header
-            .body_start
-            .checked_add(header.bytes_to_follow as usize)
-        else {
-            return Vec::new();
-        };
-        if header.bytes_to_follow == 0 || end > data.len() {
-            return Vec::new();
-        }
-        starts.push(at);
-        at = end;
+    let chain = SheetChain::walk(data);
+    if chain.stop.is_some() {
+        return Vec::new();
     }
-    starts
+    chain.starts
 }
 
 /// `records` — one record or a run of them, end to end — behind the 8-byte
 /// header a chain stream opens with, so that a test hands a family the
 /// stream it would be handed in a file.
+///
+/// The header is the one a file writes: the magic, and the number of records
+/// among `records` the native reader reads. Bytes that are not a run of
+/// whole records get a count of what the walk reads before it stops.
 #[cfg(test)]
 pub(crate) fn chain_stream(records: &[u8]) -> Vec<u8> {
     let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
     stream.extend_from_slice(records);
+    let live = u32::try_from(SheetChain::walk(&stream).live_records).unwrap_or(u32::MAX);
+    stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+    stream[4..8].copy_from_slice(&live.to_le_bytes());
     stream
 }
 
@@ -2328,7 +2495,7 @@ pub trait PsmRecordDecoder {
     /// Every record of this family in a chain stream — a `Sheet*` stream
     /// or a symbol cache's `PSMcluster0`: [`Self::decode_at`] at each
     /// offset the stream's own chain starts a record
-    /// ([`sheet_record_starts`]), in on-disk order.
+    /// ([`SheetChain::walk`]), in on-disk order.
     ///
     /// A record is a member of the chain before its payload is even looked
     /// at. This used to try every offset and slide a byte on rejection,
@@ -2344,10 +2511,12 @@ pub trait PsmRecordDecoder {
     /// attribute fragments, `JStyleOverride` — which had none on it, since
     /// no sheet chain carries either type code.
     ///
-    /// A stream that is not a clean chain yields nothing rather than
-    /// falling back to a scan; half a chain is worse evidence than none.
+    /// A stream whose chain stops before its end yields the records before
+    /// the stop and never falls back to a scan for the rest: the stop is
+    /// the caller's to report ([`SheetChain::stop`]), not to paper over.
     fn scan(&self, data: &[u8]) -> Vec<Self::Record> {
-        sheet_record_starts(data)
+        SheetChain::walk(data)
+            .starts
             .into_iter()
             .filter_map(|at| self.decode_at(data, at))
             .collect()
@@ -2785,7 +2954,7 @@ impl SheetPrimitiveLineDecoded {
 /// `Sheet*` stream's bytes.
 ///
 /// A candidate has to be a **member of the stream's record chain**
-/// ([`sheet_record_starts`]) before its payload is even looked at, and
+/// ([`SheetChain::walk`]) before its payload is even looked at, and
 /// then satisfy all of:
 ///
 /// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
@@ -2810,10 +2979,12 @@ impl SheetPrimitiveLineDecoded {
 /// lines 160 bytes inside another record. See
 /// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
 ///
-/// Adversarial bytes pass through without panics, and a stream that is not
-/// a clean chain yields nothing rather than falling back to a scan.
+/// Adversarial bytes pass through without panics. A stream whose chain
+/// stops before its end yields the records before the stop and is never
+/// scanned for the rest.
 pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| GLine2dDecoder.decode_at(data, at))
         .collect()
@@ -3039,7 +3210,7 @@ impl SheetIgLine2dDecoded {
 /// stream's bytes.
 ///
 /// A candidate has to be a **member of the stream's record chain**
-/// ([`sheet_record_starts`]) before its payload is even looked at —
+/// ([`SheetChain::walk`]) before its payload is even looked at —
 /// the same gate `decode_primitive_lines` has used since the
 /// `GLine2d` ghost family was retired — and then satisfy all of:
 ///
@@ -3058,10 +3229,11 @@ impl SheetIgLine2dDecoded {
 /// the 88 (`examples/probe_phase40_igline_chain_vs_rule`).
 ///
 /// Panic-free and bounds-checked: adversarial bytes simply fail
-/// validation and are skipped, and a stream that is not a clean chain
-/// yields nothing rather than falling back to a scan.
+/// validation and are skipped. A stream whose chain stops before its end
+/// yields the records before the stop and is never scanned for the rest.
 pub fn decode_iglines(data: &[u8]) -> Vec<SheetIgLine2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgLine2dDecoder.decode_at(data, at))
         .collect()
@@ -4424,10 +4596,11 @@ pub const PSM_TYPE_CODE_JSHEET: u16 = 0x0114;
 /// [`parse_live_psm_header`], the judgement every family decoder starts
 /// from (OCS plan `2026-09-28-pid-import-next-steps.md` P-D12, applied here
 /// by `2026-09-29-pid-import-next-round.md` P-D21). The walk stays
-/// [`sheet_record_starts`], unfiltered: it has to see every record, a
+/// [`SheetChain::walk`], unfiltered: it has to see every record, a
 /// skipped one included, to reach the next.
 pub fn jsheet_oids(data: &[u8]) -> Vec<u32> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| {
             let header = parse_live_psm_header(data, at)?;
@@ -7934,11 +8107,12 @@ fn curve_doubles<const N: usize>(payload: &[u8]) -> Option<[f64; N]> {
 /// Decode every `igCircle2d` record in a record-chain stream.
 ///
 /// Chain-gated like [`decode_iglines`]: a candidate has to start where the
-/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// stream's own chain says a record starts ([`SheetChain::walk`]), then
 /// satisfy: type code [`PSM_TYPE_CODE_IGCIRCLE2D`]; `bytes_to_follow ==
 /// 43`; three finite in-domain doubles; `radius > 0`.
 pub fn decode_igcircles(data: &[u8]) -> Vec<SheetIgCircle2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgCircle2dDecoder.decode_at(data, at))
         .collect()
@@ -7957,7 +8131,8 @@ pub fn decode_igcircle_at(data: &[u8], offset: usize) -> Option<SheetIgCircle2dD
 /// finite: the native reader stores them as absolute angles and does not
 /// normalise them, so neither does this.
 pub fn decode_igarcs(data: &[u8]) -> Vec<SheetIgArc2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgArc2dDecoder.decode_at(data, at))
         .collect()
@@ -8183,14 +8358,15 @@ pub struct SheetIgEllipticalArc2dDecoded {
 /// Decode every `igEllipticalArc2d` record in a record-chain stream.
 ///
 /// Chain-gated like [`decode_igarcs`]: a candidate has to start where the
-/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// stream's own chain says a record starts ([`SheetChain::walk`]), then
 /// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
 /// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
 /// major semi-axis; a finite `ratio > 0` (not capped at `1` -- see the
 /// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]). As for
 /// `igArc2d`, the angles only have to be finite: they are not normalised.
 pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgEllipticalArc2dDecoder.decode_at(data, at))
         .collect()
@@ -8383,7 +8559,8 @@ pub struct SheetIgEllipse2dDecoded {
 /// (not capped at `1` -- see the `2026-11-09` note above
 /// [`PSM_TYPE_CODE_IGELLIPSE2D`]).
 pub fn decode_igellipses(data: &[u8]) -> Vec<SheetIgEllipse2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgEllipse2dDecoder.decode_at(data, at))
         .collect()
@@ -8613,7 +8790,8 @@ impl SheetIgBspCurve2dDecoded {
 /// `width > 0` and `aspect > 0`; an edge count of at most
 /// `IGRECTANGLE2D_MAX_EDGES` whose list accounts for the payload exactly.
 pub fn decode_igrectangles(data: &[u8]) -> Vec<SheetIgRectangle2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgRectangle2dDecoder.decode_at(data, at))
         .collect()
@@ -8633,7 +8811,8 @@ pub fn decode_igrectangle_at(data: &[u8], offset: usize) -> Option<SheetIgRectan
 /// non-decreasing knots; and every counted field accounting for the payload
 /// exactly, trailing double and four flag bytes included.
 pub fn decode_igbspcurves(data: &[u8]) -> Vec<SheetIgBspCurve2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgBspCurve2dDecoder.decode_at(data, at))
         .collect()
@@ -10686,12 +10865,213 @@ mod tests {
         );
         assert_eq!(frames[0].byte_range, frame_at..stream.len());
 
-        // A stream that is not a clean chain yields nothing rather than
-        // falling back to a scan: half a chain is worse evidence than none.
+        // A stream whose chain stops short is read as far as the chain
+        // reads, and still never by a scan. One stray byte after the last
+        // record leaves both records on the chain, and the run inside the
+        // host as much the host's as before; the walk says where it stopped
+        // and why, and the all-or-nothing reading says the stream is not
+        // whole.
         let mut broken = stream.clone();
         broken.push(0);
         assert!(sheet_record_starts(&broken).is_empty());
-        assert!(decode_smartframes(&broken).is_empty());
+        let chain = SheetChain::walk(&broken);
+        assert_eq!(chain.starts, vec![host_at, frame_at]);
+        assert_eq!((chain.end, chain.unread_bytes()), (stream.len(), 1));
+        assert_eq!(chain.stop, Some(SheetChainStop::ShortEnvelope));
+        assert_eq!(
+            decode_smartframes(&broken)
+                .iter()
+                .map(|frame| frame.oid)
+                .collect::<Vec<_>>(),
+            vec![23],
+            "the record the chain starts, and not the run inside the host"
+        );
+    }
+
+    /// Three whole records behind the header a file writes for them: two
+    /// the native reader reads and, between them, one it skips.
+    fn three_record_stream() -> (Vec<u8>, [usize; 3]) {
+        let mut records = smart_frame_record(1);
+        let second = SHEET_STREAM_HEADER_LEN + records.len();
+        let mut skipped = smart_frame_record(2);
+        skipped[1] |= 0x80;
+        records.extend_from_slice(&skipped);
+        let third = SHEET_STREAM_HEADER_LEN + records.len();
+        records.extend_from_slice(&smart_frame_record(3));
+        (
+            chain_stream(&records),
+            [SHEET_STREAM_HEADER_LEN, second, third],
+        )
+    }
+
+    #[test]
+    fn a_whole_chain_stream_is_sound() {
+        let (stream, starts) = three_record_stream();
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, starts);
+        assert_eq!(chain.live_records, 2, "the skipped record is not live");
+        assert_eq!(
+            chain.stated_records,
+            Some(2),
+            "the header counts live records"
+        );
+        assert_eq!(chain.magic, Some(SHEET_STREAM_MAGIC));
+        assert_eq!(
+            (chain.end, chain.len, chain.stop),
+            (stream.len(), stream.len(), None)
+        );
+        assert_eq!(chain.unread_bytes(), 0);
+        assert!(chain.is_sound());
+        assert_eq!(sheet_record_starts(&stream), starts);
+
+        // A stream that is its header alone, and an empty one, hold no
+        // record and have nothing wrong with them.
+        let header_only = chain_stream(&[]);
+        let chain = SheetChain::walk(&header_only);
+        assert!(chain.starts.is_empty() && chain.is_sound());
+        assert_eq!((chain.end, chain.stated_records), (8, Some(0)));
+        let chain = SheetChain::walk(&[]);
+        assert!(chain.starts.is_empty() && chain.is_sound());
+        assert_eq!((chain.end, chain.len, chain.magic), (0, 0, None));
+    }
+
+    #[test]
+    fn a_chain_that_stops_keeps_the_records_before_the_stop() {
+        let (whole, starts) = three_record_stream();
+        let [first, second, third] = starts;
+
+        // The second record states a length of zero.
+        let mut stream = whole.clone();
+        stream[second + 2..second + 6].copy_from_slice(&0u32.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first]);
+        assert_eq!(chain.stop, Some(SheetChainStop::ZeroLength));
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (second, whole.len() - second)
+        );
+        assert_eq!(chain.live_records, 1);
+        assert!(!chain.is_sound());
+        assert!(
+            !chain.count_differs(),
+            "a stop is the fault, not the count it leaves"
+        );
+        assert!(sheet_record_starts(&stream).is_empty());
+        assert_eq!(
+            decode_smartframes(&stream)
+                .iter()
+                .map(|frame| frame.oid)
+                .collect::<Vec<_>>(),
+            [1],
+            "the record before the stop decodes"
+        );
+
+        // The last record states one byte more than the stream has.
+        let mut stream = whole.clone();
+        let stated = u32::from_le_bytes([
+            stream[third + 2],
+            stream[third + 3],
+            stream[third + 4],
+            stream[third + 5],
+        ]);
+        stream[third + 2..third + 6].copy_from_slice(&(stated + 1).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::PastEnd { stated: stated + 1 })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (third, whole.len() - third)
+        );
+        assert_eq!(chain.live_records, 1);
+
+        // A length that would overflow the offset is past the end too.
+        let mut stream = whole.clone();
+        stream[third + 2..third + 6].copy_from_slice(&u32::MAX.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::PastEnd { stated: u32::MAX })
+        );
+
+        // Five stray bytes after the last record: too few for an envelope.
+        let mut stream = whole.clone();
+        stream.extend_from_slice(&[0x3D, 0, 9, 0, 0]);
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, starts);
+        assert_eq!(chain.stop, Some(SheetChainStop::ShortEnvelope));
+        assert_eq!((chain.end, chain.unread_bytes()), (whole.len(), 5));
+        assert_eq!(chain.live_records, 2);
+
+        // Shorter than a header: nothing is read, and that is said.
+        for cut in 1..SHEET_STREAM_HEADER_LEN {
+            let chain = SheetChain::walk(&whole[..cut]);
+            assert!(chain.starts.is_empty());
+            assert_eq!(chain.stop, Some(SheetChainStop::ShortHeader), "{cut} bytes");
+            assert_eq!((chain.end, chain.unread_bytes()), (0, cut));
+            assert!(!chain.is_sound());
+        }
+    }
+
+    #[test]
+    fn a_header_that_disagrees_with_its_chain_is_not_sound() {
+        let (whole, starts) = three_record_stream();
+        let [_, _, third] = starts;
+
+        // Cut off at a record boundary: the walk reaches the new end with
+        // nothing wrong on the way, and the header still counts the record
+        // that is gone.
+        let cut = &whole[..third];
+        let chain = SheetChain::walk(cut);
+        assert_eq!((chain.stop, chain.end), (None, third));
+        assert_eq!((chain.stated_records, chain.live_records), (Some(2), 1));
+        assert!(chain.count_differs());
+        assert!(!chain.is_sound());
+        assert_eq!(
+            sheet_record_starts(cut).len(),
+            2,
+            "the all-or-nothing reading does not hold the header to the chain"
+        );
+
+        // The count alone.
+        let mut stream = whole.clone();
+        stream[4..8].copy_from_slice(&3u32.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert!(chain.count_differs() && !chain.is_sound());
+        assert_eq!(chain.starts, starts, "every record is still read");
+
+        // The magic alone.
+        let mut stream = whole.clone();
+        stream[..4].copy_from_slice(b"BACK");
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.wrong_magic(), Some(u32::from_le_bytes(*b"BACK")));
+        assert!(!chain.count_differs() && !chain.is_sound());
+        assert_eq!(chain.starts, starts, "every record is still read");
+    }
+
+    #[test]
+    fn the_chain_walk_survives_truncation_and_noise() {
+        let (whole, _) = three_record_stream();
+        for cut in 0..=whole.len() {
+            let chain = SheetChain::walk(&whole[..cut]);
+            assert_eq!(chain.len, cut);
+            assert!(chain.end <= cut);
+            assert_eq!(chain.unread_bytes(), cut - chain.end);
+            // A cut inside a record stops; a cut on a boundary does not.
+            let on_a_boundary = cut == 0 || chain.end == cut;
+            assert_eq!(chain.stop.is_none(), on_a_boundary, "cut at {cut}");
+        }
+        let noise: Vec<u8> = (0..4096u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        for at in 0..noise.len() {
+            let chain = SheetChain::walk(&noise[at..]);
+            assert!(chain.end <= chain.len);
+            assert!(chain.starts.windows(2).all(|pair| pair[0] < pair[1]));
+        }
     }
 
     #[test]

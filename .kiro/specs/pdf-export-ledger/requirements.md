@@ -260,6 +260,8 @@
 | `record_emitter_out_of_range` | 可疑 | 已解码记录的字节范围超出所属流：每个发射器在 `source_range(..)` 为 `None` 时 `continue` | 静默（新发现） |
 | `record_emitter_shape_rejected` | 可疑 | 发射器拒绝已解码记录：`igLineString2d` 的 x/y 顶点数不等，或全重合却没有顶点；`igBoundary2d` 环点少于 3；`igBspCurve2d` 采样少于 2 点 | 静默（新发现） |
 
+> 实现注记（2026-11-11）：`sheet_stream_without_geometry` 另记一种流——自己的记录链立不住的链式流（`Sheet*` 流，或符号缓存的 `JSite*/PSMcluster0`）：链在流尾之前停下（记录长度为零、长度越过流尾、剩下的字节不够一个 6 字节信封、流不足 8 字节流头），或者链走到了流尾而流头的魔数、活记录数与链对不上（`NormalizedPidGeometry::chain_faults`，`pid_parse::StreamChainFault`）。这样的流只读到停点为止，停点之前的记录照常成为实体，所以它的 `geometry` 不是 `None`、页上有它的墨，却不是整张图；它按流记一项（计数 1），`bytes` 记的是停点之后没有读的字节数，流头对不上而链走到流尾的记 0。同一条流已经因为 `geometry` 为 `None` 记过的，不再记第二项。`LayoutLedger::chain_faults` 留着解析器给出的整条事实（停点偏移、原因、读到的记录数），`pid_plot` 据此在 stderr 打一行 `warning:`。没有另立原因码：它与这一行原有的判据说的是同一件事——这条流没有被完整地读成记录——档位也相同；全部语料的完好流上没有这样的项（`tests/sheet_chain_faults.rs`）。
+
 ### A.2 排版层：实体没有产出页面图元
 
 按 Layout_Engine 的判定顺序排列。

@@ -57,8 +57,8 @@ use pid_parse::parsers::sheet_records::{
     decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
     decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
     decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, IgLine2dDecoder, PsmRecordDecoder,
-    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
+    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -300,6 +300,18 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = IgLine2dDecoder.decode_at(input, input.len() - 1);
     }
     let _ = parse_psm_header(input, usize::MAX);
+
+    // The chain walk every family decodes at, its all-or-nothing reading,
+    // and the fault a stream whose framing does not hold is reported as:
+    // whatever the bytes, the walk ends inside them and the fault, when
+    // there is one, can be said.
+    let chain = SheetChain::walk(input);
+    assert!(chain.end <= input.len());
+    assert_eq!(chain.unread_bytes(), input.len() - chain.end);
+    let _ = sheet_record_starts(input);
+    if let Some(fault) = pid_parse::StreamChainFault::of_stream("/SheetX", input) {
+        assert!(fault.describe().contains("/SheetX"));
+    }
 
     // Phase 14 Slice K: PSM `igLineString2d` polyline decoder.
     let _ = decode_iglinestrings(input);

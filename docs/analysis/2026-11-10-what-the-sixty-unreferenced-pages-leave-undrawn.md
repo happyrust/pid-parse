@@ -6,6 +6,7 @@
 > `examples/probe_which_records_reach_no_page.rs`（2026-11-07 的普查，本次重跑）。
 > 承接 `2026-11-07-every-undrawn-record-of-the-plant-backup-is-inkless.md`；与它读数不同的地方在 §4.3 写明。
 > 本文 §1–§9 是动手修之前的读数；修过之后的读数在文末「修复之后」一节，逐次修复追加。
+> §15 起是第三轮（2026-11-11），回应对 `81c5be4` 的独立审查。
 
 ## 0. 一句话
 
@@ -31,6 +32,10 @@
 笔宽；页面上的变化只在熊安夹具这一页，71 页逐页比对其余 70 页不变。三个无链族的宿主、下游与反汇编结论的
 关系写在 §12（族本身还没有退役）。§11 的白笔提案不落地：取证那条线查到了另一半（原厂把声明颜色字
 `0x8000_0000` 的笔画成纸色），修法在源头，由它做。
+
+**第三轮**（§15 起）：记录链立不住的流不再整条读成空——读到链停下的地方为止，停点之前的记录照常解码，
+停在哪、还有多少字节没读写进解析结果的告警、`pid_plot` 的 stderr 和账本的可疑项。71 页与两本账不变：全部
+语料里没有一条这样的流。
 
 ## 1. 口径与复现
 
@@ -864,3 +869,133 @@ Sheet 链上两个类型码都是 0 条。
 顺带量到上一轮的一处短板：我的脚本把语料指到了厂区备份包上，7 张夹具因此是对着那个包排的——熊安那张在包里
 找不到 `XA-A1.igr`，只有 478 个图元（穿模板是 5 478）。所以上一轮「71 页 0 处不同」里，夹具带模板的那部分
 页面并不在比对之内，当时守着它们的是纸面金样。
+
+## 15. 记录链立不住的流：读到停点为止，并且说出来（第三轮，2026-11-11）
+
+§10.1 把每个族都改成只在流自己的记录链上解码，当时的规则是「链不能恰好走完整条流，就什么都不解」。对
+`81c5be4` 的独立审查指出了它的代价：把 `test-file/DWG-0201GP06-01.pid` 的 `/Sheet6` 弄坏一个长度字段，
+图纸自己的内容整页消失，只剩模板，`pid_plot` 退出码 0、stderr 上一个字没有。§10.1 之前逐字节滑动的走法在
+同样的损坏下只丢 24 条线（审查者的读数）。
+
+### 15.1 三种损坏，改之前（`d398088`）
+
+`/Sheet6` 共 29 594 字节、359 条记录、流头记录数 354。三种损坏各改一个长度字段：
+
+| 损坏 | 链停在 | `pid_plot` | stderr | 账本汇总 |
+|---|---|---|---|---|
+| （不改） | — | 358 个图元，页幅 594.31 × 420.31 | 空 | 可疑 0、未归因 0 |
+| 中间一条记录（第 180 条，`+16994`）长度写 0 | `+16994` | **165** 个图元（全是模板），594.00 × 420.00，退出码 0 | 空 | 可疑 **352**、未归因 0 |
+| 最后一条记录（`+29350`）长度 +1 | `+29350` | 165，同上 | 空 | 可疑 **353** |
+| 最后一条记录长度 −4（流尾多出 4 个字节） | `+29590` | 165，同上 | 空 | 可疑 **353** |
+
+那 352 / 353 个可疑项是什么：当时的普查在链走不到流尾时退回逐字节滑动，滑动找到的记录没有一条被哪个族认领，
+于是全部记成 `record_refused`——`DependencyObject` 136、`igPoint2d` 75、`igTextBox` 58 或 59、`igLineString2d`
+38 或 39、`igLine2d` 24、`igSymbol2d` 20，长度写 0 的那一份另有 `igSmartFrame2d` 1。（这几行是把今天的普查
+代码送回那条旧路径重算出来的，合计与旧程序打印的三个数逐一相等。）所以账本不是空的，但它数的是滑动找到的
+东西，页面只有模板，程序不出声；两道门禁只有在这样的文件进了语料时才看得见。
+
+### 15.2 流头说的两件事，在全部语料上都成立
+
+审查者在 409 条流上量到：流头第二个字（`+4`）等于链上不带 `0x8000` 的记录数。在我够得到的语料上复核
+（`tests/sheet_chain_faults.rs::no_intact_stream_of_any_corpus_raises_a_chain_fault`，每个文件按内容只读一次）：
+
+| 语料 | 文件（去重后新增） | Sheet 流 | 其中只有流头 | 符号缓存 `JSite*/PSMcluster0` | 链上记录 | 其中活记录 |
+|---|---:|---:|---:|---:|---:|---:|
+| `test-file`，磁盘上 | 18 | 32 | 6 | 17 | 11 945 | 11 895 |
+| `test-file`，12 个 `RefData~*.zip` 里 | 637（另 605 个是副本） | 1 306 | 139 | 41 | 20 569 | 20 165 |
+| `D:\work\cad\pid-test-data` | 153 | 294 | 1 | 20 | 56 934 | 56 318 |
+| `D:\work\plant-code\cad\pid-test-data`（含 53 张备份） | 48 | 52 | 3 | 93 | 170 373 | 169 248 |
+| `D:\work\cad\PID自研软件验证` | 0（654 个全是副本） | — | — | — | — | — |
+| **合计** | **856**（5 867 份里） | **1 684** | 149 | **171** | **259 821** | 257 626 |
+
+1 855 条链式流，**没有一条例外**：开头四个字节是簇魔数 `0x6C90F544`；从 `+8` 起一条接一条恰好走到最后一个
+字节；流头第二个字等于活记录数。所以这三条都可以拿来校验，对不上的流报同一种告警。记录数这一条不是多余的：
+一条在记录边界上被截断的流，链照样干干净净走到（新的）流尾，只有流头的记录数说得出后面少了东西。
+
+### 15.3 停点之后的字节：不找回，量过
+
+链停下之后，诱人的做法是往后找第一个「从它起链恰好走到流尾」的偏移，从那里接着读。
+`examples/probe_can_a_stopped_chain_be_picked_up_again.rs` 量的就是这个找法会找到什么：把每条完好的 Sheet 流上
+每一条后面还有记录的记录轮流当成坏掉的那一条，从它的信封之后开始找（它的长度正是信不得的那个字段），正确答案
+是下一条记录的起点。探针直接从复合文件里读流，不经过解析器。
+
+```text
+1994 compound file(s), 4060 sheet stream(s), 1195 distinct with two records or more
+173982 record(s) of those streams have another record after them; if each in turn were the one a walk stops on:
+   an offset inside the record, past its envelope, from which a chain walks exactly to the stream's end: 21214 record(s)
+   held to the header's live-record count as well, the first such offset is not the next record's start: 743 record(s); no such offset at all: 0
+      D06.pid /Sheet6: record at +8 (type word 0x003D) — the search lands on +183, the next record starts at +252
+      DWG-0201GP06-01.pid /Sheet6: record at +27234 (type word 0x00FA) — the search lands on +27273, the next record starts at +27344
+```
+
+（范围：`test-file` 连同压缩包、53 张备份、11 张验收。）只要求「走到流尾」，173 982 条里有 **21 214** 条
+（12.2%）在自己肚子里就有这样的偏移，找回会落在记录内部；再加上「活记录数要凑得上流头」这一条，仍有 **743** 条
+落在记录内部——第一例就是 `D06.pid` 开头的页框。落在记录内部，就是把一条记录的载荷当成几条记录来读：文件里
+没有的几何被画出来，正是 §3 那类幻影。两条规则都不能证明不带回幻影，所以**只读前缀**，停点之后的字节原样
+报为「没读」，有多少报多少。
+
+### 15.4 现在的行为
+
+- `sheet_records::SheetChain::walk` 按流自己的框架走：魔数、流头记录数、每条记录的起点、活记录数、走到哪、
+  为什么停（流不足 8 字节流头；剩下的字节不够一个 6 字节信封；记录长度为零；记录长度越过流尾）。每个族在
+  它读到的起点上解码——停点之前的记录每一条的长度都来自前一条、一直追到流头，是真记录。
+  `sheet_record_starts` 留着原来「要么整条、要么没有」的读法，给判断链成员资格的地方用（发布线的行读取、
+  语义连接、探针）。
+- 解析结果：`PidDocument::chain_faults`（`StreamChainFault`：流路径、流长、错的魔数、停点偏移与原因、没读的
+  字节数、读到的记录数与活记录数、流头声明的记录数），`build_normalized_geometry` 原样带到
+  `NormalizedPidGeometry::chain_faults`，并且每条在 `warnings` 里说一句。范围是各族读的那两种流：`Sheet*`
+  流和顶层 `JSite*` 的 `PSMcluster0`。
+- 三张普查表在链式流（以魔数开头）上只数链读到的记录，不再退回滑动；没有流头的裸记录串（单测里的写法）照旧。
+- 账本：这条流按 `sheet_stream_without_geometry`（可疑）记一项，计数 1，`bytes` 是没读的字节数；
+  `LayoutLedger::chain_faults` 留着整条事实。没有另立原因码（规格里的实现注记写了理由）。
+- `pid_plot`：stderr 一行 `warning: <图纸>: <那句话>`，在要字体之前打印；退出码不变。模板文件的流坏了，
+  这一行以「in the border template,」开头，记在家具域。
+
+### 15.5 三种损坏，改之后
+
+| 损坏 | `pid_plot` | 账本汇总 | 账本里的可疑项 |
+|---|---|---|---|
+| （不改） | 358 个图元，594.31 × 420.31，stderr 空 | 可疑 0、未归因 0 | — |
+| 中间一条长度写 0 | **317** 个图元，594.00 × 420.00，退出码 0 | 实体 328、上页 92、可疑 **1**、未归因 0 | `/Sheet6` × 1，`bytes` 12 600 |
+| 最后一条长度 +1 | **358** 个图元，594.00 × 420.00 | 实体 435、上页 124、可疑 **1** | `/Sheet6` × 1，`bytes` 244 |
+| 最后一条长度 −4 | **358** 个图元，594.31 × 420.31 | 实体 435、上页 124、可疑 **1** | `/Sheet6` × 1，`bytes` 4 |
+
+stderr 各一行（`warning: <路径>: ` 之后的原文）：
+
+```text
+the record chain of /Sheet6 does not hold: it stops at +16994 of 29594 bytes, where a record states a length of zero, so the 179 record(s) before the stop are decoded and the 12600 byte(s) from it on are not; the stream's header states 354 live record(s) and 179 are on the chain before the stop; what the stream draws may be incomplete
+the record chain of /Sheet6 does not hold: it stops at +29350 of 29594 bytes, where a record states 239 byte(s) of payload and 238 are left, so the 358 record(s) before the stop are decoded and the 244 byte(s) from it on are not; the stream's header states 354 live record(s) and 353 are on the chain before the stop; what the stream draws may be incomplete
+the record chain of /Sheet6 does not hold: it stops at +29590 of 29594 bytes, where 4 byte(s) are left, fewer than the 6 of a record's envelope, so the 359 record(s) before the stop are decoded and the 4 byte(s) from it on are not; the stream's header states 354 live record(s) and 354 are on the chain before the stop; what the stream draws may be incomplete
+```
+
+另外三种不会让链停下的损坏也报（`tests/sheet_chain_faults.rs`）：在最后一条记录的起点处截断
+（`it runs to the stream's end with 353 live record(s) where the header states 354`）、流头记录数 +1、魔数写错
+（`the stream opens with 0x4B434142, not the chain magic 0x6C90F544`）。
+
+### 15.6 页框落在停点之后的时候
+
+`DWG-0201GP06-01.pid` 的页框（`igSmartFrame2d`，oid 947）在 `/Sheet6` 里有六份：五份是带 `0x8000` 的旧副本
+（`+17056`、`+28358`、`+28602`、`+28854`、`+29098`），唯一活着的一份是**最后一条记录**（`+29350`）。页幅
+594.305 × 420.314 mm 和图纸的墨相对图框的位移（范围原点 `(−1.105, +1.841)` mm）都是它说的。所以前两种损坏里
+页框都在停点之后：页面按「没有页框的图纸」排——页幅取模板名字说的 A2（594 × 420），墨不做那 1.105 mm ×
+1.841 mm 的位移。停点之前的记录画出来的图元，与完好图纸上同一批记录画出来的逐个相同（同一段字节、同一支笔、
+同一个符号），只是整体差这一个位移；第三种损坏读得到页框，位置也逐个相同。旧副本说的页面与活的那份一样，但
+拿一份被文件自己退役的记录来定页面是猜，没有这样做。
+
+`pid-plot/tests/cli_pid_plot.rs` 把这两层都钉住：坏流的页与「同一张图、`/Sheet6` 干净地截到停点为止」的页
+逐图元相同（停点之后没有任何东西经由别的路径上页）；停点之前的图元与完好图纸逐个同一，并且当且仅当读到的
+页框与完好图纸说的一样时位置也相同。
+
+### 15.7 没有副作用，和没有做的
+
+- 71 页逐页比对（`probe_export_bytes_unchanged`，`d398088` 与这次改动之后）：**0 页不同**。两本账、纸面金样、
+  几何金样都没有动：全部语料里没有一条这样的流。
+- 发布线（`src/publish/pid_load.rs` 的 `add_chain`）与语义连接（`src/semantics.rs`）仍然用「要么整条、要么
+  没有」的读法：链坏了的流它们一条记录都不读，也不出声。`PidDocument::chain_faults` 里有这条事实，
+  `pid_publish_xml` 还没有把它打出来。
+- `.sym` 符号文件有自己的读法（`symbol_library::read_sheet_chain`），本来就是整条或没有：链坏了的那条 Sheet
+  流读成空。整个体因此为空时，页上按 `symbol_body_empty` 记可疑项（图纸自己的缓存里有这个体时画的是缓存）；
+  一个 `.sym` 有几条 Sheet 流而只坏一条时，体少一部分而不出声。没有改。
+- `StyleCluster` 的记录链（`style_link::from_stylecluster_bytes`）停在坏记录上不出声；那个文件归另一条线。
+- 模板候选的流坏了、因此量出来的墨幅不再对得上页幅时，它只是不被选中，页面报的是「点名的模板没找到」，
+  不点名这个文件；选模板的代码在 `pid-plot/src/model.rs`，这一轮不动。

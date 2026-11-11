@@ -99,6 +99,14 @@ pub struct NormalizedPidGeometry {
     /// JSON it always did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emitter_accounts: Vec<PidEmitterAccount>,
+    /// The chain streams this geometry was read from whose own framing does
+    /// not hold ([`crate::model::PidDocument::chain_faults`], verbatim): a
+    /// stream listed here was read as far as its record chain holds and no
+    /// further, so the entities above may be short of what the file holds.
+    /// Each is also one line of [`Self::warnings`]. Empty on every document
+    /// of the corpora.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_faults: Vec<crate::model::StreamChainFault>,
 }
 
 /// Which embedded symbol body a placement draws: the definition cache
@@ -1574,6 +1582,14 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         });
     }
 
+    // A chain stream whose framing does not hold was read as far as its
+    // chain holds: the records before a stop are in the entities above and
+    // whatever follows it is not. Said last, so that every count above is
+    // read knowing which stream it may be short on.
+    for fault in &doc.chain_faults {
+        warnings.push(fault.describe());
+    }
+
     NormalizedPidGeometry {
         entities,
         page_dimensions_mm: page_dims,
@@ -1583,6 +1599,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         skipped_graphic_records,
         symbol_definitions: embedded_symbol_definitions(doc),
         emitter_accounts,
+        chain_faults: doc.chain_faults.clone(),
     }
 }
 
@@ -5108,6 +5125,7 @@ mod tests {
             skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
             emitter_accounts: Vec::new(),
+            chain_faults: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");
@@ -5856,6 +5874,7 @@ mod tests {
             skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
             emitter_accounts: Vec::new(),
+            chain_faults: Vec::new(),
         };
 
         let json = serde_json::to_string(&geometry).expect("an empty geometry serializes");
@@ -5863,6 +5882,10 @@ mod tests {
         assert!(
             !json.contains("emitter_accounts"),
             "an empty account must not appear in the JSON, got {json}"
+        );
+        assert!(
+            !json.contains("chain_faults"),
+            "an empty fault list must not appear in the JSON, got {json}"
         );
     }
 

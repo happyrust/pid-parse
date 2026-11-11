@@ -340,10 +340,16 @@ fn unclaimed_counts(
     counts
 }
 
-/// Where the census finds a record: the stream's own chain from its 8-byte
-/// header when that chain walks the stream exactly
-/// ([`crate::parsers::sheet_records::sheet_record_starts`]), and the
-/// chain-validated greedy walk only when it does not.
+/// Where the census finds a record: on a chain stream — one that opens
+/// with the chain magic — the records its own chain reads from the 8-byte
+/// header on ([`crate::parsers::sheet_records::SheetChain::walk`]), which
+/// are the records the families decode at; on anything else, a bare run of
+/// records with no header, the chain-validated greedy walk.
+///
+/// A chain stream whose walk stops before the stream's end is counted as
+/// far as the walk reads. What follows the stop is not searched for
+/// records: it is reported whole, as bytes left unread
+/// ([`crate::model::StreamChainFault`]), which is all that is known of it.
 ///
 /// The greedy walk starts at byte 0 and slides a byte at a time, so on a
 /// stream that does walk it can only see records the chain does not have.
@@ -358,9 +364,12 @@ fn unclaimed_counts(
 /// skipped census
 /// (`docs/analysis/2026-11-07-every-undrawn-record-of-the-plant-backup-is-inkless.md`).
 fn census_record_starts(data: &[u8]) -> Vec<usize> {
-    let chain = crate::parsers::sheet_records::sheet_record_starts(data);
-    if !chain.is_empty() {
-        return chain;
+    let chain = crate::parsers::sheet_records::SheetChain::walk(data);
+    let is_chain_stream = chain.magic == Some(crate::parsers::sheet_records::SHEET_STREAM_MAGIC);
+    // Bytes with no header are taken for a chain only when they walk as one
+    // from end to end, as they always were.
+    if is_chain_stream || (chain.stop.is_none() && !chain.starts.is_empty()) {
+        return chain.starts;
     }
     let mut starts = Vec::new();
     let mut off = 0usize;
