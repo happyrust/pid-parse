@@ -101,8 +101,14 @@
 //! thresholds, with no exception. A class mean cannot see a single label, so
 //! the labels whose anchor point lands more than 0.15 mm from the
 //! reference's or whose run is more than 0.05 mm wider or narrower are
-//! counted on the whole page and pinned: 50 over the eleven pages, each with
-//! a cause on record.
+//! counted on the whole page and pinned: 46 over the eleven pages, each with
+//! a cause on record. It was 50 until the three air-cooler sheets' `SP:`
+//! started its colon on its own whole pixel, as the reference does, and 47
+//! until the page was painted in the order its sheet lists its objects in
+//! (2026-11-11): `J K井场` letters `1-1/2"` and `FC` as two labels on one
+//! baseline, the read-back of our page used to join them into one run where
+//! the reference's reads as two, and a page painted in the reference's order
+//! reads back in the reference's runs — 813 on that page, where it read 816.
 //!
 //! A borrowed run is held to the reference's font family as well
 //! (2026-11-10). Where the face a label names cannot draw a character, the
@@ -237,8 +243,9 @@ const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
 /// (`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`).
 /// Fourteen of the 64 were the borrowed runs — twelve `℃` 0.201 mm wide and
 /// the A2 sheet's two `动火点` 1.863 mm narrow — and came inside both limits
-/// when they were lettered as the reference letters them; the eleven pages
-/// now come to 50.
+/// when they were lettered as the reference letters them, which left 50.
+/// Three more were the air-cooler sheets' `SP:` and one `J K井场`'s
+/// `1-1/2"` beside its `FC`; the eleven pages now come to 46.
 const LABEL_POSITION_MM: f64 = 0.15;
 
 /// How much wider or narrower than the reference's a paired label's run may
@@ -321,7 +328,7 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 813,
             text_reference: 813,
-            text_off: 7,
+            text_off: 6,
             borrowed: 0,
             borrowed_in_family: 0,
         },

@@ -783,31 +783,32 @@ struct WriteSink<'a> {
 /// Whether a stroke of `primitive` is where its page starts stroking
 /// round-ended and round-joined.
 ///
-/// The reference plots state no cap for the page. They state `1 j 1 J` with
-/// the first pen wider than one device unit and never take it back, so a
-/// path stroked before that pen is under PDF's defaults — butt ends, mitred
-/// corners — and every path after it is round, a one-unit one included. What
-/// comes before it is the border template wherever the reference draws one
-/// first: the two `CPE-SQ` templates are one-unit rules throughout (28 paths,
-/// butt-ended on six of the eleven sheets), and the `CPECCHB-SQ-A2` template
-/// strokes its sheet outline and then its 1.4141 mm frame, `3.84 w`, with the
-/// statement in front of it. The drawing itself starts on a wide pen on every
-/// one of the eleven, so it is round from its first stroke.
+/// The reference plots state no cap for the page. They state `1 j 1 J`
+/// directly behind the first width that is not `0.48 w`, one device unit,
+/// and never take it back: a one-unit pen is GDI's cosmetic pen, which has
+/// no ends to state, and the first geometric pen brings round caps and round
+/// joins that every later path is stroked under, a one-unit one included. So
+/// a path stroked before that pen is under PDF's defaults — butt ends,
+/// mitred corners — and every path after it is round.
 ///
-/// So: a template's stroke on a pen wider than the thin one, or any stroke of
-/// the drawing. `I井场` is the one sheet this does not reproduce — its
-/// reference draws one valve of the drawing before the template, which makes
-/// the template round as well, and nothing decoded so far says what puts that
-/// valve first.
+/// Which paths come before it is the sheet's display order
+/// ([`PaperModel::paint_sequence`]), and the eleven reference plots show
+/// three cases. Six draw their `CPE-SQ` border first, one-unit rules
+/// throughout (28 paths, butt-ended), and the first wide pen is the
+/// drawing's. The A2 sheet's `CPECCHB-SQ-A2` border strokes its sheet outline
+/// and then its 1.4141 mm frame, `3.84 w`, with the statement in front of
+/// it. And `I井场` lists one valve of the drawing ahead of its border frame:
+/// the valve is stroked first, on a two-unit pen, and the whole border after
+/// it is round.
+///
+/// So the rule reads the pen and nothing else: the first stroke on a pen
+/// wider than the thin one.
 fn starts_round_ends(primitive: &crate::model::PaperPrimitive) -> bool {
     if matches!(
         primitive.shape,
         PaperShape::Fill { .. } | PaperShape::Text { .. }
     ) {
         return false;
-    }
-    if !primitive.furniture {
-        return true;
     }
     let declared_mm = primitive
         .stroke
@@ -827,15 +828,10 @@ fn push_layer(
     sink: &mut WriteSink<'_>,
     round_ends: &mut bool,
 ) -> Result<(), PlotWriteError> {
-    // The index is kept because the ledger's `fates` is indexed by the model's
-    // own primitive order, not by this layer's filtered view.
-    let primitives: Vec<(usize, &crate::model::PaperPrimitive)> = model
-        .primitives
-        .iter()
-        .enumerate()
-        .filter(|(_, primitive)| primitive.confidence == confidence)
-        .collect();
-    if primitives.is_empty() {
+    // Indices, because the ledger's `fates` is indexed by the model's own
+    // primitive order, not by this layer's view of it.
+    let order = layer_order(model, confidence);
+    if order.is_empty() {
         return Ok(());
     }
     ops.push(Op::new(
@@ -858,69 +854,12 @@ fn push_layer(
     ops.push(Op::new("J", vec![Object::Int(ends)]));
     ops.push(Op::new("j", vec![Object::Int(ends)]));
 
-    for (index, primitive) in &primitives {
-        let before = ops.len();
-        let painted = paint_primitive(ops, primitive, page);
-        if painted.wrote_path && !*round_ends && starts_round_ends(primitive) {
-            // Stated in the layer's own state, ahead of the stroke's `q`, so
-            // it holds for this stroke and for every one after it.
-            ops.insert(before, Op::new("j", vec![Object::Int(1)]));
-            ops.insert(before, Op::new("J", vec![Object::Int(1)]));
-            *round_ends = true;
-        }
-        // A label is observed by its run, not by a path: `paint_primitive`
-        // deliberately writes nothing for one, so recording it here would file
-        // a correct page as a mismatch.
-        if !matches!(primitive.shape, PaperShape::Text { .. }) {
-            sink.ledger.observe_path(*index, painted.wrote_path);
-        }
-    }
-    for (index, primitive) in &primitives {
-        if let PaperShape::Text {
-            origin_mm,
-            height_mm,
-            rotation,
-            value,
-            font,
-            anchor,
-            line,
-            height_basis,
-            width_permille,
-            paragraph,
-            spans,
-        } = &primitive.shape
-        {
-            let shown = show_text(
-                ops,
-                fonts,
-                ShownText {
-                    typeface: typeface_key(font.as_deref(), value),
-                    origin_mm: *origin_mm,
-                    height_mm: *height_mm,
-                    rotation: *rotation,
-                    value,
-                    anchor: *anchor,
-                    line: *line,
-                    height_basis: *height_basis,
-                    width_permille: *width_permille,
-                    paragraph: *paragraph,
-                    spans,
-                    furniture: primitive.furniture,
-                },
-                page,
-                sink.audit,
-            )?;
-            sink.ledger.observe_run(*index, shown.wrote_run);
-            // The two condensation marks are partial-on-page facts, and they
-            // only exist when a face actually lettered the run.
-            if let Some(fate) = sink.ledger.fates.get_mut(*index)
-                && shown.wrote_run
-            {
-                fate.text = Some(TextMarks {
-                    condensed: shown.condensed,
-                    clipped_at_floor: shown.clipped_at_floor,
-                });
-            }
+    for index in order {
+        let primitive = &model.primitives[index];
+        if matches!(primitive.shape, PaperShape::Text { .. }) {
+            letter_primitive(ops, fonts, primitive, index, page, sink)?;
+        } else {
+            stroke_primitive(ops, primitive, index, page, sink, round_ends);
         }
     }
     ops.push(Op::new("Q", Vec::new()));
@@ -928,6 +867,124 @@ fn push_layer(
     Ok(())
 }
 
+/// The primitives of one layer, by index, in the order the page paints them.
+///
+/// A sheet that says what it draws over what ([`PaperModel::paint_sequence`])
+/// is painted in that order, a label where its record stands among the
+/// strokes: a stroke in the paper's colour — a label's origin mark — then
+/// covers what the sheet drew before it and is covered by what it drew after,
+/// as on the vendor's plot. A model that states no order is painted as a page
+/// has always been written: its strokes in the model's order, then its labels
+/// in the model's order.
+fn layer_order(model: &PaperModel, confidence: &str) -> Vec<usize> {
+    let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+    match model.paint_sequence() {
+        Some(order) => order.into_iter().filter(of_layer).collect(),
+        None => {
+            let lettered =
+                |index: &usize| matches!(model.primitives[*index].shape, PaperShape::Text { .. });
+            let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+            let strokes = layer.iter().copied().filter(|index| !lettered(index));
+            let labels = layer.iter().copied().filter(lettered);
+            strokes.chain(labels).collect()
+        }
+    }
+}
+
+/// The primitives [`write_plot`] visits, by index, in the order it puts them
+/// on the page: the `decoded` layer and then the `inferred` one, each in the
+/// sheet's display order when the model states one. `probe_only` primitives
+/// are not written and are not listed.
+///
+/// A page read back holds its ink and its lettering in this order, which is
+/// what lets a gate compare the two without repeating the rule.
+#[must_use]
+pub fn written_order(model: &PaperModel) -> Vec<usize> {
+    ["decoded", "inferred"]
+        .into_iter()
+        .flat_map(|confidence| layer_order(model, confidence))
+        .collect()
+}
+
+/// Paint one primitive that is not a label, and note what was written.
+fn stroke_primitive(
+    ops: &mut Vec<Op>,
+    primitive: &crate::model::PaperPrimitive,
+    index: usize,
+    page: [f64; 2],
+    sink: &mut WriteSink<'_>,
+    round_ends: &mut bool,
+) {
+    let before = ops.len();
+    let painted = paint_primitive(ops, primitive, page);
+    if painted.wrote_path && !*round_ends && starts_round_ends(primitive) {
+        // Stated in the layer's own state, ahead of the stroke's `q`, so it
+        // holds for this stroke and for every one after it.
+        ops.insert(before, Op::new("j", vec![Object::Int(1)]));
+        ops.insert(before, Op::new("J", vec![Object::Int(1)]));
+        *round_ends = true;
+    }
+    sink.ledger.observe_path(index, painted.wrote_path);
+}
+
+/// Letter one primitive if it is a label, and note what was written.
+fn letter_primitive(
+    ops: &mut Vec<Op>,
+    fonts: &[ReadyFace<'_>],
+    primitive: &crate::model::PaperPrimitive,
+    index: usize,
+    page: [f64; 2],
+    sink: &mut WriteSink<'_>,
+) -> Result<(), PlotWriteError> {
+    let PaperShape::Text {
+        origin_mm,
+        height_mm,
+        rotation,
+        value,
+        font,
+        anchor,
+        line,
+        height_basis,
+        width_permille,
+        paragraph,
+        spans,
+    } = &primitive.shape
+    else {
+        return Ok(());
+    };
+    let shown = show_text(
+        ops,
+        fonts,
+        ShownText {
+            typeface: typeface_key(font.as_deref(), value),
+            origin_mm: *origin_mm,
+            height_mm: *height_mm,
+            rotation: *rotation,
+            value,
+            anchor: *anchor,
+            line: *line,
+            height_basis: *height_basis,
+            width_permille: *width_permille,
+            paragraph: *paragraph,
+            spans,
+            furniture: primitive.furniture,
+        },
+        page,
+        sink.audit,
+    )?;
+    sink.ledger.observe_run(index, shown.wrote_run);
+    // The two condensation marks are partial-on-page facts, and they only
+    // exist when a face actually lettered the run.
+    if let Some(fate) = sink.ledger.fates.get_mut(index)
+        && shown.wrote_run
+    {
+        fate.text = Some(TextMarks {
+            condensed: shown.condensed,
+            clipped_at_floor: shown.clipped_at_floor,
+        });
+    }
+    Ok(())
+}
 /// What one primitive's paint pass actually wrote.
 ///
 /// `wrote_path` is the one fact the ledger checks: a pen state is written even
@@ -2143,7 +2200,8 @@ fn reader_sheet_edge(start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
     sheet_edge_mm(start, end, page)
 }
 
-/// Straight segments `write_plot` strokes, Decoded then Inferred. ProbeOnly is omitted.
+/// Straight segments `write_plot` strokes, in the order it strokes them
+/// ([`written_order`]): Decoded then Inferred. ProbeOnly is omitted.
 ///
 /// Arc and circle chords use the same 0.05 mm tolerance as the reader, and a
 /// dashed pen contributes only the pieces its pattern inks — the same walk the
@@ -2154,45 +2212,41 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for primitive in &model.primitives {
-            if primitive.confidence != confidence {
-                continue;
+    for index in written_order(model) {
+        let primitive = &model.primitives[index];
+        // A fill reads back as its outline, the closing edge included —
+        // the reader's `ClosePath` segment.
+        if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
+            push_chain(&mut out, chain_mm, page);
+            if chain_mm.len() >= 2 {
+                push_segment(&mut out, chain_mm[chain_mm.len() - 1], chain_mm[0], page);
             }
-            // A fill reads back as its outline, the closing edge included —
-            // the reader's `ClosePath` segment.
-            if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
-                push_chain(&mut out, chain_mm, page);
-                if chain_mm.len() >= 2 {
-                    push_segment(&mut out, chain_mm[chain_mm.len() - 1], chain_mm[0], page);
-                }
-                continue;
-            }
-            if let Some(fit) = primitive
-                .stroke
-                .as_ref()
-                .and_then(|pen| fitted_dash(pen, &primitive.shape))
-            {
-                for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
-                    for pair in run.windows(2) {
-                        let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
-                        out.extend(walk.split(pair[0], pair[1]));
-                    }
-                }
-                continue;
-            }
-            let dash: Vec<f64> = primitive
-                .stroke
-                .as_ref()
-                .map(|pen| pen.dash_mm.clone())
-                .unwrap_or_default();
-            let mut walk = DashWalk::new(&dash, 0.0);
+            continue;
+        }
+        if let Some(fit) = primitive
+            .stroke
+            .as_ref()
+            .and_then(|pen| fitted_dash(pen, &primitive.shape))
+        {
             for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
-                walk.restart();
                 for pair in run.windows(2) {
-                    for (start, end) in walk.split(pair[0], pair[1]) {
-                        out.push((start, end));
-                    }
+                    let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
+                    out.extend(walk.split(pair[0], pair[1]));
+                }
+            }
+            continue;
+        }
+        let dash: Vec<f64> = primitive
+            .stroke
+            .as_ref()
+            .map(|pen| pen.dash_mm.clone())
+            .unwrap_or_default();
+        let mut walk = DashWalk::new(&dash, 0.0);
+        for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
+            walk.restart();
+            for pair in run.windows(2) {
+                for (start, end) in walk.split(pair[0], pair[1]) {
+                    out.push((start, end));
                 }
             }
         }
@@ -3410,15 +3464,12 @@ mod tests {
     }
 
     /// The reference plots do not state a cap for the page. They state
-    /// `1 j 1 J` with the first pen wider than one device unit and never take
-    /// it back, so what a one-unit stroke ends with depends on where it is
-    /// drawn: the `CPE-SQ` templates are all one-unit rules and are drawn
-    /// first, butt-ended and mitred (28 paths on six of the eleven sheets);
-    /// the A2 template's 1.4141 mm frame is its second path, and everything
-    /// after it is round. The drawing itself starts on a wide pen on every
-    /// one of the eleven, and is round throughout.
+    /// `1 j 1 J` behind the first pen wider than one device unit and never
+    /// take it back, so what a one-unit stroke ends with depends on where it
+    /// is painted: before that pen it is butt-ended and mitred, after it
+    /// round. Whose stroke it is does not come into it.
     #[test]
-    fn a_page_strokes_round_from_the_templates_first_wide_pen_and_through_the_drawing() {
+    fn a_page_strokes_round_from_its_first_wide_pen() {
         use crate::read::{LineCap, LineJoin, read_plot_pens};
         let ends =
             |strokes: &[(bool, f64, [f64; 2], [f64; 2])]| -> Vec<(LineCap, LineJoin, usize)> {
@@ -3434,16 +3485,17 @@ mod tests {
         let round = |paths| (LineCap::Round, LineJoin::Round, paths);
         let (template, drawing) = (true, false);
 
-        // A template of one-unit rules, then the drawing — its first stroke
-        // a thin one here, which is round all the same.
+        // A template of one-unit rules, then the drawing: a thin stroke of
+        // the drawing ahead of its first wide one is under no cap either.
         assert_eq!(
             ends(&[
                 (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
                 (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
                 (drawing, 0.18, [10.0, 30.0], [60.0, 30.0]),
                 (drawing, 0.70, [10.0, 40.0], [60.0, 40.0]),
+                (drawing, 0.18, [10.0, 50.0], [60.0, 50.0]),
             ]),
-            vec![butt(2), round(2)]
+            vec![butt(3), round(2)]
         );
         // A template whose second rule is a heavy one: the rule after it is
         // round though it is thin.
@@ -3456,24 +3508,121 @@ mod tests {
             ]),
             vec![butt(1), round(3)]
         );
-        // No template: round from the first stroke.
+        // A wide stroke of the drawing ahead of the template, as `I井场`
+        // lists one valve ahead of its border frame: all round.
         assert_eq!(
             ends(&[
-                (drawing, 0.18, [10.0, 10.0], [60.0, 10.0]),
-                (drawing, 0.35, [10.0, 20.0], [60.0, 20.0]),
+                (drawing, 0.35, [10.0, 10.0], [60.0, 10.0]),
+                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+                (template, 0.25, [10.0, 30.0], [60.0, 30.0]),
             ]),
-            vec![round(2)]
+            vec![round(3)]
         );
-        // A template of thin rules alone never states a cap.
+        // Thin strokes alone never state a cap.
         assert_eq!(
             ends(&[
                 (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
-                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+                (drawing, 0.18, [10.0, 20.0], [60.0, 20.0]),
             ]),
             vec![butt(2)]
         );
     }
 
+    /// A page whose sheet states what it draws over what is painted in that
+    /// order, a label where it stands among the strokes; a page that states
+    /// none is painted strokes first and labels after, as it always was.
+    #[test]
+    fn a_page_that_states_its_order_is_painted_in_it() {
+        use crate::read::read_plot_sequence;
+        let label = primitive(
+            "decoded",
+            PaperShape::Text {
+                origin_mm: [20.0, 40.0],
+                height_mm: Some(3.0),
+                rotation: 0.0,
+                value: "AB".to_string(),
+                font: None,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: Vec::new(),
+            },
+        );
+        // In the model's order: a rule, the label, a white mark, a second
+        // rule.
+        let mut model = stroked_page(&[
+            (false, 0.35, [10.0, 10.0], [60.0, 10.0]),
+            (false, 0.25, [19.0, 40.0], [21.0, 40.0]),
+            (false, 0.35, [10.0, 70.0], [60.0, 70.0]),
+        ]);
+        model.primitives[1].stroke.as_mut().expect("a pen").rgb = [255, 255, 255];
+        model.primitives.insert(1, label);
+        let font = [PlotFont {
+            key: "",
+            bytes: pdfcraft_fonts::INTER_REGULAR,
+            subset: false,
+        }];
+        // What is painted, in order: `rule` at its height, `mark`, or a
+        // glyph.
+        let painted = |model: &PaperModel| -> Vec<String> {
+            let page = read_plot_sequence(&write_plot(model, &font).expect("write")).expect("read");
+            let mut steps: Vec<(u32, String)> = page
+                .strokes
+                .iter()
+                .map(|stroke| {
+                    let name = if stroke.paper {
+                        "mark".to_string()
+                    } else {
+                        format!("rule {:.0}", stroke.segment.start_mm[1])
+                    };
+                    (stroke.step, name)
+                })
+                .chain(
+                    page.glyphs
+                        .iter()
+                        .map(|glyph| (glyph.step, glyph.text.clone())),
+                )
+                .collect();
+            steps.sort();
+            steps.into_iter().map(|(_, name)| name).collect()
+        };
+        // The same rules as the list of segments the page strokes.
+        let stroked = |model: &PaperModel| -> Vec<f64> {
+            super::stroked_segments(model)
+                .iter()
+                .map(|(start, _)| start[1])
+                .collect()
+        };
+        // No order stated: the three strokes, then the label.
+        assert_eq!(model.paint_sequence(), None);
+        assert_eq!(super::written_order(&model), [0, 2, 3, 1]);
+        assert_eq!(painted(&model), ["rule 10", "mark", "rule 70", "A", "B"]);
+        assert_eq!(stroked(&model), [10.0, 40.0, 70.0]);
+        // The sheet's order: the second rule, the label, the mark over the
+        // label, the first rule.
+        model.ledger.paint_order = vec![3, 1, 2, 0];
+        assert_eq!(model.paint_sequence(), Some(vec![3, 1, 2, 0]));
+        assert_eq!(super::written_order(&model), [3, 1, 2, 0]);
+        assert_eq!(painted(&model), ["rule 70", "A", "B", "mark", "rule 10"]);
+        assert_eq!(stroked(&model), [70.0, 40.0, 10.0]);
+        // The layers are still written one after the other, each in the
+        // sheet's order, and a primitive of neither is not written.
+        model.primitives[3].confidence = "inferred";
+        model.primitives[2].confidence = "probe_only";
+        assert_eq!(super::written_order(&model), [1, 0, 3]);
+        assert_eq!(painted(&model), ["A", "B", "rule 10", "rule 70"]);
+        model.primitives[3].confidence = "decoded";
+        model.primitives[2].confidence = "decoded";
+        // An order that is not the page's — too short, or naming a primitive
+        // twice — is no order.
+        model.ledger.paint_order = vec![3, 1, 2];
+        assert_eq!(model.paint_sequence(), None);
+        model.ledger.paint_order = vec![3, 1, 1, 0];
+        assert_eq!(model.paint_sequence(), None);
+        assert_eq!(painted(&model), ["rule 10", "mark", "rule 70", "A", "B"]);
+    }
     #[test]
     fn a_validation_marks_width_is_not_a_pen() {
         use super::{WIDEST_PEN_MM, carries_a_pen, pen_width_mm};

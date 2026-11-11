@@ -84,7 +84,7 @@ use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing, lay_out_with_symbol_roots};
 use pid_plot::read::read_plot;
-use pid_plot::write::{PlotFont, WriteLedger, stroked_segments, write_plot_audited};
+use pid_plot::write::{PlotFont, WriteLedger, stroked_segments, write_plot_audited, written_order};
 
 /// The reference share: where this machine keeps the licensed faces, and the
 /// `Ref` library the symbol check at the end of the gate searches.
@@ -267,26 +267,24 @@ fn inked_characters(text: &str) -> impl Iterator<Item = char> + '_ {
 }
 
 /// Every character the writer lettered, in the order it wrote them: the
-/// `decoded` layer and then the `inferred` one, each in model order.
+/// `decoded` layer and then the `inferred` one, each in the order the sheet
+/// draws its objects in — a label where its record stands in the sheet's
+/// list, which is neither the model's order nor the stream's.
 ///
-/// Which labels were lettered is the writer's own account of the page
-/// ([`WriteLedger`]) rather than a second copy of its rules.
+/// Both halves are the writer's own account of the page rather than a second
+/// copy of its rules: which labels were lettered is its [`WriteLedger`], and
+/// the order it visited them in is [`written_order`].
 fn lettered_characters(model: &PaperModel, ledger: &WriteLedger) -> Vec<InkedChar> {
     let mut lettered = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for (index, primitive) in model.primitives.iter().enumerate() {
-            if primitive.confidence != confidence {
-                continue;
-            }
-            let PaperShape::Text { value, .. } = &primitive.shape else {
-                continue;
-            };
-            if !ledger.fate(index).is_some_and(|fate| fate.is_on_page()) {
-                continue;
-            }
-            lettered
-                .extend(inked_characters(value).map(|character| (character, primitive.furniture)));
+    for index in written_order(model) {
+        let primitive = &model.primitives[index];
+        let PaperShape::Text { value, .. } = &primitive.shape else {
+            continue;
+        };
+        if !ledger.fate(index).is_some_and(|fate| fate.is_on_page()) {
+            continue;
         }
+        lettered.extend(inked_characters(value).map(|character| (character, primitive.furniture)));
     }
     lettered
 }

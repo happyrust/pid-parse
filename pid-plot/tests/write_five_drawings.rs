@@ -6,7 +6,7 @@ use std::process::Command;
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
-use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
+use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot, written_order};
 
 #[path = "../src/scratch.rs"]
 mod scratch;
@@ -186,7 +186,9 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
     None
 }
 
-/// What the writer draws for each placed run, in page order.
+/// What the writer draws for each placed run, in the order it letters them
+/// ([`written_order`]): where the sheet lists each label among its objects,
+/// not where the model holds it.
 ///
 /// A drawing pads its label fields with spaces (`H=11.8MPa `,
 /// ` 1001102A`). The reference plots letter a leading pad as a glyph and
@@ -195,32 +197,27 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
 /// means no run at all.
 fn text_runs(model: &PaperModel) -> Vec<&str> {
     let mut runs = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for primitive in &model.primitives {
-            if primitive.confidence != confidence {
+    for index in written_order(model) {
+        if let PaperShape::Text {
+            value,
+            height_mm,
+            rotation,
+            origin_mm,
+            ..
+        } = &model.primitives[index].shape
+        {
+            let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
+            let inked = value.trim_end();
+            if inked.is_empty()
+                || !rotation.is_finite()
+                || !origin_mm[0].is_finite()
+                || !origin_mm[1].is_finite()
+                || !height.is_finite()
+                || height <= 0.0
+            {
                 continue;
             }
-            if let PaperShape::Text {
-                value,
-                height_mm,
-                rotation,
-                origin_mm,
-                ..
-            } = &primitive.shape
-            {
-                let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
-                let inked = value.trim_end();
-                if inked.is_empty()
-                    || !rotation.is_finite()
-                    || !origin_mm[0].is_finite()
-                    || !origin_mm[1].is_finite()
-                    || !height.is_finite()
-                    || height <= 0.0
-                {
-                    continue;
-                }
-                runs.push(inked);
-            }
+            runs.push(inked);
         }
     }
     runs

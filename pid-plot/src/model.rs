@@ -270,6 +270,33 @@ impl PaperModel {
         })
     }
 
+    /// The order the sheet paints the page in: every index into
+    /// [`Self::primitives`] once, the first painted first.
+    ///
+    /// The primitives are kept in the order the layout visits the entities;
+    /// what is drawn over what is the order the sheet lists its objects in,
+    /// which the layout records beside the model
+    /// (`LayoutLedger::paint_order`). `None` for a model that carries no such
+    /// order — one built by hand, or a drawing whose sheet states none — and
+    /// for one whose recorded order is not a permutation of its primitives:
+    /// the writer then paints the strokes and the labels as it holds them.
+    #[must_use]
+    pub fn paint_sequence(&self) -> Option<Vec<usize>> {
+        let count = self.primitives.len();
+        let stated = &self.ledger.paint_order;
+        if count == 0 || stated.len() != count {
+            return None;
+        }
+        let mut seen = vec![false; count];
+        let whole = stated.iter().all(|index| {
+            usize::try_from(*index)
+                .ok()
+                .and_then(|index| seen.get_mut(index))
+                .is_some_and(|slot| !std::mem::replace(slot, true))
+        });
+        whole.then(|| stated.iter().map(|index| *index as usize).collect())
+    }
+
     /// The page the PDF will be given.
     ///
     /// A drawing that states its sheet — a decoded `igSmartFrame2d` whose
@@ -1337,7 +1364,11 @@ pub fn lay_out_with_symbol_roots(
         // unanswered so the gap is readable rather than silent.
         missing_templates = linked_prefixes;
     }
+    // The order the template's own sheet draws its records in; kept for the
+    // page's paint order once the template's document is gone.
+    let mut template_order = None;
     if let Some((page, furniture)) = furniture {
+        template_order = Some(furniture.doc.sheet_display_order.clone());
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
@@ -1528,6 +1559,16 @@ pub fn lay_out_with_symbol_roots(
         });
     }
 
+    // The recorder has seen every entity and every primitive by now; its
+    // ledger is the page's own account. The field is not serialized, so it
+    // changes no page's bytes.
+    let mut ledger = recorder.into_ledger();
+    ledger.paint_order = paint_order(
+        &primitives,
+        &doc.sheet_display_order,
+        template_order.as_ref(),
+        border_frame_place(&doc),
+    );
     Ok(PaperModel {
         library: library.to_vec(),
         page_mm,
@@ -1540,11 +1581,97 @@ pub fn lay_out_with_symbol_roots(
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
-        // The recorder has seen every entity and every primitive by now; its
-        // ledger is the page's own account. The field is not serialized, so it
-        // changes no page's bytes.
-        ledger: recorder.into_ledger(),
+        ledger,
     })
+}
+
+/// The display order of each sheet stream of a document, by the stream's
+/// path.
+type SheetOrders =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::SheetDisplayOrder>;
+
+/// Where the sheet lists its border frame among its objects, if it lists
+/// one: the place the template is drawn at.
+///
+/// A drawing can carry the same frame more than once (`DWG-0201` repeats it
+/// six times); the template is drawn once, where the first of them stands.
+fn border_frame_place(doc: &PidDocument) -> Option<u32> {
+    doc.sheet_streams
+        .iter()
+        .filter_map(|sheet| {
+            let order = doc.sheet_display_order.get(&sheet.path)?;
+            sheet
+                .geometry
+                .as_ref()?
+                .decoded_igsmartframes
+                .iter()
+                .filter(|frame| frame.page_extent_m().is_some())
+                .filter_map(|frame| order.ranks.get(&frame.byte_start))
+                .map(|rank| rank.place)
+                .min()
+        })
+        .min()
+}
+
+/// The order the page is painted in: for each primitive an index into
+/// `primitives`, the first painted first. Empty when neither the drawing nor
+/// its template states a display order.
+///
+/// A sheet draws its objects in the order its `JSheet` record lists them
+/// (`pid_parse::parsers::sheet_display_order`), and a primitive is painted
+/// where the record it was laid out from stands in that order:
+///
+/// * a primitive of the drawing at the rank of its record — the record's own
+///   place in the list when the sheet owns it, its owner's otherwise, and
+///   within one owner the order the owner names its dependents in;
+/// * a primitive of the border template where the drawing lists its border
+///   frame, `frame_place`, and among the template's own in the order the
+///   template's sheet lists them. A sheet with a template and no listed
+///   frame draws the template first, as every page did before this.
+///
+/// A primitive whose record has no rank — its sheet states no order, or the
+/// list does not reach its owner — is painted after everything that has
+/// one. Primitives of one record, and any that tie, keep the order the
+/// model holds them in: a symbol's body is painted in the order the body
+/// decodes, which no list has been read for yet.
+fn paint_order(
+    primitives: &[PaperPrimitive],
+    drawing: &SheetOrders,
+    template: Option<&SheetOrders>,
+    frame_place: Option<u32>,
+) -> Vec<u32> {
+    let states_an_order = |orders: &SheetOrders| orders.values().any(|order| order.children > 0);
+    if !states_an_order(drawing) && !template.is_some_and(states_an_order) {
+        return Vec::new();
+    }
+    let rank_in = |orders: &SheetOrders, primitive: &PaperPrimitive| {
+        let stream = primitive.stream_path.as_deref()?;
+        let start = primitive.byte_range?[0];
+        orders.get(stream)?.ranks.get(&start).copied()
+    };
+    // (place on the sheet, the template before the record that stands
+    // there, the rank within, the model's own order)
+    let mut keys: Vec<(u32, u8, (u32, u32), u32)> = primitives
+        .iter()
+        .enumerate()
+        .map(|(index, primitive)| {
+            #[allow(clippy::cast_possible_truncation)]
+            let index = index as u32;
+            if primitive.furniture {
+                let within = template
+                    .and_then(|orders| rank_in(orders, primitive))
+                    .map_or((u32::MAX, u32::MAX), |rank| (rank.place, rank.inner));
+                (frame_place.unwrap_or(0), 0, within, index)
+            } else {
+                match rank_in(drawing, primitive) {
+                    Some(rank) => (rank.place, 1, (rank.inner, 0), index),
+                    None => (u32::MAX, 1, (u32::MAX, 0), index),
+                }
+            }
+        })
+        .collect();
+    keys.sort_unstable();
+    keys.into_iter().map(|key| key.3).collect()
 }
 
 /// Where the sheet's border frame puts its content and its own drawing on
@@ -6382,6 +6509,83 @@ mod tests {
 
     /// A corpus with nothing in it still says where a template is looked for:
     /// its own two directories, then its parent's, and no archive.
+    /// The page is painted in the order the sheet lists its objects in: the
+    /// template where the border frame stands, each record of the drawing
+    /// where it or its owner stands, and what the list does not reach after
+    /// everything it does.
+    #[test]
+    fn a_primitive_is_painted_where_the_sheet_lists_its_record() {
+        use pid_parse::parsers::sheet_display_order::{DisplayRank, SheetDisplayOrder};
+        let at = |stream: &str, start: usize, furniture: bool| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: Some(stream.to_string()),
+            byte_range: Some([start, start + 10]),
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Line {
+                start_mm: [0.0, 0.0],
+                end_mm: [1.0, 0.0],
+            },
+            furniture,
+        };
+        let order = |ranks: &[(usize, u32, u32)]| {
+            let mut orders = super::SheetOrders::new();
+            orders.insert(
+                "/Sheet6".to_string(),
+                SheetDisplayOrder {
+                    sheet_oid: 6,
+                    children: ranks.len(),
+                    ranks: ranks
+                        .iter()
+                        .map(|(start, place, inner)| {
+                            (
+                                *start,
+                                DisplayRank {
+                                    place: *place,
+                                    inner: *inner,
+                                },
+                            )
+                        })
+                        .collect(),
+                },
+            );
+            orders
+        };
+        // The model's order: two template rules, then the drawing's records
+        // as the layout visits them — a label's two texts, a valve whose body
+        // is two strokes, a line the sheet's list does not reach, and a
+        // primitive with no record at all.
+        let mut no_record = at("/Sheet6", 0, false);
+        no_record.byte_range = None;
+        let primitives = vec![
+            at("/Sheet6", 100, true),  // 0  template rule, listed second
+            at("/Sheet6", 200, true),  // 1  template rule, listed first
+            at("/Sheet6", 300, false), // 2  text, second of its owner's
+            at("/Sheet6", 400, false), // 3  text, first of its owner's
+            at("/Sheet6", 500, false), // 4  valve body, first stroke
+            at("/Sheet6", 500, false), // 5  valve body, second stroke
+            at("/Sheet6", 600, false), // 6  not reached by the list
+            no_record,                 // 7
+        ];
+        // The drawing lists the valve first, then its frame, then the label.
+        let drawing = order(&[(500, 0, 0), (300, 2, 2), (400, 2, 1)]);
+        let template = order(&[(100, 5, 0), (200, 1, 0)]);
+        let painted = super::paint_order(&primitives, &drawing, Some(&template), Some(1));
+        assert_eq!(painted, vec![4, 5, 1, 0, 3, 2, 6, 7]);
+
+        // No frame listed: the template first, as a page was always drawn.
+        let painted = super::paint_order(&primitives, &drawing, Some(&template), None);
+        assert_eq!(painted, vec![1, 0, 4, 5, 3, 2, 6, 7]);
+
+        // A template that states no order keeps the model's.
+        let painted = super::paint_order(&primitives, &drawing, None, Some(1));
+        assert_eq!(painted, vec![4, 5, 0, 1, 3, 2, 6, 7]);
+
+        // Neither states one: no order at all, and the writer keeps its own.
+        let none = super::SheetOrders::new();
+        assert!(super::paint_order(&primitives, &none, None, None).is_empty());
+        assert!(super::paint_order(&primitives, &none, Some(&none), Some(1)).is_empty());
+    }
     #[test]
     fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
         // The corpus sits in a directory of its own, so what the parent holds

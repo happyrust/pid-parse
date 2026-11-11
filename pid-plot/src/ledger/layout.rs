@@ -66,6 +66,24 @@ pub struct LayoutLedger {
     /// order the `retain` visited them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub off_sheet: Vec<u32>,
+    /// The order the page is painted in: an index into
+    /// `PaperModel::primitives` for every primitive, the first painted
+    /// first.
+    ///
+    /// The model keeps its primitives in the order the layout visits the
+    /// entities, which is the order of the record families, not of the
+    /// sheet. What a sheet draws over what is the order its `JSheet` record
+    /// lists its objects in (`pid_parse::parsers::sheet_display_order`), and
+    /// this is that order carried onto the page: the border template where
+    /// the sheet lists its frame, each record of the drawing where the sheet
+    /// lists it or its owner. Empty when no sheet of the page states an
+    /// order; the page is then painted in the model's.
+    ///
+    /// It rides here, beside the model rather than in it, so that the
+    /// model's own JSON is what it was: see
+    /// [`PaperModel::paint_sequence`](crate::model::PaperModel::paint_sequence).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint_order: Vec<u32>,
 }
 
 /// One domain's parse-layer counts (A.1).

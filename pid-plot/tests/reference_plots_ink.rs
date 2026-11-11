@@ -349,26 +349,18 @@ impl Sheet {
     }
 }
 
-/// The one-unit rules of `I井场`'s border template.
-const VALVE_FIRST: &str = "the border template's one-unit rules, butt-ended on our page and \
-                           round-ended on the reference: the reference draws one valve of the \
-                           drawing (`Ball Valve Type 4`, oid 38159) before its template, so \
-                           `1 j 1 J` is already stated when the template is stroked. Neither the \
-                           record's place in the stream, its oid nor its layer puts that valve \
-                           first";
-
-/// The one-unit rules the A2 template strokes before its frame on our page.
-const TEMPLATE_ORDER: &str = "one-unit rules of the `CPECCHB-SQ-A2` template that our page strokes \
-                              before the template's 1.4141 mm frame and the reference after it: \
-                              the reference strokes the frame second, straight after the sheet \
-                              outline, and the order it draws a template's records in is not \
-                              decoded";
-
 /// The border two reference plots do not print.
+///
+/// These are also the two plots that do not paint in the order the sheet on
+/// hand lists its objects in: 459 of 1 603 painted elements and 499 of 2 135
+/// are in that order, where the other nine plots read 98.3 to 99.3 %
+/// (`docs/analysis/2026-11-11-a-sheet-draws-its-children-in-the-order-it-lists-them.md`).
 const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing links and the \
-                           reference plot carries none; nothing on hand says whether the \
-                           drawing lost its frame after the copy we hold or the plot left the \
-                           template out";
+                           reference plot carries none. The plot also paints its objects in an \
+                           order the sheet we hold does not list them in, as no other of the \
+                           eleven does: it was made from another state of the drawing or in \
+                           another way than the rest, and nothing on hand says which, nor \
+                           whether the drawing had its frame then";
 
 /// The A2 sheet's instrument loop and its two pipeline strings.
 const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
@@ -387,12 +379,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 9334,
         same_colour: [9370, 583, 3520],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 11350.393,
-            cause: Cause::Undetermined,
-            what: VALVE_FIRST,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "J K井场 注采阀组工艺及自控流程图",
@@ -417,9 +404,14 @@ const SHEETS: [Sheet; 11] = [
         same_colour: [1278, 155, 1279],
         sheet_edges: 0,
         defects: &[
+            // 3478.925 until the page was painted in the sheet's own order
+            // (2026-11-11). The ink is the same; the comparison fits the two
+            // pages on the strokes in the order it reads them, the fit moved
+            // by 1.0e-5 in scale and 0.009 mm, and 0.036 mm of the border
+            // came to lie on reference ink.
             Defect {
                 field: Field::WholeExtra,
-                reads: 3478.925,
+                reads: 3478.889,
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
@@ -609,12 +601,6 @@ const SHEETS: [Sheet; 11] = [
                 cause: Cause::NotFixed,
                 what: "the top sheet edge and the right one, which we stroke twice, lie off the \
                        reference's 594 × 420 mm paper",
-            },
-            Defect {
-                field: Field::EndsOther,
-                reads: 2156.858,
-                cause: Cause::Undetermined,
-                what: TEMPLATE_ORDER,
             },
         ],
     },
