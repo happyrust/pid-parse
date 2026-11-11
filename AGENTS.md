@@ -77,7 +77,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/border_template.rs` | A0/A1/A2 sheets draw the frame, title block and sign-off column their linked `.igr` carries: both frames and 12 furniture labels on the `CPE-SQ` pages with the company name and `会 签 专 业` read back, and the A2 CCHB case on its own 35.354/7.071 mm insets, 116 strokes and 36 cells; a page with no same-size template draws none (pinned by `model.rs`'s extent unit test, no longer by an A2 negative) | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` + `CPECCHB-SQ-A2.igr` (soft-skips when absent) |
 | `pid-plot/tests/style_witness.rs` | The plant backup draws only style vocabulary a reference plot has exercised: the eleven acceptance pages' 10 pen widths / 2 dash patterns / 4 faces / 3 templates are pinned, every unexercised entry is pinned with its drawing-vs-furniture split (3 of the 4 unexercised widths are `CPECCHB-SQ-A1` furniture, `0.5000 mm` is also `D04`'s own ink, the 2 unexercised dash patterns are the drawing's own ink), and the four widths the open band boundaries cannot settle are pinned — `0.3000 mm` inside `(0.25, 0.35)`, `0.5000 mm` inside `(0.35, 0.70)`, `0.7500 mm` and `0.7999 mm` inside `(0.70, 1.06)` | `PID_ACCEPTANCE_CORPUS` (default `验收数据`; no fallback to the five-sheet corpus) and `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings — copied to a directory with no `Ref` and no archive in reach — draw nothing | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
-| `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm，见计划 §7.1；剩下的 `/Sheet6` 划线端头在信号线虚线按每段直线重排之后也归零（`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`），现在除 A2 那张外的十页 coverage 1.000000、uncovered 0.000 mm、extra 0.000 mm。配上的标签管两层：两条字符类阈值（平均下移 ±0.04、平均宽差 ±0.02 字高）管每一个类——不论条数、`unknown` 也算——掩膜视图与整页视图都查，没有例外：原先唯一超限、钉在读数上的 `Left/Ascender part`（以 `℃` 结尾的标签被切开的两段，8 页，+0.0294）在借来的 `℃` 照参考图用 `Tf 9.6` 画之后读 −0.0003，例外名单已经删掉；锚点偏离参考超过 0.15 mm 或 run 比参考宽窄超过 0.05 mm 的标签按页钉条数（`WholePage::text_off`，11 页合计 47：文字普查的 64 条里，14 条借来的 run 照参考图画之后回到界内，三张空冷器图的 `SP:` 在记录里的每一段各自从整像素起笔之后回到界内），多一条少一条都失败并逐条列出。一对 run 属于哪个类由 `compare.rs` 的来源查找决定：从标签自己的锚点量、按整条 run 链拼出的文字找、被切开的一段认它那一行拼出的标签（类名带 ` part`），见 `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`。借来的 run 另按字型族与参考比（`WholePage::borrowed` / `borrowed_in_family`）：标签点名的字型画不了的字，两页各自换别的字型写；凡配上对的这种 run，从两份 PDF 读回各自的字体名（`read::read_plot_with_faces`，不重复写出器的借字规则），按测试里的明文表 `FAMILIES` 归族——宋体、新宋体一族，仿宋一族——看我方与参考是否同族。11 页合计 14 条——12 条 `℃` 与 A2 图两处 `动火点`——现在 14 条全部同族：我方与参考都是 NSimSun `Tf 9.6`（字体目录里没有 `nsimsun.ttf` 时我方是同族的 SimSun）；2026-11-11 之前 12 条 `℃` 是 FangSong、只有两处 `动火点` 同族。每页的条数精确钉，同族数只许升——少了失败，多了要求把钉值提上去；读到表里没有的字体名直接失败。A2 图被拖动的仪表簇里另有两条借来的 `℃`（`L=-5℃`、`H=-15℃`）与参考配不上对，不在这个读数里。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
+| `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm，见计划 §7.1；剩下的 `/Sheet6` 划线端头在信号线虚线按每段直线重排之后也归零（`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`），现在除 A2 那张外的十页 coverage 1.000000、uncovered 0.000 mm、extra 0.000 mm。配上的标签管两层：两条字符类阈值（平均下移 ±0.04、平均宽差 ±0.02 字高）管每一个类——不论条数、`unknown` 也算——掩膜视图与整页视图都查，没有例外：原先唯一超限、钉在读数上的 `Left/Ascender part`（以 `℃` 结尾的标签被切开的两段，8 页，+0.0294）在借来的 `℃` 照参考图用 `Tf 9.6` 画之后读 −0.0003，例外名单已经删掉；锚点偏离参考超过 0.15 mm 或 run 比参考宽窄超过 0.05 mm 的标签按页钉条数（`WholePage::text_off`，11 页合计 46：文字普查的 64 条里，14 条借来的 run 照参考图画之后回到界内，三张空冷器图的 `SP:` 在记录里的每一段各自从整像素起笔之后回到界内，`J K井场` 的 `1-1/2"` 与 `FC`——同一条基线上的两条标签——在页面按图纸的显示次序画之后读回成参考图那样的两个 run、回到界内），多一条少一条都失败并逐条列出。一对 run 属于哪个类由 `compare.rs` 的来源查找决定：从标签自己的锚点量、按整条 run 链拼出的文字找、被切开的一段认它那一行拼出的标签（类名带 ` part`），见 `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`。借来的 run 另按字型族与参考比（`WholePage::borrowed` / `borrowed_in_family`）：标签点名的字型画不了的字，两页各自换别的字型写；凡配上对的这种 run，从两份 PDF 读回各自的字体名（`read::read_plot_with_faces`，不重复写出器的借字规则），按测试里的明文表 `FAMILIES` 归族——宋体、新宋体一族，仿宋一族——看我方与参考是否同族。11 页合计 14 条——12 条 `℃` 与 A2 图两处 `动火点`——现在 14 条全部同族：我方与参考都是 NSimSun `Tf 9.6`（字体目录里没有 `nsimsun.ttf` 时我方是同族的 SimSun）；2026-11-11 之前 12 条 `℃` 是 FangSong、只有两处 `动火点` 同族。每页的条数精确钉，同族数只许升——少了失败，多了要求把钉值提上去；读到表里没有的字体名直接失败。A2 图被拖动的仪表簇里另有两条借来的 `℃`（`L=-5℃`、`H=-15℃`）与参考配不上对，不在这个读数里。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
+| `pid-plot/tests/reference_plots_ink.rs` | 同样 11 张图，按**纸上看得见的墨**读（验收门禁比的是「画了什么」，不分颜色，也读不到图纸边上的线、线帽和先后）。两页都用 `ink::PageInk::read` 读成墨与纸色两份，每页 29 个读数，全部是等式：页幅与参考纸张之差；掩膜视图与整页的 coverage / 未覆盖 / 多余 / 标签配对；笔宽一致 / 不符 / 未配；笔画、标签与字的颜色（两页都是墨，还是一页是墨、另一页只是纸色）；两页用到的墨色是否相同；沿图纸边的笔画按位置配对并比笔宽（`ink::sheet_edges`）；线帽或拐角与参考图同一位置的笔画不同的墨长（`ink::ends_apart`）；参考图用纸色画在墨上的每一处，我方那两样东西的先后是否相同（`ink::wipe_order`：11 页 91 处，89 处相同）。一页与参考图印得一样时每个读数都是理想值，所以表（`SHEETS`）里每页只写它自己的数——标签数、配上的笔画数、图纸边数、白色记号数；达不到理想值的读数各占一行「已知缺陷」，写明它读多少、为什么（还没修 / 等现场数据 / 未定）。读数变差失败；变好也失败，直到收紧钉值或删掉那一行。现在 25 行：3 行还没修（A2 页幅两行、图纸边一行），12 行等现场数据（A2 晚一版的仪表回路），10 行未定（`一级闪蒸分离器A` / `低温分离器A`：参考图没有印图框，也不按手头这张图纸的显示次序画）。线帽一行都没有：11 页都是 0.000 mm。`PID_INK_GATE_OUT=<dir>` 把打印的表写到 `<dir>/reference-plots-ink.txt`；这道门从不往语料里写东西 | `PID_ACCEPTANCE_CORPUS`（默认 `D:\work\cad\pid-test-data\验收数据`）；第一张参考图不在时打印原因并软跳过，只读表的那条用例（`every_known_defect_is_one_reading_with_a_cause`）到处都跑 |
 | `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364` | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
@@ -128,6 +129,12 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 跳过）、`export_every_fixture` 真跑走查与模板表两条断言（导出段跳过）、
 `cli_pid_plot` 真跑 9 条不需要字体的用例（D06 导出跳过）。其余 8 个文件在 CI 上
 一条出图断言都不执行，因为它们读的语料（验收数据、备份语料、字体）都不在仓库里。
+
+**2026-11-11 新增的第 17 个文件 `reference_plots_ink.rs` 不在上面的实测里**，下面是照代码
+定的，没有在干净检出里量过：它是**混合**——`every_known_defect_is_one_reading_with_a_cause`
+只读表里的常量，到处都跑；`eleven_reference_plots_print_the_ink_their_pins_say` 在
+`PID_ACCEPTANCE_CORPUS` 的第一张参考图不在时打印 `skipping the ink gate; … is absent` 后
+早退，一条页面断言都不跑。下次重测整张表时把它量进去，结论那一行届时是 17 个文件。
 
 **2026-11-10 改过、没有在干净检出里重测的四行**：`cli_pid_plot`、
 `export_every_fixture`、`compare_five_drawings` 与 `export_ledger_fixtures`
@@ -319,6 +326,56 @@ decompilation.
   discriminator strategy (deferred). Field name describes byte
   position only — **not** a semantic `sub_kind`.
 
+### Display order: the `0x0114 JSheet` child list
+
+A sheet's records sit in `Sheet<N>` in the order their oids were handed
+out, which is **not** the order the sheet draws them in. The drawing
+order is the sheet's own list: the `0x0114 JSheet` record of the root
+`PSMcluster0` names every record of the sheet stream whose parent is the
+sheet, 14 bytes each (oid, a range box of four `i16` in
+`scale × 2⁻¹⁵` m, a flag word), in the order the sheet draws them.
+`src/parsers/sheet_display_order.rs` decodes it and ranks every live
+record of the stream (`PidDocument::sheet_display_order`, keyed by
+`/Sheet<N>`; not serialized, so no JSON or schema output changes):
+
+- a record the sheet owns takes its place in the list;
+- a record a `0x00FA DependencyObject` owns — a label's text boxes, a
+  connector's line string, an arrow head — takes its owner's place,
+  ordered among its siblings the way the owner's payload names them;
+- the border template is drawn where the list has the frame (`0x003D`):
+  first in 58 of the 71 files on hand, second on `I井场` (behind one
+  valve), 91 to 2 708 places down in seven.
+
+On all 71 files on hand the list names exactly the records the sheet
+owns (85 836 children), and nine of the eleven reference plots paint
+98.3–99.3 % of their elements in its order (the other two, the ones
+that print no border, were not made from the list we hold). `pid-plot`
+paints by it: `LayoutLedger::paint_order` beside the model,
+`PaperModel::paint_sequence`, `write::written_order`.
+
+**Caveats**:
+- Never take oid order or stream order for drawing order: over the
+  10 928 records the nine plots paint, 10 429 first appear in the
+  list's order, 1 989 in oid order and 1 990 in stream order.
+- The list is taken only when it is the sheet's: non-empty, and every
+  child a live record of the stream whose parent is the sheet. A sheet
+  with no such record keeps the old order (strokes, then labels, each in
+  model order).
+- The `DependencyObject` grammar is not decoded. Its dependents' order
+  is read by scanning the payload for their oids at two-byte steps; 176
+  of 1 201 groups on the reference plots come out in another order.
+- The lists of the definition caches (`JSite*`) are not read: the order
+  inside a symbol body is the body's own.
+- The 164 bytes behind the entries state the sheet's paper (an `f64`
+  height at `+102`, a size code at `+110`, an `f64` width at `+114`:
+  0.42 × 0.594, 0.594 × 0.841 or 0.841 × 1.189 m on the 71 files). The
+  decoder does not read them yet; the probe does. The eleven reference
+  plots are printed on exactly that paper, the A2 sheet included, whose
+  page this crate still takes from its border template.
+
+See `docs/analysis/2026-11-11-a-sheet-draws-its-children-in-the-order-it-lists-them.md`
+and `examples/probe_what_order_a_sheet_lists_its_children_in.rs`.
+
 Phase 14 milestones are tracked in
 `goals/phase14-sppid-sheet-geometry/progress.jsonl`. See
 `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md`
@@ -397,14 +454,45 @@ or found no label for (`unknown`) with the paper-table label it was read
 against, each label past the 0.15 mm / 0.05 mm limits the gate counts as
 `WholePage::text_off`, every lettering class with its means, whole page and
 masked, and each pair the two pages set in different faces, with both faces
-and body sizes. It reads 24 pieces, 12 pairs with no label, 47 labels past the
+and body sizes. It reads 24 pieces, 24 pairs with no label, 46 labels past the
 limits and no pair in different faces: the fourteen borrowed runs the gate
 counts as `WholePage::borrowed` are NSimSun at 3.387 mm on both pages. Until
 2026-11-11 ours were FangSong or SimSun at 3.588 mm and 64 labels were past
 the limits; the three `SP:` of the air-cooler sheets left the count when each
-run of a record took its own whole-pixel start. A machine with no
+run of a record took its own whole-pixel start, and `J K井场`'s `1-1/2"`
+beside `FC` when the page was painted in the sheet's display order: two
+labels on one baseline painted one after the other read back as one run,
+and the reference paints other objects between them. For the same reason
+the pairs with no label went from 12 to 24 — where the reference's order
+does put two such labels next to each other, both pages now read them as
+one run, which is no single label of the paper table. A machine with no
 `nsimsun.ttf` borrows SimSun instead, so there the probe would list those
 fourteen again, SimSun against NSimSun (not run on such a machine).
+
+The ink line's probes (2026-11-10 and 11) each settle one question about
+what a page prints, and print the numbers the two reference gates rest on.
+Root crate: `probe_what_order_a_sheet_lists_its_children_in` (the
+`JSheet` child list of every sheet stream given: listed against owned,
+where the frame stands, the paper the record states; exits non-zero when
+a list is not exactly the sheet's records),
+`probe_which_strokes_state_the_paper_colour` (which strokes of a symbol, a
+template or a drawing state `0x8000_0000` or white),
+`probe_which_text_records_state_a_box` (which `igTextBox` records carry
+the kind-2 tail and how tall the box is) and
+`probe_does_the_database_place_a_sheet_where_the_pid_does` (an `exp` dump
+against the `.pid`). `pid-plot`: `probe_which_paint_leaves_no_ink`,
+`probe_which_primitives_paint_the_paper` (also against another build's
+dump), `probe_which_strokes_the_reader_drops_as_sheet_edges`,
+`probe_what_the_template_masks_hide`, `probe_what_a_page_reads_inside_a_window`,
+`probe_is_a_library_gap_drawn_from_the_file`,
+`probe_is_the_border_a_reference_lacks_the_one_its_sister_prints`,
+`probe_which_device_grid_a_page_is_lettered_on`,
+`probe_does_the_unrounded_start_place_the_colon_of_sp` (9 of 9),
+`probe_does_a_sheet_print_alone_as_in_a_batch` and
+`probe_does_a_page_read_the_same_twice` (the same two plots compared
+again and again: one outcome and one fit, since the comparison stopped
+summing in hash order). Each one's module docs give its run and what it
+read.
 
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
