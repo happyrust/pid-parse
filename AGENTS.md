@@ -485,7 +485,11 @@ The gate is **ratchet-down only**:
 See `.github/scripts/check-missing-docs.sh` for the exact command
 (`cargo rustdoc --lib --locked -- -W missing-docs` + grep count).
 
-- `--workspace` makes the vendored `oxidized-mdf` crate a hard gate.
+- `--workspace` does not reach the vendored `oxidized-mdf` crate's own
+  tests: the root `Cargo.toml` lists `vendor/oxidized-mdf` under
+  `[workspace] exclude`, so the commands above only compile it as a
+  dependency of `pid-parse`. Run its unit tests on their own, from its
+  directory: `cd vendor/oxidized-mdf && cargo test --lib`.
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
   errors; keep local output clean by the same bar.
 
