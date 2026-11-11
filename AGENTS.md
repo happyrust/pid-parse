@@ -630,7 +630,13 @@ paints by it: `LayoutLedger::paint_order` beside the model,
   codes, the fixtures' multi-line notes) are lettered as before and
   listed, drawing by drawing, in
   `docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`
-  for want of a plot that shows where their lines sit.
+  for want of a plot that shows where their lines sit. Fifteen of those
+  65 have the witnessed box height, 4.034 mm, and another anchor code
+  (`0x37` on thirteen labels of `凝析油一级闪蒸分离器B气相出口改造`), so
+  labels that look alike on like sheets are lettered one device unit
+  apart by a code whose meaning is not known. That is the rule kept to
+  what its four witnesses show, not an oversight, and whether it should
+  reach them is undecided; §9 of the same analysis.
 
 - A sheet a frame embeds is drawn where the drawing lists the frame. An
   `igSmartFrame2d` record names its site at payload `+156`, and the site's
@@ -795,17 +801,21 @@ or found no label for (`unknown`) with the paper-table label it was read
 against, each label past the 0.15 mm / 0.05 mm limits the gate counts as
 `WholePage::text_off`, every lettering class with its means, whole page and
 masked, and each pair the two pages set in different faces, with both faces
-and body sizes. It reads 24 pieces, 24 pairs with no label, 2 labels past the
-limits and no pair in different faces: the fourteen borrowed runs the gate
+and body sizes. It reads 24 pieces, 24 pairs with no label, no label past the
+limits on any sheet and no pair in different faces (re-run on 2026-11-12;
+the "2 labels" this paragraph kept until then was the count before the
+boxed labels moved): the fourteen borrowed runs the gate
 counts as `WholePage::borrowed` are NSimSun at 3.387 mm on both pages. Until
 2026-11-11 ours were FangSong or SimSun at 3.588 mm and 64 labels were past
 the limits; the three `SP:` of the air-cooler sheets left the count when each
 run of a record took its own whole-pixel start, the 44 condensed SimSun
 labels of the title blocks when a label's `Tm` took the scales the PDF driver
-writes (`pid-plot/src/write/text_matrix.rs`), and `J K井场`'s `1-1/2"`
+writes (`pid-plot/src/write/text_matrix.rs`), `J K井场`'s `1-1/2"`
 beside `FC` when the page was painted in the sheet's display order: two
 labels on one baseline painted one after the other read back as one run,
-and the reference paints other objects between them. For the same reason
+and the reference paints other objects between them; and the last two, the
+A2 sheet's boxed `仪表风管线`, when a boxed line was hung from the top of
+its box. For the same reason
 the pairs with no label went from 12 to 24 — where the reference's order
 does put two such labels next to each other, both pages now read them as
 one run, which is no single label of the paper table. A machine with no
@@ -932,14 +942,26 @@ cargo test --locked -p pid-parse --no-default-features --lib
 cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown
 ```
 
-`cargo fmt --all` hands rustfmt every target's root file as one command
-line — some 450 of them, 298 root-crate examples among them. Under Windows
-that line may not pass 32 767 characters, and in a worktree whose path is
-50 characters long cargo-fmt fails before rustfmt reads a file (`os error
-206`). Whether the main checkout, whose path is 17 characters shorter, is
-still under the limit was not tried; each new example brings it nearer.
-Linux, and so CI, has no such limit. Where it bites, run
-rustfmt over the same roots in pieces: each package's `src/lib.rs`,
+`cargo fmt --all` hands rustfmt the root file of every target, as
+`\\?\`-prefixed absolute paths, in one command line for each edition: 355
+files for edition 2021 (the root crate's lib, 6 bins, 298 examples, 46
+tests and a bench, and the three of `vendor/oxidized-mdf`) and 96 for
+edition 2024 (`pid-plot`). Under Windows a command line may not pass
+32 767 characters, and the 2021 line grows by 355 characters for every
+character of the checkout's path, so whether the command runs depends on
+where the checkout is. Measured on `e9ebba1` with rustfmt 1.10.0-stable
+(the seventh review, 2026-11-12): a checkout whose path is 50 characters
+or shorter runs it, and from 51 on cargo-fmt fails before rustfmt reads a
+file (`os error 206`). The main checkout (32 characters) runs it, with 18
+characters of path to spare — the line is about 26 000 characters there
+and fails somewhere between 32 400 and 32 750 — or some 60 to 85 more
+root-crate examples, each of which costs its path, its name and about 15
+characters. A worktree under `pid-parse-wt\accept-evidence` (51) cannot
+run it, and one under `pid-parse-wt\publish-export` (50) is one example
+from the limit. The `pid-plot` line (about 8 800 characters) is nowhere
+near it, so `cargo fmt -p pid-plot` runs anywhere. Linux, and so CI, has
+no such limit. Where it bites, check the tree out under a shorter path,
+or run rustfmt over the same roots in pieces: each package's `src/lib.rs`,
 `src/bin/*.rs`, `examples/*.rs`, `tests/*.rs` and `benches/*.rs` with that
 package's edition (2021 for the root crate and `vendor/oxidized-mdf`, 2024
 for `pid-plot`), `rustfmt --check --edition <edition> <sixty files>`.
