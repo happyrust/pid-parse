@@ -2633,8 +2633,8 @@ pub trait PsmRecordDecoder {
 // Phase 14 Slices D/F: PSM-encoded geometry decoder family
 // ---------------------------------------------------------------------------
 
-/// Byte length of one PSM record header in
-/// [`decode_primitive_lines`].
+/// Byte length of the record header the two retired matchers read
+/// ([`decode_primitive_line_at`], [`decode_jstyle_override_at`]).
 ///
 /// Layout reverse-engineered from `radsrvitem.dll`
 /// `PSMSerializeOut` (0x56491E80) / `PSMSerializeIn` (0x564915E0)
@@ -2663,10 +2663,11 @@ pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 /// Equals the Intergraph IGDS class tag for `igLine2d` (`0x18 = 24`,
 /// looked up by `radsrvitem.dll!sub_56448F70`). The fixture
 /// histogram in `examples/probe_psm_type_code_histogram.rs` shows
-/// 309 cross-fixture hits for this type code on `Sheet*` streams,
-/// far more than the 3 `GLine2d` (PSM `0x3FE6`) records — `igLine2d`
-/// is the canonical Sigma 2D line representation, while `GLine2d`
-/// (PSM `0x3FE6`) is `SmartPlant`'s extended parametric wrapper.
+/// 309 cross-fixture hits for this type code on `Sheet*` streams:
+/// `igLine2d` is the Sigma 2D line record, and the only line record a
+/// sheet holds. (Phase 14 set a "`GLine2d`, PSM `0x3FE6`" family beside
+/// it as `SmartPlant`'s parametric wrapper of the same line; no such type
+/// code exists, see [`PSM_TYPE_CODE_GLINE2D`].)
 pub const PSM_TYPE_CODE_IGLINE2D: u16 = 0x0018;
 
 /// Byte length of one PSM `igLine2d` payload (after the 6-byte
@@ -2967,15 +2968,18 @@ const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 /// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
 ///
 /// The class is real — `radsrvitem.dll` has a `GLine2d::Validate`
-/// (`sub_56524C50`) and the six-double parametric layout is its — so the
-/// decoder stays, now gated on chain membership by
-/// [`decode_primitive_lines`]. It decodes nothing on this corpus, which is
-/// the correct answer for a corpus that contains none.
-///
-/// Since 2026-11-11 it decodes nothing on any stream: `0x3FE6` is past
+/// (`sub_56524C50`) and the six-double parametric layout is its — but it
+/// is a class of the geometry library, not one the reader serializes
+/// records of, and `0x3FE6` is not its type code or anyone's: it is past
 /// [`PSM_TYPE_CODE_LAST`], and a chain walk stops on a word no record
-/// opens with ([`psm_type_word_opens_a_record`]). The layout is still
-/// read at an offset by [`decode_primitive_line_at`].
+/// opens with ([`psm_type_word_opens_a_record`]).
+///
+/// **Retired as a sheet family, 2026-11-11.** Gated on chain membership
+/// from 2026-08-10, the family decoded nothing on any corpus; with the
+/// class-table tripwire it could decode nothing on any stream. The
+/// registry row, the `SheetGeometry` field, the model DTO, the emitter
+/// and the stream entry point are gone. The layout is still read at an
+/// offset by [`decode_primitive_line_at`].
 pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
 
 /// Unit-vector tolerance used when accepting a candidate `GLine2d`
@@ -3061,50 +3065,33 @@ impl SheetPrimitiveLineDecoded {
     }
 }
 
-/// Decode every PSM-encoded `GLine2d` `PrimitiveLine` record in a
-/// `Sheet*` stream's bytes.
+/// Try to read the `GLine2d` layout at `offset` in `data`: the matcher of
+/// a family retired on 2026-11-11, kept for the test that says what its
+/// hits were.
 ///
-/// A candidate has to be a **member of the stream's record chain**
-/// ([`SheetChain::walk`]) before its payload is even looked at, and
-/// then satisfy all of:
+/// The bytes at `offset` are accepted when all of these hold:
 ///
-/// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
+/// 1. the type code (header bytes 0..2 LE, masked to 14 bits) is
 ///    [`PSM_TYPE_CODE_GLINE2D`];
-/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 48 and fits
-///    within the remaining stream;
-/// 3. All six payload `f64`s are finite (rejecting NaN / inf /
-///    sub-domain values: `|x| <= 1e9`, a private
-///    `GLINE2D_COORDINATE_DOMAIN_LIMIT` in this module);
-/// 4. `(direction.x, direction.y)` has unit length within `1e-3`
-///    (a private `GLINE2D_UNIT_VECTOR_TOLERANCE`) and is not the
-///    zero vector;
+/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 48 and fits within
+///    the remaining stream;
+/// 3. all six payload `f64`s are finite and within `|x| <= 1e9`;
+/// 4. `(direction.x, direction.y)` has unit length within `1e-3` and is
+///    not the zero vector;
 /// 5. `param_start < param_end` strictly.
 ///
-/// **Chain membership is the load-bearing rule, and it is why this family
-/// no longer decodes anything on the reference corpus.** Rules 1–5 alone
-/// are satisfiable by accident: a `[1 0; 0 1]` placement matrix reads as a
-/// unit direction plus an ordered parameter pair, and `1/√2` — the ISO
-/// A-series page ratio every `igSmartFrame2d` carries — is an `f64` whose
-/// top two bytes are literally `E6 3F`. All eleven page frames in the
-/// corpus spell the type code that way and three of them used to decode as
-/// lines 160 bytes inside another record. See
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
-///
-/// Adversarial bytes pass through without panics. A stream whose chain
-/// stops before its end yields the records before the stop and is never
-/// scanned for the rest.
-pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-    SheetChain::walk(data)
-        .starts
-        .into_iter()
-        .filter_map(|at| GLine2dDecoder.decode_at(data, at))
-        .collect()
-}
-
-/// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
-/// `offset` in `data`. Returns `None` when any of the validation
-/// rules in [`decode_primitive_lines`] fail. Bounds-checked: passing
-/// `offset >= data.len()` or a truncated tail simply returns `None`.
+/// The five are satisfiable by accident: a `[1 0; 0 1]` placement matrix
+/// reads as a unit direction plus an ordered parameter pair, and `1/√2` —
+/// the ISO A-series page ratio every `igSmartFrame2d` carries — is an
+/// `f64` whose top two bytes are literally `E6 3F`. That is all this
+/// matcher ever matched: tried at every offset of the corpora's sheets it
+/// accepts seven runs of bytes, each 160 bytes into a page frame
+/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+/// No stream entry point walks it: `0x3FE6` is past
+/// [`PSM_TYPE_CODE_LAST`], a chain walk stops on such a word
+/// ([`psm_type_word_opens_a_record`]), and so no chain can hand it a
+/// record. Bounds-checked: `offset >= data.len()` or a truncated tail
+/// returns `None`.
 ///
 /// Thin wrapper over [`GLine2dDecoder::decode_at`].
 pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
@@ -3261,11 +3248,8 @@ fn decode_primitive_line_payload(
 /// local it never consults. Chain membership, not `aux_hi`, is what
 /// tells a record from a coincidence.
 ///
-/// 4-double Cartesian `(start, end)` representation. Compare to
-/// the parametric 6-double `GLine2d` (PSM `0x3FE6`) family, which
-/// is `SmartPlant`'s extended wrapper of the same geometric concept.
-/// `igLine2d` is by far the more common form in real fixtures
-/// (309 vs 3 cross-fixture hits).
+/// 4-double Cartesian `(start, end)` representation: the one line record
+/// a sheet holds (309 across the four fixtures).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgLine2dDecoded {
     /// Byte range covering the full PSM record (6-byte header +
@@ -3321,9 +3305,8 @@ impl SheetIgLine2dDecoded {
 /// stream's bytes.
 ///
 /// A candidate has to be a **member of the stream's record chain**
-/// ([`SheetChain::walk`]) before its payload is even looked at —
-/// the same gate `decode_primitive_lines` has used since the
-/// `GLine2d` ghost family was retired — and then satisfy all of:
+/// ([`SheetChain::walk`]) before its payload is even looked at, and then
+/// satisfy all of:
 ///
 /// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINE2D`] (`0x0018`);
 /// 2. `bytes_to_follow` == 50 (igLine2d records are fixed-size);
@@ -11859,10 +11842,15 @@ mod tests {
         out
     }
 
-    /// The matchers of two retired families walked on a chain, as the
+    /// The matchers of three retired families walked on a chain, as the
     /// stream entry points they no longer have walked them. The unit tests
     /// below hold the matchers' own rules, which the evidence tests rest
     /// on; nothing outside tests walks them.
+    fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
+        GLine2dDecoder.scan(data)
+    }
+
+    /// The same for the `0x0010` sub-record view.
     fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
         SubRecord0x0010Decoder.scan(data)
     }
@@ -11875,7 +11863,7 @@ mod tests {
     /// Wrap synthetic records into a `Sheet*` stream: the 8-byte stream
     /// header, then the records nose to tail.
     ///
-    /// [`decode_primitive_lines`] only considers offsets that are members of
+    /// A family's `scan` only considers offsets that are members of
     /// the stream's record chain, so a bare record with no stream header
     /// decodes as nothing. Tests that hand it loose bytes would pass for the
     /// wrong reason — which is the exact failure mode this gate exists to
@@ -11894,7 +11882,7 @@ mod tests {
     ///
     /// `0x3FE6` is past the last slot of the native reader's class table,
     /// so a chain walk stops on such a record
-    /// ([`psm_type_word_opens_a_record`]) and [`decode_primitive_lines`]
+    /// ([`psm_type_word_opens_a_record`]) and the matcher walked on a chain
     /// returns nothing for any stream. The payload rules are the class's
     /// own and are still held, through the entry point that reads at an
     /// offset.
@@ -12228,8 +12216,7 @@ mod tests {
     }
 
     /// The chain, not a payload rule, is what tells an `igLine2d` from a
-    /// coincidence — the gate `decode_primitive_lines` has carried since
-    /// the `GLine2d` ghost family was retired.
+    /// coincidence: the gate every family decodes behind.
     #[test]
     fn igline2d_ignores_a_record_shaped_match_buried_in_another_record() {
         let hidden = build_synthetic_igline2d_record(9, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));

@@ -81,7 +81,6 @@ const THRESHOLD: f64 = 0.80;
 /// Decoded record families of one sheet's oid pool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Family {
-    PrimitiveLine,
     IgLine2d,
     IgLineString2d,
     IgPoint2d,
@@ -95,7 +94,6 @@ enum Family {
 impl Family {
     fn name(self) -> &'static str {
         match self {
-            Self::PrimitiveLine => "GLine2d",
             Self::IgLine2d => "igLine2d",
             Self::IgLineString2d => "igLineString2d",
             Self::IgPoint2d => "igPoint2d",
@@ -111,8 +109,7 @@ impl Family {
     fn is_graphic(self) -> bool {
         matches!(
             self,
-            Self::PrimitiveLine
-                | Self::IgLine2d
+            Self::IgLine2d
                 | Self::IgLineString2d
                 | Self::IgPoint2d
                 | Self::IgTextBox
@@ -281,9 +278,6 @@ fn families_of(g: &SheetGeometry) -> BTreeMap<u32, BTreeSet<Family>> {
     let mut add = |oid: u32, family: Family| {
         out.entry(oid).or_default().insert(family);
     };
-    g.decoded_primitive_lines
-        .iter()
-        .for_each(|r| add(r.oid, Family::PrimitiveLine));
     g.decoded_iglines
         .iter()
         .for_each(|r| add(r.oid, Family::IgLine2d));

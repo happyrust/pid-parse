@@ -39,9 +39,9 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_records::{
-    decode_smartframes, parse_psm_header, sheet_record_starts, AttributeFragmentDecoder,
-    JStyleOverrideDecoder, PsmRecordDecoder, SheetChain, SubRecord0x0010Decoder,
-    SHEET_STREAM_MAGIC,
+    decode_primitive_line_at, decode_smartframes, parse_psm_header, sheet_record_starts,
+    AttributeFragmentDecoder, JStyleOverrideDecoder, PsmRecordDecoder, SheetChain,
+    SubRecord0x0010Decoder, SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
@@ -1230,6 +1230,11 @@ struct Tally {
     records: usize,
     /// Of those, the ones the native reader reads.
     live: usize,
+    /// Runs of bytes on those streams that the matcher of the retired
+    /// `GLine2d` family accepts, tried at every offset: each one held to
+    /// being the top two bytes of a page frame's aspect ratio
+    /// ([`page_ratio_hits`]).
+    page_ratio_hits: usize,
 }
 
 impl Tally {
@@ -1242,6 +1247,7 @@ impl Tally {
         self.caches += other.caches;
         self.records += other.records;
         self.live += other.live;
+        self.page_ratio_hits += other.page_ratio_hits;
     }
 
     /// Whether this walk read no less than `floor` did.
@@ -1321,7 +1327,60 @@ fn hold_sound(label: &str, package: &PidPackage, tally: &mut Tally) {
         }
         tally.records += chain.starts.len();
         tally.live += chain.live_records;
+        tally.page_ratio_hits += page_ratio_hits(&format!("{label} {path}"), &raw.data, &chain);
     }
+}
+
+/// What the matcher of the retired `GLine2d` family accepts in a chain
+/// stream when it is tried at every offset, which is how Phase 14 found the
+/// family's "records": the number of runs of bytes it takes, each held to
+/// what it is.
+///
+/// `0x3FE6` is no type code — the native reader's class table ends at
+/// `0x0118` — so no record of any chain states it, and a sound chain is the
+/// proof: the walk stops on such a word. What the matcher takes is the top
+/// two bytes of a double from 0.6875 up to 0.71875 with a run behind it
+/// that passes for a unit vector and an ordered pair. On every chain stream
+/// in reach that double is the aspect ratio an `igSmartFrame2d` states at
+/// payload `+148` — its own height over its width, which on an ISO A sheet
+/// is `1/√2` give or take the frame's margins: the hit sits 160 bytes into
+/// a page frame
+/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+fn page_ratio_hits(label: &str, data: &[u8], chain: &SheetChain) -> usize {
+    let mut hits = 0usize;
+    for at in 0..data.len() {
+        if decode_primitive_line_at(data, at).is_none() {
+            continue;
+        }
+        hits += 1;
+        let host = chain.starts[..chain.starts.partition_point(|&start| start <= at)]
+            .last()
+            .copied()
+            .unwrap_or_else(|| panic!("{label} +{at}: a GLine2d hit ahead of the first record"));
+        let code = u16::from_le_bytes([data[host], data[host + 1]]) & 0x3FFF;
+        assert_eq!(
+            (code, at - host),
+            (0x003D, 160),
+            "{label} +{at}: a GLine2d hit that is not 160 bytes into a page frame \
+             (type code of its host, offset in it)"
+        );
+        let double_at = |at: usize| {
+            f64::from_le_bytes(data[at..at + 8].try_into().expect("eight bytes of a frame"))
+        };
+        // The frame's payload starts six bytes in: width at `+76`, height
+        // at `+84`, their ratio at `+148`, whose top two bytes are the hit.
+        let (width, height, ratio) = (
+            double_at(host + 6 + 76),
+            double_at(host + 6 + 84),
+            double_at(at - 6),
+        );
+        assert!(
+            (ratio - height / width).abs() < 1e-9 && (0.6875..0.71875).contains(&ratio),
+            "{label} +{at}: the double the hit's type word ends is {ratio}, and the frame \
+             is {width} m by {height} m"
+        );
+    }
+    hits
 }
 
 /// Every drawing, template and symbol under `dir`, and every `RefData~*.zip`
@@ -1448,6 +1507,18 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let (on_disk, archived) = walk.corpus(Path::new("test-file"));
     eprintln!("test-file, on disk: {on_disk:?}");
     eprintln!("test-file, in its RefData archives: {archived:?}");
+    // What the retired `GLine2d` matcher accepts is pinned, not floored:
+    // two page frames of `DWG-0201GP06-01.pid` and the one of `A01.pid`.
+    assert_eq!(
+        on_disk.page_ratio_hits, REPOSITORY_ON_DISK.page_ratio_hits,
+        "what a byte-sliding walk reads as GLine2d on the repository's files"
+    );
+    // And, in the archives, the frame of `A1-W.igr` and of its `- New` copy.
+    #[cfg(feature = "refdata-archive")]
+    assert_eq!(
+        archived.page_ratio_hits, REPOSITORY_ARCHIVED.page_ratio_hits,
+        "what a byte-sliding walk reads as GLine2d in the repository's archives"
+    );
     assert_eq!(
         (on_disk.unread, archived.unread),
         (0, 0),
@@ -1521,6 +1592,7 @@ const REPOSITORY_ON_DISK: Tally = Tally {
     caches: 17,
     records: 11_945,
     live: 11_895,
+    page_ratio_hits: 3,
 };
 
 /// What the templates and symbols inside `test-file`'s twelve committed
@@ -1536,6 +1608,7 @@ const REPOSITORY_ARCHIVED: Tally = Tally {
     caches: 41,
     records: 20_569,
     live: 20_165,
+    page_ratio_hits: 2,
 };
 
 /// What every single-length change of the chain streams `test-file` holds on

@@ -72,7 +72,7 @@ use pid_parse::parsers::sheet_records::{
     decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
     decode_igrectangles, decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols,
     decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_line_at,
-    decode_primitive_lines, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
     decode_standard_relations, decode_sub_record_0x0010_at, decode_symbol_information_at,
     decode_symbol_informations, decode_variables, decode_variables_at, parse_psm_header,
     sheet_record_starts, IgLine2dDecoder, PsmRecordDecoder, SheetChain,
@@ -291,7 +291,6 @@ fn exercise_all_parsers(input: &[u8]) {
     // are not a chain these return at the walk; `planted_streams` are the
     // inputs that carry them into the payload decoders. The `decode_*_at`
     // twins are called at every offset by `exercise_every_offset`.
-    let _ = decode_primitive_lines(input);
     let _ = decode_iglines(input);
     let _ = IgLine2dDecoder.scan(input);
     let _ = decode_iglinestrings(input);
@@ -337,13 +336,15 @@ fn exercise_all_parsers(input: &[u8]) {
     // read out of this, so a malformed frame must fail the record rather
     // than the parse.
     let _ = decode_smartframes(input);
-    // The three families no sheet chain holds a record of (`0x0030`,
-    // `0x0010`) are retired and have no stream entry point; their matchers
-    // still read at an offset, and walk a chain through the decoder seam.
+    // The four families no sheet chain holds a record of (`0x0030`,
+    // `0x0010`, and `0x3FE6`, which is no type code at all) are retired and
+    // have no stream entry point; their matchers still read at an offset,
+    // and walk a chain through the decoder seam.
     {
         use pid_parse::parsers::sheet_records::{
-            AttributeFragmentDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder,
+            AttributeFragmentDecoder, GLine2dDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder,
         };
+        let _ = GLine2dDecoder.scan(input);
         let _ = JStyleOverrideDecoder.scan(input);
         let _ = SubRecord0x0010Decoder.scan(input);
         let _ = AttributeFragmentDecoder.scan(input);

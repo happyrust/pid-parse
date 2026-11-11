@@ -99,9 +99,6 @@ fn main() {
                     ));
                 }
             };
-            for r in &geometry.decoded_primitive_lines {
-                count_flags("primitive line", r.type_flags, format!("oid {}", r.oid));
-            }
             for r in &geometry.decoded_iglines {
                 count_flags("igLine2d", r.type_flags, format!("oid {}", r.oid));
             }

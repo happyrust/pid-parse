@@ -60,7 +60,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/publish_{attribute,interface,rel,dwg_generated}_parity.rs` / `publish_writer_coverage.rs` / `publish_backlog_inventory.rs` / `publish_dwg_mirror.rs` | DB-line parity + writer coverage + backlog inventory | A01 ref + optional DWG fixture |
 | `tests/publish_diff_accepted_baseline.rs` | Reads `docs/baselines/publish-diff-accepted.json` and classifies every line a `--diff-against` run prints as registered / disappeared / unregistered: A01, I井场, and six `验收数据` drawings (J K / L M井场, 轻烃分离器I, 空冷器A/B/C) each in `.pid`-alone and `--oracle-exp` mode, plus each figure's `FluidSystem` line against the per-`DocUID` bound in `FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` | `test-file/…/A01` + `D:\work\cad\PID自研软件验证` + `PID_ACCEPTANCE_CORPUS` (default `D:\work\cad\pid-test-data\验收数据`) + `PID_TEST_DATA_DIR` (default `D:\work\cad\pid-test-data`, for `Export.dmp` / `RefData~4~804.zip`) (soft-skips absent) |
 | `tests/plant_backup_census.rs` | What the 53-sheet plant backup leaves off its pages (census: `examples/probe_which_records_reach_no_page.rs`): the parser's sheet census over all 53 drawings pinned by type code (undecoded: the five `0x0019` `KeyPoint Constraint`s of `D04`'s one `ComplexString`, which the native graphic predicate does not take for drawable; refused: none; 1549 records the native reader skips; 51 `igSmartFrame2d`; one `ComplexString` of six curves and five constraints, no Group; not one record of `0x0010` / `0x0030` on a sheet chain) — read on each stream's own chain, so no phantom code out of the stream header — and `EF井场`'s hand-drawn dot (oid 52844, a `0x73` circle member) projecting as a 26-point fill ring. A run that held the pins prints one `plant backup census: …` line with what it read; one that skipped prints `skipping:` instead | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR` or either `pid-test-data` (soft-skips when absent) |
-| `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
+| `tests/parse_real_files.rs::a_sheet_chain_holds_no_gline2d_and_the_old_hits_were_a_page_frames_ratio` | No chain of five fixtures holds a record of type `0x3FE6`, no registry row reads it, and a chain walk stops on that word: the `GLine2d` family was retired on 2026-11-11. The three hits the Phase 14 byte-sliding scan counted (`DWG-0201` 2, `A01` 1) are re-found at every offset and each is held to what it was: 160 bytes into an `igSmartFrame2d`, on the top two bytes of the aspect ratio that record states at payload `+148` (its height over its width: `1/√2` on an ISO A sheet, give or take the frame's margins) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::a_sheet_chain_holds_no_jstyle_override_and_the_old_hits_were_block_length_words`, `::a_sheet_chain_holds_no_0x0010_record_and_the_old_hits_were_sub_type_words`, `::the_old_attribute_fragments_were_the_inside_of_text_boxes_and_placements` | No sheet chain of four fixtures holds a record of type `0x0030` or `0x0010`, and no registry row reads either: the three families that used to be found by sliding a decoder over the stream were retired on 2026-11-11. Their `_at` matchers are kept for this — the hits those scans returned are re-found at every offset and each is held to what it was: 98 "`JStyleOverride`" on the length word of the block a `DependencyObject` ends with, 582 "`0x0010` sub-records" on a graphic record's own sub-type word and style id (`+12` / `+14`, all but one), 84 "attribute fragments" inside an `igTextBox` (77, each the text the box's own decoder reads) or an `igSymbol2d` (7) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglinestrings_decoder_emits_decoded_polylines_with_provenance` | Phase 14 Slice K igLineString2d (PSM 0x0084) | `test-file/*.pid` |
@@ -68,7 +68,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igtextboxes_decoder_emits_decoded_texts_with_provenance` | Phase 14 Slice M igTextBox (PSM 0x004D) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
-| `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
+| `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
 | `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
 | `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. A `StyleCluster` whose chain stops is reported like a sheet's, and a symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 655 files, 1 338 sheet streams, 58 symbol caches, 32 514 records), both `pid-test-data` and the share where a machine has them | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
 | `pid-plot/tests/cli_pid_plot.rs`：断链的 5 条（这个文件连同下面那一行的 10 条共 15 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
@@ -219,15 +219,15 @@ Soft-skips when `test-file/D06.pid` is absent.
 `src/parsers/sheet_records.rs` ships typed PSM-record decoders for the
 SmartPlant `Sheet*` stream record families; the authoritative list is
 the `SHEET_RECORD_FAMILIES` registry in `src/model/sheet_families.rs`
-(17 rows: twelve of the thirteen below plus `igBspCurve2d`,
+(16 rows: eleven of the thirteen below plus `igBspCurve2d`,
 `igRectangle2d`, `igDimension`, `igSmartFrame2d` and `DependencyObject`.
-Three rows were retired on 2026-11-11 — `JStyleOverride`,
+Four rows were retired on 2026-11-11 — `GLine2d`, `JStyleOverride`,
 `SubRecord0x0010`, `AttributeFragment` — for decoding nothing on any
 chain; see the caveats).
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
-| D-E | `0x3FE6` | `decode_primitive_lines` | `SheetPrimitiveLineDecoded` | `GLine2d` (SmartPlant ext.) |
+| D-E | `0x3FE6` | — (retired; `decode_primitive_line_at` reads at an offset) | `SheetPrimitiveLineDecoded` | `GLine2d` (**not** a record family: `0x3FE6` is not a type code, and what the scan matched was the top two bytes of a page frame's aspect ratio) |
 | Phase 16 D | `0x0030` | — (retired; `decode_jstyle_override_at` reads at an offset) | `SheetJStyleOverrideDecoded` | `JStyleOverride` (RAD `style.dll`, **not** an arc; no sheet chain holds one — the class's records are in `StyleCluster`) |
 | J | `0x0018` | `decode_iglines` | `SheetIgLine2dDecoded` | `igLine2d` (IGDS standard) |
 | K | `0x0084` | `decode_iglinestrings` | `SheetIgLineString2dDecoded` | `igLineString2d` (IGDS standard) |
@@ -241,17 +241,18 @@ chain; see the caveats).
 | — | `0x0021` | `decode_igcomplexstrings` | `DecodedIgComplexString2dRecord` | `ComplexString` (an association, audit-only: its curves are its member records) |
 | — | `0x007B` | `decode_iggroups` | `DecodedIgGroupRecord` | Group (an association, audit-only: its members draw themselves) |
 
-Cross-fixture decoded geometry spans the GLine2d / igLine2d /
-polyline / point / text / symbol families (Phase 16 reclassified
-`0x0030` records as non-geometry `JStyleOverride`; Phase 17 removed
-the legacy `PrimitiveArc` compatibility surface).
+Cross-fixture decoded geometry spans the igLine2d / polyline /
+point / text / symbol families (Phase 16 reclassified `0x0030`
+records as non-geometry `JStyleOverride`; Phase 17 removed the legacy
+`PrimitiveArc` compatibility surface; the `GLine2d` lines Phase 14
+counted beside them were never records).
 All decoders are panic-safe (validated via
 `tests/parser_panic_safety.rs` adversarial matrix) and bounds-checked.
 
 Decoded records flow through `streams/cluster.rs` →
-`model::SheetGeometry::decoded_{primitive_lines,
-iglines, iglinestrings, igpoints, igtextboxes, igsymbols, igarcs,
-igcircles, igboundaries, …}` → `geometry::build_normalized_geometry`
+`model::SheetGeometry::decoded_{iglines, iglinestrings, igpoints,
+igtextboxes, igsymbols, igarcs, igcircles, igboundaries, …}` →
+`geometry::build_normalized_geometry`
 to emit `PidGraphicEntity { confidence: Decoded, kind: Line | Arc |
 Circle | Polyline | Point | Text | SymbolInstance, source:
 PidGraphicProvenance { stream_path, byte_range, record_kind,
@@ -260,13 +261,39 @@ chain. (A decoded `igBoundary2d` is emitted as the fill ring of its
 loops — see the `0x0013` caveat below.)
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
-class tags directly as PSM type codes for standard primitives.
-SmartPlant extends with `GLine2d` (`0x3FE6`), but the bulk of
-geometry is standard IGDS records using IGDS class tags as PSM type
-codes. This unlocked Slices J–N without needing `radsrvitem.dll`
-decompilation.
+class tags directly as PSM type codes for standard primitives. All of
+a sheet's geometry is standard IGDS records using IGDS class tags as
+PSM type codes — the "`GLine2d` (`0x3FE6`)" SmartPlant extension
+Phase 14 set beside them does not exist, see the caveats. This
+unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
 
 **Caveats**:
+- `0x3FE6` is **not a type code**, and `GLine2d` is not a record
+  family. The native reader's class table has a slot for each code
+  from `0x0000` to `0x0118` and nothing past it; a chain walk stops
+  on a word past it. No chain of any stream of the corpora holds a
+  record that states `0x3FE6`. What Phase 14 decoded — three "lines"
+  across four fixtures, seven hits across all the corpora — was found
+  by sliding a decoder over the stream a byte at a time: an
+  `igSmartFrame2d` states its height over its width at payload
+  `+148`, on an ISO A sheet that is `1/√2` give or take the frame's
+  margins, every `f64` from 0.6875 up to 0.71875 has `E6 3F` for its
+  top two bytes, and the bytes a page frame keeps behind them
+  sometimes pass for a unit vector and an ordered pair. Every hit
+  sits 160 bytes into a page frame. Gated on the
+  record chain from 2026-08-10 (`e5ef8fb`) the family decoded nothing
+  on any corpus; once the walk took the class table for its tripwire
+  it could decode nothing on any stream. **The family is retired
+  (2026-11-11)**: no registry row, no `SheetGeometry` field, no model
+  DTO, no emitter, no `decode_primitive_lines`.
+  `decode_primitive_line_at` stays for the test that re-finds the
+  old hits. `GLine2d` is a real class of the vendor's geometry
+  library (`GLine2d::Validate`, the six-double parametric layout);
+  it is not a class the reader serializes a record of. See
+  `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`
+  and
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §18.
 - `0x0030` is `JStyleOverride`, **not** `GArc2d`: the Phase 14 arc
   interpretation was a misidentification. Phase 16 IDA evidence
   (`radsrvitem.dll` type-code mapper → CLSID in `style.dll`) proved
