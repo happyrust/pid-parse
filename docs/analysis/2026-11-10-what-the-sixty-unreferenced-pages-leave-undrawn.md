@@ -465,6 +465,8 @@ gongyi-guandao-1 47、publish-a01 1、publish-dwg-0202 30），全部是 `record
 `a1_a_stream_that_is_its_header_alone_has_dropped_nothing` 给 8 字节、0 字节、9 字节三条无几何的流，
 修复前三条都被记成可疑，修复后只剩 9 字节那条。规格（`requirements.md` 需求 3.2 与附录 A.1、`design.md`）
 同步改了这一行。
+（2026-11-11：那次是把规格正文就地改了，不合 `design.md` 开头「正文不改写」的约定；正文已恢复原句，
+这一条现在是原文旁带日期的实现注记，`4c2df7f`。）
 
 | 读数 | 之前 | 之后 |
 |---|---:|---:|

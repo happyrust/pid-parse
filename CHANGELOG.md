@@ -319,6 +319,110 @@ L M 16481 → 16505、一级闪蒸 A 1229 → 1232、B 1362 → 1364、低温 A
 3261/3268/3141、A2 2648 → 2701；不一致仍全为 0，覆盖、多余墨迹、文字
 读数不变。`min_pen_agreed` 收紧到新读数。
 
+### 记录链立不住的流：读到链停下的地方为止，并说出停在哪（2026-11-11）
+
+每个记录族只在流自己的记录链上解码之后（见下面 2026-11-10 那一条），链不能恰好走完的流整条读成空。
+独立审查把 `test-file/DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段，导出的页只剩模板，
+`pid_plot` 退出码 0、stderr 上一个字没有。现在按流自己的框架读（`sheet_records::SheetChain::walk`）：
+魔数、流头的活记录数、每条记录的起点、走到哪、为什么停。停点之前的记录每一条的长度都来自前一条，是
+真记录，照常解码；停点之后不读，也不往后找「能接上的地方」——把每条完好 Sheet 流上的每条记录轮流当成
+坏掉的那一条来量，173 982 条里有 21 214 条在自己内部就有一个「从这里起链恰好走到流尾」的偏移，再要求
+「活记录数凑得上流头」仍有 743 条，找回就是把载荷当记录读
+（`examples/probe_can_a_stopped_chain_be_picked_up_again.rs`）。
+
+停在哪要说出来：
+
+- `PidDocument::chain_faults` 与 `NormalizedPidGeometry::chain_faults`（`StreamChainFault`：流路径、停点
+  偏移与原因、没读的字节数、读到的记录数、流头声明的记录数）；`build_normalized_geometry` 的 `warnings`
+  里每条流一句，点名流、停点偏移和没读的字节数。范围是 `Sheet*` 流与符号缓存的 `JSite*/PSMcluster0`。
+- 流头也校验。全部语料 856 个不重复文件的 1 684 条 Sheet 流、171 个符号缓存（259 821 条记录）上，开头
+  都是簇魔数，流头第二个字都等于不带 `0x8000` 的记录数，没有例外。魔数不对、记录数对不上报同一种告警；
+  记录数是唯一说得出「在记录边界上被截断」的东西。
+- 出图账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，`bytes` 是没读的字节数
+  （`LayoutLedger::chain_faults` 留着整条事实）；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。
+
+三份损坏副本上 `pid_plot` 现在画出 317 / 358 / 358 个图元（原来都是 165，只有模板），各一行告警、一项
+可疑项（没读 12 600 / 244 / 4 字节）。这张图唯一活着的页框是流的最后一条记录，所以链停在它之前的两份按
+「没有页框的图纸」排：页幅取模板名字说的 A2，墨不做页框规定的 1.105 mm × 1.841 mm 位移。完好的流上没有
+误报：`tests/sheet_chain_faults.rs` 把够得到的每个文件读一遍，71 页逐页比对 0 页不同，两本账本基线与金样
+不动。
+
+没有改的：`sheet_record_starts` 仍是「要么整条、要么没有」，发布线的行读取（`publish/pid_load.rs`）与
+语义连接（`semantics.rs`）对这样的流一条记录都不读，也不出声；`.sym` 符号文件自己的读法同样是整条或没有。
+见 `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §15。
+
+### `ComplexString` / `Group` 里的 double 是范围框的比例：`head_double` 改名 `range_scale`（2026-11-11）
+
+两种关联记录成员数之后的 `f64` 原来留作 `head_double`，注释写「语料里恒为 1.0」、成员范围框的单位是
+1/32768 m。独立审查指出不是：框的单位是「这个 double / 32768」米。语料里 20 条关联记录，14 条是 1.0，
+6 条是 2.0（`CPECCHB-SQ-A1.igr` 的外框 oid 21，`A0-W` / `A1-W` 四个模板的边框组，`A0-W.igr` 的徽标组）；
+按记录自己的比例读，120 个线、弧成员的框离成员自己的范围最多 0.759 mm，按 1/32768 m 读差到 529 mm。
+同时更正两处说得太满的话：`ComplexString` `+18` 的三个字节 8 条里有 1 条是 `01 00 00`；Group 的成员不都
+是矩形——`A0-W.igr`–`A3-W.igr` 各有一个 37 成员的徽标组（线、弧、B 样条、椭圆弧、填充边界、点）。
+
+**API**：`SheetIgComplexString2dDecoded::head_double` / `SheetIgGroupDecoded::head_double` 改名
+`range_scale`；`DecodedIgComplexString2dRecord` / `DecodedIgGroupRecord` 新增同名字段（JSON 与 schema 各多
+一个字段）；成员与两种记录各有 `range_box_m`，按比例把框读成米。解码器本来就不校验这几处的取值，解出的
+记录、页面、两本账都不变。`tests/sheet_family_wiring.rs` 现在连入库压缩包里的 11 个模板一起读，按比例钉
+每个线成员的框。见同一文档 §16。
+
+### rustdoc 重新能构建；文档检查脚本不再吞掉 rustdoc 的失败（2026-11-11）
+
+crate 拒绝公开文档链到私有项（`rustdoc::private_intra_doc_links`），而库里有 11 处这样的链接，
+`cargo rustdoc` 因此报错退出，一页文档都不生成。`.github/scripts/check-missing-docs.sh` 用 `… || true`
+跑它，再数输出里的 `missing documentation for`——报错停下时数到 0，等于基线，照样报 OK。11 处改成行内代码
+（另修两条 rustdoc 警告）；脚本保留 rustdoc 的退出码，非零即失败并打印报错。基线仍是 0。
+
+### 每个记录族只在流自己的记录链上解码：三个族在 Sheet 上不再解出任何东西（2026-11-10）
+
+`PsmRecordDecoder::scan` 原先逐字节滑动找「像记录头」的位置，会把别的记录内部的字节当成记录。86 个文档
+（118 条 Sheet 流 + 147 个缓存）上这样解出 92 405 条：`SubRecord0x0010`、`AttributeFragment`、
+`JStyleOverride` 三个族**整族**如此（备份 53 张 51 692 / 9 626 / 10 649 条），另有 13 条 `igSmartFrame2d`。
+它们分别是图形记录自己的子类型字与样式号（`+12` / `+14`）、文字框的内部、`DependencyObject` 收尾块的
+长度字（48 = `30 00`）、取值恰为 61 的字段。现在每个族只在流的记录链（8 字节流头之后一条接一条）给出的
+起点上解码。类型码 `0x0030` 的真记录全在 `StyleCluster`（语料 3 253 条，由 `style_link` 读，没有变）；
+`0x0010` 在任何流的链上都没有。三个族的注册表行、DTO 与发射器还在，解不出东西；退役是以后的事。
+
+**对调用方的影响**：
+
+- 公开的 `decode_*s(data)`（`decode_iglines`、`decode_igtextboxes` 等）要的是带 8 字节流头的整条流；喂
+  一段没有流头的裸记录不再解出东西。`decode_*_at(data, offset)` 不变，仍在任意偏移上读。
+- `SheetGeometry::decoded_sub_records_0x0010` / `decoded_attribute_fragments` / `decoded_jstyle_overrides`
+  在每条量过的流上都是空的。`JStyleOverride` 的每个命中原来发一个 `ProbeOnly` 的 `Unknown` 实体，现在
+  没有了（备份 10 649 个，夹具连模板 228 个；六份几何金样共少 131 个实体，全是这一种）。
+  `tests/semantic_join.rs` 里 DWG-0202 与发布对象连上的实体 41 → 39，少的是连在幻影上的两个。
+- `--byte-audit`：Sheet 流的覆盖率下降。幻影命中原先认领的字节大部分落在宿主记录里，宿主照样认领；其余
+  的不再有人认领——备份 53 张 99.24% → 98.65%（68 552 字节、33 条流；`A井场` `/Sheet6` 99.0% → 97.9%），
+  `test-file` 99.04% → 99.00%，验收 11 张 99.19% → 98.68%。这些字节**全部**在带 `0x8000` 的旧副本记录里
+  （原生读取器跳过、没有族解码）：文字框 762 条 50 005 字节、`DependencyObject` 280 条 13 771、折线
+  197 条 8 609、点 218 条 5 880、符号放置 58 条 3 800、线 80 条 2 330、页框 5 条 46、圆 2 条 44
+  （`examples/probe_what_the_byte_audit_no_longer_claims.rs`）。没有一条会画的记录少了字节，新数只是不再
+  把退役的副本算作读过。
+
+页面不变（71 页逐页比对 0 处不同）；两本账本的有意项相应减少（备份 208 906 → 136 929），可疑项不变。
+`tests/parser_panic_safety.rs` 的量法跟着改：`decode_*s` 在不成链的噪声上到不了载荷解码，现在 27 个
+`_at` 入口逐偏移调用，另用 290 条「植入链」把每个族的载荷解码器喂到。
+见 `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §3、§10.1、§12。
+
+### 两本出图账本的可疑项清零：60 → 0（2026-11-10）
+
+备份 53 页 48 个、夹具 7 页 12 个可疑项逐条查完，全在解析层，都是我方的缺陷：
+
+- `0x0021 ComplexString`（47 条）与 `0x007B Group`（1 条）有了解码器，登记为不发射的关联族：两种记录
+  不带坐标，成员各自解码、各自出图。下面「`0x0021` … 纯关联记录」一条里「不写专属解码器」的决定由此
+  取代——不解码，它就一直是账上「没人读的图形记录」。
+- 不列成员的 `DependencyObject`（`A井场` 一条，36 字节）解得出。
+- 只有 8 字节流头的 Sheet 流（7 条）不再记成「没有几何的流」：它装不下一条记录。
+- Sheet 级 `igEllipticalArc2d`（`XA-A1.igr` 两条）成为发射几何的 Sheet 族，注册表到 20 行。
+- 双环 `igBoundary2d`（`XA-A1.igr` 两条）：载荷 `+18` 的 `u32` 是环数，内环是孔。一条记录仍发一条环
+  （面逆时针、孔顺时针，环间用来回各走一次的连线接起来），按奇偶规则与按环绕数填出来相同。
+- 顺带：同一模板 `/Sheet6` 上 23 条 `igBspCurve2d` 用它们点名的样式画（0.25 mm），原来用默认笔。
+
+页面上的变化只在熊安夹具这一页（`工艺管道及仪表流程-1.pid`：图元 5 478 → 5 482，23 个图元得了笔；纸面
+金样 `gongyi-guandao-1` 2 907 733 → 2 945 007 字节），71 页逐页比对其余 70 页不变。两本账现在都是
+「可疑项 0 个，未归因 0」。`plant_backup_census` 钉成：没有解码器的只剩 `D04` 的 5 条
+`0x0019 KeyPoint Constraint`（不是图形记录），被拒 0。见同一文档 §2、§10.2–§10.8。
+
 ### 53 张备份图 PSM 普查：没出图的记录除 EF 那颗点外都不带墨（2026-11-07）
 
 新增普查探针 `examples/probe_which_records_reach_no_page.rs`：53 张图的 Sheet 流（57 条 / 14 万条记录）、
