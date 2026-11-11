@@ -189,7 +189,7 @@ use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource,
     border_template_places, lay_out_drawing,
 };
-use pid_plot::read::read_plot;
+use pid_plot::read::{LineCap, LineJoin, read_plot, read_plot_pens};
 use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_ledger, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
@@ -493,6 +493,32 @@ const TEMPLATE_PAST_THE_PAPER: [(&str, usize, [f64; 2]); 15] = [
     ("test/U01/D07.pid", 2, [0.327801, 0.565648]),
     ("test/U01/TESTDWG-0002TP03-01.pid", 2, [0.327801, 0.565648]),
 ];
+
+/// How the 53 pages end their strokes, read back from the PDFs: the inked
+/// paths stroked butt-ended and mitred, and the ones stroked round-ended and
+/// round-joined. No page strokes a path any other way.
+///
+/// A page states no cap until its first stroke on a pen wider than one
+/// device unit and round ends and joins from there on (`write.rs`,
+/// `starts_round_ends`), so the butt-ended paths are what each sheet paints
+/// ahead of that pen: its border template's one-unit rules where the frame
+/// is listed first, and whatever of the drawing's own the sheet lists ahead
+/// of its first wide stroke.
+const STROKE_ENDS: (usize, usize) = (4374, 79_651);
+
+/// The sheet whose own thin strokes stand ahead of its first wide pen, and
+/// how its page ends its strokes: butt-ended paths, round-ended paths.
+///
+/// `凝析油一级闪蒸分离器B气相出口改造` wears no template, and its sheet lists
+/// thin strokes of the drawing's own ahead of the first wide one. They are
+/// stroked butt-ended, as a border's rules are on the reference plots; no
+/// plot shows a drawing's own thin stroke ahead of the first wide pen, so
+/// for this page the rule is carried over, not read. It is pinned because
+/// it is the one page on hand that tells that rule from the one before it —
+/// round ends from the drawing's first stroke on any pen — under which
+/// these paths are round.
+const THIN_AHEAD_OF_THE_WIDE_PEN: (&str, usize, usize) =
+    ("凝析油一级闪蒸分离器B气相出口改造", 47, 430);
 
 /// Runs the page cuts because the condensation floor cannot hold them.
 ///
@@ -2014,6 +2040,10 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut template_past_the_paper: Vec<(String, usize, [f64; 2])> = Vec::new();
     let mut papers = [0usize; PAPERS.len()];
     let mut ledger_pages: Vec<(String, ExportLedger)> = Vec::new();
+    // Inked paths stroked butt-ended and round-ended, over the 53 pages and
+    // on the sheet of `THIN_AHEAD_OF_THE_WIDE_PEN`.
+    let mut stroke_ends = (0usize, 0usize);
+    let mut thin_ahead: Vec<(usize, usize)> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
         assert_eq!(
@@ -2152,6 +2182,25 @@ fn every_backup_drawing_exports_a_readable_page() {
             pdf.len()
         );
         let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("{name}: read back: {error}"));
+        // How the page ends its strokes.
+        let pens = read_plot_pens(&pdf)
+            .unwrap_or_else(|error| panic!("{name}: read back the pens: {error}"));
+        let mut ends = (0usize, 0usize);
+        for stroked in &pens.ends {
+            match (stroked.cap, stroked.join) {
+                (LineCap::Butt, LineJoin::Miter) => ends.0 += stroked.paths,
+                (LineCap::Round, LineJoin::Round) => ends.1 += stroked.paths,
+                other => panic!(
+                    "{name}: {} path(s) stroked under {other:?}, which the writer never states",
+                    stroked.paths
+                ),
+            }
+        }
+        stroke_ends.0 += ends.0;
+        stroke_ends.1 += ends.1;
+        if sheet.contains(THIN_AHEAD_OF_THE_WIDE_PEN.0) {
+            thin_ahead.push(ends);
+        }
         // The page the PDF got is the page the model promised, for every
         // sheet — the ones that state a sheet and the ones measured for want
         // of one. This used to be skipped when `page_mm` was `None`, which is
@@ -2196,6 +2245,19 @@ fn every_backup_drawing_exports_a_readable_page() {
     assert_eq!(
         derived, DERIVED_PAGES,
         "{derived} sheets stated no page and were measured; {DERIVED_PAGES} did when this ratchet was set"
+    );
+    // How the pages end their strokes.
+    assert_eq!(
+        stroke_ends, STROKE_ENDS,
+        "the 53 pages stroke {} path(s) butt-ended and {} round; {} and {} are pinned in \
+         STROKE_ENDS",
+        stroke_ends.0, stroke_ends.1, STROKE_ENDS.0, STROKE_ENDS.1
+    );
+    assert_eq!(
+        thin_ahead,
+        [(THIN_AHEAD_OF_THE_WIDE_PEN.1, THIN_AHEAD_OF_THE_WIDE_PEN.2)],
+        "how the page of `{}` ends its strokes (butt-ended paths, round-ended paths)",
+        THIN_AHEAD_OF_THE_WIDE_PEN.0
     );
     // Every page is its sheet's paper, and the papers are the three pinned.
     for ((paper, pinned), found) in PAPERS.iter().zip(papers) {
