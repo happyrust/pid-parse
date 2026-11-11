@@ -631,6 +631,56 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
     }
 }
 
+/// `D06`'s border frame reaches 594.33 × 420.57 mm — the `CPECCHB-SQ-A2`
+/// template, 593.94 × 420.00, where the frame puts it, 0.39 × 0.57 mm off the
+/// sheet's origin — and that is the page this crate writes. The sheet's own
+/// record states the paper it is drawn on: 0.42 × 0.594 m.
+///
+/// The eleven reference plots are each printed on the paper their sheet
+/// states. The one that wears this template, `轻烃分离器I`, is on 594 × 420
+/// mm with the template's top and right edges off the paper; our page for it
+/// is 0.329 mm wider and 0.566 mm taller, the two "not fixed yet" lines of
+/// the ink gate. So the page should be the paper, the template where the
+/// frame puts it, and what lies off the paper not printed.
+///
+/// Not landed, which is why this is ignored: the page is part of the paper
+/// model and of the seven goldens, and of the 71 pages on hand 20 would
+/// change (`docs/analysis/2026-11-11-a-sheet-states-its-paper.md`).
+#[test]
+#[ignore = "the page is still the frame's reach, 594.33 x 420.57 mm, not the 594 x 420 mm \
+            paper the sheet states"]
+fn an_a2_sheet_is_written_on_the_paper_its_sheet_states() {
+    let fixture = fixture_dir().join("D06.pid");
+    if !fixture.is_file() {
+        eprintln!("skipping the paper; {} is absent", fixture.display());
+        return;
+    }
+    let doc = pid_parse::PidParser::new()
+        .parse_file(&fixture)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let paper = doc
+        .sheet_display_order
+        .get("/Sheet6")
+        .and_then(|order| order.paper)
+        .expect("the sheet states its paper");
+    assert_eq!(
+        (paper.width_m, paper.height_m, paper.size_code),
+        (0.594, 0.42, 33)
+    );
+    let model = lay_out_drawing(&fixture, &fixture_dir()).unwrap_or_else(|error| panic!("{error}"));
+    let page = model.resolved_page_mm().expect("a page");
+    assert!(
+        near(
+            page,
+            [paper.width_m * 1000.0, paper.height_m * 1000.0],
+            1e-6
+        ),
+        "the page is {page:?} mm; the sheet states {} × {} mm",
+        paper.width_m * 1000.0,
+        paper.height_m * 1000.0
+    );
+}
+
 #[test]
 fn an_a2_sheet_draws_its_linked_a2_template() {
     // `D06` states 594.33 × 420.57 mm. The A2 CCHB template measures

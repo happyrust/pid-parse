@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### 图纸的 `JSheet` 记录写着纸张：解码了，页幅还没有按它出（2026-11-11）
+
+`0x0114 JSheet` 的子对象表后面写着图纸的纸张：纸高、一个随尺寸变的字、纸宽。手头 71 个文件只有三种——
+0.42 × 0.594、0.594 × 0.841、0.841 × 1.189 m——11 张参考图的页面恰好都是这张纸，包括 A2 那张。
+`parsers::sheet_display_order::decode_sheet_paper` 解码它（`SheetChildTable::paper`、
+`SheetDisplayOrder::paper`），探针 `probe_what_order_a_sheet_lists_its_children_in` 的 `paper` 一列改用它，
+71 个文件的输出逐字节不变。
+
+页幅**没有**改：我方的页面仍然是图框够到的地方（模板放在图框给的位置之后的范围），所以 A2 那张比参考图
+宽 0.329 mm、高 0.566 mm——这个差正好是图框的偏移。71 个文件里有 20 个的页幅会随之改变（7 张夹具里 4 张），
+要动纸面模型和金样，等解析那条线并进 `main` 之后做。现在有一条 `#[ignore]` 的测试钉着它：
+`border_template.rs::an_a2_sheet_is_written_on_the_paper_its_sheet_states`（带 `--ignored` 运行时失败在
+`the page is [594.3278903340716, 420.5656942737827] mm; the sheet states 594 × 420 mm`）。A2 上设备网格的
+偏移也量准了（x 整整 −1 个单位，y 为 0），但没有找到来源，没有落地。证据、会变的 20 个文件和设计见
+`docs/analysis/2026-11-11-a-sheet-states-its-paper.md`。
+
 ### 页面按图纸自己的显示次序画：`JSheet` 的子对象表（2026-11-11）
 
 以前一页先画完所有笔画、再写所有文字，各按模型里的次序（模板在前，图纸的记录按流里的位置）。原厂不是

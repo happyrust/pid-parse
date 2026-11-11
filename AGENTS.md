@@ -368,10 +368,16 @@ paints by it: `LayoutLedger::paint_order` beside the model,
   inside a symbol body is the body's own.
 - The 164 bytes behind the entries state the sheet's paper (an `f64`
   height at `+102`, a size code at `+110`, an `f64` width at `+114`:
-  0.42 × 0.594, 0.594 × 0.841 or 0.841 × 1.189 m on the 71 files). The
-  decoder does not read them yet; the probe does. The eleven reference
-  plots are printed on exactly that paper, the A2 sheet included, whose
-  page this crate still takes from its border template.
+  0.42 × 0.594, 0.594 × 0.841 or 0.841 × 1.189 m on the 71 files);
+  `decode_sheet_paper` reads it into `SheetChildTable::paper` and
+  `SheetDisplayOrder::paper`. The eleven reference plots are printed on
+  exactly that paper, the A2 sheet included. **`pid-plot` does not use
+  it yet**: a page is still the reach of its border frame, which is why
+  the A2 sheet is 0.33 × 0.57 mm larger than its reference. The ignored
+  test `border_template.rs::an_a2_sheet_is_written_on_the_paper_its_sheet_states`
+  fails until it does; evidence, the 20 files whose page would change
+  and the design are in
+  `docs/analysis/2026-11-11-a-sheet-states-its-paper.md`.
 
 See `docs/analysis/2026-11-11-a-sheet-draws-its-children-in-the-order-it-lists-them.md`
 and `examples/probe_what_order_a_sheet_lists_its_children_in.rs`.
