@@ -876,6 +876,125 @@ fn a_style_cluster_whose_chain_stops_is_reported_like_a_sheets() {
     }
 }
 
+/// The style table reads the records its fault says the chain read, and no
+/// others.
+///
+/// A fault is computed with [`SheetChain::walk`]. The style table used to
+/// walk its stream by itself, with no type-word tripwire: after a length
+/// that is wrong and still inside the stream it read on from where no
+/// record starts, through whatever passed for an envelope there, and often
+/// back onto the chain — so the table held styles from past the offset the
+/// warning said nothing was read from. An independent review found two
+/// copies of this fixture whose warnings both said "the chain read 21
+/// record(s)" and whose pages drew 81 and 95 suspect items.
+///
+/// Held here on every single-length change of every style table of the
+/// fixture that stops the walk: the table of the changed stream is the
+/// table of that stream cut at the stop, which is the records the chain
+/// read. The tally says how many of those changes the old walk read past.
+#[test]
+fn a_style_table_reads_the_records_its_fault_says_the_chain_read() {
+    use pid_parse::style_link::DocumentStyleTable;
+
+    let package = PidParser::new()
+        .parse_package(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let mut streams: Vec<&String> = package
+        .streams
+        .keys()
+        .filter(|path| path.ends_with("/StyleCluster"))
+        .collect();
+    streams.sort();
+    let mut seen = HashSet::new();
+    // (distinct tables, changes that stop the walk, of them the ones a walk
+    // with no tripwire reads past the stop on)
+    let mut tally = (0usize, 0usize, 0usize);
+    for stream in streams {
+        let intact = &package.streams[stream].data;
+        let mut hasher = DefaultHasher::new();
+        intact.hash(&mut hasher);
+        if !seen.insert((intact.len(), hasher.finish())) {
+            continue;
+        }
+        let chain = SheetChain::walk(intact);
+        assert!(chain.is_sound(), "{stream}: an intact table");
+        tally.0 += 1;
+        for &at in &chain.starts {
+            let length = u32_at(intact, at + 2);
+            for delta in LENGTH_DELTAS {
+                let Ok(wrong) = u32::try_from(i64::from(length) + delta) else {
+                    continue;
+                };
+                let mut changed = intact.clone();
+                put_u32(&mut changed, at + 2, wrong);
+                let Some(stop) =
+                    StreamChainFault::of_stream(stream, &changed).and_then(|fault| fault.stop)
+                else {
+                    // The walk reached the stream's end: the fault, if
+                    // there is one, names no place to hold the table to.
+                    continue;
+                };
+                tally.1 += 1;
+                if walk_taking_any_type_word(&changed).2 > stop.offset {
+                    tally.2 += 1;
+                }
+                assert!(
+                    DocumentStyleTable::from_stylecluster_bytes(&changed)
+                        == DocumentStyleTable::from_stylecluster_bytes(&changed[..stop.offset]),
+                    "{stream}: the record at +{at}, {length} -> {wrong}: the table holds what \
+                     the chain read before +{}, and nothing from past it",
+                    stop.offset
+                );
+            }
+        }
+    }
+    eprintln!(
+        "style tables of {FIXTURE}: {} distinct, {} length change(s) stop the walk, {} of them \
+         read past the stop without the tripwire",
+        tally.0, tally.1, tally.2
+    );
+    assert_eq!(tally, STYLE_TABLE_LENGTH_CHANGES);
+
+    // The review's own copy, through the parser: the 21st record of the
+    // drawing's table (at +7227) four bytes too long.
+    let stream = "/StyleCluster";
+    let intact = &package.streams[stream].data;
+    let at = SheetChain::walk(intact).starts[20];
+    assert_eq!((at, u32_at(intact, at + 2)), (7227, 94));
+    let mut changed = intact.clone();
+    put_u32(&mut changed, at + 2, 98);
+    let fault =
+        StreamChainFault::of_stream(stream, &changed).expect("the changed table has a fault");
+    let stop = fault.stop.as_ref().expect("the walk stops").offset;
+    assert_eq!((stop, fault.records_read), (7331, 21));
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: stream.to_string(),
+            new_data: changed.clone(),
+        }],
+        ..WritePlan::default()
+    };
+    let bytes = PidWriter::write_to_bytes(&package, &plan).expect("the damaged copy is written");
+    let doc = PidParser::new()
+        .parse_reader(Cursor::new(bytes))
+        .expect("the damaged copy parses");
+    assert_eq!(doc.chain_faults, vec![fault]);
+    assert!(
+        doc.style_tables["/"] == DocumentStyleTable::from_stylecluster_bytes(&changed[..stop]),
+        "the document's table is the 21 records the warning says the chain read"
+    );
+    assert!(
+        doc.style_tables["/"] != package.parsed.style_tables["/"],
+        "and is short of the intact drawing's"
+    );
+}
+
+/// [`a_style_table_reads_the_records_its_fault_says_the_chain_read`]'s
+/// tally for the fixture: distinct style tables, the single-length changes
+/// that stop the walk, and how many of those a walk with no type-word
+/// tripwire reads past the stop on.
+const STYLE_TABLE_LENGTH_CHANGES: (usize, usize, usize) = (3, 3405, 122);
+
 /// A symbol file read as a library body. The body's reader takes a sheet
 /// whole or not at all, so a sheet whose chain stops gives it nothing — a
 /// body short of that sheet's strokes, and until now nothing that said so.
