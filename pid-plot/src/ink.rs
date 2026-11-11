@@ -45,14 +45,30 @@ const STEP_MM: f64 = 0.05;
 /// How far a reference stroke may turn from ours and still run along it, as
 /// the absolute cosine of their angle: 37.5°.
 ///
-/// The comparison's own chain turns at 45° (`PEN_CHAIN_DOT`). A limit on an
-/// angle symbols are drawn at is decided by the last bit of a sum for every
-/// stroke that crosses another at exactly that angle — the two legs of a
-/// break mark across the line they break, on the A2 sheet — and the fit this
-/// module is handed is not the same to the last bit from one run to the next,
-/// so such a stroke was on the line in one run and off it in another. 37.5°
-/// is halfway between the 30° and the 45° a symbol's strokes turn by: a chord
-/// of a flattened curve still runs along its neighbour, a leg at 45° does not.
+/// The comparison's own chain turns at 45° (`PEN_CHAIN_DOT`), and this
+/// module took that limit over at first. It is the wrong place for one. A
+/// drawing's strokes turn by the angles a drafter draws — 0°, 30°, 45°, 60°,
+/// 90° — and the A2 sheet's break mark is two legs at exactly 45° across the
+/// line they break: each leg's cosine came out equal to the limit or 4e-14
+/// under it, so whether the leg ran "along" the line was the last bit of a
+/// product. While the fit still differed in its last bits from one call to
+/// the next that bit flipped between runs, and the gate's reading with it
+/// (19107.863 mm and 19108.337 mm). The fit is repeatable now
+/// (`compare::join_centerlines_within`), which makes the reading the same
+/// every run — and leaves it as arbitrary as before: any change that moves
+/// the fit by one bit, an unrelated stroke added to the page, would move the
+/// legs across the limit again.
+///
+/// So the limit is put where no stroke is. 37.5° is the middle of the gap
+/// between 30° and 45°, the two nearest angles the corpus draws at, 7.5°
+/// from each: a chord of a flattened curve, which turns a few degrees from
+/// its neighbour, still runs along it; a leg at 45° is across the line, and
+/// one at 30° along it, whatever the fit. The choice was made on that gap,
+/// not on the readings: it moved three of them, each down by under two
+/// millimetres in forty thousand (`I井场` 41949.360 → 41948.990 mm, `J K`
+/// 48726.432 → 48725.690, `L M` 55648.919 → 55647.126 — strokes that had
+/// counted as lying on a reference stroke 37.5° to 45° off them), and the
+/// A2 sheet's settled at the lower of its two values.
 const ALONG_DOT: f64 = 0.793_353_340_291_235_2;
 /// The shortest stroke that is held to a colour, paper millimetres: the
 /// comparison's `PEN_MIN_MM`. A shorter one is a dash stub.
