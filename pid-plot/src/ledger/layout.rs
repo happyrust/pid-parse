@@ -462,17 +462,62 @@ impl LayoutLedger {
     /// template's file says that it is the template's. Empty for a page all
     /// of whose streams are sound, which is every page of every corpus this
     /// crate is tested on.
+    ///
+    /// Where the stop left the records it read without a place in the
+    /// display order — none of them the sheet's own, so the sheet's list was
+    /// not taken ([`UnplacedWhy::NoRecordOfTheSheet`]) — the sentence goes
+    /// on to say that, and, for a drawing's own sheet, what the page is for
+    /// want of the paper that list's record states
+    /// ([`Self::page_for_want_of_a_paper`]). It is still one sentence:
+    /// [`Self::display_order_warnings`] starts none for those records.
     #[must_use]
     pub fn chain_fault_warnings(&self) -> Vec<String> {
         self.chain_faults
             .iter()
-            .map(|record| match record.domain {
-                LedgerDomain::Drawing => record.fault.describe(),
-                LedgerDomain::Furniture => {
-                    format!("in the border template, {}", record.fault.describe())
+            .map(|record| {
+                let said = match record.domain {
+                    LedgerDomain::Drawing => record.fault.describe(),
+                    LedgerDomain::Furniture => {
+                        format!("in the border template, {}", record.fault.describe())
+                    }
+                };
+                match self.what_a_stop_left_without_a_place(record) {
+                    Some(more) => format!("{said}{more}"),
+                    None => said,
                 }
             })
             .collect()
+    }
+
+    /// The rest of a stopped chain's sentence, where the stop is why records
+    /// of its stream take no place: how many, and what the page is instead
+    /// of the paper when the stream is the drawing's own sheet.
+    fn what_a_stop_left_without_a_place(&self, record: &ChainFaultRecord) -> Option<String> {
+        if record.fault.stop.is_none() {
+            return None;
+        }
+        let item = self.unplaced.iter().find(|item| {
+            item.why == UnplacedWhy::NoRecordOfTheSheet
+                && item.domain == record.domain
+                && item.stream == record.fault.stream_path
+        })?;
+        let own_sheet =
+            item.domain == LedgerDomain::Drawing && item.stream.matches('/').count() == 1;
+        let page = match self.page_for_want_of_a_paper {
+            Some(page) if own_sheet => format!(
+                ", and the paper stated with that list was not read either, so the page is \
+                 {}, {}",
+                page.from.named(),
+                sides_mm(page.um)
+            ),
+            _ => String::new(),
+        };
+        Some(format!(
+            "; none of the records read is the sheet's own, so the sheet's list has nothing \
+             to be held to and {} record(s), {} primitive(s) on the page, take no place in \
+             the display order{page}",
+            item.records, item.primitives
+        ))
     }
 }
 
@@ -1911,6 +1956,36 @@ mod tests {
         assert!(stopped.display_order_warnings().is_empty());
         assert_eq!(stopped.chain_fault_warnings().len(), 1);
         assert_eq!(stopped.unplaced.len(), 1, "the finding is kept");
+        // And its warning goes on to say what the stop left without a
+        // place — and, where the stream is the drawing's own sheet and no
+        // paper was read, what the page is.
+        let goes_on = "; none of the records read is the sheet's own, so the sheet's list has \
+                       nothing to be held to and 1 record(s), 2 primitive(s) on the page, take \
+                       no place in the display order";
+        let said = stopped.chain_fault_warnings();
+        assert!(
+            said[0].starts_with("the record chain of /Sheet6"),
+            "{}",
+            said[0]
+        );
+        assert!(said[0].ends_with(goes_on), "{}", said[0]);
+        let mut with_a_page = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", true)],
+        );
+        with_a_page.page_for_want_of_a_paper = Some(PageInstead {
+            from: SheetRectangle::TemplateName,
+            um: [594_000, 420_000],
+        });
+        let said = with_a_page.chain_fault_warnings();
+        assert!(
+            said[0].ends_with(&format!(
+                "{goes_on}, and the paper stated with that list was not read either, so the \
+                 page is the size its template's name states, 594.000 x 420.000 mm"
+            )),
+            "{}",
+            said[0]
+        );
 
         // No chain fault at all: this sentence is the only word there is,
         // and it says what is so — the list is there, the stream is short.
@@ -1933,6 +2008,7 @@ mod tests {
             vec![a_chain_fault(Drawing, "/Sheet6", false)],
         );
         assert_eq!(counted.display_order_warnings().len(), 1);
+        assert!(!counted.chain_fault_warnings()[0].contains("take no place"));
         // Another stream's chain, and the template's chain of a stream of
         // the same name, are not this stream's.
         for fault in [

@@ -1207,6 +1207,39 @@ fn export_a_broken_chain(case: &str, how: Break) {
         "{how:?}: a line of its own for what the chain's stop accounts for: {:?}",
         model.ledger.display_order_warnings()
     );
+    // The chain's one line is the library's sentence, and where the stop
+    // left the records read without a place it goes on to say so and to
+    // say what the page is: with no record of the sheet's own the sheet's
+    // list was not taken, nor the paper stated with it, and this copy read
+    // no frame either, so its page is the size its template's name states.
+    if broken.stop.is_some() {
+        let line = warned[0]
+            .strip_prefix(&format!("warning: {}: ", broken.path.display()))
+            .unwrap_or_else(|| panic!("{how:?}: the warning does not open with the copy"));
+        assert_eq!(
+            model.ledger.chain_fault_warnings(),
+            [line],
+            "{how:?}: the program does not say what the library found"
+        );
+        let goes_on = [
+            "none of the records read is the sheet's own",
+            "1 record(s), 2 primitive(s) on the page, take no place in the display order",
+            "the page is the size its template's name states, 594.000 x 420.000 mm",
+        ];
+        if matches!(how, Break::FirstLengthPlusEight) {
+            for needle in goes_on {
+                assert!(
+                    line.contains(needle),
+                    "{how:?}: the chain's warning does not say `{needle}`\n{outcome}"
+                );
+            }
+        } else {
+            assert!(
+                !line.contains("take no place") && !line.contains("the page is"),
+                "{how:?}: the chain's warning says more than the chain cost\n{outcome}"
+            );
+        }
+    }
 
     match fonts {
         Ok(_) => {
