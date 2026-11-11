@@ -463,7 +463,6 @@ fn sheet_oid_pool(geometry: &SheetGeometry) -> BTreeSet<u32> {
     pool.extend(geometry.decoded_igboundaries.iter().map(|r| r.oid));
     pool.extend(geometry.decoded_igsmartframes.iter().map(|r| r.oid));
     pool.extend(geometry.decoded_dependency_objects.iter().map(|r| r.oid));
-    pool.extend(geometry.decoded_jstyle_overrides.iter().map(|r| r.oid));
     pool
 }
 

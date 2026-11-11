@@ -62,21 +62,21 @@ use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     bspcurve_geometry, collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
-    decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
-    decode_dependency_objects, decode_double_value_at, decode_double_values, decode_flavor_holders,
-    decode_igarc_at, decode_igarcs, decode_igboundaries, decode_igboundary_at,
-    decode_igbspcurve_at, decode_igbspcurves, decode_igcircle_at, decode_igcircles,
-    decode_igcomplexstring_at, decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions,
-    decode_igellipse_at, decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs,
-    decode_iggroup_at, decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
+    decode_attribute_fragment_at, decode_dependency_object_at, decode_dependency_objects,
+    decode_double_value_at, decode_double_values, decode_flavor_holders, decode_igarc_at,
+    decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
+    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at,
+    decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions, decode_igellipse_at,
+    decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at,
+    decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
     decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
     decode_igrectangles, decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols,
-    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
-    decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
-    decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
-    decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
-    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_line_at,
+    decode_primitive_lines, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_standard_relations, decode_sub_record_0x0010_at, decode_symbol_information_at,
+    decode_symbol_informations, decode_variables, decode_variables_at, parse_psm_header,
+    sheet_record_starts, IgLine2dDecoder, PsmRecordDecoder, SheetChain,
+    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -338,10 +338,16 @@ fn exercise_all_parsers(input: &[u8]) {
     // than the parse.
     let _ = decode_smartframes(input);
     // The three families no sheet chain holds a record of (`0x0030`,
-    // `0x0010`); their decoders still read at any offset.
-    let _ = decode_jstyle_overrides(input);
-    let _ = decode_sub_records_0x0010(input);
-    let _ = decode_attribute_fragments(input);
+    // `0x0010`) are retired and have no stream entry point; their matchers
+    // still read at an offset, and walk a chain through the decoder seam.
+    {
+        use pid_parse::parsers::sheet_records::{
+            AttributeFragmentDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder,
+        };
+        let _ = JStyleOverrideDecoder.scan(input);
+        let _ = SubRecord0x0010Decoder.scan(input);
+        let _ = AttributeFragmentDecoder.scan(input);
+    }
 
     // The chain walk every family decodes at, its all-or-nothing reading,
     // and the fault a stream whose framing does not hold is reported as:

@@ -12,11 +12,10 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_objects,
-        decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints,
-        decode_igsymbols, decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at,
-        decode_jstyle_overrides, decode_primitive_lines, decode_sub_record_0x0010_at,
-        decode_sub_records_0x0010, parse_psm_header, primitive_line_investigation_report,
+        decode_attribute_fragment_at, decode_dependency_objects, decode_igboundaries,
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+        decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_lines,
+        decode_sub_record_0x0010_at, parse_psm_header, primitive_line_investigation_report,
         sheet_record_shape_inventory, sheet_record_starts, symbol_placement_investigation_report,
         text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
         SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
@@ -647,10 +646,10 @@ fn normalized_geometry_inventory(doc: &pid_parse::PidDocument) -> NormalizedGeom
                 pid_parse::PidGraphicKind::Unknown { .. },
                 pid_parse::PidGeometryConfidence::ProbeOnly,
             ) => inventory.probe_only_unknowns += 1,
-            // Phase 16: `Annotation` entities are emitted by the
-            // `decoded_jstyle_overrides` collection. They live in
-            // `other_entities` until a dedicated Annotation bucket
-            // ships (Phase 17 candidate).
+            // `Annotation` is vocabulary no emitter produces: the anchor
+            // reading of `0x0030` was withdrawn in August and the sheet
+            // family that carried it is retired. One that turned up would
+            // land in `other_entities`.
             (pid_parse::PidGraphicKind::Annotation { .. }, _) => inventory.other_entities += 1,
         }
     }
@@ -1138,22 +1137,26 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         21,
         "D06 DependencyObject audit count drifted"
     );
-    // Both were counts of things that are not records: 3 "JStyleOverride"
-    // and 20 "0x0010 sub-records" a byte-sliding walk read out of other
-    // records' payloads. `/Sheet6`'s chain holds neither type code, and a
-    // family decodes only what the chain starts. See
+    // Two counts were pinned here until the families behind them were
+    // retired: 3 "JStyleOverride" and 20 "0x0010 sub-records" a byte-sliding
+    // walk read out of other records' payloads. `/Sheet6`'s chain holds
+    // neither type code, which is held on the chain itself now. See
     // `every_decoded_record_starts_where_its_streams_chain_starts_one` and
     // `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §3.
-    assert_eq!(
-        geometry.decoded_jstyle_overrides.len(),
-        0,
-        "D06's sheet chain carries no 0x0030 record"
-    );
-    assert_eq!(
-        geometry.decoded_sub_records_0x0010.len(),
-        0,
-        "D06's sheet chain carries no 0x0010 record"
-    );
+    let package = parse_test_package("D06.pid").expect("D06 parsed above");
+    for sheet in &package.parsed.sheet_streams {
+        let Some(raw) = package.streams.get(&sheet.path) else {
+            continue;
+        };
+        for &at in sheet_chain(&raw.data).keys() {
+            let code = le_u16(&raw.data, at) & 0x3FFF;
+            assert!(
+                code != 0x0030 && code != 0x0010,
+                "D06 {} +{at}: a record of type 0x{code:04X} on the chain",
+                sheet.path
+            );
+        }
+    }
 
     let normalized = normalized_geometry_inventory(&doc);
     assert_eq!(
@@ -6908,13 +6911,6 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .geometry
                 .as_ref()
                 .map_or(0, |geometry| geometry.decoded_igsymbols.len());
-            // Phase 16 Slice F: `decoded_jstyle_overrides` emits
-            // `PidGraphicKind::Annotation` entities on top of the
-            // probe / Phase 14 totals above.
-            let decoded_jstyle_override_count = sheet
-                .geometry
-                .as_ref()
-                .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len());
             let total = text_count
                 + coordinate_count
                 + endpoint_count
@@ -6924,10 +6920,9 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 + decoded_iglinestring_count
                 + decoded_igpoint_count
                 + decoded_igtextbox_count
-                + decoded_igsymbol_count
-                + decoded_jstyle_override_count;
+                + decoded_igsymbol_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, decoded_jstyle_override={decoded_jstyle_override_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, total={total}",
                 sheet.path
             );
             total
@@ -12223,18 +12218,14 @@ fn a_sheet_chain_holds_no_jstyle_override_and_the_old_hits_were_block_length_wor
                 "{fixture} {}: a 0x0030 record on the chain",
                 sheet.path
             );
+            // The family that read this type code off sheets is retired:
+            // no registry row decodes it, so nothing the parse keeps can
+            // come from one.
             assert!(
-                decode_jstyle_overrides(bytes).is_empty(),
-                "{fixture} {}: the family decodes off the chain",
-                sheet.path
-            );
-            assert_eq!(
-                sheet
-                    .geometry
-                    .as_ref()
-                    .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len()),
-                0,
-                "{fixture} {}: the parsed sheet carries a JStyleOverride",
+                pid_parse::SHEET_RECORD_FAMILIES
+                    .iter()
+                    .all(|family| family.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE),
+                "{fixture} {}: a registry row reads 0x0030",
                 sheet.path
             );
 
@@ -13241,22 +13232,14 @@ fn a_sheet_chain_holds_no_0x0010_record_and_the_old_hits_were_sub_type_words() {
                 "{fixture} {}: a 0x0010 record on the chain",
                 sheet.path
             );
+            // The two families that read this type code off sheets are
+            // retired: no registry row decodes it, so nothing the parse
+            // keeps can come from one.
             assert!(
-                decode_sub_records_0x0010(bytes).is_empty()
-                    && decode_attribute_fragments(bytes).is_empty(),
-                "{fixture} {}: the family decodes off the chain",
-                sheet.path
-            );
-            let (wired_raw, wired_fragments) = sheet.geometry.as_ref().map_or((0, 0), |geometry| {
-                (
-                    geometry.decoded_sub_records_0x0010.len(),
-                    geometry.decoded_attribute_fragments.len(),
-                )
-            });
-            assert_eq!(
-                (wired_raw, wired_fragments),
-                (0, 0),
-                "{fixture} {}: the parsed sheet carries 0x0010 records",
+                pid_parse::SHEET_RECORD_FAMILIES
+                    .iter()
+                    .all(|family| family.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010),
+                "{fixture} {}: a registry row reads 0x0010",
                 sheet.path
             );
 

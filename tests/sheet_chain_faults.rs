@@ -39,7 +39,9 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_records::{
-    decode_smartframes, parse_psm_header, sheet_record_starts, SheetChain, SHEET_STREAM_MAGIC,
+    decode_smartframes, parse_psm_header, sheet_record_starts, AttributeFragmentDecoder,
+    JStyleOverrideDecoder, PsmRecordDecoder, SheetChain, SubRecord0x0010Decoder,
+    SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
@@ -784,6 +786,14 @@ struct LengthSweep {
     count_differs: usize,
     /// Records the two rows above read from where no record starts.
     records_off_the_chain: usize,
+    /// Of those, the ones a record family decodes: something in the parse
+    /// result that the file does not hold.
+    decoded_off_the_chain: usize,
+    /// Of those, the ones the matchers of the three retired families
+    /// (`JStyleOverride`, `SubRecord0x0010`, `AttributeFragment`) accept:
+    /// what the parse result held of them until those families left the
+    /// registry.
+    retired_matchers_accept: usize,
     /// The stream reads as a sound chain: the changed record ends where a
     /// later record starts, and every record between is one the native
     /// reader skips. Nothing about the framing can tell.
@@ -845,6 +855,42 @@ fn sweep_lengths(label: &str, data: &[u8], sweep: &mut LengthSweep) {
                 .skip(1)
                 .filter(|&&read| starts.binary_search(&(read + shift)).is_err())
                 .count();
+            if off_the_chain > 0 {
+                let mut copy = data.to_vec();
+                put_u32(&mut copy, at + 2, wrong);
+                let off: Vec<usize> = chain
+                    .starts
+                    .iter()
+                    .skip(1)
+                    .map(|read| read + shift)
+                    .filter(|read| starts.binary_search(read).is_err())
+                    .collect();
+                for family in SHEET_RECORD_FAMILIES {
+                    for range in (family.decoded_ranges)(&copy) {
+                        if off.contains(&range.start) {
+                            sweep.decoded_off_the_chain += 1;
+                        }
+                    }
+                }
+                let retired = JStyleOverrideDecoder
+                    .scan(&copy)
+                    .into_iter()
+                    .map(|record| record.byte_range.start)
+                    .chain(
+                        SubRecord0x0010Decoder
+                            .scan(&copy)
+                            .into_iter()
+                            .map(|record| record.byte_range.start),
+                    )
+                    .chain(
+                        AttributeFragmentDecoder
+                            .scan(&copy)
+                            .into_iter()
+                            .map(|record| record.byte_range.start),
+                    );
+                sweep.retired_matchers_accept +=
+                    retired.filter(|start| off.contains(start)).count();
+            }
             let past_the_record = 8 + 6 + wrong as usize;
             match chain.stop {
                 Some(_) if chain.end == 8 => sweep.stops_on_the_record += 1,
@@ -938,6 +984,14 @@ fn sweep_file(
 ///   starts and every record it swallowed is a superseded copy the native
 ///   reader skips: that reads as a sound chain, and no rule about framing
 ///   can say otherwise.
+///
+/// No record family decodes one of the records read off the chain
+/// (`decoded_off_the_chain` is zero in every row). The matchers of the
+/// three families retired on 2026-11-11 accept some of them
+/// (`retired_matchers_accept`): a sub-type word `0x0010` or a block length
+/// `30 00` is as good a type word to the walk as any, and those families
+/// were the only ones that made a record of what followed. With their rows
+/// in the registry that number was `decoded_off_the_chain`.
 #[test]
 fn every_single_length_change_of_a_committed_stream_is_accounted_for() {
     let mut files = Vec::new();
@@ -1315,6 +1369,8 @@ const LENGTHS_ON_DISK: LengthSweeps = LengthSweeps {
         stops_later: 168,
         count_differs: 2,
         records_off_the_chain: 175,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 62,
         swallows_skipped_records: 0,
     },
     caches: LengthSweep {
@@ -1326,6 +1382,8 @@ const LENGTHS_ON_DISK: LengthSweeps = LengthSweeps {
         stops_later: 354,
         count_differs: 133,
         records_off_the_chain: 360,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 0,
         swallows_skipped_records: 0,
     },
     symbol_sheets: LengthSweep {
@@ -1337,6 +1395,8 @@ const LENGTHS_ON_DISK: LengthSweeps = LengthSweeps {
         stops_later: 0,
         count_differs: 0,
         records_off_the_chain: 0,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 0,
         swallows_skipped_records: 0,
     },
 };
@@ -1354,6 +1414,8 @@ const LENGTHS_ARCHIVED: LengthSweeps = LengthSweeps {
         stops_later: 0,
         count_differs: 1,
         records_off_the_chain: 0,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 0,
         swallows_skipped_records: 0,
     },
     caches: LengthSweep {
@@ -1365,6 +1427,8 @@ const LENGTHS_ARCHIVED: LengthSweeps = LengthSweeps {
         stops_later: 369,
         count_differs: 4,
         records_off_the_chain: 374,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 0,
         swallows_skipped_records: 0,
     },
     symbol_sheets: LengthSweep {
@@ -1376,6 +1440,8 @@ const LENGTHS_ARCHIVED: LengthSweeps = LengthSweeps {
         stops_later: 79,
         count_differs: 536,
         records_off_the_chain: 79,
+        decoded_off_the_chain: 0,
+        retired_matchers_accept: 0,
         swallows_skipped_records: 14,
     },
 };

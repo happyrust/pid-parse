@@ -5024,27 +5024,6 @@ pub struct SheetJStyleOverrideDecoded {
     pub raw_attribute_tail: Vec<u8>,
 }
 
-/// Decode every conservative PSM `0x0030` `JStyleOverride` record on
-/// a `Sheet*` stream's chain (RAD `JStyleOverride`
-/// `IJPersistImp::Save` Version-3 path): [`decode_jstyle_override_at`]
-/// at each record the chain starts.
-///
-/// **No sheet chain of any corpus carries this type code**, so on every
-/// drawing and template measured this returns nothing. The 13 671
-/// "records" the family used to report — and emit as position-less
-/// `ProbeOnly` entities — were what a byte-sliding walk made of the block
-/// every `0x00FA` `DependencyObject` ends with, `<type u16> <selector u16>
-/// <len u16>` followed by `len` bytes: a 48-byte block states its length
-/// as `30 00`, which reads as this type word, and the block's first four
-/// bytes then read as `bytes_to_follow`. All of them ran past the end of
-/// the record they sat in
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §3.2). The class is real and so is its type code; its records live in
-/// a `StyleCluster`, where `style_link` reads them.
-pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
-    JStyleOverrideDecoder.scan(data)
-}
-
 /// [`PsmRecordDecoder`] adapter for the RAD `JStyleOverride` family
 /// (PSM type `0x0030`, `style.dll` Version-3 IO — **not** an arc; see
 /// the Phase 16 reclassification note on
@@ -5054,6 +5033,26 @@ pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
 /// [`PSM_RECORD_HEADER_LEN`] header (`oid` at header bytes 6..10) and
 /// carries a variable attribute tail inside `bytes_to_follow`; both
 /// deviations live on this adapter.
+///
+/// **Retired as a sheet family, 2026-11-11.** No sheet chain of any corpus
+/// carries this type code, so the family had no record to decode. The
+/// 13 671 "records" it used to report — and emit as position-less
+/// `ProbeOnly` entities — were what a byte-sliding walk made of the block
+/// every `0x00FA` `DependencyObject` ends with, `<type u16> <selector u16>
+/// <len u16>` followed by `len` bytes: a 48-byte block states its length
+/// as `30 00`, which reads as this type word, and the block's first four
+/// bytes then read as `bytes_to_follow`. All of them ran past the end of
+/// the record they sat in
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.2, §12). The class is real and so is its type code; its records live
+/// in a `StyleCluster`, where `style_link` reads them by their own
+/// 90-byte layout.
+///
+/// The registry row, the `SheetGeometry` field, the model DTO, the emitter
+/// and the stream entry point are gone. This matcher and
+/// [`decode_jstyle_override_at`] stay, for one reason: the tests and
+/// probes that re-find what the old scan matched hold each hit to the
+/// record it sat in, and need the rule that made the hit.
 pub struct JStyleOverrideDecoder;
 
 impl PsmRecordDecoder for JStyleOverrideDecoder {
@@ -5333,33 +5332,9 @@ pub struct SheetSubRecord0x0010Decoded {
     pub leading_word: Option<u16>,
 }
 
-/// Decode every PSM `0x0010` record on a Sheet stream's chain: at each
-/// record the chain starts, accept the 6-byte PSM header when
-/// `type_code == 0x0010` and `bytes_to_follow` satisfies the
-/// `[SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
-/// SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW]` envelope.
-///
-/// **No sheet chain of any corpus carries this type code**, so on every
-/// drawing and template measured this returns nothing. The 66 190
-/// "sub-records" the family used to report were what a byte-sliding walk
-/// made of a graphic record's own payload: `+12` of an `igLine2d`,
-/// `igPoint2d`, `igTextBox`, `igLineString2d` … is its sub-type word,
-/// which is `0x0010` on most of them, and the `u32` after it is the
-/// record's style id, which the walk read as `bytes_to_follow`. More than
-/// half ran past the end of the record they sat in
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §3.1). What each "sub-record" held is a field of its host, which the
-/// host's own family decodes.
-///
-/// The decoder is **conservative** and panic-free: adversarial bytes
-/// either fail validation and are skipped, or never decode at all.
-pub fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
-    SubRecord0x0010Decoder.scan(data)
-}
-
 /// Try to decode a single PSM `0x0010` sub-record starting at `offset`
-/// in `data`. Returns `None` when any validation rule from
-/// [`decode_sub_records_0x0010`] fails. Bounds-checked: passing
+/// in `data`. Returns `None` when any validation rule of
+/// [`SubRecord0x0010Decoder`] fails. Bounds-checked: passing
 /// `offset >= data.len()` or a truncated tail returns `None`.
 ///
 /// Thin wrapper over [`SubRecord0x0010Decoder::decode_at`].
@@ -5370,9 +5345,29 @@ pub fn decode_sub_record_0x0010_at(
     SubRecord0x0010Decoder.decode_at(data, offset)
 }
 
-/// [`PsmRecordDecoder`] adapter for the audit-only polymorphic
-/// `0x0010` sub-record family. Validation rules are documented on
-/// [`decode_sub_records_0x0010`].
+/// [`PsmRecordDecoder`] adapter for what was the polymorphic `0x0010`
+/// sub-record family: it accepts the 6-byte PSM header when
+/// `type_code == 0x0010` and `bytes_to_follow` satisfies the
+/// `[SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+/// SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW]` envelope. Conservative and
+/// panic-free.
+///
+/// **Retired as a sheet family, 2026-11-11.** No chain of any stream in
+/// the corpora carries this type code. The 66 190 "sub-records" the family
+/// used to report were what a byte-sliding walk made of a graphic record's
+/// own payload: `+12` of an `igLine2d`, `igPoint2d`, `igTextBox`,
+/// `igLineString2d` … is its sub-type word, which is `0x0010` on most of
+/// them, and the `u32` after it is the record's style id, which the walk
+/// read as `bytes_to_follow`. More than half ran past the end of the
+/// record they sat in
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.1, §12). What each "sub-record" held is a field of its host, which
+/// the host's own family decodes.
+///
+/// The registry row, the `SheetGeometry` field, the model DTO, the emitter
+/// and the stream entry point are gone. This matcher and
+/// [`decode_sub_record_0x0010_at`] stay for the tests and probes that
+/// re-find what the old scan matched.
 pub struct SubRecord0x0010Decoder;
 
 impl PsmRecordDecoder for SubRecord0x0010Decoder {
@@ -5430,7 +5425,7 @@ impl PsmRecordDecoder for SubRecord0x0010Decoder {
 // annotation labels) as length-prefixed UTF-16LE after a fixed
 // `marker(4) + aux(8)` prefix. See
 // `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`. This decoder
-// is strictly additive: the raw Phase 18 `decode_sub_records_0x0010`
+// is strictly additive: the raw Phase 18 `SubRecord0x0010Decoder`
 // path is unchanged, and no `PidGraphicKind` is emitted.
 
 /// One length-prefixed UTF-16LE string extracted from a PSM `0x0010`
@@ -5481,26 +5476,6 @@ pub const ATTRIBUTE_FRAGMENT_STRING_START: usize = 12;
 /// against a bogus length prefix.
 pub const ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT: u16 = 4096;
 
-/// Decode every PSM `0x0010` **attribute fragment** in a Sheet stream's
-/// bytes (Phase 26, additive + audit-only).
-///
-/// Uses the same header envelope as [`decode_sub_records_0x0010`], then
-/// parses `marker(4) + aux(8) + [u16 len + UTF-16LE]*` and keeps a record
-/// only when at least one clean, non-empty UTF-16LE string is recovered.
-/// Records whose tail is not clean length-prefixed UTF-16LE are skipped
-/// (still available via the raw Phase 18 decoder). Panic-free.
-///
-/// Like [`decode_sub_records_0x0010`] it reads the stream's chain, and
-/// **no sheet chain of any corpus carries a `0x0010` record**: the 12 531
-/// "fragments" this used to report were, all but 33, the inside of a text
-/// box from its `+12` on — sub-type word, style id, then the box's own
-/// length-prefixed UTF-16 text, which is what the strings were. 303 of
-/// those boxes were superseded copies the native reader skips. The text of
-/// a label is `igTextBox`'s to decode, and it does.
-pub fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
-    AttributeFragmentDecoder.scan(data)
-}
-
 /// Try to decode a single PSM `0x0010` attribute fragment at `offset`.
 /// Returns `None` when the header fails validation, the payload is too
 /// short for `marker(4)+aux(8)+len`, or no clean UTF-16LE string is
@@ -5521,6 +5496,16 @@ pub fn decode_attribute_fragment_at(
 /// clean non-empty string. Two adapters deliberately share one type
 /// code here — the raw Phase 18 collection and this typed view coexist
 /// by design.
+///
+/// **Retired as a sheet family, 2026-11-11**, with
+/// [`SubRecord0x0010Decoder`]: the same envelope, so the same absence.
+/// The 12 531 "fragments" this used to report were, all but 33, the
+/// inside of a text box from its `+12` on — sub-type word, style id, then
+/// the box's own length-prefixed UTF-16 text, which is what the strings
+/// were; 303 of those boxes were superseded copies the native reader
+/// skips. The text of a label is `igTextBox`'s to decode, and it does.
+/// This matcher and [`decode_attribute_fragment_at`] stay for the tests
+/// and probes that re-find what the old scan matched.
 pub struct AttributeFragmentDecoder;
 
 impl PsmRecordDecoder for AttributeFragmentDecoder {
@@ -11863,6 +11848,19 @@ mod tests {
             out.extend_from_slice(&v.to_le_bytes());
         }
         out
+    }
+
+    /// The matchers of two retired families walked on a chain, as the
+    /// stream entry points they no longer have walked them. The unit tests
+    /// below hold the matchers' own rules, which the evidence tests rest
+    /// on; nothing outside tests walks them.
+    fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
+        SubRecord0x0010Decoder.scan(data)
+    }
+
+    /// The same for the attribute-fragment view.
+    fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
+        AttributeFragmentDecoder.scan(data)
     }
 
     /// Wrap synthetic records into a `Sheet*` stream: the 8-byte stream
