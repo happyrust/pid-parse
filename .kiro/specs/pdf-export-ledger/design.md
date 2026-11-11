@@ -483,13 +483,15 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `record_no_decoder` | `NormalizedPidGeometry::dropped_graphic_records` | 计数项（流，类型码），值为表中 `count` |
 | `record_refused` | `refused_graphic_records` | 同上 |
 | `record_native_skip` | `skipped_graphic_records` | 同上 |
-| `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None`、且 `size` 大于 8 字节流头者（只有流头的空流不含记录，不记） | 计数项（流），另记 `size` 字节数 |
+| `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None` 者 | 计数项（流），另记 `size` 字节数 |
 | `record_symbol_body_cache` | `doc.jsites[..].nested_geometry` 的 `len()` | 计数项（存储路径） |
 | `cache_definition_unplaced` | `geometry.symbol_definitions` 中没有任何 `SymbolInstance.definition` 指向的定义 | 计数项（`JSite<site>`），值为定义数，另记其体图元数 |
 | `record_audit_only_family` | `emitter_accounts` 中 `audit_only` 行的 `decoded` | 计数项（流，族） |
 | `record_emitter_out_of_range` | 根 crate：11 个发射族在 `source_range(..)` 为 `None` 时的 `continue`（`geometry.rs` 约 2299、2381、2469、2541、2612、2670、2728、2830、2911、2992、3127 行） | 计数项（流，族） |
 | `record_emitter_shape_rejected` | 根 crate：`igLineString2d` 顶点数不等（约 2731 行）或全重合却无顶点（约 2746 行）；`igBoundary2d` 环点少于 3（约 3005 行）；`igBspCurve2d` 采样少于 2（约 3139 行） | 计数项（流，族） |
 
+> 实现注记（2026-11-10）：`sheet_stream_without_geometry` 在实现里多一个条件——流要长于 8 字节流头才记。只有流头（魔数 + 记录数）的流不含记录，没有哪条记录没变成实体，也没有普查可丢，它是一张空的 Sheet，不是丢弃。此前这样的空流 7 条（备份 `N井场` 2 条、`Q井场` 1 条，夹具 `A01` 嵌入图框的 4 条）被记成了可疑项（`99aa9da`；`LedgerRecorder::parse` 里 `stream.size <= SHEET_STREAM_HEADER_LEN` 的 `continue`）。
+>
 > 实现注记（2026-11-11）：`sheet_stream_without_geometry` 另记一种流——自己的记录链立不住的链式流（`Sheet*` 流，或符号缓存的 `JSite*/PSMcluster0`）：链在流尾之前停下（记录长度为零、长度越过流尾、剩下的字节不够一个 6 字节信封、流不足 8 字节流头），或者链走到了流尾而流头的魔数、活记录数与链对不上（`NormalizedPidGeometry::chain_faults`，`pid_parse::StreamChainFault`）。这样的流只读到停点为止，停点之前的记录照常成为实体，所以它的 `geometry` 不是 `None`、页上有它的墨，却不是整张图；它按流记一项（计数 1），`bytes` 记的是停点之后没有读的字节数，流头对不上而链走到流尾的记 0。同一条流已经因为 `geometry` 为 `None` 记过的，不再记第二项。`LayoutLedger::chain_faults` 留着解析器给出的整条事实（停点偏移、原因、读到的记录数），`pid_plot` 据此在 stderr 打一行 `warning:`。没有另立原因码：它与这一行原有的判据说的是同一件事——这条流没有被完整地读成记录——档位也相同；全部语料的完好流上没有这样的项（`tests/sheet_chain_faults.rs`）。挂钩在 `LedgerRecorder::parse`，紧接在按 `geometry` 为 `None` 记流的循环之后。
 
 **A.2 排版层：实体**（`EntityLayout` 或 `PlacementLayout` 的 `dropped`）
