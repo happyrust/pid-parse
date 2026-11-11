@@ -1075,6 +1075,9 @@ the record chain of /Sheet6 does not hold: it stops at +29590 of 29594 bytes, wh
 | 边框的两个矩形 | 8 | `igRectangle2d` × 2 |
 | 徽标 | 4（`A0-W.igr`、`A1-W.igr`、`A2-W.igr`、`A3-W.igr` 各一） | 37 个：`igLine2d` 16、`igArc2d` 7、`igBoundary2d` 5、`igBspCurve2d` 4、`igEllipticalArc2d` 4、`igPoint2d` 1 |
 
+（2026-11-11 更正：下面「各由自己的族解码、发射」对徽标里的 5 条 `igBoundary2d` 不成立——图纸侧语法拒收它们，
+见 §17.6。其余 32 个成员成立。）
+
 两种组的每个成员都是同一条链上唯一一条活记录，所有者字是这个组的 oid。徽标的 37 个成员各由自己的族解码、
 发射（矩形仍然是不发射、由四条边画），所以组不发射的理由没有变：发射它就是把成员再画一遍。
 
@@ -1097,3 +1100,115 @@ the record chain of /Sheet6 does not hold: it stops at +29590 of 29594 bytes, wh
 端点短 1 个格点左右）；我起先写的「框向外包住线」的断言因此不成立，改成了「相差不超过 1 mm」。
 
 页面没有变：这两个族不发射，71 页逐页比对 0 页不同，两本账与金样不动。
+
+## 17. 第四轮（2026-11-11）：类型字绊线、三个无链族退役、第二次复审的其余各条
+
+第二次独立审查（固定在 `0d63b1b`）的结论是可以并入、没有阻断项，另有三条应修、四条建议。这一节记做了什么、
+量到什么。
+
+### 17.1 长度「错了但没越界」：链在类型字不是记录开头的地方停下
+
+§15 的论证——「停点之前的记录每一条的长度都来自前一条，是真记录」——只在链恰好停在坏记录上时成立。长度错了
+而仍在流内时，链从没有记录的偏移接着读，读到字节碰巧不像记录为止；停点不是坏点，「没读的字节数」偏小，
+碰巧接回真记录、活记录数又碰巧相等时一个字都不说。
+
+**规则**（`sheet_records::psm_type_word_opens_a_record`）：类型码在 `0x0001..=0x0118`、不是 `0x00F8`、没有
+`0x4000` 位。不满足就停（`SheetChainStop::NoSuchClass`），故障带上这个类型字和链读到的最后一条记录的偏移。
+
+依据：
+
+- `radsrvitem.dll` 的「类型码 → CLSID」表（`dword_5667B068`）整张读出：281 个槽，`0x0000`–`0x0118`，按 CLSID 排序，
+  其后不是 GUID；230 个在 `jutil.dll` 的 RAD 注册表里有名字，50 个有 CLSID 而注册表没列，`0x00F8` 一个是空的。
+- `PSMSerializeIn` 把读到的类型字与对象的 14 位类型码比，不等就报 `Stream offset mismatch while reading serial data`：
+  它读的记录不可能带 `0x4000`。
+- `0x0000`：类表不排除（0 号槽是 `JFeatureControlFrame Object`）。拦它是因为 0 是载荷里最常见的字，而语料里没有
+  一条记录的类型码是 0。真有这种记录的图会在那里停下并报出来。
+- 语料里以链魔数开头的流去重 3 984 条、499 289 条记录，没有一条不满足这条规则。
+
+**为什么不用「语料里出现过的类型码」白名单**：它抓得更多，但 Sheet 链上语料只见过 18 种码、缓存链 49 种；
+`igBalloon`、`igLeader`、`Graphics Bag` 都在原生的图形谓词里而语料的链上一条都没有——白名单会把带这种记录的
+好图在那里截断。
+
+**读数**（每条记录的长度字段各改 ±1、±2 … ±64；图纸与模板的 Sheet 流去重 100 条、2 106 074 个变体）：
+
+| | 不设绊线 | 只拦 `0x0000` / `0x4000` | 类表（采用） | 语料白名单 |
+|---|---:|---:|---:|---:|
+| 读进至少一条假记录 | 620 049 | 75 317 | 35 074 | 1 156 |
+| 停点恰好是坏记录之后第一个偏移 | 1 485 144 | 2 029 876 | 2 070 119 | 2 104 037 |
+| 走到流尾、只靠流头记录数报出 | 8 146 | 857 | 450 | 16 |
+| 完全不出声 | 41 | 0 | 0 | 0 |
+
+缓存流（去重 156 条、927 841 个变体）：读进假记录 238 391 → 11 121，完全不出声 312 → 0。
+
+抓不到的一类：`.sym` 的 Sheet 流上有 18 个变体（入库压缩包里 14 个），坏记录恰好把后面几条带 `0x8000` 的旧副本
+整条吞掉、落在一条真记录的起点上。每个起点都是真的、活记录数也对，只看框架分辨不出。
+
+告警与文档改说「链读到的记录」；走到流尾而记录数不对的故障写明不给位置。`0x3FE6`（`GLine2d`）超出类表，
+`decode_primitive_lines` 因此在任何流上都解不出东西；这个族没有退役。
+
+测试：`tests/sheet_chain_faults.rs` 的 `a_length_that_is_wrong_and_in_bounds_stops_the_walk_past_its_record`
+（复审的两个例子加 11 个原先完全不出声的变体）与 `every_single_length_change_of_a_committed_stream_is_accounted_for`
+（入库每条链式流的每条记录各 14 个变体，逐类钉数）。
+
+### 17.2 三个无链族退役
+
+`JStyleOverride`（Sheet 族）、`SubRecord0x0010`、`AttributeFragment` 从族注册表（20 → 17 行）、`SheetGeometry`
+（三个字段、四个 DTO）、几何发射器、语义连接的 oid 池、`DECODED_TYPE_CODES`（19 → 17）里拿掉，三个流入口
+（`decode_jstyle_overrides`、`decode_sub_records_0x0010`、`decode_attribute_fragments`）删除。
+
+完好文件上什么都没变：这三个族在链上本来就解不出东西。6 份几何金样、7 份纸面金样、两本账、普查钉值都没有
+重写。变的是坏流：长度错了之后链读到的假记录，类型字是 `0x0010`（图形记录的子类型字）或 `0x0030`（依赖对象
+收尾块的长度）时能过绊线，而只有这三个族会把它解成东西。长度变体的那道门现在逐个问「假记录有没有被族解成
+东西」：注册表里的族 0 条；三个退役的匹配器在磁盘上的 Sheet 流的 175 条假记录里会认 62 条——退役之前这 62 条
+进解析结果。
+
+**没有整族删掉的部分**：三个 `decode_*_at` 匹配函数、它们的 `PsmRecordDecoder` 适配器和解析层 DTO 留着。
+原因：`tests/parse_real_files.rs` 的三条证据用例和两个探针（`probe_what_the_chainless_families_matched`、
+`probe_what_the_byte_audit_no_longer_claims`）要把旧扫描的每个命中归到它所在的宿主记录上，需要当时造出命中的那条
+规则。解析路径上没有任何地方再调用它们。公开模式里的两个名字（`SheetRecordKind::JStyleOverride`、
+`PidGraphicKind::Annotation`）也还在，没有代码再产出。
+
+### 17.3 `-W` 模板里的 Sheet 级椭圆弧与 B 样条
+
+入库的 `RefData~4~682.zip` 里 `A0-W.igr` 到 `A3-W.igr` 的 `/Sheet6` 各有 4 条 `0x007E` 和 4 条 `0x005D`，都是徽标
+Group 的成员。「语料里只有 `XA-A1.igr` 一张有」的说法不成立，已改。四条弧是同一个椭圆（10.976 × 7.958 mm）的
+上帽、下帽和左侧两小段，方向字节 0（顺时针）——`XA-A1.igr` 那两条是 1。`tests/elliptical_arcs.rs` 新增
+`the_w_templates_logo_ring_is_four_clockwise_arcs_of_one_ellipse`：两个帽各转 106.26°、落在弦的外侧，两小段各转
+14.07°、在椭圆左侧，端点都落在徽标线段的端点上；反向读的话帽会绕 253.74°。没有页面穿 `-W` 模板。
+
+### 17.4 `pid_publish_xml` 对断链出声
+
+发布线的读取器对每条以链魔数开头的根流「要么整条、要么没有」。链停下的流一条记录都不给它，交付少掉那条流里的
+全部属性行、标注文字和符号放置，退出码 0、一个字不说（`DWG-0201GP06-01.pid` `/Sheet6` 一个长度写 0：
+「92 of 102 label values reach an item, 18 attributes published」变成「0 of 102 …, 0 attributes published」）。
+现在单文件模式下每条这样的流在 stderr 上一行 `warning:`（`StreamChainFault::describe` 加一句发布线怎么读了它）。
+XML、`_Coverage.json`、退出码不变。备份包模式没有做。
+
+### 17.5 `StyleCluster` 与 `.sym`
+
+- `StyleCluster`（文档自己的和每个符号缓存的）链不成立时现在进 `PidDocument::chain_faults`，由此到几何告警、
+  账本和 `pid_plot` 的 stderr。样式表自己的走法没有改（读到不成帧的记录为止，没有类型字绊线）。
+- `.sym` 当库体读时每张 sheet 整条或没有；`SymbolGeometry::chain_faults` 现在带着解析这个文件时发现的故障。
+  `pid-plot` 还没有读这个字段。
+
+### 17.6 「2 158 条边界」是 86 个文档上的数；入库压缩包里的模板另有 41 条
+
+2 158 是备份、验收、共享、夹具图纸和两处模板目录共 86 个文档的 Sheet 链上的条数（复审独立复现了这个数）。
+入库 `RefData~4~682.zip` 里的模板不在其中，它们的 Sheet 链上另有 41 条活的 `igBoundary2d`。这一轮用一次性的
+测试读的：
+
+| 模板 | 链上 | 图纸侧语法 | 说明 |
+|---|---:|---|---|
+| `A0-W.igr`、`A1-W.igr`、`A2-W.igr`、`A3-W.igr` | 各 5，共 20 | **全部拒收** | 都是徽标 Group 的成员。环的第一个成员标签处是 `0x02` 或 `0x03`，不是 `0x67`。解析这些模板时报成 `0x0013 × 5` 的被拒图形记录。符号体语法（`decode_igsym_boundary_at`）各读得通 1 条 |
+| `CPECCHBA2.igr` | 14 | 14 条解码 | 没有成员引用；锚点不是 `1e30` 占位，也不在解出的环内（环自己闭合）|
+| `qsmcqtaz13A2.igr` | 7 | 7 条解码 | 同上 |
+
+复审报的是「四个 `-W` 模板各有 1 条按任何语法都读不通（成员里有 `0x7F` 标签）、另有 12 条一环边界锚点在环外」。
+我量到的与它**对不上**：按图纸侧语法这 20 条一条都不解码，锚点在环外的 21 条在另外两个模板里。两边用的语法
+不同，**没有对齐**。能确定的：这 20 条是有墨的图形记录而现在不画；`CPECCHBA2.igr` / `qsmcqtaz13A2.igr` 的 21 条
+发射成填充而锚点读法没有证据。没有页面穿这六个模板。
+
+### 17.7 完成审计的证据页
+
+`docs/analysis/2026-11-11-what-the-plant-backup-census-pins-and-why-none-of-it-draws.md`：
+`tests/plant_backup_census.rs` 钉的每一类为什么不画、证据是什么、哪里没有证据。
