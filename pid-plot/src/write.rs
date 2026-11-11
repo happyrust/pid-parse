@@ -108,15 +108,21 @@ fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     }
 }
 
-/// The pens the reference plotter used, in paper millimetres.
+/// One device unit of the reference plotter, in paper millimetres: 1/150
+/// inch, `0.48 w`.
+const DEVICE_UNIT_MM: f64 = 25.4 / 150.0;
+
+/// The pens the reference plots print, in paper millimetres: one, two, four,
+/// six and eight device units, `0.48 / 0.96 / 1.92 / 2.88 / 3.84 w`.
 ///
-/// Half, one, two and three times the mid pen: `0.169 / 0.339 / 0.678 /
-/// 1.017` — and a fifth at four times it, [`PEN_HEAVY_MM`].
+/// They are written as this crate has always written them — the unit to the
+/// micrometre and its multiples by the mid pen, within a micrometre of the
+/// plotter's own — so that a page's bytes do not move with the statement of
+/// the rule ([`pen_width_mm`]).
 /// Three pens were all the five-drawing corpus ever showed. The A2
 /// reference plot added on 2026-11-02 prints a fourth: its
 /// `CPECCHB-SQ-A2.igr` title block declares 1.0606 / 1.1313 / 1.4141 mm
-/// rules, and the plot prints every one of them at `1.02` — the wide pen,
-/// not the thick one the table used to fold them onto.
+/// rules, and the plot prints the first two at `1.02` — the wide pen.
 const PEN_THIN_MM: f64 = 0.169;
 const PEN_MID_MM: f64 = 0.339;
 const PEN_THICK_MM: f64 = 0.678;
@@ -140,48 +146,64 @@ const PEN_HEAVY_MM: f64 = 1.355;
 /// ([`pen_width_mm`]); a stroke with no style at all lands on the same one.
 const STROKE_MM: f64 = PEN_MID_MM;
 
-/// Snap a declared stroke width onto the plot's four pens.
+/// The pen a declared stroke width prints on: the width in device units,
+/// cut to a whole unit and never under one.
 ///
-/// A `.pid` declares its widths on the ISO 128 ladder — 0.13 / 0.18 / 0.35 /
-/// 0.70 mm on the I drawing — and plotting those literally gives more widths
-/// than the plotter carries. The boundaries are measured, and they
-/// are intervals rather than values: the title block's 0.25 mm rules print thin
-/// while 0.35 mm symbol strokes print mid, so the thin/mid boundary lies inside
-/// `(0.25, 0.35)`; 0.70 mm process mains print thick, so the mid/thick boundary
-/// lies inside `(0.35, 0.70)`. No reference page prints ink that declares a
-/// width between 0.35 and 0.70 — the 0.50 mm strokes this table used to cite as
-/// a mid-pen anchor were the drawing's `As Drawn` placeholder, which prints
-/// *thin* (see `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`) — so the
-/// 0.55 mm threshold below is a choice inside that interval, not a measurement.
+/// A `.pid` declares its widths in millimetres — 0.13 / 0.18 / 0.35 /
+/// 0.70 mm on the I drawing — and the vendor's plots stroke each on a whole
+/// number of device units ([`DEVICE_UNIT_MM`]). Which number is one rule on
+/// every width the eleven reference plots show
+/// (`probe_which_pen_a_declared_width_prints_on`: 19 393 straight pieces,
+/// each read against the reference stroke at its place):
 ///
-/// The thick/wide boundary sits inside `(0.70, 1.06)`: the CCHB A2 title block
-/// declares 1.0606 mm and up, and the plot prints those wide, while every
-/// 0.70 mm stroke on the same sheet prints thick. 0.85 mm is a choice inside
-/// that interval.
+/// | declared mm | in units | prints on | pieces |
+/// |---|---|---|---|
+/// | 0.01 | 0.06 | 1 | 104 |
+/// | 0.13 | 0.77 | 1 | 1 935 |
+/// | 0.18 | 1.06 | 1 | 4 182 |
+/// | 0.25 | 1.48 | 1 | 833 |
+/// | 0.35 | 2.07 | 2 | 10 521 |
+/// | 0.70 | 4.13 | 4 | 1 797 |
+/// | 1.0606 | 6.26 | 6 | 3 |
+/// | 1.1313 | 6.68 | 6 | 14 |
+/// | 1.4141 | 8.35 | 8 | 4 |
 ///
-/// The wide/heavy boundary sits inside `(1.1313, 1.4141)`: the same title
-/// block's 1.0606 and 1.1313 mm rules print wide (`2.88 w`) and its 1.4141 mm
-/// frame prints heavy (`3.84 w`, [`PEN_HEAVY_MM`]). 1.27 mm is a choice
-/// inside that interval, and those four frame lines are all the evidence
-/// there is for the fifth pen.
+/// The width is cut, not rounded — 1.1313 mm is 6.68 units and prints on
+/// six, 0.25 mm is 1.48 and prints on one — and a width under one unit
+/// prints on one, as a pen of no width does in GDI. That the driver cuts is
+/// read off these nine and not off the vendor's program; it replaces a
+/// table of five bands (2026-11-11) whose boundaries were choices inside
+/// the gaps between them, and it prints every width a drawing on hand
+/// declares — these nine, `0.7071`, and the plant backup's `0.30`, `0.50`,
+/// `0.75` and `0.7999`, which no plot shows — on the pen the table did. The
+/// two part only where no drawing on hand declares a width: just under two
+/// units (0.30 to 0.339 mm, one unit and no longer two), and on three, five
+/// and seven units (0.508 to 0.677, 0.847 to 1.016 and 1.185 to 1.355 mm),
+/// which the table had no pen for and folded onto its neighbours.
 ///
-/// A width that is not finite or not positive falls back to the mid pen, which
-/// is what an unresolved style draws with.
+/// One, two, four, six and eight units are written as the five pens this
+/// crate has always written; another count is that many units exactly.
+///
+/// A width that is not finite or not positive falls back to the mid pen,
+/// which is what an unresolved style draws with. One wider than
+/// [`WIDEST_PEN_MM`] is no pen ([`carries_a_pen`]) and keeps the heaviest.
 #[must_use]
 pub fn pen_width_mm(declared_mm: f64) -> f64 {
     if !declared_mm.is_finite() || declared_mm <= 0.0 {
         return PEN_MID_MM;
     }
-    if declared_mm <= 0.30 {
-        PEN_THIN_MM
-    } else if declared_mm <= 0.55 {
-        PEN_MID_MM
-    } else if declared_mm <= 0.85 {
-        PEN_THICK_MM
-    } else if declared_mm <= 1.27 {
-        PEN_WIDE_MM
-    } else {
-        PEN_HEAVY_MM
+    if declared_mm > WIDEST_PEN_MM {
+        return PEN_HEAVY_MM;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let units = (declared_mm / DEVICE_UNIT_MM).trunc().max(1.0) as u32;
+    match units {
+        1 => PEN_THIN_MM,
+        2 => PEN_MID_MM,
+        4 => PEN_THICK_MM,
+        6 => PEN_WIDE_MM,
+        8 => PEN_HEAVY_MM,
+        units => f64::from(units) * DEVICE_UNIT_MM,
     }
 }
 
@@ -190,7 +212,7 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
 /// The ISO 128 ladder these drawings are authored on tops out at 0.70 mm, which
 /// [`pen_width_mm`] snaps onto the thick pen. A sheet template is authored on a
 /// different scale and can declare more: the CCHB A2 title block states
-/// 1.4141 mm for its heavy rails, and the plot prints it on the wide pen.
+/// 1.4141 mm for its frame, and the plot prints it on the heaviest pen.
 /// Past that a width stops being a pen: `SmartPlant` writes its *validation
 /// marks* into the same style table, and those carry the mark's own on-screen
 /// size instead — `BandAid`, which flags an object an engineer has to look at,
@@ -3853,30 +3875,83 @@ mod tests {
             );
         }
     }
+    /// A declared width prints on its whole device units: the width in
+    /// units of 1/150 inch, cut to a whole unit and never under one.
+    ///
+    /// The nine widths the eleven reference plots show a pen for, with the
+    /// pieces `probe_which_pen_a_declared_width_prints_on` reads each on:
+    /// 19 393 straight pieces, every one on the pen the cut gives.
     #[test]
-    fn declared_widths_snap_onto_the_five_plot_pens() {
+    fn a_declared_width_prints_on_its_whole_device_units() {
         use super::{
-            PEN_HEAVY_MM, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm,
+            DEVICE_UNIT_MM, PEN_HEAVY_MM, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM,
+            WIDEST_PEN_MM, pen_width_mm,
         };
-        // The I drawing's own ladder: 0.13 / 0.18 / 0.35 / 0.70 mm.
-        for thin in [0.13, 0.18, 0.25, 0.30] {
-            assert_eq!(pen_width_mm(thin), PEN_THIN_MM, "{thin} mm");
+        let units = |declared: f64| (pen_width_mm(declared) / DEVICE_UNIT_MM).round();
+        // declared mm, the units the reference plots print it on, pieces
+        let witnessed = [
+            (0.01, 1.0, 104),
+            (0.13, 1.0, 1935),
+            (0.18, 1.0, 4182),
+            (0.25, 1.0, 833),
+            (0.35, 2.0, 10_521),
+            (0.70, 4.0, 1797),
+            (1.0606, 6.0, 3),
+            (1.1313, 6.0, 14),
+            (1.4141, 8.0, 4),
+        ];
+        for (declared, printed, pieces) in witnessed {
+            assert_eq!(
+                units(declared),
+                printed,
+                "{declared} mm, which {pieces} pieces of the reference plots print on {printed}"
+            );
         }
-        for mid in [0.35, 0.50, 0.55] {
-            assert_eq!(pen_width_mm(mid), PEN_MID_MM, "{mid} mm");
+        // The five pens those are, as this crate has always written them.
+        assert_eq!(pen_width_mm(0.18), PEN_THIN_MM);
+        assert_eq!(pen_width_mm(0.35), PEN_MID_MM);
+        assert_eq!(pen_width_mm(0.70), PEN_THICK_MM);
+        // 0.7071 mm, which the A2 sheet declares: a millimetre over the root of two.
+        assert_eq!(pen_width_mm(std::f64::consts::FRAC_1_SQRT_2), PEN_THICK_MM);
+        assert_eq!(pen_width_mm(1.1313), PEN_WIDE_MM);
+        assert_eq!(pen_width_mm(1.4141), PEN_HEAVY_MM);
+        // The four widths the plant backup declares and no reference plot
+        // shows: the same pens the five-band table gave them.
+        for (declared, pen) in [
+            (0.30, PEN_THIN_MM),
+            (0.50, PEN_MID_MM),
+            (0.75, PEN_THICK_MM),
+            (0.7999, PEN_THICK_MM),
+        ] {
+            assert_eq!(pen_width_mm(declared), pen, "{declared} mm");
         }
-        for thick in [0.70, 0.85] {
-            assert_eq!(pen_width_mm(thick), PEN_THICK_MM, "{thick} mm");
+        // Where the cut and the table part, on widths no drawing on hand
+        // declares: a width just under two units is still one, and three,
+        // five and seven units are pens of their own.
+        for (declared, printed) in [
+            (0.33, 1.0),
+            (0.34, 2.0),
+            (0.507, 2.0),
+            (0.508, 3.0),
+            (0.55, 3.0),
+            (0.60, 3.0),
+            (0.677, 3.0),
+            (0.678, 4.0),
+            (0.85, 5.0),
+            (1.0, 5.0),
+            (1.016, 6.0),
+            (1.27, 7.0),
+            (1.30, 7.0),
+            (1.355, 8.0),
+            (WIDEST_PEN_MM, 8.0),
+        ] {
+            assert_eq!(units(declared), printed, "{declared} mm");
         }
-        // The CCHB A2 title block's 1.0606 and 1.1313 mm rules print on the
-        // wide pen …
-        for wide in [1.0, 1.0606, 1.1313, 1.27] {
-            assert_eq!(pen_width_mm(wide), PEN_WIDE_MM, "{wide} mm");
-        }
-        // … and its 1.4141 mm frame, and anything above it, on the heavy one:
-        // the A2 reference strokes the frame's four lines `3.84 w`.
-        for heavy in [1.28, 1.4141, 2.0] {
-            assert_eq!(pen_width_mm(heavy), PEN_HEAVY_MM, "{heavy} mm");
+        assert!((pen_width_mm(0.60) - 3.0 * DEVICE_UNIT_MM).abs() < 1e-12);
+        // Past the widest pen a width is a mark's size, not a pen
+        // (`carries_a_pen`); it keeps the heaviest.
+        for mark in [1.46, 2.0, 10.0] {
+            assert_eq!(pen_width_mm(mark), PEN_HEAVY_MM, "{mark} mm");
         }
         // A width that is not a width draws the fallback pen.
         for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
@@ -3884,13 +3959,23 @@ mod tests {
         }
         // 0.169 / 0.339 / 0.678 / 1.017 / 1.355 mm are 0.48 / 0.96 / 1.92 /
         // 2.88 / 3.84 pt — one, two, four, six and eight device units — the
-        // only five widths the reference pages carry.
+        // only five widths the reference pages carry, and each is the pen
+        // of its own width.
         let points = |mm: f64| mm * 72.0 / 25.4;
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
         assert!((points(PEN_WIDE_MM) - 2.88).abs() < 0.005);
         assert!((points(PEN_HEAVY_MM) - 3.84).abs() < 0.005);
+        for pen in [
+            PEN_THIN_MM,
+            PEN_MID_MM,
+            PEN_THICK_MM,
+            PEN_WIDE_MM,
+            PEN_HEAVY_MM,
+        ] {
+            assert_eq!(pen_width_mm(pen), pen, "{pen} mm");
+        }
     }
 
     /// `SP:` states two runs in one style, `SP` and `:`. The reference writes

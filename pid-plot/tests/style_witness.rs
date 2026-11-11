@@ -60,14 +60,20 @@ const DASH_PATTERNS: [&str; 2] = ["1.905/1.270", "7.000/1.750/0.350/1.750"];
 const FACES: [&str; 4] = ["Arial", "Arial Narrow", "FangSong", "SimSun"];
 const TEMPLATES: [&str; 3] = ["CPE-SQ-A0.igr", "CPE-SQ-A1.igr", "CPECCHB-SQ-A2.igr"];
 
-/// The unexercised widths whose pens the references cannot settle.
+/// The unexercised widths: the ones the plant backup declares and no
+/// reference plot shows a pen for.
 ///
-/// The pen table snaps a declared width onto four plotter pens, and the
-/// references bound each boundary into an open interval, not onto a value.
-/// A width is listed here only when no validated page declares it *and* it
-/// sits inside one of those intervals. `0.7071` is declared by the A2
-/// acceptance sheet and that sheet's pen column agrees, so it is witnessed
-/// rather than listed, even though it sits inside the thick/wide interval.
+/// Each sits between two witnessed widths that print on different pens, so
+/// the plots alone do not say which of the two it prints on. The writer's
+/// rule does — a width prints on its whole device units, cut and never under
+/// one (`pen_width_mm`), which is the pen of every one of the 19 393 pieces
+/// the plots show — and by it these four print on one, two, four and four
+/// units ([`UNEXERCISED_PENS`]): the pens the five-band table before it gave
+/// them. That is the rule carried to widths it was not read on, and the
+/// gate below still holds each to the open interval it sits in. `0.7071` is
+/// declared by the A2 acceptance sheet and that sheet's pen column agrees,
+/// so it is witnessed rather than listed, even though it sits inside the
+/// thick/wide interval.
 ///
 /// - **thin/mid `(0.25, 0.35)`** — 0.25 mm rules print thin and 0.35 mm
 ///   strokes print mid (9665 straight symbol strokes on the eleven sheets
@@ -88,6 +94,15 @@ const TEMPLATES: [&str; 3] = ["CPE-SQ-A0.igr", "CPE-SQ-A1.igr", "CPECCHB-SQ-A2.i
 /// ([`pen_width_mm`]). For `0.7500` and `0.7999` the nearest one below is the
 /// witnessed `0.7071`, which prints thick as `0.7000` does.
 const WIDENED_BY_THE_BOUNDARY: [&str; 4] = ["0.3000", "0.5000", "0.7500", "0.7999"];
+
+/// The pen each of [`WIDENED_BY_THE_BOUNDARY`] prints on, in device units of
+/// 1/150 inch: what the writer's rule gives a width no plot shows.
+const UNEXERCISED_PENS: [(&str, f64); 4] = [
+    ("0.3000", 1.0),
+    ("0.5000", 2.0),
+    ("0.7500", 4.0),
+    ("0.7999", 4.0),
+];
 
 fn corpus_dir() -> PathBuf {
     std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -321,6 +336,14 @@ fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
         3,
         "three boundaries, four widths the references cannot settle: {open_intervals:?}"
     );
+    // What the writer's rule prints each of them on.
+    for (width, units) in UNEXERCISED_PENS {
+        let printed = (pen_width_mm(millimetres(width)) / (25.4 / 150.0)).round();
+        assert!(
+            (printed - units).abs() < f64::EPSILON,
+            "{width} mm prints on {printed} device unit(s); {units} when this was pinned"
+        );
+    }
     assert_eq!(
         widths.keys().copied().collect::<Vec<_>>(),
         WIDENED_BY_THE_BOUNDARY,
