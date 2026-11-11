@@ -101,14 +101,16 @@
 //! thresholds, with no exception. A class mean cannot see a single label, so
 //! the labels whose anchor point lands more than 0.15 mm from the
 //! reference's or whose run is more than 0.05 mm wider or narrower are
-//! counted on the whole page and pinned: 46 over the eleven pages, each with
-//! a cause on record. It was 50 until the three air-cooler sheets' `SP:`
-//! started its colon on its own whole pixel, as the reference does, and 47
-//! until the page was painted in the order its sheet lists its objects in
-//! (2026-11-11): `J K井场` letters `1-1/2"` and `FC` as two labels on one
-//! baseline, the read-back of our page used to join them into one run where
-//! the reference's reads as two, and a page painted in the reference's order
-//! reads back in the reference's runs — 813 on that page, where it read 816.
+//! counted on the whole page and pinned: 2 over the eleven pages, the A2
+//! sheet's two boxed `仪表风管线`. It was 50 until the three air-cooler
+//! sheets' `SP:` started its colon on its own whole pixel, as the reference
+//! does. Forty-four title-block labels came inside when a condensed label's
+//! `Tm` took the scales the driver writes, and `J K井场`'s `1-1/2"` beside
+//! `FC` when the page was painted in the order its sheet lists its objects
+//! in (2026-11-11): the two are labels on one baseline, the read-back of our
+//! page used to join them into one run where the reference's reads as two,
+//! and a page painted in the reference's order reads back in the reference's
+//! runs — 813 on that page, where it read 816.
 //!
 //! A borrowed run is held to the reference's font family as well
 //! (2026-11-10). Where the face a label names cannot draw a character, the
@@ -217,8 +219,12 @@ const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 /// Largest mean width difference a lettering class may show, in body heights.
 ///
 /// Held on every class, as [`CLASS_DOWN_HEIGHTS`] is. No class reads past
-/// ±0.015: the widest are the two fused valve tags left in `J K`'s `unknown`
-/// and a title block's two `Right/Bottom` certificate captions. Every
+/// ±0.015, and only one past ±0.0021: the two fused valve tags left in
+/// `J K`'s `unknown`, +0.0146, which is the reader joining two labels into
+/// one run and not the lettering. A title block's two `Right/Bottom`
+/// certificate captions read +0.0149 on seven pages while a label's `Tm`
+/// carried the plotter's own stretch and not the driver's 256ths
+/// (`write/text_matrix.rs`). Every
 /// `Center` class read about +0.028 while an upright two-glyph run kept its
 /// natural advance rather than the whole-pixel `lpDx` steps the plotter
 /// spaces it by, and the A2 `Left/Ascender` class read −0.320 while its 8 pt
@@ -243,9 +249,16 @@ const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
 /// (`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`).
 /// Fourteen of the 64 were the borrowed runs — twelve `℃` 0.201 mm wide and
 /// the A2 sheet's two `动火点` 1.863 mm narrow — and came inside both limits
-/// when they were lettered as the reference letters them, which left 50.
-/// Three more were the air-cooler sheets' `SP:` and one `J K井场`'s
-/// `1-1/2"` beside its `FC`; the eleven pages now come to 46.
+/// when they were lettered as the reference letters them. Three were the
+/// air-cooler sheets' `SP:`, inside once each run of a record took its own
+/// whole-pixel start. Forty-four were the title blocks' SimSun labels at
+/// `800`, 0.05 to 0.43 mm wide or narrow while their `Tm` carried the
+/// plotter's own stretch; they are inside now that it carries the driver's
+/// 256ths (`write/text_matrix.rs`). One was `J K`'s `1-1/2"` beside `FC`,
+/// two labels on one baseline that the reader joined into one run while our
+/// page painted them one after the other; painted in the order the sheet
+/// lists its objects in, the page reads back in the reference's runs. The
+/// eleven pages come to 2: the A2 sheet's two boxed `仪表风管线`.
 const LABEL_POSITION_MM: f64 = 0.15;
 
 /// How much wider or narrower than the reference's a paired label's run may
@@ -300,7 +313,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 583,
             text_reference: 583,
-            text_off: 6,
+            // The six were the title block's: their `Tm` now states the
+            // stretch the way the driver does (`write/text_matrix.rs`).
+            text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
         },
@@ -328,7 +343,13 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 813,
             text_reference: 813,
-            text_off: 6,
+            // Six were the title block's, as on the I sheet. The seventh was
+            // `1-1/2"` beside `FC`: two labels 1.185 mm apart in height that
+            // the reader joined into one run while our page painted them one
+            // after the other, 0.058 mm long along the slant. Painted in the
+            // order the sheet lists its objects in, they read back as the
+            // reference's two runs.
+            text_off: 0,
             borrowed: 0,
             borrowed_in_family: 0,
         },
@@ -356,7 +377,8 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 959,
             text_reference: 959,
-            text_off: 6,
+            // The six were the title block's, as on the I sheet.
+            text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
         },
@@ -412,7 +434,8 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 161,
             text_reference: 161,
-            text_off: 6,
+            // The six were the title block's, as on the I sheet.
+            text_off: 0,
             borrowed: 0,
             borrowed_in_family: 0,
         },
@@ -504,8 +527,9 @@ const PINS: [Pin; 11] = [
             text_reference: 326,
             // `SP:` was the seventh: its colon is 21 units after the label
             // here, as the reference's is, since each run of a record starts
-            // on its own whole pixel (`write::record_run_start_px`).
-            text_off: 6,
+            // on its own whole pixel (`write::record_run_start_px`). The six
+            // were the title block's, as on the I sheet.
+            text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
         },
@@ -535,8 +559,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
-            // `SP:` was the seventh, as on the A sheet.
-            text_off: 6,
+            // `SP:` was the seventh and the title block's the six, as on the
+            // A sheet.
+            text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
         },
@@ -566,8 +591,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
-            // `SP:` was the seventh, as on the A sheet.
-            text_off: 6,
+            // `SP:` was the seventh and the title block's the six, as on the
+            // A sheet.
+            text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
         },
@@ -609,7 +635,11 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 187.091 + EXTRA_SLACK_MM,
             min_text_matched: 250,
             text_reference: 261,
-            text_off: 4,
+            // Two of the four were the company name's two lines, stated in
+            // the driver's 256ths now. The two left are the boxed
+            // `仪表风管线`, whose line hangs from the top of its box on the
+            // reference page: 0.212 and 0.201 mm off.
+            text_off: 2,
             borrowed: 3,
             borrowed_in_family: 3,
         },

@@ -39,12 +39,17 @@
 //! `script_runs` module holds the cut.
 //! A style height is written at the `Tf` the reference plotter would size it
 //! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
-//! `plotted_size_pt`). Every face must be a static TrueType or
+//! `plotted_size_pt`). A label that is turned, or whose style states a
+//! character width, is set under the text matrix the reference plots' PDF
+//! driver writes for that font — whole 256ths, `0.797` for a stretch of 0.8
+//! and `1.012` both ways for a turned Arial — which the `text_matrix` module
+//! holds. Every face must be a static TrueType or
 //! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
 //! a variable font.
 
 mod borrowed;
 mod script_runs;
+mod text_matrix;
 mod verdict;
 
 pub use verdict::{
@@ -662,6 +667,11 @@ struct FaceHeights {
     /// reads, so [`permille_scale`]'s `wf` rule treats both alike). See
     /// [`REFERENCE_CAP_PX`].
     avg_em: f64,
+    /// The face's design grid, `head` `unitsPerEm`: how many design units
+    /// the fractions above are fractions of. The PDF driver states a font's
+    /// transform per design unit ([`text_matrix`]), so a SimSun of 256 and an
+    /// Arial of 2048 on the same cell are not written alike.
+    em_units: f64,
 }
 
 impl FaceHeights {
@@ -672,6 +682,7 @@ impl FaceHeights {
         cap: 1467.0 / 2048.0,
         stated_cap: Some(1467.0 / 2048.0),
         avg_em: 904.0 / 2048.0,
+        em_units: 2048.0,
     };
 
     fn of(bytes: &[u8]) -> Self {
@@ -725,6 +736,7 @@ impl FaceHeights {
             cap: cap / em,
             stated_cap: stated_cap.map(|cap| cap / em),
             avg_em,
+            em_units: em,
         };
         (heights.ascent > 0.0 && heights.cap > 0.0 && heights.descent >= 0.0).then_some(heights)
     }
@@ -1807,13 +1819,33 @@ fn show_text(
         height_mm,
         text.width_permille,
     );
+    // `plate` is the stretch the plotter asks GDI for. What the label's `Tm`
+    // states is the PDF driver's reading of that font, in whole 256ths
+    // ([`text_matrix`]): `0.797` along a SimSun label at `800` on a 30-unit
+    // cell where `plate` is 0.8, and `1.012` both ways for a turned Arial
+    // label, which is not stretched at all. The font is the one the label
+    // names, on the label's own cell; a piece in another face or at another
+    // size is set under the same matrix, where the driver would state one of
+    // its own — no reference plot turns or stretches such a label.
+    let cell_units = (scale_heights.ascent + scale_heights.descent) * scale_heights.em_units;
+    let px_per_unit = whole_pixel_cell(scale_heights, text.height_basis, height_mm)
+        .filter(|_| cell_units > 0.0)
+        .map(|cell_px| cell_px / cell_units);
+    let matrix = text_matrix::written(px_per_unit, plate, upright);
+    // The driver states a letter-spacing against the entry it keeps in
+    // 256ths; `run_advance` and [`script_runs`] figure it against `plate`.
+    let respaced = if plate.is_finite() && matrix.spacing > 0.0 {
+        plate / matrix.spacing
+    } else {
+        1.0
+    };
     // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
     // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`,
     // the device font's natural width only for a lone glyph and, rounded to
-    // the pixel, a rotated pair ([`run_advance`]) — at `plate`, the scale this whole label's
-    // `Tm` carries: the same scale narrows every glyph's outline and its
-    // advance together, which is why it belongs in `Tm` rather than folded
-    // into the width this loop sums.
+    // the pixel, a rotated pair ([`run_advance`]) — at `plate`, the stretch of
+    // the device font this whole label is set in: the same stretch narrows
+    // every glyph's outline and its advance together, which is why it belongs
+    // in `Tm` rather than folded into the width this loop sums.
     //
     // `run_advance` is handed `plate`, not `plate * condense`: `condense`
     // ([`PaperModel::lay_out`] below) is solved from this loop's own
@@ -1903,7 +1935,7 @@ fn show_text(
                 size_pt,
                 face,
                 bytes,
-                tc_pt: advance.tc_pt,
+                tc_pt: advance.tc_pt * respaced,
                 steps_px: advance.steps_px,
                 start,
                 begins_string: true,
@@ -1924,7 +1956,7 @@ fn show_text(
                 size_pt,
                 face,
                 bytes: bytes[from..until].to_vec(),
-                tc_pt: script_runs::spacing_pt(&advance.glyphs[glyphs.clone()], plate),
+                tc_pt: script_runs::spacing_pt(&advance.glyphs[glyphs.clone()], plate) * respaced,
                 steps_px: Vec::new(),
                 start: if first {
                     start
@@ -1935,6 +1967,10 @@ fn show_text(
             }));
         }
     }
+    // What the plotter's own steps make of the run. The driver's matrix moves
+    // the drawn run off it by a fraction of a percent (a stretched label's
+    // glyphs no longer land on the steps exactly, a turned one's last glyph
+    // is a little larger); the page-edge test below reads the plotter's.
     let laid_out_mm = width_mm * plate;
     // The anchor hangs a box from the insertion point as wide as the stored
     // run, its trailing pad included, and the paragraph sets the trimmed line
@@ -2012,7 +2048,7 @@ fn show_text(
             }
         }
     }
-    let scale = plate * condense;
+    let scale = matrix.along * condense;
     let origin_mm = baseline_origin(
         origin_mm,
         text.rotation,
@@ -2034,8 +2070,8 @@ fn show_text(
         vec![
             Object::Real(cos * scale),
             Object::Real(sin * scale),
-            Object::Real(-sin),
-            Object::Real(cos),
+            Object::Real(-sin * matrix.across),
+            Object::Real(cos * matrix.across),
             pt(origin_mm[0]),
             pt(origin_mm[1]),
         ],
@@ -2064,11 +2100,11 @@ fn show_text(
         };
         if let Some(at_px) = at_px {
             // `Td` moves from the line's start, in text space: the label's
-            // `Tm` scales it by `plate` on its way to the page, and by
-            // `condense` where the page had to squeeze the label, together
-            // with its glyphs. A pixel is the page's own here, as it is for
-            // every glyph's step ([`stepped_advance`]).
-            let along_pt = (at_px - line_px) * (72.0 / PLOT_DPI) / plate;
+            // `Tm` scales it by what it states along the baseline on its way
+            // to the page, and by `condense` where the page had to squeeze
+            // the label, together with its glyphs. A pixel is the page's own
+            // here, as it is for every glyph's step ([`stepped_advance`]).
+            let along_pt = (at_px - line_px) * (72.0 / PLOT_DPI) / matrix.along;
             ops.push(Op::new(
                 "Td",
                 vec![Object::Real(along_pt), Object::Real(0.0)],
@@ -2100,11 +2136,11 @@ fn show_text(
                     &piece.bytes,
                     &piece.steps_px,
                     piece.size_pt,
-                    plate,
+                    matrix.along,
                 ))],
             ));
         }
-        pen_px += shown_px(piece, plate);
+        pen_px += shown_px(piece, matrix.along);
     }
     ops.push(Op::new("ET", Vec::new()));
     Ok(Shown {
@@ -2648,7 +2684,9 @@ fn reference_extent_mm(
 /// own outline narrower together with its advance (the reason `render.dll`
 /// drew a condensed run with a condensed device font rather than a kerning
 /// table). `sx` is only this function's divisor for `tc_pt`, so a `Tm` of
-/// `1` reproduces it exactly; the caller never multiplies `tc_pt` again. See
+/// `1` reproduces it exactly; the caller restates `tc_pt` once, for the
+/// scale the PDF driver writes into `Tm` in place of `sx`
+/// ([`text_matrix`]). See
 /// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
 struct RunAdvance {
     /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
@@ -3003,6 +3041,18 @@ mod tests {
 
     use super::PlotFont;
 
+    /// SimSun's own tables (`simsun.ttc`): 256 design units to the em, 220
+    /// of ascent and 36 of descent, a stated cap height of 175 and an
+    /// average character width of 128.
+    const SIMSUN_TABLES: super::FaceHeights = super::FaceHeights {
+        ascent: 220.0 / 256.0,
+        descent: 36.0 / 256.0,
+        cap: 175.0 / 256.0,
+        stated_cap: Some(175.0 / 256.0),
+        avg_em: 0.5,
+        em_units: 256.0,
+    };
+
     /// The operands of every `name` operator of `ops`, numbers only.
     fn numbers(ops: &[super::Op], name: &str) -> Vec<Vec<f64>> {
         ops.iter()
@@ -3172,6 +3222,197 @@ mod tests {
         );
     }
 
+    /// A label whose style states a character width is set under the matrix
+    /// the reference plots' driver writes for its font, not under the stretch
+    /// itself: SimSun at `800` on a 30-unit cell — the title block's
+    /// `设计证书号` — is stretched by 12/15 and written `0.797 0 0 1`, 204/256.
+    /// Its letter-spacing is what the plotter's steps ask for on the device,
+    /// over those 204/256: the glyphs no longer land on the steps exactly,
+    /// as the reference's do not.
+    #[test]
+    fn a_stated_width_is_set_under_the_matrix_the_driver_writes() {
+        let value = "ABCDE";
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (height_mm, page) = (3.5, [841.0, 594.0]);
+        assert_eq!(
+            super::whole_pixel_cell(SIMSUN_TABLES, basis, height_mm),
+            Some(30.0),
+            "the style's cell"
+        );
+        let plate = super::permille_scale("SimSun", SIMSUN_TABLES, basis, height_mm, Some(800));
+        assert!(
+            (plate - 0.8).abs() < 1e-12,
+            "the stretch asked for: {plate}"
+        );
+        let size_pt = super::plotted_size_pt(SIMSUN_TABLES, basis, height_mm);
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let stepped = super::run_advance(
+            "SimSun",
+            &metrics,
+            &bytes,
+            value,
+            SIMSUN_TABLES,
+            basis,
+            height_mm,
+            size_pt,
+            Some(800),
+            plate,
+            true,
+            device,
+        );
+        assert_ne!(stepped.tc_pt, 0.0, "the run is letter-spaced");
+        let face = super::ReadyFace {
+            key: "SimSun",
+            resource: "F1".to_string(),
+            metrics,
+            heights: SIMSUN_TABLES,
+        };
+        let ops = label_ops(&face, value, height_mm, 0.0, Some(800));
+        let matrix = numbers(&ops, "Tm");
+        assert_eq!(matrix.len(), 1, "one text matrix");
+        assert_eq!(
+            matrix[0][..4],
+            [0.797, 0.0, -0.0, 1.0],
+            "the reference writes `0.797 0 0 1` for this font"
+        );
+        let spacing = numbers(&ops, "Tc");
+        let on_device = stepped.tc_pt * plate;
+        assert!(
+            (spacing[0][0] - on_device / (204.0 / 256.0)).abs() < 1e-12,
+            "Tc {} is not the device spacing {on_device} over 204/256",
+            spacing[0][0]
+        );
+    }
+
+    /// A turned label is set under the driver's matrix too, stretched or not:
+    /// Arial on a 29-unit cell — the reference's `0 1.012 -1.012 0` under
+    /// `Tf 12.45` — is 259/256 both ways. Its glyphs still step by whole
+    /// device units along the turned baseline.
+    #[test]
+    fn a_turned_label_is_set_under_the_matrix_the_driver_writes() {
+        let value = "ABAB";
+        let (metrics, bytes) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value);
+        let basis = crate::model::TextHeightBasis::Cap;
+        // Nine points of cap height: the reference's `Tf 12.45`.
+        let (height_mm, page) = (9.0 * 25.4 / 72.0, [841.0, 594.0]);
+        let arial = super::FaceHeights::ARIAL;
+        assert_eq!(
+            super::whole_pixel_cell(arial, basis, height_mm),
+            Some(29.0),
+            "the style's cell"
+        );
+        let size_pt = super::plotted_size_pt(arial, basis, height_mm);
+        assert!((size_pt - 12.45).abs() < 1e-9, "Tf {size_pt}");
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let stepped = super::run_advance(
+            "Arial", &metrics, &bytes, value, arial, basis, height_mm, size_pt, None, 1.0, false,
+            device,
+        );
+        assert_eq!(
+            stepped.steps_px.len(),
+            3,
+            "a step after each glyph but the last"
+        );
+        let codes = metrics.codes(&bytes);
+        let widths: Vec<f64> = codes.iter().map(|(code, _)| metrics.width(*code)).collect();
+        let face = super::ReadyFace {
+            key: "Arial",
+            resource: "F1".to_string(),
+            metrics,
+            heights: arial,
+        };
+        let ops = label_ops(&face, value, height_mm, std::f64::consts::FRAC_PI_2, None);
+        let matrix = &numbers(&ops, "Tm")[0];
+        assert!(
+            matrix[0].abs() < 1e-12
+                && (matrix[1] - 1.012).abs() < 1e-12
+                && (matrix[2] + 1.012).abs() < 1e-12
+                && matrix[3].abs() < 1e-12,
+            "the reference writes `0 1.012 -1.012 0` for this font, not {matrix:?}"
+        );
+        let shown = ops
+            .iter()
+            .find(|op| op.op == b"TJ")
+            .expect("a turned run is shown glyph by glyph");
+        let super::Object::Array(array) = &shown.operands[0] else {
+            panic!("TJ takes an array");
+        };
+        for (index, &step) in stepped.steps_px.iter().enumerate() {
+            let super::Object::Real(adjust) = &array[2 * index + 1] else {
+                panic!("glyph {index} is followed by its adjustment");
+            };
+            let landed_px = (widths[index] - *adjust / 1000.0) * size_pt * 1.012 * 150.0 / 72.0;
+            #[allow(clippy::cast_precision_loss)]
+            let step_px = step as f64;
+            assert!(
+                (landed_px - step_px).abs() < 1e-9,
+                "glyph {index} lands {landed_px} device units on, not {step}"
+            );
+        }
+    }
+
+    /// A stretched string of two scripts, the shape of the A2 sheet's
+    /// certificate line: SimSun at `800` on a 24-unit cell is written
+    /// `0.832 0 0 1`, 213/256, and its Latin run still starts on the whole
+    /// pixel the steps before it add up to. Under the driver's matrix the
+    /// glyphs of a text object drift off their steps; the next text object
+    /// starts on its own, so the drift ends there.
+    #[test]
+    fn a_later_script_run_starts_on_its_step_under_the_drivers_matrix() {
+        let value = "工程设计证书: A111017147 ";
+        let font = crate::fonts::test_faces::drawing("工程设计证书");
+        let metrics = metrics_of(&font);
+        let basis = crate::model::TextHeightBasis::Cap;
+        // The style height of the certificate line, 2.828 mm of cap.
+        let (height_mm, page) = (2.828, [841.0, 594.0]);
+        assert_eq!(
+            super::whole_pixel_cell(SIMSUN_TABLES, basis, height_mm),
+            Some(24.0),
+            "the style's cell"
+        );
+        let plate = super::permille_scale("SimSun", SIMSUN_TABLES, basis, height_mm, Some(800));
+        assert!((plate - 10.0 / 12.0).abs() < 1e-12, "the stretch: {plate}");
+        let size_pt = super::plotted_size_pt(SIMSUN_TABLES, basis, height_mm);
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let bytes = metrics.encode(value).expect("the face encodes the label");
+        let whole = super::run_advance(
+            "SimSun",
+            &metrics,
+            &bytes,
+            value,
+            SIMSUN_TABLES,
+            basis,
+            height_mm,
+            size_pt,
+            Some(800),
+            plate,
+            true,
+            device,
+        );
+        // `工程设计证书: ` is eight glyphs.
+        let start_px: i64 = whole.glyphs[..8].iter().map(|glyph| glyph.step_px).sum();
+        let face = super::ReadyFace {
+            key: "SimSun",
+            resource: "F1".to_string(),
+            metrics,
+            heights: SIMSUN_TABLES,
+        };
+        let ops = label_ops(&face, value, height_mm, 0.0, Some(800));
+        let matrix = &numbers(&ops, "Tm")[0];
+        assert_eq!(matrix[..4], [0.832, 0.0, -0.0, 1.0], "213/256");
+        let moved = numbers(&ops, "Td");
+        assert_eq!(moved.len(), 1, "the Latin run is moved to its own start");
+        // `Td` is in text space; the matrix carries it to the page.
+        let on_page_px = moved[0][0] * 0.832 * super::PLOT_DPI / 72.0;
+        #[allow(clippy::cast_precision_loss)]
+        let start = start_px as f64;
+        assert!(
+            (on_page_px - start).abs() < 1e-9,
+            "the Latin run starts {on_page_px} pixels on, not the {start_px} its steps add up to"
+        );
+    }
+
     /// `JStyleTextChar +52`'s `800` narrows a SimSun furniture label by a
     /// ratio that changes at every `Tf` tier the style height rounds to —
     /// four of this corpus's own tiers, each `lfW / (lfH × avg/cell)` with
@@ -3180,13 +3421,7 @@ mod tests {
     /// rule that was a whole device pixel off `lfW` at each of these four.
     #[test]
     fn furniture_w800_matches_simsun_four_height_tiers() {
-        let simsun = super::FaceHeights {
-            ascent: 220.0 / 256.0,
-            descent: 36.0 / 256.0,
-            cap: 175.0 / 256.0,
-            stated_cap: Some(175.0 / 256.0),
-            avg_em: 0.5,
-        };
+        let simsun = SIMSUN_TABLES;
         let cases = [
             (4.0, 16.8, 26.0 / 35.0),
             (4.243_916_666_666_666, 17.76, 28.0 / 37.0),
@@ -3533,6 +3768,7 @@ mod tests {
             cap: cap.unwrap_or(1466.0) / upm,
             stated_cap: cap.map(|cap| cap / upm),
             avg_em: 0.0,
+            em_units: upm,
         };
         let arial = face(2048.0, 1854.0, 434.0, Some(1467.0));
         let narrow = face(2048.0, 1888.0, 431.0, None);
@@ -4534,13 +4770,7 @@ mod tests {
     #[test]
     fn nsimsun_is_measured_as_simsun_is() {
         use crate::model::TextHeightBasis::{Ascent, Cap};
-        let song = super::FaceHeights {
-            ascent: 220.0 / 256.0,
-            descent: 36.0 / 256.0,
-            cap: 175.0 / 256.0,
-            stated_cap: Some(175.0 / 256.0),
-            avg_em: 128.0 / 256.0,
-        };
+        let song = SIMSUN_TABLES;
         for basis in [Cap, Ascent] {
             assert_eq!(
                 super::reference_cap_px("NSimSun", basis),
