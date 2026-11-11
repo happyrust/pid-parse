@@ -1511,8 +1511,11 @@ fn page_ratio_hits(label: &str, data: &[u8], chain: &SheetChain) -> usize {
     hits
 }
 
-/// Every drawing, template and symbol under `dir`, and every `RefData~*.zip`
-/// that may hold more of them. A machine-local symbol library and this
+/// Every drawing, template and symbol under `dir`, and every archive of a
+/// backup package that may hold more of them: `RefData~*.zip` (templates,
+/// symbols, and the `.pid` templates and assemblies beside them) and
+/// `PlantData~*.zip`, where a package keeps its drawings — the files a
+/// whole-package publish reads. A machine-local symbol library and this
 /// crate's own plots are left out.
 fn documents(dir: &Path, files: &mut Vec<PathBuf>, archives: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1543,7 +1546,9 @@ fn documents(dir: &Path, files: &mut Vec<PathBuf>, archives: &mut Vec<PathBuf>) 
             .any(|known| extension.eq_ignore_ascii_case(known))
         {
             files.push(path);
-        } else if extension.eq_ignore_ascii_case("zip") && name.starts_with("RefData~") {
+        } else if extension.eq_ignore_ascii_case("zip")
+            && (name.starts_with("RefData~") || name.starts_with("PlantData~"))
+        {
             archives.push(path);
         }
     }
@@ -1585,7 +1590,7 @@ impl Walk {
     }
 
     /// The drawings, templates and symbols on disk under `root`, and then
-    /// the ones inside its reference-data archives.
+    /// the ones inside its archives.
     fn corpus(&mut self, root: &Path) -> (Tally, Tally) {
         let mut files = Vec::new();
         let mut archives = Vec::new();
@@ -1600,7 +1605,7 @@ impl Walk {
         let mut archived = Tally::default();
         #[cfg(feature = "refdata-archive")]
         for archive in &archives {
-            for extension in ["igr", "sym"] {
+            for extension in ["igr", "sym", "pid"] {
                 let Ok(members) = pid_parse::refdata_archive::archive_members(archive, extension)
                 else {
                     continue;
@@ -1634,14 +1639,15 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let mut walk = Walk::new();
     let (on_disk, archived) = walk.corpus(Path::new("test-file"));
     eprintln!("test-file, on disk: {on_disk:?}");
-    eprintln!("test-file, in its RefData archives: {archived:?}");
+    eprintln!("test-file, in its archives: {archived:?}");
     // What the retired `GLine2d` matcher accepts is pinned, not floored:
     // two page frames of `DWG-0201GP06-01.pid` and the one of `A01.pid`.
     assert_eq!(
         on_disk.page_ratio_hits, REPOSITORY_ON_DISK.page_ratio_hits,
         "what a byte-sliding walk reads as GLine2d on the repository's files"
     );
-    // And, in the archives, the frame of `A1-W.igr` and of its `- New` copy.
+    // And, in the archives, the frame of `A1-W.igr`, of its `- New` copy,
+    // and of five of the `.pid` drawings and templates beside them.
     #[cfg(feature = "refdata-archive")]
     assert_eq!(
         archived.page_ratio_hits, REPOSITORY_ARCHIVED.page_ratio_hits,
@@ -1700,7 +1706,7 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
         read.push(canonical);
         let (on_disk, archived) = walk.corpus(&root);
         eprintln!("{}, on disk: {on_disk:?}", root.display());
-        eprintln!("{}, in its RefData archives: {archived:?}", root.display());
+        eprintln!("{}, in its archives: {archived:?}", root.display());
         total.add(&on_disk);
         total.add(&archived);
     }
@@ -1723,20 +1729,26 @@ const REPOSITORY_ON_DISK: Tally = Tally {
     page_ratio_hits: 3,
 };
 
-/// What the templates and symbols inside `test-file`'s twelve committed
-/// `RefData~*.zip` archives held beyond that, each distinct file once: 637
-/// of their 1 242 members, the other 605 being copies.
+/// What the templates, symbols and drawings inside `test-file`'s committed
+/// archives held beyond that, each distinct file once: twelve `RefData~*.zip`
+/// and two `PlantData~*.zip`, 657 of whose 1 902 `.igr` / `.sym` / `.pid`
+/// members are distinct, the other 1 245 being copies. Until 2026-11-11 the
+/// walk opened the `RefData` archives alone and read no `.pid` member: 637
+/// documents, 1 306 sheets, 41 caches, 20 569 records. The twenty it reads
+/// now are the seven drawings of a `PlantData` zip — the files a
+/// whole-package publish reads — and the `.pid` templates and one assembly
+/// of the reference data.
 #[cfg(feature = "refdata-archive")]
 const REPOSITORY_ARCHIVED: Tally = Tally {
-    documents: 637,
+    documents: 657,
     repeats: 0,
     unread: 0,
-    sheets: 1306,
-    header_only: 139,
-    caches: 41,
-    records: 20_569,
-    live: 20_165,
-    page_ratio_hits: 2,
+    sheets: 1377,
+    header_only: 173,
+    caches: 61,
+    records: 25_711,
+    live: 25_267,
+    page_ratio_hits: 7,
 };
 
 /// What every single-length change of the chain streams `test-file` holds on
