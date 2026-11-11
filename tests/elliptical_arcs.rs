@@ -296,10 +296,11 @@ fn the_xa_templates_sheet_level_arcs_close_the_counters_of_its_b() {
     use pid_parse::parsers::sheet_records::{decode_igellipticalarcs, decode_iglines};
     use pid_parse::PidGraphicKind;
 
-    if !std::path::Path::new(XA_TEMPLATE).exists() {
-        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
-        return;
-    }
+    // The template is committed: a checkout without it fails here.
+    assert!(
+        std::path::Path::new(XA_TEMPLATE).exists(),
+        "{XA_TEMPLATE} is committed and has to be present"
+    );
     let package = PidParser::new()
         .parse_package(XA_TEMPLATE)
         .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));
@@ -451,10 +452,11 @@ fn the_xa_templates_sheet_level_arcs_close_the_counters_of_its_b() {
 fn the_xa_templates_wordmark_draws_every_stroke_with_the_pen_it_names() {
     use pid_parse::parsers::sheet_records::decode_igbspcurves;
 
-    if !std::path::Path::new(XA_TEMPLATE).exists() {
-        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
-        return;
-    }
+    // The template is committed: a checkout without it fails here.
+    assert!(
+        std::path::Path::new(XA_TEMPLATE).exists(),
+        "{XA_TEMPLATE} is committed and has to be present"
+    );
     let package = PidParser::new()
         .parse_package(XA_TEMPLATE)
         .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));

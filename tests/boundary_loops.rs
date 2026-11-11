@@ -5,9 +5,14 @@
 //! oid 5076 — are letters with a counter: an outer loop of 104 and of 162
 //! lines, and inside each a second loop of 77 and of 54 lines wound the
 //! other way. They are the only boundaries of more than one loop among the
-//! 2 158 the corpora keep on sheet chains, and the decoder, which held the
-//! `u32` at payload `+18` to `1`, refused both: the logo printed one letter
-//! of three.
+//! 2 158 on the sheet chains of the 86 documents that count was taken on —
+//! the plant backup, the acceptance sheets, the share, the fixture drawings
+//! and the two template directories — and the decoder, which held the `u32`
+//! at payload `+18` to `1`, refused both: the logo printed one letter of
+//! three. (The templates inside the committed `RefData~4~682.zip` are not
+//! among the 86; what their boundaries read as is in
+//! `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+//! §17.6.)
 //!
 //! What says the second loop is a hole, on a template no vendor plot wears:
 //!
@@ -90,10 +95,11 @@ fn signed_area(ring: &[(f64, f64)]) -> f64 {
 
 #[test]
 fn a_two_loop_boundary_reaches_the_page_as_the_area_between_its_loops() {
-    if !std::path::Path::new(XA_TEMPLATE).exists() {
-        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
-        return;
-    }
+    // The template is committed: a checkout without it fails here.
+    assert!(
+        std::path::Path::new(XA_TEMPLATE).exists(),
+        "{XA_TEMPLATE} is committed and has to be present"
+    );
     let package = PidParser::new()
         .parse_package(XA_TEMPLATE)
         .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));
@@ -176,10 +182,11 @@ fn a_two_loop_boundary_reaches_the_page_as_the_area_between_its_loops() {
 
 #[test]
 fn a_two_loop_boundary_decodes_its_loops_its_anchor_and_its_references() {
-    if !std::path::Path::new(XA_TEMPLATE).exists() {
-        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
-        return;
-    }
+    // The template is committed: a checkout without it fails here.
+    assert!(
+        std::path::Path::new(XA_TEMPLATE).exists(),
+        "{XA_TEMPLATE} is committed and has to be present"
+    );
     let package = PidParser::new()
         .parse_package(XA_TEMPLATE)
         .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));

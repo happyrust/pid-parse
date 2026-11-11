@@ -6389,14 +6389,23 @@ const IGBOUNDARY2D_MIN_LOOP_LEN: usize = 6 + 33;
 /// and that many 8-byte member references — and it closes the payload
 /// exactly.
 ///
-/// Read this way the trailer closes the payload of all 2 158 boundaries the
-/// corpora keep on sheet chains, whichever grammar decodes them today (a
+/// Read this way the trailer closes the payload of all 2 158 boundaries on
+/// the sheet chains of the 86 documents the count was taken on — the plant
+/// backup, the acceptance sheets, the share, the fixture drawings and the
+/// two template directories — whichever grammar decodes them today (a
 /// linked template's 21-byte trailer is this one with no reference, its
 /// anchor the pair `1e30`). Two of them state two loops, both in
 /// `XA-A1.igr`: an outer loop and a loop wholly inside it wound the other
 /// way, with the anchor between the two
 /// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
 /// §10.6).
+///
+/// That is not every boundary in reach. The templates inside the committed
+/// `RefData~4~682.zip` keep 41 more on their sheet chains, and 20 of them
+/// — five in the logo of each of `A0-W.igr` to `A3-W.igr` — this grammar
+/// refuses: where a loop's first member tag `0x67` stands they carry
+/// `0x02` or `0x03`. No page wears those templates, so the refusal reaches
+/// no export; it is an open gap all the same (same document, §17.6).
 ///
 /// The reference count is not held to the member count. One of the two
 /// names 217 lines for its 216 members; the odd one is a line 32 µm long

@@ -343,11 +343,19 @@ decompilation.
   (`SheetGeometry::decoded_igboundaries`, `closed_loop` flag,
   byte-audit `Decoded`). The `u32` at payload `+18` is the **number
   of loops** (`loop_segment_counts`, `loops()`): one on 2 156 of the
-  2 158 boundaries the corpora keep on sheet chains, two on
+  2 158 boundaries on the sheet chains of the 86 documents that count
+  was taken on (the plant backup, the acceptance sheets, the share, the
+  fixture drawings, the two template directories), two on
   `XA-A1.igr`'s oids 5074 and 5076, whose second loop is the counter
   of a logo letter. The anchor is the point the fill was seeded at:
-  inside the loop on every one-loop record, between the two loops on
-  those two. The family emits — it was audit-only until the fills
+  inside the loop on every one-loop record of those documents that
+  carries member references, between the two loops on those two. Not
+  among the 86: the templates inside the committed
+  `RefData~4~682.zip`, whose sheet chains keep 41 more — the 20 in
+  the logos of `A0-W.igr` to `A3-W.igr` are refused by this grammar
+  (no page wears them), and the 21 of `CPECCHBA2.igr` and
+  `qsmcqtaz13A2.igr` decode with an anchor that is not inside their
+  ring. The family emits — it was audit-only until the fills
   turned out to have a consumer — one closed `Polyline` per record,
   to be filled rather than stroked, because the member lines already
   stroke the outline. A fill with a hole is still one ring: every
