@@ -1822,6 +1822,17 @@ fn a_paper_a_metre_too_large_is_refused_and_the_drawing_is_whole() {
     );
 }
 
+/// Wrong in its height alone: the width is the frame's to a third of a
+/// millimetre, and the height is 29 mm off. Each side is held on its own.
+#[test]
+fn a_paper_too_tall_for_the_frame_is_refused_and_the_drawing_is_whole() {
+    export_with_a_paper_that_is_not_the_frames(
+        "paper-too-tall",
+        [0.594, 0.45],
+        "594.000 x 450.000",
+    );
+}
+
 #[test]
 fn a_paper_turned_on_its_side_is_refused_and_the_drawing_is_whole() {
     export_with_a_paper_that_is_not_the_frames("paper-upright", [0.42, 0.594], "420.000 x 594.000");
@@ -2157,20 +2168,22 @@ fn a_stopped_chain_beside_a_list_that_is_not_the_sheets_is_two_warnings() {
     );
 }
 
-/// A paper held to the size a template's name states, for want of a frame,
-/// is refused in words that name no frame.
+/// A paper beside a template's name alone is the page, and one that is not
+/// the size the name states says so.
 ///
 /// `DWG-0201GP06-01.pid` less its last record — its one live border frame —
-/// is a sound drawing no frame of which is read: its page dimensions are
-/// the 594 by 420 mm its template's name stands for, and its paper, read
-/// from the list's record, is the same. With the paper's width halved in
-/// that record the two are 297 mm apart. The paper is refused as a paper
-/// that is not a frame's is, and the page is the size the name states; but
-/// what it was held to is a name, and the warning and the account's site
-/// say so. No drawing on hand states a paper beside a name alone, so the
-/// limit that refuses it is the frames', carried over.
+/// is a sound drawing no frame of which is read: all it has for its sheet
+/// beside the paper is the 594 by 420 mm its template's name stands for.
+/// With the paper's width halved in the list's record the two are 297 mm
+/// apart. A paper is refused for a frame's rectangle, which is a reading of
+/// the same sheet; a name is a label, of the template the drawing was
+/// started from, and overrules no reading. So the page is the paper the
+/// sheet states, and that the two differ is said: one suspect item of its
+/// own code — not the frame's — and one warning that names both sizes, says
+/// no frame was read and says which the page is. No drawing on hand states
+/// a paper beside a name alone, so nothing witnesses this path.
 #[test]
-fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
+fn a_paper_unlike_its_templates_name_is_the_page_and_says_so() {
     let case = "paper-no-frame";
     let corpus = fixtures();
     let frameless = broken_copy(case, Break::LastLengthPlusOne).sound_prefix;
@@ -2192,7 +2205,6 @@ fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
     let sound = lay_out_drawing(&frameless, &corpus)
         .unwrap_or_else(|error| panic!("{}: {error}", frameless.display()));
     assert_eq!(sound.page_mm, Some([594.0, 420.0]));
-    assert_eq!(sound.ledger.paper_refused, None);
     assert!(sound.ledger.page_warnings().is_empty());
 
     let drawing = scratch(case).join("DWG-0201GP06-01-halved.pid");
@@ -2201,9 +2213,11 @@ fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
         .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
     assert_eq!(
         model.page_mm,
-        Some([594.0, 420.0]),
-        "the page is not the size the template's name states"
+        Some([297.0, 420.0]),
+        "the page is not the paper the sheet states"
     );
+    // The model holds what the sheet at its largest holds; the paper cuts
+    // nothing out of it.
     let primitives = |model: &PaperModel| -> Vec<String> {
         model
             .primitives
@@ -2214,7 +2228,7 @@ fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
     assert_eq!(
         primitives(&model),
         primitives(&sound),
-        "the page lost or gained ink"
+        "the model lost or gained primitives"
     );
 
     let write = write_ledger(&model).unwrap_or_else(|error| panic!("{case}: {error}"));
@@ -2228,11 +2242,19 @@ fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
     assert_eq!(
         page,
         [(
-            "paper_unlike_the_frame",
+            "paper_unlike_the_template_name",
             Some("paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm"),
             1
-        )]
+        )],
+        "the page's own suspect items: the name's code, not the frame's"
     );
+    let dropped: Vec<(&str, u64)> = account
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(dropped, [("paper_unlike_the_template_name", 1)]);
 
     let said = export_against_the_fixtures(case, &drawing, "halved.pdf");
     let warned = warnings(&said.stderr);
@@ -2246,18 +2268,24 @@ fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
         drawing.display().to_string(),
         "the paper its sheet states, 297.000 x 420.000 mm".to_string(),
         "is not the size its template's name states, 594.000 x 420.000 mm".to_string(),
-        "no border frame was read to hold it to".to_string(),
-        "the page is the size the template's name states".to_string(),
+        "no border frame was read".to_string(),
+        "the page is the paper".to_string(),
     ] {
         assert!(
             line.contains(&needle),
             "the warning does not say {needle:?}\n{said}"
         );
     }
-    for untrue in ["border frame's,", "frame's rectangle", "no drawing on hand"] {
+    for untrue in [
+        "border frame's,",
+        "frame's rectangle",
+        "not taken",
+        "no drawing on hand",
+    ] {
         assert!(
             !line.contains(untrue),
-            "the warning says {untrue:?} of a drawing no frame of which was read\n{said}"
+            "the warning says {untrue:?} of a paper that is the page, in a drawing no frame \
+             of which was read\n{said}"
         );
     }
     assert_eq!(

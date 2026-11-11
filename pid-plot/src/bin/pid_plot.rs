@@ -110,9 +110,10 @@ fn main() -> ExitCode {
     // A paper that is not the border frame's is not taken for the page: the
     // page is the frame's rectangle and the drawing is whole, but it is not
     // on the paper its sheet states. One line, with both rectangles; the
-    // account counts it as a suspect item. Where no frame was read the
-    // paper is held to the size the template's name states, and the line
-    // says that and names no frame.
+    // account counts it as a suspect item. Where no frame was read there
+    // is only the size the template's name states, which refuses no paper:
+    // the page is the paper, and a paper that is not the name's size is one
+    // line all the same, with both sizes, and a suspect item of its own.
     for page in model.ledger.page_warnings() {
         eprintln!("warning: {pid}: {page}");
     }

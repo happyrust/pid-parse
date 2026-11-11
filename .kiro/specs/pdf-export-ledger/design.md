@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 48]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 25 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）。
+- `DropReason::ALL: [DropReason; 49]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 26 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -562,7 +562,8 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `furniture_endpoint_pair_drawn` | 家具循环里 `record_kind` 为 `EndpointPair` 的实体，经 `furniture_observations` |
 | `template_candidate_unreadable` | `load_border_template`（约 1862 行）的三处 `continue`（约 1873、1879、1882 行），经 `load_border_template_traced` 记候选名 |
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
-| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；`PaperRefused::held_to`（`SheetRectangle`）记下对照的是页框还是模板名给出的页幅，句子与来源照此分两种说法（2026-11-12 加） |
+| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；只在读到图框时成立（2026-11-12 加） |
+| `paper_unlike_the_template_name` | `lay_out_drawing` 定页面时没有读到图框、`paper_is_the_named_sheet` 不成立：页面仍是纸张，`LayoutLedger::paper_unlike_the_name` 记下两个尺寸（微米）；汇总时页级记 1 项、来源记 `PaperBesideAName::sides()`；`LayoutLedger::page_warnings` 给那一行 `warning:`（2026-11-12 第七轮加） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models

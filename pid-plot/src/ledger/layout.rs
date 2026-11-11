@@ -100,15 +100,24 @@ pub struct LayoutLedger {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unplaced: Vec<UnplacedRecords>,
     /// The paper the drawing's sheet states, when it was read and not taken
-    /// for the page because it is not the sheet's other rectangle
-    /// (`model::paper_is_the_frames`): the border frame's, or, for a
-    /// drawing no frame of which was read, the size its template's name
-    /// states ([`SheetRectangle`]). The page is then that rectangle; the
-    /// page account files one suspect [`DropReason::PaperUnlikeTheFrame`]
-    /// and `pid_plot` says it ([`Self::page_warnings`]). `None` on every
-    /// page of every corpus this crate is tested on.
+    /// for the page because it is not the border frame's
+    /// (`model::paper_is_the_frames`). The page is then the frame's
+    /// rectangle; the page account files one suspect
+    /// [`DropReason::PaperUnlikeTheFrame`] and `pid_plot` says it
+    /// ([`Self::page_warnings`]). Only for a drawing a frame of which gave a
+    /// page. `None` on every page of every corpus this crate is tested on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paper_refused: Option<PaperRefused>,
+    /// The paper the drawing's sheet states and the size its template's
+    /// name states, when no frame gave a page and the two are not one sheet
+    /// (`model::paper_is_the_named_sheet`). The paper is the page all the
+    /// same — a name overrules no reading — and the page account files one
+    /// suspect [`DropReason::PaperUnlikeTheTemplateName`] and `pid_plot`
+    /// says it ([`Self::page_warnings`]). `None` on every page of every
+    /// corpus this crate is tested on, none of which states a paper beside
+    /// a name alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_unlike_the_name: Option<PaperBesideAName>,
     /// What the page is, and where that was read, when it is not a paper
     /// because none was read: the sheet's `JSheet` record, which states the
     /// paper behind its list of objects, was not found, is not the sheet's,
@@ -162,9 +171,8 @@ pub struct PageInstead {
     pub um: [u64; 2],
 }
 
-/// A paper that was read and refused: the paper and the rectangle it was
-/// held to, each `[width, height]` in micrometres, and which rectangle that
-/// was.
+/// A paper that was read and refused: the paper and the border frame's
+/// rectangle, each `[width, height]` in micrometres.
 ///
 /// Whole micrometres rather than millimetres so that the ledger stays
 /// comparable for equality; a side that is not a positive finite length is
@@ -173,11 +181,18 @@ pub struct PageInstead {
 pub struct PaperRefused {
     /// The paper the sheet's record states.
     pub paper_um: [u64; 2],
-    /// What the paper was held to: the border frame's rectangle, or the
-    /// size the template's name states where no frame was read.
-    pub held_to: SheetRectangle,
-    /// That rectangle's sides.
-    pub held_to_um: [u64; 2],
+    /// The rectangle the border frame states.
+    pub frame_um: [u64; 2],
+}
+
+/// A paper that is the page beside a template's name that states another
+/// size: the two, each `[width, height]` in micrometres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaperBesideAName {
+    /// The paper the sheet's record states, which is the page.
+    pub paper_um: [u64; 2],
+    /// The size the template's name stands for.
+    pub named_um: [u64; 2],
 }
 
 /// A length in millimetres as whole micrometres; zero for one that is not
@@ -206,20 +221,27 @@ fn sides_mm(sides_um: [u64; 2]) -> String {
 }
 
 impl PaperRefused {
-    /// The two rectangles, for the page account's suspect site:
-    /// `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`, or
-    /// `paper …, template name's size 594.000 x 420.000 mm` where no frame
-    /// was read.
+    /// The two rectangles, for the page account's suspect site and the
+    /// warning: `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`.
     #[must_use]
     pub fn sides(&self) -> String {
-        let held_to = match self.held_to {
-            SheetRectangle::Frame => "frame",
-            SheetRectangle::TemplateName => "template name's size",
-        };
         format!(
-            "paper {}, {held_to} {}",
+            "paper {}, frame {}",
             sides_mm(self.paper_um),
-            sides_mm(self.held_to_um)
+            sides_mm(self.frame_um)
+        )
+    }
+}
+
+impl PaperBesideAName {
+    /// The two sizes, for the page account's suspect site: `paper 297.000 x
+    /// 420.000 mm, template name's size 594.000 x 420.000 mm`.
+    #[must_use]
+    pub fn sides(&self) -> String {
+        format!(
+            "paper {}, template name's size {}",
+            sides_mm(self.paper_um),
+            sides_mm(self.named_um)
         )
     }
 }
@@ -309,41 +331,36 @@ impl LayoutLedger {
         self.unplaced = unplaced;
     }
 
-    /// What is to be said of the page itself: one sentence when the paper
-    /// the sheet states was refused, with the paper, the rectangle it was
-    /// held to — the border frame's, or the size the template's name states
-    /// where no frame was read, and the sentence says which — and that the
-    /// page is that rectangle. Empty for a page written on the paper its
-    /// sheet states, which is every page of every corpus this crate is
-    /// tested on.
-    ///
-    /// The limit is measured on drawings that state a frame. No drawing on
-    /// hand states a paper beside a template's name alone, so held to a
-    /// name the limit is carried over, and the sentence does not say that
-    /// drawings keep to it.
+    /// What is to be said of the page itself. One sentence when the paper
+    /// the sheet states was refused for not being the border frame's, with
+    /// the paper, the frame's rectangle and that the page is the frame's.
+    /// One sentence when no frame was read and the paper is not the size
+    /// the template's name states, with both sizes and that the page is the
+    /// paper: a name refuses nothing. Empty for a page written on the paper
+    /// its sheet states with nothing to say against it, which is every page
+    /// of every corpus this crate is tested on.
     #[must_use]
     pub fn page_warnings(&self) -> Vec<String> {
         let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
-        self.paper_refused
-            .iter()
-            .map(|refused| match refused.held_to {
-                SheetRectangle::Frame => format!(
-                    "the paper its sheet states, {}, is not its border frame's, {}: no \
-                     drawing on hand has the two more than {limit_mm} mm apart on a side, so \
-                     the paper is not taken for the page and the page is the frame's rectangle",
-                    sides_mm(refused.paper_um),
-                    sides_mm(refused.held_to_um)
-                ),
-                SheetRectangle::TemplateName => format!(
-                    "the paper its sheet states, {}, is not the size its template's name \
-                     states, {}, and no border frame was read to hold it to: the two are \
-                     more than {limit_mm} mm apart on a side, so the paper is not taken for \
-                     the page and the page is the size the template's name states",
-                    sides_mm(refused.paper_um),
-                    sides_mm(refused.held_to_um)
-                ),
-            })
-            .collect()
+        let refused = self.paper_refused.iter().map(|refused| {
+            format!(
+                "the paper its sheet states, {}, is not its border frame's, {}: no \
+                 drawing on hand has the two more than {limit_mm} mm apart on a side, so \
+                 the paper is not taken for the page and the page is the frame's rectangle",
+                sides_mm(refused.paper_um),
+                sides_mm(refused.frame_um)
+            )
+        });
+        let beside_a_name = self.paper_unlike_the_name.iter().map(|beside| {
+            format!(
+                "the paper its sheet states, {}, is not the size its template's name \
+                 states, {}, and no border frame was read to say which the sheet is: a \
+                 name is a label and the paper a reading, so the page is the paper",
+                sides_mm(beside.paper_um),
+                sides_mm(beside.named_um)
+            )
+        });
+        refused.chain(beside_a_name).collect()
     }
 
     /// One sentence per stream and reason for the records that draw on the
@@ -1991,16 +2008,14 @@ mod tests {
                 );
             }
         }
-        // A paper read and refused.
-        let refused = |held_to, held_to_um| LayoutLedger {
+        // A paper read and refused: only ever for a frame's rectangle.
+        let by_a_frame = LayoutLedger {
             paper_refused: Some(PaperRefused {
                 paper_um: [297_000, 420_000],
-                held_to,
-                held_to_um,
+                frame_um: frame,
             }),
             ..LayoutLedger::default()
         };
-        let by_a_frame = refused(SheetRectangle::Frame, frame);
         assert_eq!(
             by_a_frame.page_warnings(),
             [
@@ -2014,23 +2029,38 @@ mod tests {
             by_a_frame.paper_refused.map(|refused| refused.sides()),
             Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm".to_string())
         );
-        let by_a_name = refused(SheetRectangle::TemplateName, named);
+        // A paper that is the page, beside a name that states another size.
+        let beside_a_name = LayoutLedger {
+            paper_unlike_the_name: Some(PaperBesideAName {
+                paper_um: [297_000, 420_000],
+                named_um: named,
+            }),
+            ..LayoutLedger::default()
+        };
         assert_eq!(
-            by_a_name.page_warnings(),
+            beside_a_name.page_warnings(),
             [
                 "the paper its sheet states, 297.000 x 420.000 mm, is not the size its \
               template's name states, 594.000 x 420.000 mm, and no border frame was read to \
-              hold it to: the two are more than 2.707 mm apart on a side, so the paper is not \
-              taken for the page and the page is the size the template's name states"
+              say which the sheet is: a name is a label and the paper a reading, so the page \
+              is the paper"
             ]
         );
         assert_eq!(
-            by_a_name.paper_refused.map(|refused| refused.sides()),
+            beside_a_name
+                .paper_unlike_the_name
+                .map(|beside| beside.sides()),
             Some(
                 "paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm".to_string()
             )
         );
-        assert!(!by_a_name.page_warnings()[0].contains("frame's"));
+        let said = &beside_a_name.page_warnings()[0];
+        assert!(
+            !said.contains("frame's") && !said.contains("not taken"),
+            "{said}"
+        );
+        // Nothing to say of a page that is its paper.
+        assert!(LayoutLedger::default().page_warnings().is_empty());
     }
 
     #[test]

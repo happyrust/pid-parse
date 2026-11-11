@@ -1343,11 +1343,13 @@ pub fn lay_out_with_symbol_roots(
     // The paper is the page when it is the frame's paper. One that lies
     // farther from the frame than any real drawing's is not taken — it
     // would cut the page to whatever it says — and the page is the frame's
-    // rectangle. `frame_mm` is not always a frame's: for a drawing no frame
-    // of which gives a page it is the size the template's name stands for,
-    // and a paper is held to that by the same limit, carried over (no
-    // drawing on hand states a paper beside a name alone). What is said of
-    // the page says which of the two it was. A sheet with neither has
+    // rectangle, which holds the drawing as long as the frame is no smaller
+    // than the sheet. That holds one reading to another. A drawing no frame
+    // of which gives a page has, in `frame_mm`, the size its template's
+    // name stands for: a label, of the template the drawing was started
+    // from. It refuses no paper — the paper is the page — and a paper that
+    // is not the size the name states is said and filed
+    // (`DropReason::PaperUnlikeTheTemplateName`). A sheet with neither has
     // nothing to hold its paper against but its own ink, and ink of the
     // drawing's that falls off the page is filed as suspect
     // (`DropReason::DrawingSegmentBeyondThePaper`).
@@ -1357,9 +1359,18 @@ pub fn lay_out_with_symbol_roots(
         crate::ledger::SheetRectangle::TemplateName
     };
     let stated_paper = stated_paper_mm(&doc);
-    let paper_refused = match (stated_paper, frame_mm) {
-        (Some(paper), Some(frame)) if !paper_is_the_frames(paper, frame) => Some((paper, frame)),
-        _ => None,
+    let (paper_refused, paper_unlike_the_name) = match (stated_paper, frame_mm, sheet_rectangle) {
+        (Some(paper), Some(frame), crate::ledger::SheetRectangle::Frame)
+            if !paper_is_the_frames(paper, frame) =>
+        {
+            (Some((paper, frame)), None)
+        }
+        (Some(paper), Some(named), crate::ledger::SheetRectangle::TemplateName)
+            if !paper_is_the_named_sheet(paper, named) =>
+        {
+            (None, Some((paper, named)))
+        }
+        _ => (None, None),
     };
     let page_mm = if paper_refused.is_some() {
         frame_mm
@@ -1649,12 +1660,17 @@ pub fn lay_out_with_symbol_roots(
     };
     ledger.paint_order = paint_order(&primitives, &orders);
     // What the page is, where it is not the paper the sheet states, and
-    // which rectangle it is instead.
+    // which rectangle it is instead; and a paper that is the page beside a
+    // template's name that states another size.
     ledger.paper_refused = paper_refused.map(|(paper, frame)| crate::ledger::PaperRefused {
         paper_um: paper.map(crate::ledger::micrometres),
-        held_to: sheet_rectangle,
-        held_to_um: frame.map(crate::ledger::micrometres),
+        frame_um: frame.map(crate::ledger::micrometres),
     });
+    ledger.paper_unlike_the_name =
+        paper_unlike_the_name.map(|(paper, named)| crate::ledger::PaperBesideAName {
+            paper_um: paper.map(crate::ledger::micrometres),
+            named_um: named.map(crate::ledger::micrometres),
+        });
     if stated_paper.is_none() {
         ledger.page_for_want_of_a_paper = frame_mm.map(|frame| crate::ledger::PageInstead {
             from: sheet_rectangle,
@@ -1701,16 +1717,24 @@ pub fn lay_out_with_symbol_roots(
 /// to the micrometre above it: a paper is the frame's when no drawing on
 /// hand has the two farther apart.
 ///
+/// What the measurement is worth. The limit is the largest reading of the
+/// sample with a fifth of a micrometre to spare, and the sample is
+/// thirteen placements, not sixty drawings: sheets that wear one template
+/// the same way read alike to the last bit, so the 60 show 13 distinct
+/// distances, and four of those are frames placed by hand (the ninth
+/// review's count). No reading witnesses 2.707 mm as a boundary — from
+/// there to the 87 mm of the next ISO size there is none, and the limit
+/// stands at the bottom of that gap, the tightest it can be without
+/// refusing a drawing on hand. So a sound drawing whose frame was placed a
+/// little further off than `N井场`'s is refused as well. It is not cut: it
+/// gets the page it had before papers were read, its frame's rectangle,
+/// with one warning and one suspect item.
+///
 /// It is not a tolerance on a drawing's geometry: a paper inside it is the
 /// page exactly, and the frame's rectangle places nothing on that page.
-///
-/// A drawing no frame of which gives a page has the size its template's
-/// name stands for in the frame's place (`pid_parse::framed_page_dimensions_mm`
-/// tells the two apart), and its paper is held to that by this same limit.
-/// None of the 65 drawings states a paper beside a name alone, so for a
-/// name the limit is carried over and not measured; what is said of such a
-/// page names the template's name and no frame
-/// (`ledger::SheetRectangle`).
+/// Nor is it used where no frame was read: a paper beside a template's
+/// name alone is held to [`PAPER_NAME_REACH_MM`], and is the page either
+/// way.
 pub const PAPER_FRAME_REACH_MM: f64 = 2.707;
 
 /// Whether `paper_mm` is the paper of the sheet whose border frame states
@@ -1718,13 +1742,51 @@ pub const PAPER_FRAME_REACH_MM: f64 = 2.707;
 /// [`PAPER_FRAME_REACH_MM`] of the same side of the paper.
 ///
 /// A paper that is not is refused — the page is then the frame's rectangle,
-/// as every page was before papers were read, and the drawing is whole. A
-/// paper half the frame's width, one with a side of no length, one a metre
-/// too large and one turned on its side are all refused; a side that is not
-/// a number is too.
+/// as every page was before papers were read. The drawing is whole on that
+/// page as long as the frame holds the sheet. A frame smaller than its
+/// paper by more than the limit — an A3 border on an A2 sheet — gives a
+/// page smaller than the sheet; no drawing on hand has one, and the only
+/// frames smaller than their papers are `DWG-0202GP06-01`'s, by a third of
+/// a millimetre. A paper half the frame's width, one with a side of no
+/// length, one a metre too large, one turned on its side and one too tall
+/// alone are all refused; a side that is not a number is too.
 #[must_use]
 pub fn paper_is_the_frames(paper_mm: [f64; 2], frame_mm: [f64; 2]) -> bool {
     (0..2).all(|side| (frame_mm[side] - paper_mm[side]).abs() <= PAPER_FRAME_REACH_MM)
+}
+
+/// How far a side of the paper may lie from the same side of the size its
+/// template's name states, in millimetres, for the two to be one sheet.
+///
+/// Half a millimetre, and that is a matter of how each is written, not of
+/// anything measured. A name states a size the way a label does: `A2` is
+/// 594 by 420, whole millimetres, which is as fine as ISO 216 states a
+/// sheet. The paper is read to the nanometre. So a paper that is the named
+/// sheet is the named size once rounded to the millimetre, and one half a
+/// millimetre or more away rounds to another number and is another size.
+/// The 2.707 mm of [`PAPER_FRAME_REACH_MM`] says nothing here: it is how
+/// far frames placed by hand lie from their papers.
+///
+/// **Nothing witnesses this path.** None of the 65 drawings on hand states
+/// a paper beside a template's name alone: three carry a `Template` tag at
+/// all and each of the three has a frame (the ninth review's count). The
+/// papers on hand are exact ISO sizes and so are the names', so a paper
+/// and a name would differ by nothing or by 87 mm and more, and any limit
+/// between the two says the same of them.
+pub const PAPER_NAME_REACH_MM: f64 = 0.5;
+
+/// Whether `paper_mm` is the sheet the template's name states, `named_mm`:
+/// each side less than [`PAPER_NAME_REACH_MM`] from the same side of the
+/// name's.
+///
+/// One that is not is the page all the same. A name is a label — of the
+/// template the drawing was started from, which a sheet resized since no
+/// longer matches — and overrules no reading. What it can do is disagree,
+/// and that is said (`DropReason::PaperUnlikeTheTemplateName`): with no
+/// frame read, a paper read wrong has nothing else to show it.
+#[must_use]
+pub fn paper_is_the_named_sheet(paper_mm: [f64; 2], named_mm: [f64; 2]) -> bool {
+    (0..2).all(|side| (named_mm[side] - paper_mm[side]).abs() < PAPER_NAME_REACH_MM)
 }
 
 /// The paper the drawing's sheets state, `[width, height]` in millimetres:
@@ -7687,7 +7749,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 48 codes has to be reachable and has to be *recorded*
+    // Every one of the 49 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -8647,8 +8709,7 @@ mod tests {
                 );
                 model.ledger.paper_refused = Some(crate::ledger::PaperRefused {
                     paper_um: [297_000, 420_000],
-                    held_to: crate::ledger::SheetRectangle::Frame,
-                    held_to_um: [594_328, 420_566],
+                    frame_um: [594_328, 420_566],
                 });
                 let write = crate::write::write_ledger(&model).expect("the page writes");
                 let assembled = ExportLedger::assemble(&model, &write);
@@ -8657,6 +8718,42 @@ mod tests {
                     Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm")
                 );
                 assert_eq!(assembled.summary().suspect, 1);
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
+            DropReason::PaperUnlikeTheTemplateName => {
+                // A page that is its paper, beside a name that states
+                // another size: nothing is left undrawn, and the page
+                // account files the two sizes once.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [297.0, 420.0],
+                );
+                model.ledger.paper_unlike_the_name = Some(crate::ledger::PaperBesideAName {
+                    paper_um: [297_000, 420_000],
+                    named_um: [594_000, 420_000],
+                });
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                assert_eq!(
+                    assembled.page.suspect_sites[0].name.as_deref(),
+                    Some("paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm")
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                assert_eq!(
+                    assembled.drawing.primitives.on_page, 1,
+                    "the stroke is drawn"
+                );
                 *assembled
                     .page
                     .dropped
@@ -8766,6 +8863,35 @@ mod tests {
         assert_eq!(segments, entities, "and its entity");
         assert_eq!(segments.len(), 1);
         segments[0]
+    }
+
+    /// A paper is the sheet a template's name states when it rounds to the
+    /// name's whole millimetres, and is another size half a millimetre off.
+    #[test]
+    fn a_paper_is_the_named_sheet_to_the_millimetre_the_name_is_written_in() {
+        use super::{PAPER_NAME_REACH_MM, paper_is_the_named_sheet};
+        let a2 = [594.0, 420.0];
+        // The papers on hand are the ISO sizes to the nanometre.
+        assert!(paper_is_the_named_sheet([594.0, 420.0], a2));
+        assert!(paper_is_the_named_sheet([594.000_001, 419.999_999], a2));
+        assert!(paper_is_the_named_sheet([594.499, 420.0], a2));
+        // Half a millimetre off rounds to another number.
+        assert!(!paper_is_the_named_sheet([594.5, 420.0], a2));
+        assert!(!paper_is_the_named_sheet([594.0, 419.5], a2));
+        // What a frame's limit lets through is another size beside a name.
+        assert!(!paper_is_the_named_sheet([595.0, 420.0], a2));
+        assert!(!paper_is_the_named_sheet([594.0, 422.7], a2));
+        // The next ISO size, the sheet turned, half the width, no number.
+        for paper in [
+            [841.0, 594.0],
+            [420.0, 594.0],
+            [297.0, 420.0],
+            [594.0, f64::NAN],
+            [f64::INFINITY, 420.0],
+        ] {
+            assert!(!paper_is_the_named_sheet(paper, a2), "{paper:?}");
+        }
+        assert!((PAPER_NAME_REACH_MM - 0.5).abs() < f64::EPSILON);
     }
 
     /// A paper is the frame's when no drawing on hand has the two farther
@@ -8889,7 +9015,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 48, "the appendix's 48 rows");
+        assert_eq!(DropReason::all().len(), 49, "the appendix's 49 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.

@@ -526,6 +526,23 @@ impl ExportLedger {
                 count: 1,
             });
         }
+        // A paper that is the page, beside a template's name that states
+        // another size and no frame to say which the sheet is: nothing is
+        // left undrawn for it, and the two sizes are the site.
+        if let Some(beside) = &ledger.paper_unlike_the_name {
+            page.dropped
+                .insert(DropReason::PaperUnlikeTheTemplateName, 1);
+            page.suspect_sites.push(SuspectSite {
+                reason: DropReason::PaperUnlikeTheTemplateName,
+                stream: None,
+                oid: None,
+                bytes: None,
+                type_code: None,
+                family: None,
+                name: Some(beside.sides()),
+                count: 1,
+            });
+        }
         // A template candidate that could not be read or parsed is the other
         // page-level suspect drop; its site is the candidate's own name.
         let unreadable = u64::try_from(ledger.template_unreadable.len()).unwrap_or(u64::MAX);

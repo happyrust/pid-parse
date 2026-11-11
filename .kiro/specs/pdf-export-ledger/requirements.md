@@ -355,7 +355,8 @@
 |---|---|---|---|
 | `template_candidate_unreadable` | 可疑 | `load_border_template` 中模板候选读不出（`read_archive_file`）或解析失败（`parse_file` / `parse_reader`）后 `continue` | 静默（新发现） |
 | `template_missing` | 可疑 | 页面点名的模板没有文件可答，页面不穿家具 | 已计数（`missing_templates`） |
-| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加）。没有读到图框的图纸，对照纸张的是模板名给出的页幅（`pid_parse::framed_page_dimensions_mm` 为 `None` 时），用同一个限值——它是在页框上量的，手头没有一张图只凭模板名带着纸张，所以这里是外推；来源写 `template name's size`，警告说「不是模板名给出的页幅，也没有读到图框」 | 新增 |
+| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加）。只用在读到了图框的图纸上；限值是样本的最大值（60 张图只有 13 种不同的读数，其中 4 种是手拖的图框），完好的图也可能触发，触发时得到的是读纸张之前的页面；页框比纸张小超过限值时页面会小于图纸（2026-11-12 第七轮写实） | 新增 |
+| `paper_unlike_the_template_name` | 可疑 | `lay_out_drawing`：没有读到图框（`pid_parse::framed_page_dimensions_mm` 为 `None`），图纸声明的纸张与模板名给出的页幅有一边相差 0.5 mm 或更多（`model::PAPER_NAME_REACH_MM`：模板名的页幅写到整毫米，纸张读到纳米，同一张纸四舍五入到毫米应当相同）。**不拒收**：页面照用纸张——模板名是标签（而且是图纸起稿时的模板），纸张是读数；只记本项、来源记两个尺寸，`pid_plot` 在 stderr 打一行，退出码不变。这条路没有见证：手头 65 张真实图纸没有一张只凭模板名带着纸张（2026-11-12 第七轮加，附录由 48 行变 49 行） | 新增 |
 | `page_size_source` | — | 页幅来自声明（`page_mm`）还是测得（`resolved_page_mm`） | 门禁读数 |
 
 ### A.9 不入账的内容
