@@ -615,9 +615,34 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
 
 /// `.pid` input: read the drawing from the file alone and write only what
 /// it states.
+/// One sentence for each chain stream of the `.pid` at `path` whose record
+/// chain does not hold, with what the publish reader made of the stream.
+///
+/// The reader takes a stream's records all or nothing, so a chain that
+/// stops short costs the delivery everything the stream holds while the
+/// exit code stays 0; this is the only place that says so.
+fn chain_fault_warnings(path: &Path) -> Vec<String> {
+    pid_parse::publish::pid_load::chain_faults_from_pid(path)
+        .unwrap_or_default()
+        .iter()
+        .map(|fault| {
+            let read = if fault.stop.is_some() {
+                "the publish reader takes nothing from a stream whose chain stops short, so \
+                 the items, labels and attributes it holds are not in the XML"
+            } else {
+                "the publish reader read the records the chain reached"
+            };
+            format!("{}; {read}", fault.describe())
+        })
+        .collect()
+}
+
 fn run_pid(options: &CliOptions) -> Result<i32, String> {
     let mut drawing = load_publish_from_pid(&options.input_path)
         .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
+    for fault in chain_fault_warnings(&options.input_path) {
+        eprintln!("warning: {}: {fault}", options.input_path.display());
+    }
     if let Some(dump_path) = &options.oracle_exp {
         let dump =
             std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;

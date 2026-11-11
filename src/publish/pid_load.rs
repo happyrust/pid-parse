@@ -424,6 +424,9 @@ struct Records {
     /// Symbol placement oid -> the `.sym` library path that site's
     /// `JProperties` states.
     library_paths: HashMap<u32, String>,
+    /// The chain streams read whose own framing does not hold. One whose
+    /// walk stops short gave [`Self::add_chain`] nothing at all.
+    chain_faults: Vec<crate::model::StreamChainFault>,
 }
 
 impl Records {
@@ -448,6 +451,13 @@ impl Records {
             compound.open_stream(&stream_path)?.read_to_end(&mut data)?;
             if data.get(0..4) == Some(&CHAIN_MAGIC.to_le_bytes()[..]) {
                 records.add_chain(&data);
+                // `add_chain` takes a stream's records all or nothing, so
+                // one whose chain stops short has just given it none. That
+                // is kept, to be said ([`chain_faults_from_reader`]).
+                let path = stream_path.to_string_lossy().replace('\\', "/");
+                if let Some(fault) = crate::model::StreamChainFault::of_stream(&path, &data) {
+                    records.chain_faults.push(fault);
+                }
             }
         }
         let referenced: BTreeSet<u32> = records.symbol_sites.values().copied().collect();
@@ -748,6 +758,31 @@ pub fn load_publish_from_reader<R: Read + Seek>(
     drawing_name: &str,
 ) -> Result<PidPublishDrawing, PidLoadError> {
     load_from_records(Records::read_from(reader)?, drawing_name)
+}
+
+/// The chain streams of a `.pid`'s root storage whose record chain does
+/// not hold, as the publish reader meets them.
+///
+/// The reader takes a stream's records all or nothing: one whose walk
+/// stops before the stream's end gives it no record, and what the drawing
+/// publishes is then short of every attribute row, label text and symbol
+/// placement that stream holds — 18 published attributes become none on a
+/// copy of `DWG-0201GP06-01.pid` with one length field of `/Sheet6` set to
+/// zero. A stream whose chain reaches the end with a header count that
+/// differs is read as far as the chain reaches, and listed all the same.
+/// [`load_publish_from_reader`] does not carry these; a caller that
+/// delivers the XML asks here and says them, as `pid_publish_xml` does.
+pub fn chain_faults_from_reader<R: Read + Seek>(
+    reader: R,
+) -> Result<Vec<crate::model::StreamChainFault>, PidLoadError> {
+    Ok(Records::read_from(reader)?.chain_faults)
+}
+
+/// [`chain_faults_from_reader`] for a `.pid` on disk.
+pub fn chain_faults_from_pid(
+    path: &Path,
+) -> Result<Vec<crate::model::StreamChainFault>, PidLoadError> {
+    chain_faults_from_reader(std::fs::File::open(path)?)
 }
 
 fn load_from_records(
