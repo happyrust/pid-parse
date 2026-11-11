@@ -161,6 +161,7 @@ pub(super) fn advance(
             tc_pt: 0.0,
             width_mm: run_width_mm(lender, size_pt, bytes),
             steps_px: Vec::new(),
+            glyphs: Vec::new(),
         };
     }
     let cell = named.heights.ascent + named.heights.descent;

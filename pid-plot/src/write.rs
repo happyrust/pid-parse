@@ -32,6 +32,11 @@
 //! `borrowed` module holds that lettering — the size the reference sets a
 //! borrowed glyph at, and the step of a label borrowed whole — and says
 //! which labels it reaches.
+//! A string that changes script — Latin letters, Han, a full-width
+//! parenthesis — is written as one text object for each script run, each on
+//! the whole pixel the plotter's steps put it and spaced by its own glyphs,
+//! the way the reference plots write `DWG-0100` and `集05-37`; the
+//! `script_runs` module holds the cut.
 //! A style height is written at the `Tf` the reference plotter would size it
 //! at: the em it implies, its cell rounded to whole 150 dpi pixels (see
 //! `plotted_size_pt`). Every face must be a static TrueType or
@@ -39,6 +44,7 @@
 //! a variable font.
 
 mod borrowed;
+mod script_runs;
 mod verdict;
 
 pub use verdict::{
@@ -1755,10 +1761,9 @@ fn show_text(
     // cannot hold at its stated width, already the rarest path through
     // this function.
     let mut emitted: Vec<LetteredPiece<'_, '_>> = Vec::with_capacity(runs.len());
-    // For each piece that opens a run of the record, what the plotter
-    // measures everything before it at, in its own pixels and before any
-    // glyph is put on a whole one.
-    let mut opens_after_px: Vec<Option<f64>> = Vec::with_capacity(runs.len());
+    // What the plotter measures everything before the run in hand at, in its
+    // own pixels and before any glyph is put on a whole one: where a run of
+    // the record opens.
     let mut measured_px = 0.0;
     let mut width_mm = 0.0;
     let device = device_scale(page).unwrap_or(1.0);
@@ -1816,27 +1821,56 @@ fn show_text(
             ),
         };
         width_mm += advance.width_mm;
-        // `Tc` is a graphics-state parameter: once set it adds to *every*
-        // glyph's own displacement, including the run's last one. The
-        // reference's `Tc` is only the correction for the `n - 1` gaps
-        // *between* glyphs ([`run_advance`]), so a run that needed one is
-        // split here — the head under `Tc`, the last glyph alone under
-        // `Tc = 0` — rather than let the PDF apply a correction meant for
-        // `n - 1` transitions to `n` of them.
-        if advance.tc_pt != 0.0
-            && let Some(split) = last_glyph_byte_offset(&face.metrics, &bytes)
-            && split > 0
-            && split < bytes.len()
+        let start = opens.map_or(PieceStart::Continues, PieceStart::RecordRun);
+        // The string is one call to GDI, which hands the driver a text
+        // object for each script run of it ([`script_runs`]): `DWG-0100` and
+        // `集05-37` are two on the reference page, each on the whole pixel
+        // the steps before it add up to and spaced by its own glyphs. A
+        // turned run is set glyph by glyph already, and the run the
+        // borrowing samples letter is left as it is.
+        let script = if upright
+            && as_the_reference != Some(index)
+            && advance.glyphs.len() == run_text.chars().count()
         {
-            let tail = bytes[split..].to_vec();
-            let mut head = bytes;
-            head.truncate(split);
-            emitted.push((size_pt, face, head, advance.tc_pt, Vec::new()));
-            emitted.push((size_pt, face, tail, 0.0, Vec::new()));
-            opens_after_px.extend([opens, None]);
+            script_runs::of(&run_text)
         } else {
-            emitted.push((size_pt, face, bytes, advance.tc_pt, advance.steps_px));
-            opens_after_px.push(opens);
+            Vec::new()
+        };
+        if script.len() < 2 {
+            emitted.extend(last_glyph_apart(LetteredPiece {
+                size_pt,
+                face,
+                bytes,
+                tc_pt: advance.tc_pt,
+                steps_px: advance.steps_px,
+                start,
+                begins_string: true,
+            }));
+            continue;
+        }
+        let lens: Vec<usize> = face
+            .metrics
+            .codes(&bytes)
+            .iter()
+            .map(|(_, len)| *len)
+            .collect();
+        for (order, glyphs) in script.into_iter().enumerate() {
+            let from: usize = lens[..glyphs.start].iter().sum();
+            let until = from + lens[glyphs.clone()].iter().sum::<usize>();
+            let first = order == 0;
+            emitted.extend(last_glyph_apart(LetteredPiece {
+                size_pt,
+                face,
+                bytes: bytes[from..until].to_vec(),
+                tc_pt: script_runs::spacing_pt(&advance.glyphs[glyphs.clone()], plate),
+                steps_px: Vec::new(),
+                start: if first {
+                    start
+                } else {
+                    PieceStart::ScriptRun(script_runs::start_px(&advance.glyphs, glyphs.start))
+                },
+                begins_string: first,
+            }));
         }
     }
     let laid_out_mm = width_mm * plate;
@@ -1951,46 +1985,64 @@ fn show_text(
     // own — including back to zero for a lone glyph that follows one that
     // needed it. A rotated run instead sets each glyph on its own whole-pixel
     // step ([`glyph_by_glyph`]).
-    // How far the text line's start has been moved from the label's, in the
-    // plotter's pixels.
-    let mut line_px: i64 = 0;
-    for ((size, face, bytes, tc_pt, steps_px), opens) in emitted.iter().zip(&opens_after_px) {
-        if let (Some(start_px), Some(before_px)) = (unrounded_px, opens) {
-            let at_px = record_run_start_px(start_px, *before_px);
+    // Where the text line in force starts, where the next glyph would be set
+    // and where the string in hand began: each in the plotter's pixels along
+    // the baseline, after the label's own start and before any condensing.
+    let mut line_px = 0.0;
+    let mut pen_px = 0.0;
+    let mut string_px = 0.0;
+    for piece in &emitted {
+        #[allow(clippy::cast_precision_loss)]
+        let at_px = match piece.start {
+            PieceStart::Continues => None,
+            PieceStart::RecordRun(before_px) => {
+                unrounded_px.map(|start_px| record_run_start_px(start_px, before_px) as f64)
+            }
+            PieceStart::ScriptRun(steps) => Some(string_px + steps as f64),
+        };
+        if let Some(at_px) = at_px {
             // `Td` moves from the line's start, in text space: the label's
-            // `Tm` scales it by `scale` on its way to the page. A pixel is
-            // the page's own here, as it is for every glyph's step
-            // ([`stepped_advance`]).
-            #[allow(clippy::cast_precision_loss)]
-            let along_pt = (at_px - line_px) as f64 * (72.0 / PLOT_DPI) / scale;
+            // `Tm` scales it by `plate` on its way to the page, and by
+            // `condense` where the page had to squeeze the label, together
+            // with its glyphs. A pixel is the page's own here, as it is for
+            // every glyph's step ([`stepped_advance`]).
+            let along_pt = (at_px - line_px) * (72.0 / PLOT_DPI) / plate;
             ops.push(Op::new(
                 "Td",
                 vec![Object::Real(along_pt), Object::Real(0.0)],
             ));
             line_px = at_px;
+            pen_px = at_px;
         }
-        ops.push(Op::new("Tc", vec![Object::Real(*tc_pt)]));
+        if piece.begins_string {
+            string_px = pen_px;
+        }
+        ops.push(Op::new("Tc", vec![Object::Real(piece.tc_pt)]));
         ops.push(Op::new(
             "Tf",
-            vec![Object::name(&face.resource), Object::Real(*size)],
+            vec![
+                Object::name(&piece.face.resource),
+                Object::Real(piece.size_pt),
+            ],
         ));
-        if steps_px.is_empty() {
+        if piece.steps_px.is_empty() {
             ops.push(Op::new(
                 "Tj",
-                vec![Object::String(PdfString::literal(bytes.clone()))],
+                vec![Object::String(PdfString::literal(piece.bytes.clone()))],
             ));
         } else {
             ops.push(Op::new(
                 "TJ",
                 vec![Object::Array(glyph_by_glyph(
-                    &face.metrics,
-                    bytes,
-                    steps_px,
-                    *size,
+                    &piece.face.metrics,
+                    &piece.bytes,
+                    &piece.steps_px,
+                    piece.size_pt,
                     plate,
                 ))],
             ));
         }
+        pen_px += shown_px(piece, plate);
     }
     ops.push(Op::new("ET", Vec::new()));
     Ok(Shown {
@@ -2557,6 +2609,12 @@ struct RunAdvance {
     /// letters glyph by glyph: a rotated one ([`glyph_by_glyph`]). Empty for
     /// a run lettered as one string under `tc_pt`.
     steps_px: Vec<i64>,
+    /// Every glyph of an upright run as the plotter steps it — its whole
+    /// pixels and its own width in the device font at `sx` — which is what a
+    /// string cut into script runs places and spaces each of them from
+    /// ([`script_runs`]). Empty for a run of one glyph, a rotated run and a
+    /// run the reference font has no cell for.
+    glyphs: Vec<script_runs::Stepped>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2580,6 +2638,7 @@ fn run_advance(
         tc_pt: 0.0,
         width_mm: run_width_mm(metrics, size_pt, bytes),
         steps_px: Vec::new(),
+        glyphs: Vec::new(),
     };
     if n < 2 || !(sx.is_finite() && sx > 0.0) {
         return natural();
@@ -2599,6 +2658,7 @@ fn run_advance(
             tc_pt: 0.0,
             width_mm,
             steps_px: vec![step],
+            glyphs: Vec::new(),
         };
     }
     // The steps are rounded in the plotter's own pixels, on a sheet `device`
@@ -2687,10 +2747,19 @@ fn stepped_advance(
     // under its correction.
     let width_mm = leading_px * 25.4 / PLOT_DPI / sx + widths_em[n - 1] * size_pt / PT_PER_MM;
     if upright {
+        let glyphs = lp_dx
+            .iter()
+            .zip(widths_em)
+            .map(|(&step_px, width_em)| script_runs::Stepped {
+                step_px,
+                natural_px: width_em * em_px * sx,
+            })
+            .collect();
         return RunAdvance {
             tc_pt,
             width_mm,
             steps_px: Vec::new(),
+            glyphs,
         };
     }
     lp_dx.truncate(n - 1);
@@ -2698,6 +2767,7 @@ fn stepped_advance(
         tc_pt: 0.0,
         width_mm,
         steps_px: lp_dx,
+        glyphs: Vec::new(),
     }
 }
 
@@ -2719,10 +2789,89 @@ fn last_glyph_byte_offset(metrics: &Metrics, bytes: &[u8]) -> Option<usize> {
     bytes.len().checked_sub(last_len)
 }
 
-/// One piece of a label as the page letters it: its size, its face, its
-/// bytes, its `Tc`, and the whole-pixel steps a rotated run is set at
-/// ([`glyph_by_glyph`]; empty for a run shown as one string).
-type LetteredPiece<'f, 'a> = (f64, &'f ReadyFace<'a>, Vec<u8>, f64, Vec<i64>);
+/// Where a piece of a label starts along its baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PieceStart {
+    /// Where the piece before it left the text position.
+    Continues,
+    /// On a whole pixel of its own, as a run of the record: what the plotter
+    /// measures everything before it at ([`record_run_start_px`]).
+    RecordRun(f64),
+    /// As a later script run of its string: so many whole pixels after the
+    /// string's first glyph ([`script_runs::start_px`]).
+    ScriptRun(i64),
+}
+
+/// One piece of a label as the page letters it.
+struct LetteredPiece<'f, 'a> {
+    size_pt: f64,
+    face: &'f ReadyFace<'a>,
+    bytes: Vec<u8>,
+    /// Its `Tc`, in points of text space.
+    tc_pt: f64,
+    /// The whole-pixel steps a rotated run is set at ([`glyph_by_glyph`]);
+    /// empty for a piece shown as one string.
+    steps_px: Vec<i64>,
+    start: PieceStart,
+    /// Whether it opens a string — one call to GDI — rather than carrying
+    /// one on: the place a later script run of that string is counted from.
+    begins_string: bool,
+}
+
+/// A piece as the page shows it: one string under its `Tc`, or, where it has
+/// a `Tc` and more than one glyph, every glyph but the last under that `Tc`
+/// and the last one on its own under none.
+///
+/// `Tc` is a graphics-state parameter: once set it adds to *every* glyph's
+/// own displacement, including the last one's. The reference's `Tc` is only
+/// the correction for the `n - 1` gaps *between* glyphs ([`run_advance`]), so
+/// a piece that needs one is split here rather than let the PDF apply a
+/// correction meant for `n - 1` transitions to `n` of them.
+fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'f, 'a>> {
+    let split = (piece.tc_pt != 0.0)
+        .then(|| last_glyph_byte_offset(&piece.face.metrics, &piece.bytes))
+        .flatten()
+        .filter(|split| *split > 0 && *split < piece.bytes.len());
+    let Some(split) = split else {
+        return vec![piece];
+    };
+    let tail = LetteredPiece {
+        size_pt: piece.size_pt,
+        face: piece.face,
+        bytes: piece.bytes[split..].to_vec(),
+        tc_pt: 0.0,
+        steps_px: Vec::new(),
+        start: PieceStart::Continues,
+        begins_string: false,
+    };
+    let mut head = piece;
+    head.bytes.truncate(split);
+    head.steps_px = Vec::new();
+    vec![head, tail]
+}
+
+/// How far showing `piece` moves the text position along the baseline, in
+/// the plotter's pixels under a text matrix scaled by `sx`: every glyph's
+/// own width and the piece's `Tc`, or for a piece set glyph by glyph its
+/// steps and its last glyph's own width.
+fn shown_px(piece: &LetteredPiece<'_, '_>, sx: f64) -> f64 {
+    let metrics = &piece.face.metrics;
+    let px_per_pt = PLOT_DPI / 72.0;
+    let codes = metrics.codes(&piece.bytes);
+    if piece.steps_px.is_empty() {
+        return codes
+            .iter()
+            .map(|(code, _)| (metrics.width(*code) * piece.size_pt + piece.tc_pt) * sx * px_per_pt)
+            .sum();
+    }
+    let stepped: i64 = piece.steps_px.iter().sum();
+    let last = codes.last().map_or(0.0, |(code, _)| {
+        metrics.width(*code) * piece.size_pt * sx * px_per_pt
+    });
+    #[allow(clippy::cast_precision_loss)]
+    let stepped = stepped as f64;
+    stepped + last
+}
 
 /// A rotated run's `TJ` array: each glyph but the last followed by the
 /// adjustment that moves the next one onto its own whole-pixel step
@@ -2794,6 +2943,175 @@ mod tests {
     use pdfcraft_fonts::pdf::Metrics;
 
     use super::PlotFont;
+
+    /// The operands of every `name` operator of `ops`, numbers only.
+    fn numbers(ops: &[super::Op], name: &str) -> Vec<Vec<f64>> {
+        ops.iter()
+            .filter(|op| op.op == name.as_bytes())
+            .map(|op| {
+                op.operands
+                    .iter()
+                    .filter_map(|operand| match operand {
+                        super::Object::Real(value) => Some(*value),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The bytes every `Tj` of `ops` shows, in order.
+    fn strings_shown(ops: &[super::Op]) -> Vec<Vec<u8>> {
+        ops.iter()
+            .filter(|op| op.op == b"Tj")
+            .map(|op| match &op.operands[0] {
+                super::Object::String(string) => string.bytes.clone(),
+                other => panic!("Tj shows a string, not {other:?}"),
+            })
+            .collect()
+    }
+
+    /// One label lettered on an A1 sheet in `face`, the operators it writes.
+    fn label_ops(
+        face: &super::ReadyFace<'_>,
+        value: &str,
+        height_mm: f64,
+        rotation: f64,
+        width_permille: Option<u16>,
+    ) -> Vec<super::Op> {
+        let text = ShownText {
+            typeface: face.key,
+            origin_mm: [200.0, 100.0],
+            height_mm: Some(height_mm),
+            rotation,
+            value,
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            height_basis: crate::model::TextHeightBasis::Cap,
+            width_permille,
+            paragraph: None,
+            spans: &[],
+            furniture: false,
+        };
+        let mut ops = Vec::new();
+        let mut audit = super::PlotAudit::default();
+        super::show_text(
+            &mut ops,
+            std::slice::from_ref(face),
+            text,
+            [841.0, 594.0],
+            &mut audit,
+        )
+        .expect("the label letters");
+        ops
+    }
+
+    /// `bytes` embedded the way [`write_plot`] embeds a face, as the
+    /// [`Metrics`] the writer letters with.
+    fn metrics_of(bytes: &[u8]) -> Metrics {
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let (family, _) = embedding::names(bytes).expect("font name");
+        let resource = embed(&mut doc, &mut font_resources, bytes, &family).expect("embed");
+        let font_ref = font_resources
+            .get(resource.as_bytes())
+            .cloned()
+            .expect("resource");
+        let font_dict = doc.dict(&font_ref).expect("font dict");
+        Metrics::from_dict(&doc, &font_dict)
+    }
+
+    /// A string that changes script is one text object for each script run:
+    /// the reference writes `DWG-0100集05-37` as `DWG-0100` and `集05-37`,
+    /// the second on the whole pixel the steps of the first add up to and
+    /// each spaced by its own glyphs. The string ends where it ended as one
+    /// text object.
+    #[test]
+    fn a_string_that_changes_script_is_one_text_object_for_each_script_run() {
+        let value = "DWG-0100集05-37";
+        // Inter with `集` standing on the glyph of `A`: a face a character
+        // map says draws the whole label.
+        let font = crate::fonts::test_faces::drawing("集");
+        let metrics = metrics_of(&font);
+        let heights = super::FaceHeights::of(&font);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (height_mm, page) = (2.5, [841.0, 594.0]);
+        let size_pt = super::plotted_size_pt(heights, basis, height_mm);
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let bytes = metrics.encode(value).expect("the face encodes the label");
+        let whole = super::run_advance(
+            "", &metrics, &bytes, value, heights, basis, height_mm, size_pt, None, 1.0, true,
+            device,
+        );
+        assert_eq!(whole.glyphs.len(), 14, "one step for each glyph");
+        let (latin, han) = whole.glyphs.split_at(8);
+        let spaced = |glyphs: &[super::script_runs::Stepped]| {
+            let (_, leading) = glyphs.split_last().expect("glyphs");
+            let short_px: f64 = leading
+                .iter()
+                .map(|glyph| {
+                    #[allow(clippy::cast_precision_loss)]
+                    let step = glyph.step_px as f64;
+                    step - glyph.natural_px
+                })
+                .sum();
+            #[allow(clippy::cast_precision_loss)]
+            let gaps = leading.len() as f64;
+            short_px / gaps * 72.0 / super::PLOT_DPI
+        };
+        let (latin_bytes, han_bytes) = (
+            metrics.encode("DWG-0100").expect("encodes"),
+            metrics.encode("集05-37").expect("encodes"),
+        );
+        let face = super::ReadyFace {
+            key: "",
+            resource: "F1".to_string(),
+            metrics,
+            heights,
+        };
+        let ops = label_ops(&face, value, height_mm, 0.0, None);
+        let moved: Vec<usize> = ops
+            .iter()
+            .enumerate()
+            .filter(|(_, op)| op.op == b"Td")
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(
+            moved.len(),
+            1,
+            "the second script run, and only it, is moved to a start of its own"
+        );
+        let (before, after) = ops.split_at(moved[0]);
+        assert_eq!(strings_shown(before).concat(), latin_bytes, "the Latin run");
+        assert_eq!(strings_shown(after).concat(), han_bytes, "the Han run");
+        // The Han run starts on the whole pixel the Latin run's steps end on.
+        let start_px: i64 = latin.iter().map(|glyph| glyph.step_px).sum();
+        #[allow(clippy::cast_precision_loss)]
+        let start_pt = start_px as f64 * 72.0 / super::PLOT_DPI;
+        let td = &numbers(&ops, "Td")[0];
+        assert!(
+            (td[0] - start_pt).abs() < 1e-12 && td[1] == 0.0,
+            "moved {td:?}, the Latin run's {start_px} pixels are {start_pt} pt"
+        );
+        // Each run is spaced by its own glyphs, and its last glyph by none.
+        let spacings: Vec<f64> = numbers(&ops, "Tc").into_iter().map(|tc| tc[0]).collect();
+        assert!(
+            spaced(latin) != 0.0 && spaced(han) != 0.0,
+            "both runs must need spacing for this label to show the cut"
+        );
+        let expected = [spaced(latin), 0.0, spaced(han), 0.0];
+        assert_eq!(spacings.len(), expected.len(), "{spacings:?}");
+        for (got, want) in spacings.iter().zip(expected) {
+            assert!(
+                (got - want).abs() < 1e-12,
+                "Tc {spacings:?}, not {expected:?}"
+            );
+        }
+        assert!(
+            (spaced(latin) - spaced(han)).abs() > 1e-6,
+            "the two runs must need different spacing for this label to tell them apart"
+        );
+    }
 
     /// `JStyleTextChar +52`'s `800` narrows a SimSun furniture label by a
     /// ratio that changes at every `Tf` tier the style height rounds to —
