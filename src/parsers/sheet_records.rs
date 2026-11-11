@@ -2182,12 +2182,88 @@ pub struct PsmHeader {
 /// anywhere in the corpus.
 pub const PSM_TYPE_FLAG_NATIVE_SKIP: u16 = 0b10;
 
+/// The other bit of [`PsmHeader::type_flags`]: the type word's `0x4000`.
+/// No record of any chain stream in the corpora sets it, and a chain walk
+/// does not read past a word that does ([`psm_type_word_opens_a_record`]).
+pub const PSM_TYPE_FLAG_UNSEEN: u16 = 0b01;
+
+/// The last type code the native reader has a class for.
+///
+/// `radsrvitem.dll` keeps one CLSID per type code in a table the code
+/// indexes (`dword_5667B068`, 20 bytes a slot;
+/// `docs/analysis/2026-08-04-psm-type-code-registry.md`). It has 281
+/// slots, `0x0000` to `0x0118` — the table is sorted by CLSID, and what
+/// follows slot `0x0118` in the file is not a GUID. 230 of the slots name
+/// a class of the RAD registry in `jutil.dll`, 50 hold a CLSID that
+/// registry does not list, and one, [`PSM_TYPE_CODE_EMPTY_SLOT`], holds
+/// none.
+pub const PSM_TYPE_CODE_LAST: u16 = 0x0118;
+
+/// The one slot of the native reader's class table that holds no CLSID.
+pub const PSM_TYPE_CODE_EMPTY_SLOT: u16 = 0x00F8;
+
+/// Whether `type_word` can open a record of a chain stream: the tripwire
+/// [`SheetChain::walk`] stops on.
+///
+/// A record's length is the only thing that says where the next one
+/// starts, so a length that is wrong and still inside the stream sends the
+/// walk on from an offset where no record starts, reading whatever bytes
+/// lie there as an envelope. Nothing about a length says it is wrong; the
+/// type word beside it can. A word is refused when
+///
+/// * its type code is past [`PSM_TYPE_CODE_LAST`] or is
+///   [`PSM_TYPE_CODE_EMPTY_SLOT`]: the native reader has no class to make
+///   of it, so no file it wrote or can read holds such a record;
+/// * its `0x4000` bit is set ([`PSM_TYPE_FLAG_UNSEEN`]). `PSMSerializeIn`
+///   holds the word of every record it reads against the 14-bit type code
+///   of the object the record's oid names, and reports "Stream offset
+///   mismatch while reading serial data" when they differ
+///   (`docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`): a
+///   record it reads cannot carry the bit, and it names the failure this
+///   rule is for;
+/// * its type code is zero. The class table does not rule that out — slot
+///   `0` is `JFeatureControlFrame Object` — but zero is the commonest word
+///   a payload holds, and no record states it.
+///
+/// None of the three occurs once on the 499 289 records of the 3 984
+/// distinct streams that open with the chain magic in the corpora (sheets,
+/// symbol caches, `StyleCluster`, the `PSMcluster` and attribute streams,
+/// the sheets of symbol files). Changing one length field by ±1, ±2 … ±64
+/// on every record of the corpora's sheets and symbol caches, 353 changes
+/// used to read as a sound chain: 351 through a "record" of type word
+/// `0x0000`, the other two through `0x4000` and `0xF000`.
+///
+/// The rule is the class table's and not the list of codes the corpora
+/// happen to carry (18 on sheets, 49 in symbol caches). That list refuses
+/// more — of 2 106 074 length changes on the corpora's sheets it leaves
+/// 1 156 reading a record off the chain, where this rule leaves 35 074 and
+/// no rule 620 049 — and it would stop a sound stream at the first record
+/// of a class these corpora lack: `igBalloon`, `igLeader` and `Graphics
+/// Bag` pass the native graphic predicate and no corpus chain holds one. A
+/// stop is loud either way; one on a sound drawing costs the rest of its
+/// sheet. `tests/sheet_chain_faults.rs` makes the same changes on the
+/// committed streams on every run and pins what each reads as.
+#[must_use]
+pub fn psm_type_word_opens_a_record(type_word: u16) -> bool {
+    let code = type_word & 0x3FFF;
+    type_word & 0x4000 == 0
+        && code != 0
+        && code <= PSM_TYPE_CODE_LAST
+        && code != PSM_TYPE_CODE_EMPTY_SLOT
+}
+
 impl PsmHeader {
     /// Whether the native reader skips this record without reading it —
     /// [`PSM_TYPE_FLAG_NATIVE_SKIP`] is set in its type word.
     #[must_use]
     pub fn native_reader_skips(&self) -> bool {
         self.type_flags & PSM_TYPE_FLAG_NATIVE_SKIP != 0
+    }
+
+    /// The type word as stored: the 14-bit code under its two flag bits.
+    #[must_use]
+    pub fn type_word(&self) -> u16 {
+        (self.type_flags << 14) | (self.type_code & 0x3FFF)
     }
 }
 
@@ -2252,6 +2328,14 @@ pub enum SheetChainStop {
         /// The `bytes_to_follow` it states.
         stated: u32,
     },
+    /// The word at the stop is not one a record opens with
+    /// ([`psm_type_word_opens_a_record`]): the walk has left the record
+    /// boundaries by here, and the length of the last record it read is
+    /// the first thing in doubt.
+    NoSuchClass {
+        /// The type word found there.
+        type_word: u16,
+    },
 }
 
 /// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
@@ -2272,10 +2356,26 @@ pub enum SheetChainStop {
 /// §3).
 ///
 /// A stream whose framing does not hold is read as far as it holds and no
-/// further. The records before a stop are records — each one's length came
-/// from the record before it, back to the header — so they decode as on any
+/// further. The records the chain read before a stop decode as on any
 /// stream; what follows the stop is not searched for a place to pick the
-/// chain up again. `examples/probe_can_a_stopped_chain_be_picked_up_again`
+/// chain up again.
+///
+/// "The records the chain read", not "the records the file holds": each
+/// one's offset came from the lengths before it, and a length can be wrong
+/// without running past the stream. The walk then goes on from an offset
+/// where no record starts. It stops there when the word it finds is not
+/// one a record opens with ([`psm_type_word_opens_a_record`]) — on 98.3%
+/// of the length changes measured on the corpora's sheets that is the very
+/// next offset, so the stop names the first byte past the record whose
+/// length is wrong — and otherwise where the bytes it took for records run
+/// out: on the other 1.7% it reads one such record, rarely two, before it
+/// stops, and on 450 of 2 106 074 it rejoins the chain further on and
+/// reaches the stream's end, where only the header's count says something
+/// is wrong and nothing says where. What it read on the way is not in the
+/// file as a record, and the families that could decode one are the ones
+/// whose type code it happened to state.
+///
+/// `examples/probe_can_a_stopped_chain_be_picked_up_again`
 /// measures what such a search would find if each record of each intact
 /// sheet stream in turn were the one the walk stops on. Of the 173 982
 /// records of the corpora's sheet streams that have another after them,
@@ -2351,6 +2451,12 @@ impl SheetChain {
                 chain.stop = Some(SheetChainStop::ShortEnvelope);
                 break;
             };
+            if !psm_type_word_opens_a_record(header.type_word()) {
+                chain.stop = Some(SheetChainStop::NoSuchClass {
+                    type_word: header.type_word(),
+                });
+                break;
+            }
             if header.bytes_to_follow == 0 {
                 chain.stop = Some(SheetChainStop::ZeroLength);
                 break;
@@ -2419,8 +2525,8 @@ impl SheetChain {
 /// This is the all-or-nothing reading, for a caller that tests membership
 /// of the chain or that has no way to say a stream was cut short: the
 /// publish line's row reader, the semantic join, the probes. The record
-/// families read [`SheetChain::walk`] instead — the records before a stop
-/// are still records — and what stopped the walk is reported beside them.
+/// families read [`SheetChain::walk`] instead — what the chain read before
+/// a stop still decodes — and what stopped the walk is reported beside it.
 /// Neither reading holds the header to the chain; [`SheetChain::is_sound`]
 /// does.
 #[must_use]
@@ -2865,6 +2971,11 @@ const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 /// decoder stays, now gated on chain membership by
 /// [`decode_primitive_lines`]. It decodes nothing on this corpus, which is
 /// the correct answer for a corpus that contains none.
+///
+/// Since 2026-11-11 it decodes nothing on any stream: `0x3FE6` is past
+/// [`PSM_TYPE_CODE_LAST`], and a chain walk stops on a word no record
+/// opens with ([`psm_type_word_opens_a_record`]). The layout is still
+/// read at an offset by [`decode_primitive_line_at`].
 pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
 
 /// Unit-vector tolerance used when accepting a candidate `GLine2d`
@@ -11173,6 +11284,109 @@ mod tests {
         }
     }
 
+    /// A length that is wrong and still inside the stream sends the walk on
+    /// from an offset where no record starts. It stops there when the word
+    /// it finds is not one a record opens with; when the bytes there read
+    /// as a record of a class the reader has, it goes on, and a walk that
+    /// lands back on the chain reaches the stream's end with nothing but
+    /// the header's count to say so.
+    #[test]
+    fn a_chain_stops_on_a_word_no_record_opens_with() {
+        for (word, opens) in [
+            (0x0018u16, true),
+            (0x8018, true),
+            (0x0001, true),
+            (0x0118, true),
+            (0x8118, true),
+            (0x0000, false),
+            (0x8000, false),
+            (0x4018, false),
+            (0xC018, false),
+            (0x0119, false),
+            (0x00F8, false),
+            (0x80F8, false),
+            (0x3FE6, false),
+            (0xFFFF, false),
+        ] {
+            assert_eq!(psm_type_word_opens_a_record(word), opens, "0x{word:04X}");
+        }
+
+        let record = |type_word: u16, payload: &[u8]| {
+            let mut record = type_word.to_le_bytes().to_vec();
+            record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            record.extend_from_slice(payload);
+            record
+        };
+        // The first record's payload ends in four zero bytes and then
+        // twelve that read as a line record of six bytes.
+        let mut payload = vec![0x11u8; 20];
+        payload.extend_from_slice(&[0; 4]);
+        payload.extend_from_slice(&record(PSM_TYPE_CODE_IGLINE2D, &[0xAB; 6]));
+        let a = record(PSM_TYPE_CODE_IGLINE2D, &payload);
+        let b = record(PSM_TYPE_CODE_IGTEXTBOX | 0x8000, &[0x22; 9]);
+        let c = record(PSM_TYPE_CODE_IGARC2D, &[0x33; 5]);
+        let whole = chain_stream(&[a.clone(), b.clone(), c].concat());
+        let first = SHEET_STREAM_HEADER_LEN;
+        let second = first + a.len();
+        let third = second + b.len();
+        let chain = SheetChain::walk(&whole);
+        assert_eq!(chain.starts, [first, second, third]);
+        assert!(chain.is_sound());
+        let stated = payload.len() as u32;
+
+        // Sixteen bytes short: the walk goes on from the four zero bytes.
+        let mut stream = whole.clone();
+        stream[first + 2..first + 6].copy_from_slice(&(stated - 16).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        let stop = first + PSM_ENVELOPE_LEN + payload.len() - 16;
+        assert_eq!(
+            chain.starts,
+            [first],
+            "the record whose length is wrong is read"
+        );
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::NoSuchClass { type_word: 0 })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (stop, whole.len() - stop)
+        );
+        assert_eq!(chain.live_records, 1);
+        assert!(!chain.is_sound());
+        assert!(sheet_record_starts(&stream).is_empty());
+
+        // Twelve bytes short: the bytes there read as a record of a class
+        // the reader has, and it ends where the second record starts. The
+        // walk reaches the stream's end; the header's count is one short
+        // of what it read, and that is all that is wrong with it.
+        let mut stream = whole.clone();
+        stream[first + 2..first + 6].copy_from_slice(&(stated - 12).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second - 12, second, third]);
+        assert_eq!((chain.stop, chain.end), (None, whole.len()));
+        assert_eq!((chain.stated_records, chain.live_records), (Some(2), 3));
+        assert!(chain.count_differs() && !chain.is_sound());
+
+        // A record of the chain itself whose word no record opens with: the
+        // walk stops on it, whatever its length says.
+        let mut stream = whole.clone();
+        stream[second..second + 2]
+            .copy_from_slice(&(PSM_TYPE_CODE_IGTEXTBOX | 0x4000).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::NoSuchClass {
+                type_word: PSM_TYPE_CODE_IGTEXTBOX | 0x4000
+            })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (second, whole.len() - second)
+        );
+    }
+
     #[test]
     fn a_header_that_disagrees_with_its_chain_is_not_sound() {
         let (whole, starts) = three_record_stream();
@@ -11668,13 +11882,40 @@ mod tests {
         out
     }
 
+    /// The `GLine2d` records of a synthetic stream, read where the test put
+    /// them: each record's own length leads to the next.
+    ///
+    /// `0x3FE6` is past the last slot of the native reader's class table,
+    /// so a chain walk stops on such a record
+    /// ([`psm_type_word_opens_a_record`]) and [`decode_primitive_lines`]
+    /// returns nothing for any stream. The payload rules are the class's
+    /// own and are still held, through the entry point that reads at an
+    /// offset.
+    fn gline2d_records_where_they_lie(stream: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
+        let mut out = Vec::new();
+        let mut at = SHEET_STREAM_HEADER_LEN;
+        while let Some(header) = parse_psm_header(stream, at) {
+            let end = header.body_start + header.bytes_to_follow as usize;
+            if header.bytes_to_follow == 0 || end > stream.len() {
+                break;
+            }
+            out.extend(decode_primitive_line_at(stream, at));
+            at = end;
+        }
+        out
+    }
+
     #[test]
     fn primitive_line_decodes_canonical_synthetic_record() {
         // Canonical synthetic line: origin at (0,0), unit horizontal
         // direction, params [0, 1.0]. Endpoints A=(0,0) B=(1,0).
         let record = build_synthetic_gline2d_record(42, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
         let stream = synthetic_sheet_stream(&[record]);
-        let decoded = decode_primitive_lines(&stream);
+        assert!(
+            decode_primitive_lines(&stream).is_empty(),
+            "no chain holds a record of a type code past the class table"
+        );
+        let decoded = gline2d_records_where_they_lie(&stream);
         assert_eq!(decoded.len(), 1, "expected exactly one decoded line");
         let line = &decoded[0];
         assert_eq!(line.type_code, PSM_TYPE_CODE_GLINE2D);
@@ -11709,7 +11950,7 @@ mod tests {
         // Overwrite type with 0x1234 (not the GLine2d type).
         record[0] = 0x34;
         record[1] = 0x12;
-        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
+        let decoded = gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record]));
         assert!(decoded.is_empty(), "wrong type_code must be rejected");
     }
 
@@ -11718,7 +11959,7 @@ mod tests {
         // direction = (2.0, 0.0): length 2, not unit.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (2.0, 0.0), 0.0, 1.0);
         assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
+            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
             "non-unit direction vector must be rejected"
         );
     }
@@ -11728,7 +11969,7 @@ mod tests {
         // direction = (0.0, 0.0): zero vector.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
         assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
+            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
             "zero direction vector must be rejected"
         );
     }
@@ -11738,13 +11979,13 @@ mod tests {
         // param_start == param_end.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.0, 1.0);
         assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
+            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
             "param_start >= param_end must be rejected"
         );
         // param_start > param_end.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.5, 0.5);
         assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
+            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
             "reversed param range must be rejected"
         );
     }
@@ -11757,7 +11998,7 @@ mod tests {
         let origin_off = PSM_RECORD_HEADER_LEN;
         record[origin_off..origin_off + 8].copy_from_slice(&nan_bytes);
         assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
+            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
             "NaN coordinate must be rejected"
         );
     }
@@ -11827,7 +12068,7 @@ mod tests {
             build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5),
             build_synthetic_gline2d_record(8, (0.20, 0.30), (0.0, 1.0), 0.0, 0.8),
         ]);
-        let decoded = decode_primitive_lines(&data);
+        let decoded = gline2d_records_where_they_lie(&data);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 7);
         assert_eq!(decoded[1].oid, 8);
@@ -13451,7 +13692,7 @@ mod tests {
         }
         record.extend_from_slice(&[0xAB; TAIL_LEN]);
 
-        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
+        let decoded = gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record]));
         assert_eq!(decoded.len(), 1);
         let line = &decoded[0];
         assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
@@ -13730,14 +13971,15 @@ mod tests {
 
     #[test]
     fn sub_record_0x0010_preserves_type_flags() {
-        // The lower flag bit (type word 0x4000) rides through: the native
-        // reader does not test it.
+        // The lower flag bit (type word 0x4000) rides through the envelope
+        // as stored. No chain walk reads a record that carries it, so it is
+        // read here where it lies.
         let payload = vec![0u8; 16];
         let record = build_synthetic_sub_record_0x0010(0b01, &payload);
-        let decoded = decode_sub_records_0x0010(&chain_stream(&record));
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].type_flags, 0b01);
-        assert_eq!(decoded[0].type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+        assert!(decode_sub_records_0x0010(&chain_stream(&record)).is_empty());
+        let decoded = decode_sub_record_0x0010_at(&record, 0).expect("reads at an offset");
+        assert_eq!(decoded.type_flags, 0b01);
+        assert_eq!(decoded.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
     }
 
     #[test]

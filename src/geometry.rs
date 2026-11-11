@@ -1583,9 +1583,9 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     }
 
     // A chain stream whose framing does not hold was read as far as its
-    // chain holds: the records before a stop are in the entities above and
-    // whatever follows it is not. Said last, so that every count above is
-    // read knowing which stream it may be short on.
+    // chain holds: the records the chain read before a stop are in the
+    // entities above and whatever follows it is not. Said last, so that
+    // every count above is read knowing which stream it may be short on.
     for fault in &doc.chain_faults {
         warnings.push(fault.describe());
     }

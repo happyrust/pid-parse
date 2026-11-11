@@ -1993,6 +1993,10 @@ pub enum StreamChainStopReason {
     ZeroLength,
     /// The record at the stop states more bytes than the stream has left.
     PastEnd,
+    /// The word at the stop is not one a record opens with
+    /// ([`crate::parsers::sheet_records::psm_type_word_opens_a_record`]):
+    /// the walk has left the record boundaries by here.
+    NoSuchClass,
 }
 
 /// Where a chain stream's record walk stopped, and why.
@@ -2006,6 +2010,16 @@ pub struct StreamChainStop {
     /// stating a length the stream does not hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_len: Option<u32>,
+    /// The type word at the stop, when the stop is a word no record opens
+    /// with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_word: Option<u16>,
+    /// Offset of the last record the walk read before the stop, when it
+    /// read one. The stop is where that record's stated length ends, so
+    /// when the stop is not a record's start this record's length is the
+    /// first thing in doubt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_record_offset: Option<usize>,
 }
 
 /// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
@@ -2018,12 +2032,24 @@ pub struct StreamChainStop {
 /// live records than the header states (a stream cut off at a record
 /// boundary reads like that, and nothing else about it does).
 ///
-/// The records before a stop are decoded as on any stream, and no record
-/// family decodes anything from the stop on: what the stream draws is then
-/// what the file holds less what the stop hid, and this is where a reader
-/// finds out. [`crate::build_normalized_geometry`] says each fault in a
-/// warning, and keeps the list in
+/// The records the chain read before a stop are decoded as on any stream,
+/// and no record family decodes anything from the stop on: what the stream
+/// draws is then what the file holds less what the stop hid, and this is
+/// where a reader finds out. [`crate::build_normalized_geometry`] says each
+/// fault in a warning, and keeps the list in
 /// [`crate::NormalizedPidGeometry::chain_faults`].
+///
+/// What a fault says is what the chain read, which is the file's records
+/// only as far as the lengths it followed were right. A stop on a word no
+/// record opens with ([`StreamChainStopReason::NoSuchClass`]) is the walk
+/// finding that out: the last record it read
+/// ([`StreamChainStop::last_record_offset`]) states a length that ends
+/// where no record starts — on the corpora's sheets that record is the one
+/// whose length is wrong for 98.3% of single-length changes, and one
+/// record later for the rest. A fault with no stop and a count that
+/// differs places nothing: the walk reached the stream's end, records are
+/// missing or were read from where none starts, and
+/// [`Self::unread_bytes`] being zero does not mean no byte was lost.
 ///
 /// One record a stop can hide decides more than its own ink: the sheet's
 /// border frame, which states the page and where the drawing sits on it.
@@ -2054,7 +2080,7 @@ pub struct StreamChainFault {
     /// reach and no record family decodes; zero when the walk reached the
     /// end.
     pub unread_bytes: usize,
-    /// Records the walk read. They are decoded as on any stream.
+    /// Records the chain read. They are decoded as on any stream.
     pub records_read: usize,
     /// Of those, the ones the native reader reads: no `0x8000` in the type
     /// word.
@@ -2078,18 +2104,23 @@ impl StreamChainFault {
             return None;
         }
         let stop = chain.stop.map(|stop| {
-            let (reason, record_len) = match stop {
-                SheetChainStop::ShortHeader => (StreamChainStopReason::ShortHeader, None),
-                SheetChainStop::ShortEnvelope => (StreamChainStopReason::ShortEnvelope, None),
-                SheetChainStop::ZeroLength => (StreamChainStopReason::ZeroLength, Some(0)),
+            let (reason, record_len, type_word) = match stop {
+                SheetChainStop::ShortHeader => (StreamChainStopReason::ShortHeader, None, None),
+                SheetChainStop::ShortEnvelope => (StreamChainStopReason::ShortEnvelope, None, None),
+                SheetChainStop::ZeroLength => (StreamChainStopReason::ZeroLength, Some(0), None),
                 SheetChainStop::PastEnd { stated } => {
-                    (StreamChainStopReason::PastEnd, Some(stated))
+                    (StreamChainStopReason::PastEnd, Some(stated), None)
+                }
+                SheetChainStop::NoSuchClass { type_word } => {
+                    (StreamChainStopReason::NoSuchClass, None, Some(type_word))
                 }
             };
             StreamChainStop {
                 offset: chain.end,
                 reason,
                 record_len,
+                type_word,
+                last_record_offset: chain.starts.last().copied(),
             }
         });
         Some(Self {
@@ -2152,16 +2183,27 @@ impl StreamChainFault {
                         stop.record_len.unwrap_or_default(),
                         self.unread_bytes.saturating_sub(6)
                     ),
+                    StreamChainStopReason::NoSuchClass => format!(
+                        "the type word 0x{:04X} is not one a record opens with",
+                        stop.type_word.unwrap_or_default()
+                    ),
                 };
+                // The record whose stated length ends at the stop. When
+                // the stop is not a record's start, its length is where to
+                // look first.
+                let last = stop
+                    .last_record_offset
+                    .map(|at| format!(", the last of them at +{at}"))
+                    .unwrap_or_default();
                 parts.push(format!(
-                    "it stops at +{} of {} bytes, where {why}, so the {} record(s) before the \
-                     stop are decoded and the {} byte(s) from it on are not",
+                    "it stops at +{} of {} bytes, where {why}: the chain read {} record(s) \
+                     before the stop{last}, and the {} byte(s) from it on are not read",
                     stop.offset, self.stream_len, self.records_read, self.unread_bytes
                 ));
                 if let Some(stated) = self.stated_records {
                     parts.push(format!(
-                        "the stream's header states {stated} live record(s) and {} are on the \
-                         chain before the stop",
+                        "the stream's header states {stated} live record(s) and the chain read \
+                         {} before the stop",
                         self.live_records_read
                     ));
                 }
@@ -2170,7 +2212,7 @@ impl StreamChainFault {
                 if let Some(stated) = self.stated_records.filter(|_| self.count_differs()) {
                     parts.push(format!(
                         "it runs to the stream's end with {} live record(s) where the header \
-                         states {stated}",
+                         states {stated}, and nothing in it says where they differ",
                         self.live_records_read
                     ));
                 }

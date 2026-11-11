@@ -44,7 +44,7 @@ use pid_parse::parsers::sheet_records::{
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
     build_normalized_geometry, ParseOptions, PidDocument, PidPackage, PidParser, StreamChainFault,
-    StreamChainStopReason, SHEET_RECORD_FAMILIES,
+    StreamChainStop, StreamChainStopReason, SHEET_RECORD_FAMILIES,
 };
 
 const FIXTURE: &str = "test-file/DWG-0201GP06-01.pid";
@@ -463,6 +463,517 @@ fn the_records_before_a_break_decode_as_on_the_intact_stream() {
     }
 }
 
+/// One record of a committed stream made to state a length that is wrong
+/// and still inside the stream.
+struct LengthChange {
+    fixture: &'static str,
+    stream: &'static str,
+    /// Index of the record on the stream's chain.
+    record: usize,
+    /// What is added to the length it states.
+    delta: i64,
+    /// The word the walk then finds at the first offset past the record.
+    stops_on: u16,
+    /// Whether the stream read as a sound chain — no stop, the header's
+    /// count met — for as long as the walk took any word for a type word.
+    was_silent: bool,
+}
+
+/// The two examples of the second independent review, and then every
+/// single-length change of the repository's own drawings and templates
+/// that used to read as a sound chain, with four of the 69 of their symbol
+/// caches. Each of the silent ones went through a "record" of type word
+/// zero that ended where a record of the file starts.
+const LENGTH_CHANGES: [LengthChange; 13] = [
+    LengthChange {
+        fixture: "test-file/DWG-0202GP06-01.pid",
+        stream: "/Sheet6",
+        record: 130,
+        delta: -1,
+        stops_on: 0x5E00,
+        was_silent: false,
+    },
+    LengthChange {
+        fixture: "test-file/DWG-0201GP06-01.pid",
+        stream: "/Sheet6",
+        record: 0,
+        delta: 8,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/CPE-SQ-A0.igr",
+        stream: "/Sheet6",
+        record: 26,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/CPE-SQ-A0.igr",
+        stream: "/Sheet6",
+        record: 144,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/CPE-SQ-A1.igr",
+        stream: "/Sheet6",
+        record: 26,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/CPE-SQ-A1.igr",
+        stream: "/Sheet6",
+        record: 144,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/CPE-SQ-A2.igr",
+        stream: "/Sheet6",
+        record: 27,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/XA-A1.igr",
+        stream: "/Sheet6",
+        record: 30,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/Ref/Template Files/XA-A1.igr",
+        stream: "/Sheet6",
+        record: 42,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/D06.pid",
+        stream: "/JSite145/PSMcluster0",
+        record: 10,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/D06.pid",
+        stream: "/JSite145/PSMcluster0",
+        record: 38,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/D06.pid",
+        stream: "/JSite151/PSMcluster0",
+        record: 16,
+        delta: 16,
+        stops_on: 0,
+        was_silent: true,
+    },
+    LengthChange {
+        fixture: "test-file/DWG-0201GP06-01.pid",
+        stream: "/JSite329/PSMcluster0",
+        record: 39,
+        delta: 4,
+        stops_on: 0,
+        was_silent: true,
+    },
+];
+
+/// The walk as it was before it held a type word to anything: records
+/// read, of them live, and where it ended.
+fn walk_taking_any_type_word(data: &[u8]) -> (usize, usize, usize) {
+    let mut at = 8usize;
+    let (mut read, mut live) = (0usize, 0usize);
+    while let Some(header) = parse_psm_header(data, at) {
+        let end = header.body_start + header.bytes_to_follow as usize;
+        if header.bytes_to_follow == 0 || end > data.len() {
+            break;
+        }
+        read += 1;
+        if !header.native_reader_skips() {
+            live += 1;
+        }
+        at = end;
+    }
+    (read, live, at)
+}
+
+/// A length that is wrong and still inside the stream sends the walk on
+/// from an offset where no record starts. It stops on the word it finds
+/// there, so the fault names the first byte past the record whose length
+/// is wrong, the record itself, and every byte from there on as unread —
+/// where it used to read on through whatever lay there, and, on twelve of
+/// these thirteen, to the stream's end with nothing said.
+#[test]
+fn a_length_that_is_wrong_and_in_bounds_stops_the_walk_past_its_record() {
+    for change in &LENGTH_CHANGES {
+        let LengthChange {
+            fixture,
+            stream,
+            record,
+            delta,
+            ..
+        } = *change;
+        let label = format!("{fixture} {stream} record {record} {delta:+}");
+        let package = PidParser::new()
+            .parse_package(fixture)
+            .unwrap_or_else(|error| panic!("{fixture} should parse: {error}"));
+        let intact = package
+            .get_stream(stream)
+            .unwrap_or_else(|| panic!("{fixture} has a {stream}"))
+            .data
+            .clone();
+        let starts = sheet_record_starts(&intact);
+        let at = starts[record];
+        let stated = u32_at(&intact, at + 2);
+        let wrong = u32::try_from(i64::from(stated) + delta).expect("a length");
+        let mut broken = intact.clone();
+        put_u32(&mut broken, at + 2, wrong);
+        let stop = at + 6 + wrong as usize;
+        assert!(
+            stop < broken.len() && !starts.contains(&stop),
+            "{label}: the wrong length ends inside the stream, where no record starts"
+        );
+
+        // What this used to read as.
+        let (read, live, end) = walk_taking_any_type_word(&broken);
+        if change.was_silent {
+            assert_eq!(
+                (end, live),
+                (broken.len(), u32_at(&broken, 4) as usize),
+                "{label}: taking any word for a type word, the walk reaches the stream's end \
+                 with the header's count"
+            );
+        } else {
+            assert!(
+                end != stop && read > record + 1,
+                "{label}: taking any word for a type word, the walk reads on past +{stop}"
+            );
+        }
+
+        // What it reads as now.
+        let fault = StreamChainFault::of_stream(stream, &broken)
+            .unwrap_or_else(|| panic!("{label}: the chain does not hold"));
+        assert_eq!(
+            fault.stop,
+            Some(StreamChainStop {
+                offset: stop,
+                reason: StreamChainStopReason::NoSuchClass,
+                record_len: None,
+                type_word: Some(change.stops_on),
+                last_record_offset: Some(at),
+            }),
+            "{label}"
+        );
+        assert_eq!(
+            (fault.records_read, fault.unread_bytes),
+            (record + 1, broken.len() - stop),
+            "{label}: the chain reads up to the changed record and nothing past it"
+        );
+        let said = fault.describe();
+        for needle in [
+            format!("stops at +{stop} "),
+            format!("0x{:04X} is not one a record opens with", change.stops_on),
+            format!("the last of them at +{at}"),
+            format!("{} byte(s) from it on are not", broken.len() - stop),
+        ] {
+            assert!(said.contains(&needle), "{label}: `{needle}` in: {said}");
+        }
+
+        // The same through a parse of the whole document.
+        let plan = WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: stream.to_string(),
+                new_data: broken.clone(),
+            }],
+            ..WritePlan::default()
+        };
+        let bytes = PidWriter::write_to_bytes(&package, &plan)
+            .unwrap_or_else(|error| panic!("{label}: the changed copy is written: {error}"));
+        let doc = PidParser::new()
+            .parse_reader(Cursor::new(bytes))
+            .unwrap_or_else(|error| panic!("{label}: the changed copy parses: {error}"));
+        assert_eq!(doc.chain_faults, vec![fault], "{label}");
+        let geometry = build_normalized_geometry(&doc);
+        assert_eq!(
+            geometry
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("record chain"))
+                .collect::<Vec<_>>(),
+            vec![&said],
+            "{label}: one warning, the fault's own sentence"
+        );
+        // No decoded entity comes from past the stop, and every record
+        // before the changed one decodes as on the intact stream.
+        for entity in &geometry.entities {
+            let decoded_here = entity.source.stream_path.as_deref() == Some(stream)
+                && matches!(entity.confidence, pid_parse::PidGeometryConfidence::Decoded);
+            if let Some(range) = entity.source.byte_range.as_ref().filter(|_| decoded_here) {
+                assert!(
+                    range.end <= stop,
+                    "{label}: {} is decoded from +{}..+{}, past the stop at +{stop}",
+                    entity.id,
+                    range.start,
+                    range.end
+                );
+            }
+        }
+        for family in SHEET_RECORD_FAMILIES {
+            let before: Vec<_> = (family.decoded_ranges)(&intact)
+                .into_iter()
+                .filter(|range| range.end <= at)
+                .collect();
+            let after: Vec<_> = (family.decoded_ranges)(&broken)
+                .into_iter()
+                .filter(|range| range.start < at)
+                .collect();
+            assert_eq!(
+                after, before,
+                "{label}: {} decodes the records before +{at} as on the intact stream",
+                family.name
+            );
+            for range in (family.decoded_ranges)(&broken) {
+                assert!(
+                    range.end <= stop,
+                    "{label}: {} decodes +{}..+{}, past the stop at +{stop}",
+                    family.name,
+                    range.start,
+                    range.end
+                );
+            }
+        }
+    }
+}
+
+/// The fourteen changes made to each record's length field.
+const LENGTH_DELTAS: [i64; 14] = [1, -1, 2, -2, 4, -4, 8, -8, 16, -16, 32, -32, 64, -64];
+
+/// What every single-length change of a set of streams reads as.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+struct LengthSweep {
+    /// Distinct streams that hold a record.
+    streams: usize,
+    /// Records on their chains.
+    records: usize,
+    /// Changes made: fourteen a record, less those that would state a
+    /// length below zero.
+    changes: usize,
+    /// The walk stops on the changed record: it states no byte, or more
+    /// than the stream has.
+    stops_on_the_record: usize,
+    /// The walk stops at the first offset past the changed record, with
+    /// nothing read from where no record starts.
+    stops_past_the_record: usize,
+    /// The walk reads on from where no record starts, and stops later.
+    stops_later: usize,
+    /// The walk reaches the stream's end and the header's count gives it
+    /// away: a fault that names no place.
+    count_differs: usize,
+    /// Records the two rows above read from where no record starts.
+    records_off_the_chain: usize,
+    /// The stream reads as a sound chain: the changed record ends where a
+    /// later record starts, and every record between is one the native
+    /// reader skips. Nothing about the framing can tell.
+    swallows_skipped_records: usize,
+}
+
+/// Make each of [`LENGTH_DELTAS`] to each record of `data` in turn and
+/// count what the walk reads.
+///
+/// A walk reads a record's own bytes to find the next and nothing before
+/// them, so each change is walked on the stream from the changed record on
+/// — behind a header counting the live records from there on — rather than
+/// from the top; the first records of every stream are walked whole as
+/// well and held to the same reading.
+fn sweep_lengths(label: &str, data: &[u8], sweep: &mut LengthSweep) {
+    let whole = SheetChain::walk(data);
+    assert!(whole.is_sound(), "{label}: an intact stream");
+    let starts = &whole.starts;
+    if starts.is_empty() {
+        return;
+    }
+    sweep.streams += 1;
+    sweep.records += starts.len();
+    let stated = whole.stated_records.expect("a header");
+    let mut live_before = 0u32;
+    for (index, &at) in starts.iter().enumerate() {
+        let length = u32_at(data, at + 2);
+        let shift = at - 8;
+        let mut tail = Vec::with_capacity(data.len() - shift);
+        tail.extend_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+        tail.extend_from_slice(&(stated - live_before).to_le_bytes());
+        tail.extend_from_slice(&data[at..]);
+        for delta in LENGTH_DELTAS {
+            let Ok(wrong) = u32::try_from(i64::from(length) + delta) else {
+                continue;
+            };
+            put_u32(&mut tail, 10, wrong);
+            let chain = SheetChain::walk(&tail);
+            if index < 24 {
+                let mut copy = data.to_vec();
+                put_u32(&mut copy, at + 2, wrong);
+                let full = SheetChain::walk(&copy);
+                assert_eq!(
+                    (full.stop, full.end, full.starts.len(), full.count_differs()),
+                    (
+                        chain.stop,
+                        chain.end + shift,
+                        index + chain.starts.len(),
+                        chain.count_differs()
+                    ),
+                    "{label}: record {index} at +{at}, {length} -> {wrong}: the stream walked \
+                     whole and walked from the record"
+                );
+            }
+            sweep.changes += 1;
+            let off_the_chain = chain
+                .starts
+                .iter()
+                .skip(1)
+                .filter(|&&read| starts.binary_search(&(read + shift)).is_err())
+                .count();
+            let past_the_record = 8 + 6 + wrong as usize;
+            match chain.stop {
+                Some(_) if chain.end == 8 => sweep.stops_on_the_record += 1,
+                Some(_) if chain.end == past_the_record => sweep.stops_past_the_record += 1,
+                Some(_) => {
+                    sweep.stops_later += 1;
+                    sweep.records_off_the_chain += off_the_chain;
+                }
+                None if chain.count_differs() => {
+                    sweep.count_differs += 1;
+                    sweep.records_off_the_chain += off_the_chain;
+                }
+                None => {
+                    let lands = past_the_record + shift;
+                    assert!(
+                        off_the_chain == 0
+                            && (lands == data.len() || starts.binary_search(&lands).is_ok()),
+                        "{label}: record {index} at +{at}, {length} -> {wrong}, reads as a sound \
+                         chain through {off_the_chain} record(s) the file does not hold"
+                    );
+                    sweep.swallows_skipped_records += 1;
+                }
+            }
+        }
+        if !parse_psm_header(data, at).is_some_and(|header| header.native_reader_skips()) {
+            live_before += 1;
+        }
+    }
+}
+
+/// The three kinds of chain stream the sweep keeps apart.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+struct LengthSweeps {
+    /// `Sheet*` streams of drawings and border templates.
+    sheets: LengthSweep,
+    /// `JSite*/PSMcluster0` symbol caches.
+    caches: LengthSweep,
+    /// `Sheet*` streams of symbol files.
+    symbol_sheets: LengthSweep,
+}
+
+/// Sweep every chain stream of one file, each distinct stream once.
+fn sweep_file(
+    label: &str,
+    bytes: Vec<u8>,
+    seen: &mut HashSet<(usize, u64)>,
+    sweeps: &mut LengthSweeps,
+) {
+    let is_symbol = label.to_ascii_lowercase().ends_with(".sym");
+    let Ok(package) = PidParser::with_options(ParseOptions::geometry())
+        .parse_package_from_reader(Cursor::new(bytes))
+    else {
+        return;
+    };
+    let mut paths: Vec<&String> = package.streams.keys().collect();
+    paths.sort();
+    for path in paths {
+        let Some(is_sheet) = chain_stream_kind(path) else {
+            continue;
+        };
+        let data = &package.streams[path].data;
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        if !seen.insert((data.len(), hasher.finish())) {
+            continue;
+        }
+        let sweep = match (is_sheet, is_symbol) {
+            (true, false) => &mut sweeps.sheets,
+            (true, true) => &mut sweeps.symbol_sheets,
+            (false, _) => &mut sweeps.caches,
+        };
+        sweep_lengths(&format!("{label} {path}"), data, sweep);
+    }
+}
+
+/// Every record of every chain stream the repository commits, with its
+/// length field changed by ±1, ±2 … ±64: what each change reads as.
+///
+/// None reads as a sound chain through a record the file does not hold —
+/// 79 did on the files on disk before the walk held type words to the
+/// native reader's class table, ten of them on sheets
+/// ([`LENGTH_CHANGES`]). Nearly all stop at the first offset past the
+/// changed record, which is where the fault then points. What is left,
+/// pinned so that a change to the rule shows here:
+///
+/// * the walk reads one "record" more before it stops, because the bytes
+///   it lands on spell a type code the reader has a class for;
+/// * the walk lands back on the chain and reaches the stream's end, and
+///   the header's count is all that says so;
+/// * in symbol files, the changed record ends exactly where a later record
+///   starts and every record it swallowed is a superseded copy the native
+///   reader skips: that reads as a sound chain, and no rule about framing
+///   can say otherwise.
+#[test]
+fn every_single_length_change_of_a_committed_stream_is_accounted_for() {
+    let mut files = Vec::new();
+    let mut archives = Vec::new();
+    documents(Path::new("test-file"), &mut files, &mut archives);
+    let mut seen = HashSet::new();
+    let mut on_disk = LengthSweeps::default();
+    for file in &files {
+        let bytes = std::fs::read(file).unwrap_or_else(|error| panic!("{file:?}: {error}"));
+        sweep_file(&file.display().to_string(), bytes, &mut seen, &mut on_disk);
+    }
+    eprintln!("length sweep, test-file on disk: {on_disk:#?}");
+    assert_eq!(on_disk, LENGTHS_ON_DISK);
+
+    #[cfg(feature = "refdata-archive")]
+    {
+        let mut archived = LengthSweeps::default();
+        for archive in &archives {
+            for extension in ["igr", "sym"] {
+                let Ok(members) = pid_parse::refdata_archive::archive_members(archive, extension)
+                else {
+                    continue;
+                };
+                for member in members {
+                    let label = member.label().display().to_string();
+                    if let Ok(bytes) = pid_parse::refdata_archive::read_archive_file(&member) {
+                        sweep_file(&label, bytes, &mut seen, &mut archived);
+                    }
+                }
+            }
+        }
+        eprintln!("length sweep, test-file's RefData archives: {archived:#?}");
+        assert_eq!(archived, LENGTHS_ARCHIVED);
+    }
+}
+
 /// What the walk over one corpus read.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 struct Tally {
@@ -790,4 +1301,81 @@ const REPOSITORY_ARCHIVED: Tally = Tally {
     caches: 41,
     records: 20_569,
     live: 20_165,
+};
+
+/// What every single-length change of the chain streams `test-file` holds on
+/// disk reads as. Exact: a stream added, or a rule changed, moves these.
+const LENGTHS_ON_DISK: LengthSweeps = LengthSweeps {
+    sheets: LengthSweep {
+        streams: 15,
+        records: 8261,
+        changes: 109_090,
+        stops_on_the_record: 176,
+        stops_past_the_record: 108_744,
+        stops_later: 168,
+        count_differs: 2,
+        records_off_the_chain: 175,
+        swallows_skipped_records: 0,
+    },
+    caches: LengthSweep {
+        streams: 16,
+        records: 2948,
+        changes: 38_725,
+        stops_on_the_record: 141,
+        stops_past_the_record: 38_097,
+        stops_later: 354,
+        count_differs: 133,
+        records_off_the_chain: 360,
+        swallows_skipped_records: 0,
+    },
+    symbol_sheets: LengthSweep {
+        streams: 9,
+        records: 99,
+        changes: 1303,
+        stops_on_the_record: 70,
+        stops_past_the_record: 1233,
+        stops_later: 0,
+        count_differs: 0,
+        records_off_the_chain: 0,
+        swallows_skipped_records: 0,
+    },
+};
+
+/// The same for the templates and symbols of `test-file`'s `RefData~*.zip`
+/// archives, the streams a file on disk already had left out.
+#[cfg(feature = "refdata-archive")]
+const LENGTHS_ARCHIVED: LengthSweeps = LengthSweeps {
+    sheets: LengthSweep {
+        streams: 9,
+        records: 910,
+        changes: 12_120,
+        stops_on_the_record: 107,
+        stops_past_the_record: 12_012,
+        stops_later: 0,
+        count_differs: 1,
+        records_off_the_chain: 0,
+        swallows_skipped_records: 0,
+    },
+    caches: LengthSweep {
+        streams: 40,
+        records: 1444,
+        changes: 19_010,
+        stops_on_the_record: 382,
+        stops_past_the_record: 18_255,
+        stops_later: 369,
+        count_differs: 4,
+        records_off_the_chain: 374,
+        swallows_skipped_records: 0,
+    },
+    symbol_sheets: LengthSweep {
+        streams: 1003,
+        records: 16_290,
+        changes: 211_607,
+        stops_on_the_record: 7795,
+        stops_past_the_record: 203_183,
+        stops_later: 79,
+        count_differs: 536,
+        records_off_the_chain: 79,
+        swallows_skipped_records: 14,
+    },
 };
