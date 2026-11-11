@@ -280,6 +280,9 @@ def shows(pdf_path):
     tm_raw = None
     array = None
     sequence = 0
+    # Which `BT … ET` a text object sits in: a label is one of them, however
+    # many text matrices it states.
+    block = -1
     out = []
 
     def number(value):
@@ -312,6 +315,7 @@ def shows(pdf_path):
         placed = multiply(start, ctm)
         record = {
             "seq": sequence,
+            "block": block,
             "font": font.basefont if font else state["font"],
             "resource": state["font"],
             "size_raw": state["size"],
@@ -362,6 +366,7 @@ def shows(pdf_path):
             tm = [1, 0, 0, 1, 0, 0]
             tlm = [1, 0, 0, 1, 0, 0]
             tm_raw = None
+            block += 1
         elif op == "Tf":
             names = [v for k, v in operands if k == "name"]
             if names and nums:
