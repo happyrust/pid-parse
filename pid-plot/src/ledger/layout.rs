@@ -91,6 +91,55 @@ pub struct LayoutLedger {
     /// [`PaperModel::paint_sequence`](crate::model::PaperModel::paint_sequence).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paint_order: Vec<u32>,
+    /// The records that draw on the page and take no place in the order
+    /// its sheets draw in, by domain, stream and reason. Each stream of them
+    /// is also one [`DropReason::RecordWithoutDisplayPlace`] item of
+    /// [`Self::parse`]; this is what was found, kept so that a caller can
+    /// say it ([`Self::display_order_warnings`]). Empty on every page of
+    /// every corpus this crate is tested on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced: Vec<UnplacedRecords>,
+}
+
+/// Why a record that draws on a page takes no place in the order its sheet
+/// draws in (`pid_parse::parsers::sheet_display_order`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnplacedWhy {
+    /// The sheet the record is in states no list of its objects that could
+    /// be read: no `JSheet` record of its storage's cluster names the
+    /// stream's records, or the stream is one nothing reads a list for.
+    NoList,
+    /// The sheet's list was read and does not reach the record: nothing it
+    /// hangs under is listed.
+    NotReached,
+    /// The record is in a sheet nested in the drawing, which has a list of
+    /// its own, and no frame the drawing lists was found to embed it.
+    NoFrame,
+    /// The primitive names no record.
+    NoRecord,
+}
+
+/// The records of one stream that draw on the page and that no sheet's list
+/// places, for one reason.
+///
+/// Such a record is painted all the same — after everything that has a
+/// place, or, on a page no sheet of which states an order, strokes first and
+/// lettering after — so the page lacks nothing; what it does not have is the
+/// drawing's word on what covers what. The account says so as a suspect
+/// item, and `pid_plot` on stderr.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnplacedRecords {
+    /// The drawing's own, or the border template's.
+    pub domain: LedgerDomain,
+    /// The stream the records are in; empty when the primitives name none.
+    pub stream: String,
+    /// Why they take no place.
+    pub why: UnplacedWhy,
+    /// How many records.
+    pub records: u64,
+    /// How many primitives of the page they draw.
+    pub primitives: u64,
 }
 
 /// One chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
@@ -110,6 +159,69 @@ pub struct ChainFaultRecord {
 }
 
 impl LayoutLedger {
+    /// File the records no sheet's list places: one suspect
+    /// [`DropReason::RecordWithoutDisplayPlace`] item per domain and stream,
+    /// counted in records, and the finding itself in [`Self::unplaced`].
+    pub fn note_unplaced(&mut self, unplaced: Vec<UnplacedRecords>) {
+        for item in &unplaced {
+            self.parse
+                .get_mut(item.domain)
+                .push_record(ParseRecord::new(
+                    DropReason::RecordWithoutDisplayPlace,
+                    item.stream.clone(),
+                    item.records,
+                ));
+        }
+        self.unplaced = unplaced;
+    }
+
+    /// One sentence per stream and reason for the records that draw on the
+    /// page and take no place in its display order: how many, how many
+    /// primitives they draw, why, and where they are painted instead. One in
+    /// the border template's file says that it is the template's. Empty for
+    /// a page whose every record stands where a sheet lists it, which is
+    /// every page of every corpus this crate is tested on.
+    #[must_use]
+    pub fn display_order_warnings(&self) -> Vec<String> {
+        let painted = if self.paint_order.is_empty() {
+            "no sheet of the page states an order, and it is painted strokes first and \
+             lettering after"
+        } else {
+            "they are painted after everything that has a place"
+        };
+        self.unplaced
+            .iter()
+            .map(|item| {
+                let whose = match item.domain {
+                    LedgerDomain::Drawing => "",
+                    LedgerDomain::Furniture => "in the border template, ",
+                };
+                let of = if item.stream.is_empty() {
+                    String::new()
+                } else {
+                    format!(" of {}", item.stream)
+                };
+                let why = match item.why {
+                    UnplacedWhy::NoList => {
+                        "the sheet states no list of its objects that could be read"
+                    }
+                    UnplacedWhy::NotReached => {
+                        "the sheet's list of its objects does not reach them"
+                    }
+                    UnplacedWhy::NoFrame => {
+                        "no frame the drawing lists was found to embed the sheet they are in"
+                    }
+                    UnplacedWhy::NoRecord => "they name no record",
+                };
+                format!(
+                    "{whose}{} record(s){of}, {} primitive(s) on the page, take no place in \
+                     the display order: {why}; {painted}",
+                    item.records, item.primitives
+                )
+            })
+            .collect()
+    }
+
     /// One sentence per chain stream that was not read whole, naming the
     /// stream, the offset its record walk stopped at and the bytes left
     /// unread, in the order the streams were met. A fault in the border

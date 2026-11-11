@@ -255,6 +255,7 @@
 | `record_refused` | 可疑 | 有解码器的类型码，记录形状被拒：`refused_graphic_records` | 已计数并告警 |
 | `record_native_skip` | 有意 | 类型字带 `0x8000` 原生跳过位，是文件自己退役的旧副本：`skipped_graphic_records` | 已计数，不告警 |
 | `sheet_stream_without_geometry` | 可疑 | `SheetStream::geometry` 为 `None`：流打不开，或没有任何族解码出记录且探针一无所获；这时该流的三类普查在 `sheet_geometry_from_probe`（`src/streams/cluster.rs`）里一并丢掉 | 静默（新发现） |
+| `record_without_display_place` | 可疑 | `paint_order` / `unplaced_records`（`pid-plot/src/model.rs`）：页上有图元、却在图纸的显示次序里没有位置的记录——图纸没有读到自己的对象表（`JSheet` 记录缺失，或它列的不全是这条流的记录），表够不到这条记录的拥有者，或记录在一张嵌入的图纸里而图纸列出的图框没有一个嵌着它。这样的记录照样画，画在有位置的全部之后；整页没有一张图纸给出次序时退到「先笔画后文字」。页上不少东西，少的是「谁盖住谁」的依据。按流记一项，计数是记录数；`LayoutLedger::unplaced` 留着原因与图元数，`pid_plot` 在 stderr 上各说一行（2026-11-11 加，附录由 44 行变 45 行，可疑 23 / 有意 22）。手头 71 页一项都没有 | 静默（审查发现） |
 | `record_symbol_body_cache` | 有意 | 嵌套 `JSite*/PSMcluster0` 的符号体记录，经引用它的放置画出，本身不是页面内容 | 只有告警文字 |
 | `cache_definition_unplaced` | 有意 | 缓存定义没有任何放置引用（例如参数化符号缓存的模板体），其记录不上页 | 未计数（新发现） |
 | `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |

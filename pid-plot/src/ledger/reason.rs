@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 44 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 45 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -104,6 +104,18 @@ pub enum DropReason {
     /// is counted once, with the bytes left unread
     /// (`LedgerRecorder::parse`).
     SheetStreamWithoutGeometry,
+    /// A record that draws on the page and takes no place in the order its
+    /// sheet draws in (`pid_parse::parsers::sheet_display_order`): the sheet
+    /// states no list of its objects that could be read, the list does not
+    /// reach the record's owner, or the record is in a sheet nested in the
+    /// drawing that no frame of the drawing was found to embed. Nothing is
+    /// missing from the page — what such a record draws is painted after
+    /// everything that has a place, or, when no sheet of the page states an
+    /// order at all, the page is painted strokes first and lettering after —
+    /// but what covers what is then not read from the drawing. Counted in
+    /// records, once per stream (`LayoutLedger::note_unplaced`); no page of
+    /// the corpora this crate is tested on has one.
+    RecordWithoutDisplayPlace,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as
     /// page content of its own.
@@ -282,11 +294,12 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 44] = [
+pub const ALL: [DropReason; 45] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
     DropReason::SheetStreamWithoutGeometry,
+    DropReason::RecordWithoutDisplayPlace,
     DropReason::RecordSymbolBodyCache,
     DropReason::CacheDefinitionUnplaced,
     DropReason::RecordAuditOnlyFamily,
@@ -345,6 +358,7 @@ impl DropReason {
             Self::RecordRefused => "record_refused",
             Self::RecordNativeSkip => "record_native_skip",
             Self::SheetStreamWithoutGeometry => "sheet_stream_without_geometry",
+            Self::RecordWithoutDisplayPlace => "record_without_display_place",
             Self::RecordSymbolBodyCache => "record_symbol_body_cache",
             Self::CacheDefinitionUnplaced => "cache_definition_unplaced",
             Self::RecordAuditOnlyFamily => "record_audit_only_family",
@@ -395,6 +409,7 @@ impl DropReason {
             Self::RecordNoDecoder
             | Self::RecordRefused
             | Self::SheetStreamWithoutGeometry
+            | Self::RecordWithoutDisplayPlace
             | Self::RecordEmitterOutOfRange
             | Self::RecordEmitterShapeRejected
             | Self::KindMisrouted
@@ -447,6 +462,7 @@ impl DropReason {
             | Self::RecordRefused
             | Self::RecordNativeSkip
             | Self::SheetStreamWithoutGeometry
+            | Self::RecordWithoutDisplayPlace
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
             | Self::RecordAuditOnlyFamily
@@ -702,12 +718,13 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 44] = [
+    const APPENDIX_A: [&str; 45] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
         "record_native_skip",
         "sheet_stream_without_geometry",
+        "record_without_display_place",
         "record_symbol_body_cache",
         "cache_definition_unplaced",
         "record_audit_only_family",
@@ -763,11 +780,11 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 44, "the catalog is 44 codes");
+        assert_eq!(ALL.len(), 45, "the catalog is 45 codes");
     }
 
     #[test]
-    fn tiers_split_22_suspect_22_intentional() {
+    fn tiers_split_23_suspect_22_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -776,9 +793,9 @@ mod tests {
             .iter()
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
-        assert_eq!(suspect, 22, "appendix A's suspect column");
+        assert_eq!(suspect, 23, "appendix A's suspect column");
         assert_eq!(intentional, 22, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 44);
+        assert_eq!(suspect + intentional, 45);
     }
 
     #[test]

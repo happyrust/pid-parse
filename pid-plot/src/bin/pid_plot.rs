@@ -97,6 +97,13 @@ fn main() -> ExitCode {
     for fault in model.ledger.chain_fault_warnings() {
         eprintln!("warning: {pid}: {fault}");
     }
+    // A record that draws and takes no place in the order its sheet draws
+    // in is on the page, painted after the rest; what covers what there is
+    // not the drawing's word. Each stream of them is named, and the account
+    // counts it as a suspect item.
+    for unplaced in model.ledger.display_order_warnings() {
+        eprintln!("warning: {pid}: {unplaced}");
+    }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {

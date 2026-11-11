@@ -1092,3 +1092,234 @@ fn a_chain_whose_last_record_runs_past_the_stream_exports_the_rest_and_says_so()
 fn a_chain_with_stray_bytes_at_its_end_exports_the_records_and_says_so() {
     export_a_broken_chain("chain-last-minus-four", Break::LastLengthMinusFour);
 }
+
+/// A copy of `D06.pid` whose `JSheet` record lists, first, an object the
+/// sheet does not hold: one oid of the cluster changed and nothing else.
+///
+/// A list is taken for the sheet's only when every object it names is a
+/// record of the sheet's own (`pid_parse::parsers::sheet_display_order`),
+/// so this drawing states no display order that can be read. Its `/Sheet6`
+/// is the committed one, byte for byte.
+fn d06_with_a_list_that_is_not_its_sheets(case: &str) -> PathBuf {
+    use pid_parse::parsers::sheet_display_order::find_sheet_child_table;
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    const CLUSTER: &str = "/PSMcluster0";
+    let source = d06();
+    let package = pid_parse::PidParser::new()
+        .parse_package(&source)
+        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+    assert!(
+        package.parsed.sheet_display_order.contains_key("/Sheet6"),
+        "{}: the committed drawing states no display order",
+        source.display()
+    );
+    let mut cluster = package
+        .get_stream(CLUSTER)
+        .unwrap_or_else(|| panic!("{} has no {CLUSTER}", source.display()))
+        .data
+        .clone();
+    let table = find_sheet_child_table(&cluster, 6, |_| true)
+        .unwrap_or_else(|| panic!("{}: no JSheet record for sheet 6", source.display()));
+    // The first entry as the record spells it: oid, range box, flags.
+    let first = table.children[0];
+    let mut entry = first.oid.to_le_bytes().to_vec();
+    for word in first.range {
+        entry.extend_from_slice(&word.to_le_bytes());
+    }
+    entry.extend_from_slice(&first.flags.to_le_bytes());
+    let found: Vec<usize> = cluster
+        .windows(entry.len())
+        .enumerate()
+        .filter(|(_, window)| *window == entry.as_slice())
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(found.len(), 1, "the list's first entry, in the cluster");
+    // An oid no record of the sheet carries.
+    cluster[found[0]..found[0] + 4].copy_from_slice(&0x7fff_fff0u32.to_le_bytes());
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: CLUSTER.to_string(),
+            new_data: cluster,
+        }],
+        ..WritePlan::default()
+    };
+    let path = scratch(case).join("D06.pid");
+    PidWriter::write_to(&package, &plan, &path)
+        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    path
+}
+
+/// A sheet whose list of objects cannot be read still exports: every record
+/// is drawn, and the page lacks nothing but the drawing's word on what
+/// covers what. That is not a finished export either, and nothing on the
+/// page says so — so the program says it, in one warning that names the
+/// stream, how many records and primitives no list places and why, and the
+/// page's ledger files the stream as a suspect item, where the gates that
+/// read ledgers see it. The drawing as committed, against the same corpus,
+/// draws no such warning and files nothing.
+#[test]
+fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
+    use pid_plot::ledger::{LedgerDomain, UnplacedWhy};
+
+    let case = "order-unread";
+    let corpus = fixtures();
+    let committed = d06();
+    let drawing = d06_with_a_list_that_is_not_its_sheets(case);
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+
+    // The committed drawing: every primitive stands where a sheet lists its
+    // record, and the account files nothing about the order.
+    assert!(
+        sound.ledger.unplaced.is_empty(),
+        "{:?}",
+        sound.ledger.unplaced
+    );
+    assert!(sound.ledger.display_order_warnings().is_empty());
+
+    // The copy holds the same page: the same primitives, in the model's
+    // own order, the template among them.
+    let primitives = |model: &PaperModel| -> Vec<String> {
+        model
+            .primitives
+            .iter()
+            .map(|primitive| format!("{:?} {:?}", identity(primitive), primitive.shape))
+            .collect()
+    };
+    assert_eq!(
+        primitives(&model),
+        primitives(&sound),
+        "the page lost or gained ink"
+    );
+    assert!(model.template.is_some(), "the copy wears no template");
+
+    // What no list places: every record of `/Sheet6` that draws.
+    let own: Vec<&PaperPrimitive> = model
+        .primitives
+        .iter()
+        .filter(|primitive| !primitive.furniture)
+        .collect();
+    assert!(
+        own.iter()
+            .all(|primitive| primitive.stream_path.as_deref() == Some("/Sheet6"))
+    );
+    let mut records: Vec<usize> = own
+        .iter()
+        .map(|primitive| primitive.byte_range.expect("a record")[0])
+        .collect();
+    records.sort_unstable();
+    records.dedup();
+    assert_eq!(
+        model.ledger.unplaced.len(),
+        1,
+        "{:?}",
+        model.ledger.unplaced
+    );
+    let unplaced = &model.ledger.unplaced[0];
+    assert_eq!(
+        (unplaced.domain, unplaced.stream.as_str(), unplaced.why),
+        (LedgerDomain::Drawing, "/Sheet6", UnplacedWhy::NoList)
+    );
+    assert_eq!(unplaced.records, records.len() as u64);
+    assert_eq!(unplaced.primitives, own.len() as u64);
+    // The template states its own order, so the page is painted in one:
+    // the template first, then the drawing's own as the model holds them.
+    let painted = model
+        .paint_sequence()
+        .expect("the template states an order");
+    let (template, drawn): (Vec<usize>, Vec<usize>) = painted
+        .iter()
+        .partition(|index| model.primitives[**index].furniture);
+    assert_eq!(
+        painted[..template.len()],
+        template[..],
+        "the template is not first"
+    );
+    assert!(drawn.windows(2).all(|pair| pair[0] < pair[1]));
+    // The account: one suspect item for the stream, counted in records.
+    let items: Vec<(DropReason, &str, u64)> = model
+        .ledger
+        .parse
+        .drawing
+        .items
+        .iter()
+        .filter(|item| item.reason == DropReason::RecordWithoutDisplayPlace)
+        .map(|item| (item.reason, item.stream.as_str(), item.count))
+        .collect();
+    assert_eq!(
+        items,
+        [(
+            DropReason::RecordWithoutDisplayPlace,
+            "/Sheet6",
+            unplaced.records
+        )]
+    );
+    assert_eq!(
+        DropReason::RecordWithoutDisplayPlace.tier(),
+        pid_plot::ledger::Tier::Suspect
+    );
+
+    // The program, on both drawings.
+    let fonts = fonts_for_a_child();
+    let export = |drawing: &Path, name: &str| {
+        let out = unwritten(&scratch(case), name);
+        let mut command = pid_plot();
+        if let Ok(fonts) = &fonts {
+            command.env("PID_PLOT_FONTS", fonts);
+        }
+        if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+            command.env("PID_SYMBOL_LIBRARY", library);
+        }
+        let outcome = run(command.arg(drawing).arg(&out).arg(&corpus));
+        match &fonts {
+            Ok(_) => {
+                assert_eq!(outcome.code, Some(0), "{outcome}");
+                assert!(out.exists(), "{} was not written\n{outcome}", out.display());
+            }
+            Err(searched) => {
+                eprintln!(
+                    "{case}: no font directory is present (searched {searched}), so the run \
+                     can only get as far as the first missing face"
+                );
+                assert_eq!(outcome.code, Some(1), "{outcome}");
+            }
+        }
+        outcome
+    };
+    let said = export(&drawing, "unlisted.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "a sheet whose list cannot be read is exactly one warning\n{said}"
+    );
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        format!("{} record(s) of /Sheet6", unplaced.records),
+        format!("{} primitive(s) on the page", unplaced.primitives),
+        "take no place in the display order".to_string(),
+        "states no list of its objects that could be read".to_string(),
+        "painted after everything that has a place".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "the warning does not say {needle:?}\n{said}"
+        );
+    }
+    assert_eq!(
+        model.ledger.display_order_warnings(),
+        [line
+            .strip_prefix(&format!("warning: {}: ", drawing.display()))
+            .expect("the warning opens with the drawing")],
+        "the program does not say what the library found"
+    );
+    let silent = export(&committed, "committed.pdf");
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "the committed drawing drew a warning\n{silent}"
+    );
+}

@@ -169,7 +169,7 @@ pub enum DropReason {
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
 - `DropReason::ALL: [DropReason; 44]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 22 个，有意 21 个。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 23 个，有意 22 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -484,6 +484,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `record_refused` | `refused_graphic_records` | 同上 |
 | `record_native_skip` | `skipped_graphic_records` | 同上 |
 | `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None` 者 | 计数项（流），另记 `size` 字节数 |
+| `record_without_display_place` | 排版结束时 `unplaced_records`：页上图元所出自的记录里，`PageOrders::place` 给不出位置的 | 计数项（记录），按域与流各一项；原因与图元数在 `LayoutLedger::unplaced`（2026-11-11 加） |
 | `record_symbol_body_cache` | `doc.jsites[..].nested_geometry` 的 `len()` | 计数项（存储路径） |
 | `cache_definition_unplaced` | `geometry.symbol_definitions` 中没有任何 `SymbolInstance.definition` 指向的定义 | 计数项（`JSite<site>`），值为定义数，另记其体图元数 |
 | `record_audit_only_family` | `emitter_accounts` 中 `audit_only` 行的 `decoded` | 计数项（流，族） |

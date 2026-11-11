@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::ledger::{
     Asymmetry, BodyItemLayout, BodyTally, DropReason, EntityLayout, EntityOutcome, LedgerDomain,
     LedgerRecorder, PlacementLayout, PlacementSource, SourceKind, SourceName, TemplateTrace,
-    TextNormalization,
+    TextNormalization, UnplacedRecords, UnplacedWhy,
 };
 use crate::write::carries_a_pen;
 
@@ -1612,12 +1612,16 @@ pub fn lay_out_with_symbol_roots(
     // ledger is the page's own account. The field is not serialized, so it
     // changes no page's bytes.
     let mut ledger = recorder.into_ledger();
-    ledger.paint_order = paint_order(
-        &primitives,
-        &doc.sheet_display_order,
-        template_order.as_ref(),
-        border_frame_place(&doc),
-    );
+    let orders = PageOrders {
+        drawing: &doc.sheet_display_order,
+        embedded: &doc.embedded_sheet_display_order,
+        template: template_order.as_ref(),
+        frame_place: border_frame_place(&doc),
+    };
+    ledger.paint_order = paint_order(&primitives, &orders);
+    // What the sheets' lists place nowhere is painted all the same, and
+    // said: a suspect item of the account and a line on `pid_plot`'s stderr.
+    ledger.note_unplaced(unplaced_records(&primitives, &orders));
     Ok(PaperModel {
         library: library.to_vec(),
         page_mm,
@@ -1798,6 +1802,106 @@ fn border_frame_place(doc: &PidDocument) -> Option<u32> {
         .min()
 }
 
+/// The display order of each sheet the drawing's frames embed, by the
+/// nested stream's path.
+type EmbeddedOrders =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::EmbeddedSheetOrder>;
+
+/// What the sheets of a page say about the order it is painted in.
+struct PageOrders<'a> {
+    /// The drawing's own sheets.
+    drawing: &'a SheetOrders,
+    /// The sheets the drawing's frames embed.
+    embedded: &'a EmbeddedOrders,
+    /// The border template's sheets, when the page wears one.
+    template: Option<&'a SheetOrders>,
+    /// Where the drawing lists its border frame, if it lists one.
+    frame_place: Option<u32>,
+}
+
+/// Where a primitive is painted: the place on the sheet, the template ahead
+/// of the record that stands there, and the rank within the place.
+type PaintKey = (u32, u8, (u32, u32));
+
+/// Each embedded sheet's records in the order that sheet draws them: for
+/// every record offset, how many of the sheet's records are drawn before it.
+type EmbeddedOrdinals<'a> =
+    std::collections::BTreeMap<&'a str, std::collections::HashMap<usize, u32>>;
+
+impl PageOrders<'_> {
+    /// Whether any sheet of the page states an order: without one the page
+    /// is painted as it was before any list was read.
+    fn states_an_order(&self) -> bool {
+        let states = |orders: &SheetOrders| orders.values().any(|order| order.children > 0);
+        states(self.drawing) || self.template.is_some_and(states)
+    }
+
+    fn embedded_ordinals(&self) -> EmbeddedOrdinals<'_> {
+        self.embedded
+            .iter()
+            .map(|(stream, sheet)| {
+                let mut drawn: Vec<_> = sheet
+                    .order
+                    .ranks
+                    .iter()
+                    .map(|(start, rank)| (*rank, *start))
+                    .collect();
+                drawn.sort_unstable();
+                let ordinals = drawn
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, (_, start))| {
+                        (start, u32::try_from(ordinal).unwrap_or(u32::MAX))
+                    })
+                    .collect();
+                (stream.as_str(), ordinals)
+            })
+            .collect()
+    }
+
+    /// Where `primitive` is painted, or why no sheet says.
+    fn place(
+        &self,
+        primitive: &PaperPrimitive,
+        ordinals: &EmbeddedOrdinals<'_>,
+    ) -> Result<PaintKey, UnplacedWhy> {
+        let (Some(stream), Some(range)) = (primitive.stream_path.as_deref(), primitive.byte_range)
+        else {
+            return Err(UnplacedWhy::NoRecord);
+        };
+        let start = range[0];
+        if primitive.furniture {
+            // The template stands where the drawing lists its border frame,
+            // first when it lists none, its own in the order its sheet
+            // lists them.
+            let order = self
+                .template
+                .and_then(|orders| orders.get(stream))
+                .ok_or(UnplacedWhy::NoList)?;
+            let rank = order.ranks.get(&start).ok_or(UnplacedWhy::NotReached)?;
+            return Ok((self.frame_place.unwrap_or(0), 0, (rank.place, rank.inner)));
+        }
+        if let Some(order) = self.drawing.get(stream) {
+            let rank = order.ranks.get(&start).ok_or(UnplacedWhy::NotReached)?;
+            return Ok((rank.place, 1, (rank.inner, 0)));
+        }
+        // A sheet a frame embeds is what the frame draws: it stands at the
+        // frame's rank, behind anything the frame's own record draws, its
+        // records in the order its own sheet lists them.
+        let sheet = self.embedded.get(stream).ok_or(UnplacedWhy::NoList)?;
+        let ordinal = ordinals
+            .get(stream)
+            .and_then(|ordinals| ordinals.get(&start))
+            .ok_or(UnplacedWhy::NotReached)?;
+        let frame = sheet.frame.as_ref().ok_or(UnplacedWhy::NoFrame)?;
+        Ok((
+            frame.rank.place,
+            1,
+            (frame.rank.inner, ordinal.saturating_add(1)),
+        ))
+    }
+}
+
 /// The order the page is painted in: for each primitive an index into
 /// `primitives`, the first painted first. Empty when neither the drawing nor
 /// its template states a display order.
@@ -1812,51 +1916,93 @@ fn border_frame_place(doc: &PidDocument) -> Option<u32> {
 /// * a primitive of the border template where the drawing lists its border
 ///   frame, `frame_place`, and among the template's own in the order the
 ///   template's sheet lists them. A sheet with a template and no listed
-///   frame draws the template first, as every page did before this.
+///   frame draws the template first, as every page did before this;
+/// * a primitive of a sheet one of the drawing's frames embeds — a stream
+///   nested in the storage of the frame's site — where the drawing lists
+///   that frame, and among the embedded sheet's own in the order its own
+///   `JSheet` record lists them. That is the rule the reference plots show
+///   for a template carried to the other thing a frame draws; no drawing
+///   with a vendor plot embeds a sheet.
 ///
-/// A primitive whose record has no rank — its sheet states no order, or the
-/// list does not reach its owner — is painted after everything that has
-/// one. Primitives of one record, and any that tie, keep the order the
+/// A primitive no list places — its sheet states no order, the list does
+/// not reach its record's owner, no listed frame embeds the sheet it is in —
+/// is painted after everything that has a place, a template's own at the
+/// template's place behind the template's others. [`unplaced_records`] names
+/// them. Primitives of one record, and any that tie, keep the order the
 /// model holds them in: a symbol's body is painted in the order the body
 /// decodes, which no list has been read for yet.
-fn paint_order(
-    primitives: &[PaperPrimitive],
-    drawing: &SheetOrders,
-    template: Option<&SheetOrders>,
-    frame_place: Option<u32>,
-) -> Vec<u32> {
-    let states_an_order = |orders: &SheetOrders| orders.values().any(|order| order.children > 0);
-    if !states_an_order(drawing) && !template.is_some_and(states_an_order) {
+fn paint_order(primitives: &[PaperPrimitive], orders: &PageOrders<'_>) -> Vec<u32> {
+    if !orders.states_an_order() {
         return Vec::new();
     }
-    let rank_in = |orders: &SheetOrders, primitive: &PaperPrimitive| {
-        let stream = primitive.stream_path.as_deref()?;
-        let start = primitive.byte_range?[0];
-        orders.get(stream)?.ranks.get(&start).copied()
-    };
-    // (place on the sheet, the template before the record that stands
-    // there, the rank within, the model's own order)
-    let mut keys: Vec<(u32, u8, (u32, u32), u32)> = primitives
+    let ordinals = orders.embedded_ordinals();
+    let mut keys: Vec<(PaintKey, u32)> = primitives
         .iter()
         .enumerate()
         .map(|(index, primitive)| {
             #[allow(clippy::cast_possible_truncation)]
             let index = index as u32;
-            if primitive.furniture {
-                let within = template
-                    .and_then(|orders| rank_in(orders, primitive))
-                    .map_or((u32::MAX, u32::MAX), |rank| (rank.place, rank.inner));
-                (frame_place.unwrap_or(0), 0, within, index)
-            } else {
-                match rank_in(drawing, primitive) {
-                    Some(rank) => (rank.place, 1, (rank.inner, 0), index),
-                    None => (u32::MAX, 1, (u32::MAX, 0), index),
+            let key = orders.place(primitive, &ordinals).unwrap_or_else(|_| {
+                if primitive.furniture {
+                    (orders.frame_place.unwrap_or(0), 0, (u32::MAX, u32::MAX))
+                } else {
+                    (u32::MAX, 1, (u32::MAX, 0))
                 }
-            }
+            });
+            (key, index)
         })
         .collect();
     keys.sort_unstable();
-    keys.into_iter().map(|key| key.3).collect()
+    keys.into_iter().map(|(_, index)| index).collect()
+}
+
+/// The records that draw on the page and that no sheet's list places, by
+/// domain, stream and reason, in that order: what [`paint_order`] paints
+/// after the rest — or, on a page no sheet of which states an order, every
+/// record that draws.
+///
+/// Empty for a page whose every primitive stands where a list puts it,
+/// which is every page of every corpus this crate is tested on.
+fn unplaced_records(
+    primitives: &[PaperPrimitive],
+    orders: &PageOrders<'_>,
+) -> Vec<UnplacedRecords> {
+    let ordinals = orders.embedded_ordinals();
+    // (domain, stream, reason) -> the records' offsets, and the primitives.
+    let mut found: std::collections::BTreeMap<
+        (bool, String, UnplacedWhy),
+        (std::collections::BTreeSet<usize>, u64),
+    > = std::collections::BTreeMap::new();
+    for primitive in primitives {
+        let Err(why) = orders.place(primitive, &ordinals) else {
+            continue;
+        };
+        let stream = primitive.stream_path.clone().unwrap_or_default();
+        let entry = found.entry((primitive.furniture, stream, why)).or_default();
+        if let Some(range) = primitive.byte_range {
+            entry.0.insert(range[0]);
+        }
+        entry.1 = entry.1.saturating_add(1);
+    }
+    found
+        .into_iter()
+        .map(
+            |((furniture, stream, why), (records, primitives))| UnplacedRecords {
+                domain: if furniture {
+                    LedgerDomain::Furniture
+                } else {
+                    LedgerDomain::Drawing
+                },
+                stream,
+                why,
+                // A primitive that names no record is counted for one.
+                records: u64::try_from(records.len())
+                    .unwrap_or(u64::MAX)
+                    .max(u64::from(why == UnplacedWhy::NoRecord) * primitives),
+                primitives,
+            },
+        )
+        .collect()
 }
 
 /// Where the sheet's border frame puts its content and its own drawing on
@@ -6875,21 +7021,229 @@ mod tests {
         // The drawing lists the valve first, then its frame, then the label.
         let drawing = order(&[(500, 0, 0), (300, 2, 2), (400, 2, 1)]);
         let template = order(&[(100, 5, 0), (200, 1, 0)]);
-        let painted = super::paint_order(&primitives, &drawing, Some(&template), Some(1));
+        let no_sheet = super::EmbeddedOrders::new();
+        let orders = |drawing, template, frame_place| super::PageOrders {
+            drawing,
+            embedded: &no_sheet,
+            template,
+            frame_place,
+        };
+        let painted = super::paint_order(&primitives, &orders(&drawing, Some(&template), Some(1)));
         assert_eq!(painted, vec![4, 5, 1, 0, 3, 2, 6, 7]);
 
         // No frame listed: the template first, as a page was always drawn.
-        let painted = super::paint_order(&primitives, &drawing, Some(&template), None);
+        let painted = super::paint_order(&primitives, &orders(&drawing, Some(&template), None));
         assert_eq!(painted, vec![1, 0, 4, 5, 3, 2, 6, 7]);
 
         // A template that states no order keeps the model's.
-        let painted = super::paint_order(&primitives, &drawing, None, Some(1));
+        let painted = super::paint_order(&primitives, &orders(&drawing, None, Some(1)));
         assert_eq!(painted, vec![4, 5, 0, 1, 3, 2, 6, 7]);
 
         // Neither states one: no order at all, and the writer keeps its own.
         let none = super::SheetOrders::new();
-        assert!(super::paint_order(&primitives, &none, None, None).is_empty());
-        assert!(super::paint_order(&primitives, &none, Some(&none), Some(1)).is_empty());
+        assert!(super::paint_order(&primitives, &orders(&none, None, None)).is_empty());
+        assert!(super::paint_order(&primitives, &orders(&none, Some(&none), Some(1))).is_empty());
+
+        // What the lists place nowhere is named, by domain, stream and
+        // reason: the line the drawing's list does not reach and the
+        // primitive with no record.
+        use crate::ledger::{LedgerDomain, UnplacedRecords, UnplacedWhy};
+        let unplaced = |domain, stream: &str, why, records, primitives| UnplacedRecords {
+            domain,
+            stream: stream.to_string(),
+            why,
+            records,
+            primitives,
+        };
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&drawing, Some(&template), Some(1))),
+            [
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NotReached,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+            ]
+        );
+        // A template whose list was not read: its two rules as well.
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&drawing, None, Some(1))),
+            [
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NotReached,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Furniture,
+                    "/Sheet6",
+                    UnplacedWhy::NoList,
+                    2,
+                    2
+                ),
+            ]
+        );
+        // No sheet states an order: every record that draws, the valve's
+        // two strokes being one record.
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&none, None, None)),
+            [
+                unplaced(LedgerDomain::Drawing, "/Sheet6", UnplacedWhy::NoList, 4, 5),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Furniture,
+                    "/Sheet6",
+                    UnplacedWhy::NoList,
+                    2,
+                    2
+                ),
+            ]
+        );
+    }
+
+    /// A sheet a frame embeds is what the frame draws: it is painted where
+    /// the drawing lists the frame, in the order the embedded sheet lists
+    /// its own objects. `A01.pid`'s frame 64 stands first and embeds the
+    /// border in `/JSite204/Sheet6`; `Q井场`'s frame 67755 stands at place
+    /// 2 937 of 2 957 and embeds eight lines.
+    #[test]
+    fn what_a_frame_embeds_is_painted_where_the_drawing_lists_the_frame() {
+        use crate::ledger::{LedgerDomain, UnplacedRecords, UnplacedWhy};
+        use pid_parse::parsers::sheet_display_order::{
+            DisplayRank, EmbeddedSheetOrder, EmbeddingFrame, SheetDisplayOrder,
+        };
+        let at = |stream: &str, start: usize| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: Some(stream.to_string()),
+            byte_range: Some([start, start + 10]),
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Line {
+                start_mm: [0.0, 0.0],
+                end_mm: [1.0, 0.0],
+            },
+            furniture: false,
+        };
+        let order = |ranks: &[(usize, u32, u32)]| SheetDisplayOrder {
+            sheet_oid: 6,
+            children: ranks.len(),
+            paper: None,
+            ranks: ranks
+                .iter()
+                .map(|(start, place, inner)| {
+                    (
+                        *start,
+                        DisplayRank {
+                            place: *place,
+                            inner: *inner,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        // The drawing: a valve, the frame (its record draws nothing), a
+        // label under a dependency object at the frame's place plus one, a
+        // pipe. The embedded sheet lists its second record first.
+        let primitives = vec![
+            at("/Sheet6", 100),          // 0  valve, place 0
+            at("/Sheet6", 300),          // 1  label, place 2 inner 1
+            at("/Sheet6", 400),          // 2  pipe, place 3
+            at("/JSite204/Sheet6", 8),   // 3  embedded, listed second
+            at("/JSite204/Sheet6", 64),  // 4  embedded, listed first
+            at("/JSite204/Sheet6", 120), // 5  embedded, its list does not reach it
+            at("/JSite9/Sheet6", 8),     // 6  a nested sheet with no list read
+        ];
+        let mut drawing = super::SheetOrders::new();
+        drawing.insert(
+            "/Sheet6".to_string(),
+            order(&[(100, 0, 0), (200, 1, 0), (300, 2, 1), (400, 3, 0)]),
+        );
+        let embedded_at = |frame: Option<DisplayRank>| {
+            let mut embedded = super::EmbeddedOrders::new();
+            embedded.insert(
+                "/JSite204/Sheet6".to_string(),
+                EmbeddedSheetOrder {
+                    order: order(&[(8, 1, 0), (64, 0, 0)]),
+                    frame: frame.map(|rank| EmbeddingFrame {
+                        stream_path: "/Sheet6".to_string(),
+                        rank,
+                    }),
+                },
+            );
+            embedded
+        };
+        let embedded = embedded_at(Some(DisplayRank { place: 1, inner: 0 }));
+        let orders = super::PageOrders {
+            drawing: &drawing,
+            embedded: &embedded,
+            template: None,
+            frame_place: None,
+        };
+        // The valve, the embedded sheet's two listed records in its order,
+        // the label, the pipe, and last what no list places.
+        assert_eq!(
+            super::paint_order(&primitives, &orders),
+            vec![0, 4, 3, 1, 2, 5, 6]
+        );
+        let unplaced = |stream: &str, why, records, primitives| UnplacedRecords {
+            domain: LedgerDomain::Drawing,
+            stream: stream.to_string(),
+            why,
+            records,
+            primitives,
+        };
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders),
+            [
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NotReached, 1, 1),
+                unplaced("/JSite9/Sheet6", UnplacedWhy::NoList, 1, 1),
+            ]
+        );
+        // No frame of the drawing names the storage: the embedded sheet has
+        // an order of its own and nowhere to stand.
+        let embedded = embedded_at(None);
+        let orders = super::PageOrders {
+            drawing: &drawing,
+            embedded: &embedded,
+            template: None,
+            frame_place: None,
+        };
+        assert_eq!(
+            super::paint_order(&primitives, &orders),
+            vec![0, 1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders),
+            [
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NotReached, 1, 1),
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NoFrame, 2, 2),
+                unplaced("/JSite9/Sheet6", UnplacedWhy::NoList, 1, 1),
+            ]
+        );
     }
     #[test]
     fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
@@ -7150,7 +7504,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 44 codes has to be reachable and has to be *recorded*
+    // Every one of the 45 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -7526,6 +7880,40 @@ mod tests {
                     &NormalizedPidGeometry::default(),
                 );
                 first_parse_reason(&recorder)
+            }
+            DropReason::RecordWithoutDisplayPlace => {
+                // A stroke laid out from a record of a stream no sheet's
+                // list was read for: it is on the page, and the account
+                // says no list places it.
+                let stroke = PaperPrimitive {
+                    confidence: "decoded",
+                    stream_path: Some("/Sheet6".to_string()),
+                    byte_range: Some([8, 64]),
+                    symbol: None,
+                    stroke: None,
+                    shape: PaperShape::Line {
+                        start_mm: [0.0, 0.0],
+                        end_mm: [1.0, 0.0],
+                    },
+                    furniture: false,
+                };
+                let none = super::SheetOrders::new();
+                let no_sheet = super::EmbeddedOrders::new();
+                let orders = super::PageOrders {
+                    drawing: &none,
+                    embedded: &no_sheet,
+                    template: None,
+                    frame_place: None,
+                };
+                let mut ledger = LayoutLedger::default();
+                ledger.note_unplaced(super::unplaced_records(&[stroke], &orders));
+                ledger
+                    .parse
+                    .drawing
+                    .items
+                    .first()
+                    .map(|item| item.reason)
+                    .expect("one parse record")
             }
             DropReason::RecordSymbolBodyCache => {
                 let mut nested = pid_parse::JSiteNestedGeometry::default();
@@ -8102,7 +8490,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 44, "the appendix's 44 rows");
+        assert_eq!(DropReason::all().len(), 45, "the appendix's 45 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.
