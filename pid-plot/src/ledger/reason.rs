@@ -851,6 +851,102 @@ mod tests {
         assert_eq!(ALL.len(), 48, "the catalog is 48 codes");
     }
 
+    /// Appendix A's tier column, code by code: the suspect ones.
+    ///
+    /// The test's own copy, like [`APPENDIX_A`], so that a code moved from
+    /// one tier to the other fails here by its name. Nothing else holds a
+    /// tier: a ledger baseline pins counts under codes and reads each
+    /// code's tier from [`DropReason::tier`] when it compares, so a code
+    /// turned suspect passes both ledger gates — its pinned count becomes a
+    /// ceiling — and the count of each tier stays what it was if another
+    /// code is turned the other way with it.
+    const SUSPECT: [&str; 25] = [
+        "record_no_decoder",
+        "record_refused",
+        "sheet_stream_without_geometry",
+        "record_without_display_place",
+        "record_emitter_out_of_range",
+        "record_emitter_shape_rejected",
+        "kind_misrouted",
+        "point_marker_degenerate",
+        "kind_annotation",
+        "symbol_missing",
+        "symbol_unresolvable",
+        "symbol_body_empty",
+        "body_boundary_circle_degenerate",
+        "body_boundary_member_unsupported",
+        "off_sheet",
+        "fill_degenerate",
+        "pen_width_invalid",
+        "chain_empty",
+        "segment_non_finite",
+        "drawing_segment_beyond_the_paper",
+        "text_placement_non_finite",
+        "text_height_invalid",
+        "template_candidate_unreadable",
+        "template_missing",
+        "paper_unlike_the_frame",
+    ];
+
+    /// The intentional ones.
+    const INTENTIONAL: [&str; 23] = [
+        "record_native_skip",
+        "record_symbol_body_cache",
+        "cache_definition_unplaced",
+        "record_audit_only_family",
+        "layer_hidden",
+        "layer_consistency_checks",
+        "endpoint_pair_guess",
+        "line_on_sheet_edge",
+        "fill_duplicate",
+        "point_no_marker",
+        "kind_unknown",
+        "body_layer_hidden",
+        "body_null_placeholder",
+        "body_line_on_sheet_edge",
+        "text_control_char",
+        "text_trailing_empty_line",
+        "probe_only",
+        "segment_too_short",
+        "segment_on_sheet_edge",
+        "segment_beyond_the_paper",
+        "segment_beyond_the_paper_no_plot_of_template",
+        "text_empty",
+        "text_whitespace_only",
+    ];
+
+    #[test]
+    fn every_code_is_in_the_tier_the_appendix_gives_it() {
+        // Each name is a code of the catalog, and no code is in both lists
+        // or in one twice.
+        for name in SUSPECT.iter().chain(&INTENTIONAL) {
+            assert!(APPENDIX_A.contains(name), "{name} is not a reason code");
+            let listed = SUSPECT
+                .iter()
+                .chain(&INTENTIONAL)
+                .filter(|other| *other == name)
+                .count();
+            assert_eq!(listed, 1, "{name} is listed {listed} times");
+        }
+        // Every code is in one of them, and it is the tier the code states.
+        for reason in ALL {
+            let pinned = if SUSPECT.contains(&reason.code()) {
+                Tier::Suspect
+            } else if INTENTIONAL.contains(&reason.code()) {
+                Tier::Intentional
+            } else {
+                panic!("{} is in neither tier's list", reason.code());
+            };
+            assert_eq!(
+                reason.tier(),
+                pinned,
+                "{} is {} in the appendix",
+                reason.code(),
+                pinned.code()
+            );
+        }
+    }
+
     #[test]
     fn tiers_split_25_suspect_23_intentional() {
         let suspect = ALL
