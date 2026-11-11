@@ -628,6 +628,9 @@ enum Break {
     /// The last record states four bytes fewer than it has, which leaves
     /// four stray bytes at the stream's end.
     LastLengthMinusFour,
+    /// The header counts one live record more than the chain holds. No
+    /// length is touched, so the walk reaches the stream's end.
+    HeaderCountPlusOne,
 }
 
 /// A copy of `DWG-0201GP06-01.pid` with one [`Break`] in its `/Sheet6`.
@@ -643,8 +646,12 @@ struct Broken {
     /// `None` for [`Break::None`].
     stop: Option<(usize, usize)>,
     /// Offset of the record the break touches: every record ending at or
-    /// before it is untouched. The stream's length for [`Break::None`].
+    /// before it is untouched. The stream's length when no record is
+    /// touched.
     first_touched: usize,
+    /// The live-record count the header is made to state, when the break
+    /// is that count and nothing stops the walk.
+    header_states: Option<u32>,
 }
 
 /// Write `how`'s copy of the drawing under `case`'s scratch directory.
@@ -680,8 +687,15 @@ fn broken_copy(case: &str, how: Break) -> Broken {
     let state = |data: &mut [u8], at: usize, value: u32| {
         data[at + 2..at + 6].copy_from_slice(&value.to_le_bytes());
     };
+    let mut header_states = None;
     let (stop, first_touched) = match how {
         Break::None => (None, len),
+        Break::HeaderCountPlusOne => {
+            let live = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+            data[4..8].copy_from_slice(&(live + 1).to_le_bytes());
+            header_states = Some(live + 1);
+            (None, len)
+        }
         Break::MiddleLengthZero => {
             let middle = starts[starts.len() / 2];
             state(&mut data, middle, 0);
@@ -734,6 +748,7 @@ fn broken_copy(case: &str, how: Break) -> Broken {
         sound_prefix: write("sound-prefix", prefix),
         stop,
         first_touched,
+        header_states,
     }
 }
 
@@ -935,8 +950,8 @@ fn export_a_broken_chain(case: &str, how: Break) {
         .map(|item| (item.stream.as_str(), item.count, item.bytes))
         .collect();
     let warned = warnings(&outcome.stderr);
-    match broken.stop {
-        None => {
+    match (broken.stop, broken.header_states) {
+        (None, None) => {
             assert_eq!(model.primitives.len(), intact.primitives.len());
             assert!(filed.is_empty(), "{how:?}: filed {filed:?}");
             assert!(
@@ -944,7 +959,38 @@ fn export_a_broken_chain(case: &str, how: Break) {
                 "{how:?}: a drawing rewritten as it is drew a warning\n{outcome}"
             );
         }
-        Some((stop, unread)) => {
+        // Every record is read and the page is the drawing's. The header
+        // is all that says records may be missing, so the stream is filed
+        // all the same, with no byte unread, and the program says it.
+        (None, Some(states)) => {
+            assert_eq!(model.primitives.len(), intact.primitives.len());
+            assert_eq!(
+                filed,
+                [(DWG_0201_SHEET, 1, Some(0))],
+                "{how:?}: the stream is filed once, with no byte unread"
+            );
+            assert_eq!(
+                warned.len(),
+                1,
+                "{how:?}: a header that disagrees with its chain is exactly one warning\n{outcome}"
+            );
+            let line = warned[0];
+            for needle in [
+                broken.path.display().to_string(),
+                DWG_0201_SHEET.to_string(),
+                format!("live record(s) where the header states {states}"),
+            ] {
+                assert!(
+                    line.contains(&needle),
+                    "{how:?}: the warning does not say `{needle}`\n{outcome}"
+                );
+            }
+            assert!(
+                !line.contains("stops at"),
+                "{how:?}: the walk reaches the stream's end\n{outcome}"
+            );
+        }
+        (Some((stop, unread)), _) => {
             assert_eq!(
                 filed,
                 [(DWG_0201_SHEET, 1, Some(unread as u64))],
@@ -1005,12 +1051,12 @@ fn export_a_broken_chain(case: &str, how: Break) {
         let write = write_ledger(&intact).unwrap_or_else(|error| panic!("intact: {error}"));
         ExportLedger::assemble(&intact, &write).summary()
     };
-    match broken.stop {
-        None => {
+    match (broken.stop, broken.header_states) {
+        (None, None) => {
             assert!(sites.is_empty(), "{how:?}: {sites:?}");
             assert_eq!(summary, intact_summary, "{how:?}");
         }
-        Some(_) => {
+        _ => {
             assert_eq!(
                 sites,
                 [(Some(DWG_0201_SHEET), 1)],
@@ -1075,4 +1121,15 @@ fn a_chain_whose_last_record_runs_past_the_stream_exports_the_rest_and_says_so()
 #[test]
 fn a_chain_with_stray_bytes_at_its_end_exports_the_records_and_says_so() {
     export_a_broken_chain("chain-last-minus-four", Break::LastLengthMinusFour);
+}
+
+/// A header that counts one live record more than the chain holds. The
+/// walk reaches the stream's end, every record is read and the page is the
+/// drawing's own — and the count is the only thing that says records may
+/// be missing, as it is for a stream cut off at a record boundary. Held end
+/// to end here: one warning that names no stop, the stream filed in the
+/// page's ledger with no byte unread, the same exit code.
+#[test]
+fn a_header_that_counts_one_record_too_many_exports_the_page_and_says_so() {
+    export_a_broken_chain("chain-header-count", Break::HeaderCountPlusOne);
 }
