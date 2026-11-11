@@ -40,14 +40,23 @@ use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_display_order::DisplayRank;
 use pid_parse::parsers::sheet_records::{
-    decode_smartframes, parse_psm_header, sheet_record_starts, AttributeFragmentDecoder,
-    JStyleOverrideDecoder, PsmRecordDecoder, SheetChain, SubRecord0x0010Decoder,
+    decode_smartframes, parse_psm_header, sheet_record_starts, PsmRecordDecoder, SheetChain,
     SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
     build_normalized_geometry, ParseOptions, PidDocument, PidPackage, PidParser, StreamChainFault,
     StreamChainStop, StreamChainStopReason, SHEET_RECORD_FAMILIES,
+};
+
+/// The matchers of the four retired families: what a length sweep asks
+/// "would the old families have decoded this?" with, and what the corpus
+/// walk tries at every offset.
+#[path = "support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{
+    decode_primitive_line_at, AttributeFragmentDecoder, JStyleOverrideDecoder,
+    SubRecord0x0010Decoder,
 };
 
 const FIXTURE: &str = "test-file/DWG-0201GP06-01.pid";
@@ -1020,6 +1029,125 @@ fn a_style_cluster_whose_chain_stops_is_reported_like_a_sheets() {
     }
 }
 
+/// The style table reads the records its fault says the chain read, and no
+/// others.
+///
+/// A fault is computed with [`SheetChain::walk`]. The style table used to
+/// walk its stream by itself, with no type-word tripwire: after a length
+/// that is wrong and still inside the stream it read on from where no
+/// record starts, through whatever passed for an envelope there, and often
+/// back onto the chain — so the table held styles from past the offset the
+/// warning said nothing was read from. An independent review found two
+/// copies of this fixture whose warnings both said "the chain read 21
+/// record(s)" and whose pages drew 81 and 95 suspect items.
+///
+/// Held here on every single-length change of every style table of the
+/// fixture that stops the walk: the table of the changed stream is the
+/// table of that stream cut at the stop, which is the records the chain
+/// read. The tally says how many of those changes the old walk read past.
+#[test]
+fn a_style_table_reads_the_records_its_fault_says_the_chain_read() {
+    use pid_parse::style_link::DocumentStyleTable;
+
+    let package = PidParser::new()
+        .parse_package(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let mut streams: Vec<&String> = package
+        .streams
+        .keys()
+        .filter(|path| path.ends_with("/StyleCluster"))
+        .collect();
+    streams.sort();
+    let mut seen = HashSet::new();
+    // (distinct tables, changes that stop the walk, of them the ones a walk
+    // with no tripwire reads past the stop on)
+    let mut tally = (0usize, 0usize, 0usize);
+    for stream in streams {
+        let intact = &package.streams[stream].data;
+        let mut hasher = DefaultHasher::new();
+        intact.hash(&mut hasher);
+        if !seen.insert((intact.len(), hasher.finish())) {
+            continue;
+        }
+        let chain = SheetChain::walk(intact);
+        assert!(chain.is_sound(), "{stream}: an intact table");
+        tally.0 += 1;
+        for &at in &chain.starts {
+            let length = u32_at(intact, at + 2);
+            for delta in LENGTH_DELTAS {
+                let Ok(wrong) = u32::try_from(i64::from(length) + delta) else {
+                    continue;
+                };
+                let mut changed = intact.clone();
+                put_u32(&mut changed, at + 2, wrong);
+                let Some(stop) =
+                    StreamChainFault::of_stream(stream, &changed).and_then(|fault| fault.stop)
+                else {
+                    // The walk reached the stream's end: the fault, if
+                    // there is one, names no place to hold the table to.
+                    continue;
+                };
+                tally.1 += 1;
+                if walk_taking_any_type_word(&changed).2 > stop.offset {
+                    tally.2 += 1;
+                }
+                assert!(
+                    DocumentStyleTable::from_stylecluster_bytes(&changed)
+                        == DocumentStyleTable::from_stylecluster_bytes(&changed[..stop.offset]),
+                    "{stream}: the record at +{at}, {length} -> {wrong}: the table holds what \
+                     the chain read before +{}, and nothing from past it",
+                    stop.offset
+                );
+            }
+        }
+    }
+    eprintln!(
+        "style tables of {FIXTURE}: {} distinct, {} length change(s) stop the walk, {} of them \
+         read past the stop without the tripwire",
+        tally.0, tally.1, tally.2
+    );
+    assert_eq!(tally, STYLE_TABLE_LENGTH_CHANGES);
+
+    // The review's own copy, through the parser: the 21st record of the
+    // drawing's table (at +7227) four bytes too long.
+    let stream = "/StyleCluster";
+    let intact = &package.streams[stream].data;
+    let at = SheetChain::walk(intact).starts[20];
+    assert_eq!((at, u32_at(intact, at + 2)), (7227, 94));
+    let mut changed = intact.clone();
+    put_u32(&mut changed, at + 2, 98);
+    let fault =
+        StreamChainFault::of_stream(stream, &changed).expect("the changed table has a fault");
+    let stop = fault.stop.as_ref().expect("the walk stops").offset;
+    assert_eq!((stop, fault.records_read), (7331, 21));
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: stream.to_string(),
+            new_data: changed.clone(),
+        }],
+        ..WritePlan::default()
+    };
+    let bytes = PidWriter::write_to_bytes(&package, &plan).expect("the damaged copy is written");
+    let doc = PidParser::new()
+        .parse_reader(Cursor::new(bytes))
+        .expect("the damaged copy parses");
+    assert_eq!(doc.chain_faults, vec![fault]);
+    assert!(
+        doc.style_tables["/"] == DocumentStyleTable::from_stylecluster_bytes(&changed[..stop]),
+        "the document's table is the 21 records the warning says the chain read"
+    );
+    assert!(
+        doc.style_tables["/"] != package.parsed.style_tables["/"],
+        "and is short of the intact drawing's"
+    );
+}
+
+/// [`a_style_table_reads_the_records_its_fault_says_the_chain_read`]'s
+/// tally for the fixture: distinct style tables, the single-length changes
+/// that stop the walk, and how many of those a walk with no type-word
+/// tripwire reads past the stop on.
+const STYLE_TABLE_LENGTH_CHANGES: (usize, usize, usize) = (3, 3405, 122);
+
 /// A symbol file read as a library body. The body's reader takes a sheet
 /// whole or not at all, so a sheet whose chain stops gives it nothing — a
 /// body short of that sheet's strokes, and until now nothing that said so.
@@ -1383,6 +1511,11 @@ struct Tally {
     records: usize,
     /// Of those, the ones the native reader reads.
     live: usize,
+    /// Runs of bytes on those streams that the matcher of the retired
+    /// `GLine2d` family accepts, tried at every offset: each one held to
+    /// being the top two bytes of a page frame's aspect ratio
+    /// ([`page_ratio_hits`]).
+    page_ratio_hits: usize,
 }
 
 impl Tally {
@@ -1395,6 +1528,7 @@ impl Tally {
         self.caches += other.caches;
         self.records += other.records;
         self.live += other.live;
+        self.page_ratio_hits += other.page_ratio_hits;
     }
 
     /// Whether this walk read no less than `floor` did.
@@ -1474,11 +1608,67 @@ fn hold_sound(label: &str, package: &PidPackage, tally: &mut Tally) {
         }
         tally.records += chain.starts.len();
         tally.live += chain.live_records;
+        tally.page_ratio_hits += page_ratio_hits(&format!("{label} {path}"), &raw.data, &chain);
     }
 }
 
-/// Every drawing, template and symbol under `dir`, and every `RefData~*.zip`
-/// that may hold more of them. A machine-local symbol library and this
+/// What the matcher of the retired `GLine2d` family accepts in a chain
+/// stream when it is tried at every offset, which is how Phase 14 found the
+/// family's "records": the number of runs of bytes it takes, each held to
+/// what it is.
+///
+/// `0x3FE6` is no type code — the native reader's class table ends at
+/// `0x0118` — so no record of any chain states it, and a sound chain is the
+/// proof: the walk stops on such a word. What the matcher takes is the top
+/// two bytes of a double from 0.6875 up to 0.71875 with a run behind it
+/// that passes for a unit vector and an ordered pair. On every chain stream
+/// in reach that double is the aspect ratio an `igSmartFrame2d` states at
+/// payload `+148` — its own height over its width, which on an ISO A sheet
+/// is `1/√2` give or take the frame's margins: the hit sits 160 bytes into
+/// a page frame
+/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+fn page_ratio_hits(label: &str, data: &[u8], chain: &SheetChain) -> usize {
+    let mut hits = 0usize;
+    for at in 0..data.len() {
+        if decode_primitive_line_at(data, at).is_none() {
+            continue;
+        }
+        hits += 1;
+        let host = chain.starts[..chain.starts.partition_point(|&start| start <= at)]
+            .last()
+            .copied()
+            .unwrap_or_else(|| panic!("{label} +{at}: a GLine2d hit ahead of the first record"));
+        let code = u16::from_le_bytes([data[host], data[host + 1]]) & 0x3FFF;
+        assert_eq!(
+            (code, at - host),
+            (0x003D, 160),
+            "{label} +{at}: a GLine2d hit that is not 160 bytes into a page frame \
+             (type code of its host, offset in it)"
+        );
+        let double_at = |at: usize| {
+            f64::from_le_bytes(data[at..at + 8].try_into().expect("eight bytes of a frame"))
+        };
+        // The frame's payload starts six bytes in: width at `+76`, height
+        // at `+84`, their ratio at `+148`, whose top two bytes are the hit.
+        let (width, height, ratio) = (
+            double_at(host + 6 + 76),
+            double_at(host + 6 + 84),
+            double_at(at - 6),
+        );
+        assert!(
+            (ratio - height / width).abs() < 1e-9 && (0.6875..0.71875).contains(&ratio),
+            "{label} +{at}: the double the hit's type word ends is {ratio}, and the frame \
+             is {width} m by {height} m"
+        );
+    }
+    hits
+}
+
+/// Every drawing, template and symbol under `dir`, and every archive of a
+/// backup package that may hold more of them: `RefData~*.zip` (templates,
+/// symbols, and the `.pid` templates and assemblies beside them) and
+/// `PlantData~*.zip`, where a package keeps its drawings — the files a
+/// whole-package publish reads. A machine-local symbol library and this
 /// crate's own plots are left out.
 fn documents(dir: &Path, files: &mut Vec<PathBuf>, archives: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1509,7 +1699,9 @@ fn documents(dir: &Path, files: &mut Vec<PathBuf>, archives: &mut Vec<PathBuf>) 
             .any(|known| extension.eq_ignore_ascii_case(known))
         {
             files.push(path);
-        } else if extension.eq_ignore_ascii_case("zip") && name.starts_with("RefData~") {
+        } else if extension.eq_ignore_ascii_case("zip")
+            && (name.starts_with("RefData~") || name.starts_with("PlantData~"))
+        {
             archives.push(path);
         }
     }
@@ -1551,7 +1743,7 @@ impl Walk {
     }
 
     /// The drawings, templates and symbols on disk under `root`, and then
-    /// the ones inside its reference-data archives.
+    /// the ones inside its archives.
     fn corpus(&mut self, root: &Path) -> (Tally, Tally) {
         let mut files = Vec::new();
         let mut archives = Vec::new();
@@ -1566,7 +1758,7 @@ impl Walk {
         let mut archived = Tally::default();
         #[cfg(feature = "refdata-archive")]
         for archive in &archives {
-            for extension in ["igr", "sym"] {
+            for extension in ["igr", "sym", "pid"] {
                 let Ok(members) = pid_parse::refdata_archive::archive_members(archive, extension)
                 else {
                     continue;
@@ -1600,7 +1792,20 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let mut walk = Walk::new();
     let (on_disk, archived) = walk.corpus(Path::new("test-file"));
     eprintln!("test-file, on disk: {on_disk:?}");
-    eprintln!("test-file, in its RefData archives: {archived:?}");
+    eprintln!("test-file, in its archives: {archived:?}");
+    // What the retired `GLine2d` matcher accepts is pinned, not floored:
+    // two page frames of `DWG-0201GP06-01.pid` and the one of `A01.pid`.
+    assert_eq!(
+        on_disk.page_ratio_hits, REPOSITORY_ON_DISK.page_ratio_hits,
+        "what a byte-sliding walk reads as GLine2d on the repository's files"
+    );
+    // And, in the archives, the frame of `A1-W.igr`, of its `- New` copy,
+    // and of five of the `.pid` drawings and templates beside them.
+    #[cfg(feature = "refdata-archive")]
+    assert_eq!(
+        archived.page_ratio_hits, REPOSITORY_ARCHIVED.page_ratio_hits,
+        "what a byte-sliding walk reads as GLine2d in the repository's archives"
+    );
     assert_eq!(
         (on_disk.unread, archived.unread),
         (0, 0),
@@ -1654,7 +1859,7 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
         read.push(canonical);
         let (on_disk, archived) = walk.corpus(&root);
         eprintln!("{}, on disk: {on_disk:?}", root.display());
-        eprintln!("{}, in its RefData archives: {archived:?}", root.display());
+        eprintln!("{}, in its archives: {archived:?}", root.display());
         total.add(&on_disk);
         total.add(&archived);
     }
@@ -1674,21 +1879,29 @@ const REPOSITORY_ON_DISK: Tally = Tally {
     caches: 17,
     records: 11_945,
     live: 11_895,
+    page_ratio_hits: 3,
 };
 
-/// What the templates and symbols inside `test-file`'s twelve committed
-/// `RefData~*.zip` archives held beyond that, each distinct file once: 637
-/// of their 1 242 members, the other 605 being copies.
+/// What the templates, symbols and drawings inside `test-file`'s committed
+/// archives held beyond that, each distinct file once: twelve `RefData~*.zip`
+/// and two `PlantData~*.zip`, 657 of whose 1 902 `.igr` / `.sym` / `.pid`
+/// members are distinct, the other 1 245 being copies. Until 2026-11-11 the
+/// walk opened the `RefData` archives alone and read no `.pid` member: 637
+/// documents, 1 306 sheets, 41 caches, 20 569 records. The twenty it reads
+/// now are the seven drawings of a `PlantData` zip — the files a
+/// whole-package publish reads — and the `.pid` templates and one assembly
+/// of the reference data.
 #[cfg(feature = "refdata-archive")]
 const REPOSITORY_ARCHIVED: Tally = Tally {
-    documents: 637,
+    documents: 657,
     repeats: 0,
     unread: 0,
-    sheets: 1306,
-    header_only: 139,
-    caches: 41,
-    records: 20_569,
-    live: 20_165,
+    sheets: 1377,
+    header_only: 173,
+    caches: 61,
+    records: 25_711,
+    live: 25_267,
+    page_ratio_hits: 7,
 };
 
 /// What every single-length change of the chain streams `test-file` holds on

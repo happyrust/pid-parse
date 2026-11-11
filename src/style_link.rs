@@ -139,7 +139,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::PidError;
 use crate::model::{PidDocument, SheetGeometry};
 use crate::parsers::sheet_records::{
-    IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+    SheetChain, IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
 /// Magic word every cluster-family stream opens with, `StyleCluster`
@@ -147,6 +147,7 @@ use crate::parsers::sheet_records::{
 const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 
 /// Bytes of stream header (`magic` + `record_count`) before the record chain.
+#[cfg(test)]
 const STREAM_HEADER_LEN: usize = 8;
 
 /// Bytes of PSM envelope (`type_word` + `bytes_to_follow`) before a payload.
@@ -1564,8 +1565,21 @@ impl DocumentStyleTable {
     ///
     /// The stream is a pure record chain — `u32` magic, `u32` count, then
     /// records nose to tail — so it is walked exactly rather than scanned.
-    /// Anything that is not such a chain yields an empty table; nothing here
-    /// panics or allocates unboundedly on hostile input.
+    /// Anything that does not open with the chain magic yields an empty
+    /// table; nothing here panics or allocates unboundedly on hostile
+    /// input.
+    ///
+    /// The walk is [`SheetChain::walk`], the one a sheet's record families
+    /// decode on and the one a [`crate::model::StreamChainFault`] is
+    /// computed with: the table holds the records the chain read and no
+    /// others, so a fault that says "the chain read 21 record(s) … and the
+    /// bytes from it on are not read" says what this table was built from.
+    /// Until 2026-11-11 the table walked the stream by itself, with no
+    /// type-word tripwire, and after a length that is wrong and still in
+    /// bounds it read on from where no record starts — on the three style
+    /// tables of `DWG-0201GP06-01.pid`, past the fault's stop on 122 of the
+    /// 3 405 single-length changes that stop the walk
+    /// (`tests/sheet_chain_faults.rs`).
     #[must_use]
     pub fn from_stylecluster_bytes(data: &[u8]) -> Self {
         let mut table = Self::default();
@@ -1576,21 +1590,18 @@ impl DocumentStyleTable {
         // records they name. They are held here and bound once the walk has
         // seen everything.
         let mut librarian_names: Vec<LibrarianName> = Vec::new();
-        let mut at = STREAM_HEADER_LEN;
-        while let (Some(type_word), Some(bytes_to_follow)) =
-            (u16_at(data, at), u32_at(data, at + 2))
-        {
-            let Some(payload_start) = at.checked_add(PSM_ENVELOPE_LEN) else {
+        for at in SheetChain::walk(data).starts {
+            // The walk read this record, so its envelope and the payload it
+            // states lie inside the stream.
+            let (Some(type_word), Some(bytes_to_follow)) = (u16_at(data, at), u32_at(data, at + 2))
+            else {
                 break;
             };
-            let Some(end) = payload_start.checked_add(bytes_to_follow as usize) else {
+            let payload_start = at + PSM_ENVELOPE_LEN;
+            let end = payload_start + bytes_to_follow as usize;
+            let Some(payload) = data.get(payload_start..end) else {
                 break;
             };
-            // A zero-length record would not advance the cursor.
-            if bytes_to_follow == 0 || end > data.len() {
-                break;
-            }
-            let payload = &data[payload_start..end];
             let type_code = type_word & 0x3FFF;
             if !STYLE_FAMILY_TYPE_CODES.contains(&type_code) {
                 // A point symbol's glyph rides in this stream as ordinary
@@ -1624,7 +1635,6 @@ impl DocumentStyleTable {
                     }
                     _ => {}
                 }
-                at = end;
                 continue;
             }
             if let Some(style_id) = u32_at(payload, STYLE_ID_OFFSET) {
@@ -1689,7 +1699,6 @@ impl DocumentStyleTable {
                 table.by_id.entry(style_id).or_insert(slot);
                 table.records.push(record);
             }
-            at = end;
         }
         table.bind_librarian_names(&librarian_names);
         table

@@ -2422,7 +2422,6 @@ impl<'a> EmitContext<'a> {
 const EMITTERS: &[&dyn GeometryEmitter] = &[
     // Emitting families (historical order — do not reorder without
     // re-blessing the golden snapshot).
-    &GLine2dEmitter,
     &IgSymbol2dEmitter,
     &IgTextBoxEmitter,
     &IgPoint2dEmitter,
@@ -2475,77 +2474,6 @@ pub(crate) fn emitter_families() -> Vec<(&'static str, bool)> {
         .iter()
         .map(|emitter| (emitter.family(), emitter.is_no_op()))
         .collect()
-}
-
-/// Emits `Decoded` [`PidGraphicKind::Line`] entities for the
-/// `SmartPlant` extended `GLine2d` family (PSM `0x3FE6`), converting
-/// the parametric `origin + t·direction` form to Cartesian endpoints.
-struct GLine2dEmitter;
-
-impl GeometryEmitter for GLine2dEmitter {
-    fn family(&self) -> &'static str {
-        "GLine2d"
-    }
-
-    fn emit(
-        &self,
-        ctx: &EmitContext<'_>,
-        sheet: &SheetStream,
-        out: &mut Vec<PidGraphicEntity>,
-    ) -> EmitSkips {
-        let mut skips = EmitSkips::default();
-        let Some(geometry) = &sheet.geometry else {
-            return skips;
-        };
-        for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
-            let Some(byte_range) = source_range(
-                record.byte_start,
-                record.byte_end.saturating_sub(record.byte_start),
-                sheet.size,
-            ) else {
-                skips.out_of_range();
-                continue;
-            };
-            let (ax, ay) = record.endpoint_a();
-            let (bx, by) = record.endpoint_b();
-            out.push(PidGraphicEntity {
-                id: format!("{}:primitive-line:{index}", sheet.path),
-                drawing_id: None,
-                graphic_oid: Some(record.oid),
-                source_layer: None,
-                kind: PidGraphicKind::Line {
-                    start: PidPoint { x: ax, y: ay },
-                    end: PidPoint { x: bx, y: by },
-                },
-                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
-                source: PidGraphicProvenance {
-                    stream_path: Some(sheet.path.clone()),
-                    byte_range: Some(byte_range),
-                    record_id: Some(format!("primitive-line:{index}")),
-                    record_kind: Some(SheetRecordKind::PrimitiveLine),
-                    field_x: None,
-                    note: Some(format!(
-                        "PSM GLine2d record decoded from radsrvitem.dll byte layout (\
-                         18-byte header + 6 x f64 payload); oid={} type_code=0x{:04X} \
-                         type_flags=0x{:X} bytes_to_follow={} origin=({:.4}, {:.4}) \
-                         direction=({:.5}, {:.5}) param=[{:.4}, {:.4}]",
-                        record.oid,
-                        record.type_code,
-                        record.type_flags,
-                        record.bytes_to_follow,
-                        record.origin_x,
-                        record.origin_y,
-                        record.direction_x,
-                        record.direction_y,
-                        record.param_start,
-                        record.param_end,
-                    )),
-                },
-                confidence: PidGeometryConfidence::Decoded,
-            });
-        }
-        skips
-    }
 }
 
 /// Emits `Decoded` [`PidGraphicKind::SymbolInstance`] entities for the
@@ -4107,7 +4035,6 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -4215,7 +4142,6 @@ mod tests {
                         note: Some("score=80 identity=graphic_nearby stable_shape".into()),
                     },
                 ],
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -4362,7 +4288,6 @@ mod tests {
                             .into(),
                     ),
                 }],
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -4461,7 +4386,6 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -4531,7 +4455,6 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -4621,7 +4544,6 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
-                decoded_primitive_lines: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),

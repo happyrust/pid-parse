@@ -6,10 +6,10 @@
 //!
 //! - `streams/cluster.rs` populates [`crate::model::SheetGeometry`] by
 //!   walking [`SHEET_RECORD_FAMILIES`] and calling
-//!   [`SheetRecordFamily::decode_into`] instead of 11 hand-written
-//!   decode+convert+assign blocks;
+//!   [`SheetRecordFamily::decode_into`] instead of one hand-written
+//!   decode+convert+assign block a family;
 //! - the "is this sheet empty" check derives from
-//!   [`SheetRecordFamily::record_count`] instead of an 11-conjunct
+//!   [`SheetRecordFamily::record_count`] instead of a hand-kept
 //!   `&&` chain;
 //! - `byte_audit/aggregate.rs` traces decoded byte envelopes from
 //!   [`SheetRecordFamily::decoded_ranges`] +
@@ -37,7 +37,7 @@ use crate::parsers::sheet_records::{
     decode_dependency_objects, decode_igarcs, decode_igboundaries, decode_igbspcurves,
     decode_igcircles, decode_igcomplexstrings, decode_igdimensions, decode_igellipticalarcs,
     decode_iggroups, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igrectangles,
-    decode_igsymbols, decode_igtextboxes, decode_primitive_lines, decode_smartframes,
+    decode_igsymbols, decode_igtextboxes, decode_smartframes,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -89,31 +89,18 @@ pub struct SheetRecordFamily {
     pub decoded_ranges: fn(&[u8]) -> Vec<core::ops::Range<usize>>,
 }
 
-/// The 11 Sheet PSM record families, in the historical cluster-wiring
+/// The Sheet PSM record families, in the historical cluster-wiring
 /// order (order is cosmetic: every row writes a distinct field and
 /// byte-audit sorts ranges before merging).
+///
+/// Every row reads a type code the native reader has a class for, so one a
+/// chain can hold a record of. The row that stood first until 2026-11-11,
+/// `GLine2d` (`0x3FE6`), did not: its type code is past the class table,
+/// its three corpus "records" were the top two bytes of a page frame's
+/// `1/√2` read as a type word by a byte-sliding walk
+/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`),
+/// and from the day the families took the record chain it decoded nothing.
 pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
-    SheetRecordFamily {
-        name: "GLine2d",
-        type_code: 0x3FE6,
-        emits_geometry: true,
-        trace_class: SheetFamilyTraceClass::Decoded,
-        geometry_field: "decoded_primitive_lines",
-        model_dto: "DecodedPrimitiveLineRecord",
-        decode_into: |data, geometry| {
-            geometry.decoded_primitive_lines = decode_primitive_lines(data)
-                .into_iter()
-                .map(Into::into)
-                .collect();
-        },
-        record_count: |geometry| geometry.decoded_primitive_lines.len(),
-        decoded_ranges: |data| {
-            decode_primitive_lines(data)
-                .into_iter()
-                .map(|r| r.byte_range)
-                .collect()
-        },
-    },
     SheetRecordFamily {
         name: "igLine2d",
         type_code: 0x0018,
@@ -487,7 +474,7 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
 ];
 
 /// True when no family has any decoded records on `geometry`
-/// (registry-derived replacement for the historical 11-conjunct `&&`
+/// (registry-derived replacement for the historical hand-kept `&&`
 /// chain in `streams/cluster.rs`).
 pub fn sheet_geometry_has_no_family_records(geometry: &SheetGeometry) -> bool {
     SHEET_RECORD_FAMILIES
@@ -527,8 +514,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_seventeen_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 17);
+    fn registry_has_sixteen_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 16);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -537,13 +524,13 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            17,
+            16,
             "every registry row must own a distinct SheetGeometry field"
         );
     }
 
     /// No two rows read one type code, and none reads a type code no chain
-    /// holds a record of: the three families that did are retired.
+    /// holds a record of: the four families that did are retired.
     #[test]
     fn no_type_code_is_shared_and_the_retired_families_have_no_row() {
         let mut codes: Vec<u16> = SHEET_RECORD_FAMILIES.iter().map(|f| f.type_code).collect();
@@ -556,15 +543,39 @@ mod tests {
         assert_eq!(duplicates, Vec::<u16>::new(), "one row a type code");
         for family in SHEET_RECORD_FAMILIES {
             assert!(
-                family.type_code != 0x0010 && family.type_code != 0x0030,
+                ![0x0010, 0x0030, 0x3FE6].contains(&family.type_code),
                 "{} reads 0x{:04X}, a type code no sheet chain holds",
                 family.name,
                 family.type_code
             );
             assert!(
-                !["JStyleOverride", "SubRecord0x0010", "AttributeFragment"].contains(&family.name),
+                ![
+                    "JStyleOverride",
+                    "SubRecord0x0010",
+                    "AttributeFragment",
+                    "GLine2d"
+                ]
+                .contains(&family.name),
                 "{} is retired",
                 family.name
+            );
+        }
+    }
+
+    /// A family decodes where the chain walk starts a record, and the walk
+    /// stops on a type word the native reader has no class for. A row whose
+    /// type code the walk stops on is handed no record by any stream: that
+    /// was `GLine2d` (`0x3FE6`) from the day the walk took the class table
+    /// for its tripwire, and it stood in the registry for one more round.
+    #[test]
+    fn every_row_reads_a_type_code_a_chain_can_hold() {
+        use crate::parsers::sheet_records::psm_type_word_opens_a_record;
+        for family in SHEET_RECORD_FAMILIES {
+            assert!(
+                psm_type_word_opens_a_record(family.type_code),
+                "{} reads 0x{:04X}, a type word the chain walk stops on",
+                family.name,
+                family.type_code
             );
         }
     }

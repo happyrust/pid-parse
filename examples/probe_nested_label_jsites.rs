@@ -21,10 +21,11 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{
-    decode_igsymbols, decode_igtextboxes, JStyleOverrideDecoder, PsmRecordDecoder,
-};
+use pid_parse::parsers::sheet_records::{decode_igsymbols, decode_igtextboxes, PsmRecordDecoder};
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::PidPackage;
+use retired_matchers::JStyleOverrideDecoder;
 
 const FIXTURES: &[&str] = &[
     "DWG-0201GP06-01.pid",

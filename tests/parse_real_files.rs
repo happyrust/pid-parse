@@ -12,19 +12,27 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragment_at, decode_dependency_objects, decode_igboundaries,
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-        decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_lines,
-        decode_sub_record_0x0010_at, parse_psm_header, primitive_line_investigation_report,
-        sheet_record_shape_inventory, sheet_record_starts, symbol_placement_investigation_report,
+        decode_dependency_objects, decode_igboundaries, decode_iglines, decode_iglinestrings,
+        decode_igpoints, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
+        parse_psm_header, primitive_line_investigation_report, sheet_record_shape_inventory,
+        sheet_record_starts, symbol_placement_investigation_report,
         text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
         SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
-        DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN, PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_GLINE2D,
+        DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN, PSM_TYPE_CODE_DEPENDENCY_OBJECT,
         PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
         PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
-        PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
+        PSM_TYPE_CODE_JSTYLE_OVERRIDE,
     },
     PidParser,
+};
+
+/// The matchers of the four retired families: what the evidence tests below
+/// re-find the old byte-sliding hits with.
+#[path = "support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{
+    decode_attribute_fragment_at, decode_jstyle_override_at, decode_primitive_line_at,
+    decode_sub_record_0x0010_at, PSM_TYPE_CODE_SUB_RECORD_0X0010,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -1099,11 +1107,6 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         "D06 Sheet6 coordinate hint count drifted"
     );
     assert_eq!(
-        geometry.decoded_primitive_lines.len(),
-        0,
-        "D06 should not gain GLine2d records without updating the baseline"
-    );
-    assert_eq!(
         geometry.decoded_iglines.len(),
         0,
         "D06 should not gain igLine2d records without updating the baseline"
@@ -1137,12 +1140,14 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         21,
         "D06 DependencyObject audit count drifted"
     );
-    // Two counts were pinned here until the families behind them were
+    // Three counts were pinned here until the families behind them were
     // retired: 3 "JStyleOverride" and 20 "0x0010 sub-records" a byte-sliding
-    // walk read out of other records' payloads. `/Sheet6`'s chain holds
-    // neither type code, which is held on the chain itself now. See
+    // walk read out of other records' payloads, and 0 "GLine2d", a type code
+    // the native reader has no class for. `/Sheet6`'s chain holds none of
+    // the three type codes, which is held on the chain itself now. See
     // `every_decoded_record_starts_where_its_streams_chain_starts_one` and
-    // `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §3.
+    // `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    // §3 and §18.
     let package = parse_test_package("D06.pid").expect("D06 parsed above");
     for sheet in &package.parsed.sheet_streams {
         let Some(raw) = package.streams.get(&sheet.path) else {
@@ -1151,7 +1156,7 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         for &at in sheet_chain(&raw.data).keys() {
             let code = le_u16(&raw.data, at) & 0x3FFF;
             assert!(
-                code != 0x0030 && code != 0x0010,
+                ![0x0030, 0x0010, 0x3FE6].contains(&code),
                 "D06 {} +{at}: a record of type 0x{code:04X} on the chain",
                 sheet.path
             );
@@ -6887,10 +6892,6 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             // PSM-decoded line/text/symbol/annotation records each
             // produce one additional `PidGeometryConfidence::Decoded`
             // entity on top of the probe / inferred totals above.
-            let decoded_line_count = sheet
-                .geometry
-                .as_ref()
-                .map_or(0, |geometry| geometry.decoded_primitive_lines.len());
             let decoded_igline_count = sheet
                 .geometry
                 .as_ref()
@@ -6915,14 +6916,13 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 + coordinate_count
                 + endpoint_count
                 + hint_count
-                + decoded_line_count
                 + decoded_igline_count
                 + decoded_iglinestring_count
                 + decoded_igpoint_count
                 + decoded_igtextbox_count
                 + decoded_igsymbol_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, total={total}",
                 sheet.path
             );
             total
@@ -7102,7 +7102,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             + decoded_symbols
             + inferred_annotations,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; JStyleOverride records become inferred annotations; remaining probe evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded igLine2d records become decoded lines; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; JStyleOverride records become inferred annotations; remaining probe evidence stays ProbeOnly Unknown"
     );
     // `PidGeometryConfidence::Decoded` is legitimate for decoded
     // line / polyline / point / text / symbol records. Arc / Circle /
@@ -7119,7 +7119,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::SymbolInstance { .. }
                 )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d entities"
+        "Decoded confidence currently only applies to PSM igLine2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d entities"
     );
     assert!(
         geometry.entities.iter().all(|entity| {
@@ -8349,23 +8349,23 @@ fn dwg0201_produces_inferred_endpoint_lines() {
     }
 }
 
-/// DWG-0201 keeps its EndpointPair-inferred lines and emits **no**
-/// `GLine2d` line.
+/// DWG-0201 keeps its EndpointPair-inferred lines.
 ///
-/// Phase 14 Slice E asserted the opposite — at least one decoded `GLine2d`
-/// — and that assertion held for six months on two entities that were never
-/// records. They were the top two bytes of an `igSmartFrame2d`'s `1/√2` page
-/// ratio, 160 bytes inside that record's payload, picked up because the
-/// decoder scanned every byte offset instead of walking the chain. All of it
-/// is measured in
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
-///
-/// The direction is now pinned the other way: zero is the right count for a
-/// corpus with no `GLine2d` in it, and the inferred floor is what must not
-/// move. Should a real one ever turn up, this test is where it announces
-/// itself.
+/// Phase 14 Slice E asserted beside this floor that the drawing emits at
+/// least one decoded `GLine2d` line, and that held for six months on two
+/// entities that were never records: the top two bytes of an
+/// `igSmartFrame2d`'s `1/√2` page ratio, 160 bytes inside that record's
+/// payload, picked up because the decoder scanned every byte offset instead
+/// of walking the chain
+/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+/// From 2026-08-10 the same test pinned the count at zero, and from
+/// 2026-11-11 that half asserted nothing: the family is retired and no
+/// emitter is left to put such a line on the drawing. What the two hits
+/// were is held by
+/// `a_sheet_chain_holds_no_gline2d_and_the_old_hits_were_a_page_frames_ratio`;
+/// what stays here is the floor that must not move.
 #[test]
-fn dwg0201_emits_no_gline2d_lines_and_keeps_its_inferred_floor() {
+fn dwg0201_keeps_its_inferred_line_floor() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
     };
@@ -8378,38 +8378,29 @@ fn dwg0201_emits_no_gline2d_lines_and_keeps_its_inferred_floor() {
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
         })
         .count();
-    // `GLine2d`-specific: Slice J's igLine2d entities share
-    // `PidGraphicKind::Line` but carry a different note, and are covered by
-    // the dedicated igLines test.
-    let gline2d_lines: Vec<_> = geometry
-        .entities
-        .iter()
-        .filter(|entity| {
-            entity
-                .source
-                .note
-                .as_ref()
-                .is_some_and(|note| note.contains("PSM GLine2d"))
-        })
-        .collect();
-    eprintln!(
-        "DWG-0201GP06-01: inferred_lines={inferred_lines}, GLine2d_lines={}",
-        gline2d_lines.len()
-    );
+    eprintln!("DWG-0201GP06-01: inferred_lines={inferred_lines}");
 
     assert!(
         inferred_lines >= 49,
         "DWG-0201 inferred line floor regressed: got {inferred_lines}, expected >= 49"
     );
-    assert!(
-        gline2d_lines.is_empty(),
-        "DWG-0201 has no GLine2d record; anything here is a scan artifact reaching \
-         the drawing again: {:?}",
-        gline2d_lines
-            .iter()
-            .map(|entity| &entity.source)
-            .collect::<Vec<_>>()
-    );
+    // Every decoded line of the drawing is an `igLine2d`: no other family
+    // emits one.
+    for entity in &geometry.entities {
+        if entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+            && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        {
+            assert!(
+                entity
+                    .source
+                    .record_id
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("igline2d:")),
+                "a decoded line that is not an igLine2d: {:?}",
+                entity.source
+            );
+        }
+    }
 }
 
 #[test]
@@ -11859,136 +11850,133 @@ fn sheet6_coordinate_value_frequency_analysis() {
     }
 }
 
-/// Cross-fixture ratchet: `decode_primitive_lines` finds no `GLine2d` on
-/// any `Sheet*` stream in the corpus, and anything it ever does find holds
-/// the documented invariants.
+/// No chain holds a `0x3FE6` record, and the three "`GLine2d` records" these
+/// fixtures used to count were each the top two bytes of the aspect ratio
+/// of an `igSmartFrame2d`.
 ///
 /// Phase 14 Slice D asserted an aggregate of `>= 1` against baselines of
-/// "DWG-0201 → 2 hits, A01 → 1 hit". Those three were never records: each
-/// sat 160 bytes inside an `igSmartFrame2d`, on the two bytes where its
-/// `1/√2` page ratio spells `0x3FE6`. Requiring at least one therefore
-/// pinned the artifact in place. Measured in
+/// "DWG-0201 → 2 hits, A01 → 1 hit". Those three came from trying every byte
+/// offset: a page frame states its height over its width at payload `+148`,
+/// on an ISO A sheet that is `1/√2` give or take the frame's margins, any
+/// `f64` from 0.6875 up to 0.71875 has `E6 3F` for its top two bytes, and a
+/// walk that read them as a type word found a unit vector and an ordered
+/// pair in what the frame stores behind them. Measured in
 /// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
 ///
-/// The floor is now zero and the per-record invariants stay, so a genuine
-/// `GLine2d` appearing in a future fixture trips the count assertion and
-/// gets checked on the way in rather than slipping through.
+/// `0x3FE6` is not a type code: the native reader's class table ends at
+/// `0x0118`, and a chain walk stops on a word past it
+/// (`psm_type_word_opens_a_record`). The family that read it off sheets
+/// decoded nothing from the day the families took the record chain
+/// (2026-08-10), could decode nothing from the day the walk took the class
+/// table for its tripwire (2026-11-11), and was retired with the three
+/// before it. The test that stood here until then asserted that a decoder
+/// which could return nothing returned nothing.
+///
+/// So this pins three things per fixture: no record of a chain states the
+/// type code, no registry row reads it, and each hit of the old walk sits
+/// 160 bytes into a page frame, on the top two bytes of its aspect ratio.
 #[test]
-fn primitive_line_decoder_finds_no_gline2d_and_holds_invariants_if_it_ever_does() {
+fn a_sheet_chain_holds_no_gline2d_and_the_old_hits_were_a_page_frames_ratio() {
+    const GLINE2D: u16 = 0x3FE6;
+    const SMART_FRAME: u16 = 0x003D;
     let fixtures = [
-        "DWG-0201GP06-01.pid",
-        "DWG-0202GP06-01.pid",
-        "工艺管道及仪表流程-1.pid",
-        "export-test/publish-data/A01/A01.pid",
-        "D06.pid",
+        ("DWG-0201GP06-01.pid", 2usize),
+        ("DWG-0202GP06-01.pid", 0),
+        ("工艺管道及仪表流程-1.pid", 0),
+        ("export-test/publish-data/A01/A01.pid", 1),
+        ("D06.pid", 0),
     ];
-    let mut total_decoded = 0usize;
-    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
-    let mut sample_lines: Vec<String> = Vec::new();
-    for fixture in fixtures {
+    assert!(
+        !pid_parse::parsers::sheet_records::psm_type_word_opens_a_record(GLINE2D),
+        "a chain walk stops on 0x3FE6"
+    );
+    assert!(
+        pid_parse::SHEET_RECORD_FAMILIES
+            .iter()
+            .all(|family| family.type_code != GLINE2D),
+        "a registry row reads 0x3FE6"
+    );
+    let mut checked = 0usize;
+    for (fixture, slid) in fixtures {
         let Some(pkg) = parse_test_package(fixture) else {
             continue;
         };
-        let mut per_fixture_count = 0usize;
+        checked += 1;
+        let mut hits = 0usize;
         for sheet in &pkg.parsed.sheet_streams {
             let Some(raw) = pkg.streams.get(&sheet.path) else {
                 continue;
             };
             let bytes = raw.data.as_slice();
-            let decoded = decode_primitive_lines(bytes);
-            for line in &decoded {
-                // Provenance: byte range fits the stream.
-                assert!(
-                    line.byte_range.end <= bytes.len(),
-                    "decoded line byte_range {:?} exceeds stream {} bytes ({})",
-                    line.byte_range,
-                    sheet.path,
-                    bytes.len()
-                );
-                assert!(
-                    line.byte_range.start < line.byte_range.end,
-                    "decoded line byte_range must be non-empty: {:?}",
-                    line.byte_range
-                );
-                // Type code: GLine2d only.
-                assert_eq!(
-                    line.type_code, PSM_TYPE_CODE_GLINE2D,
-                    "decoder must only emit GLine2d records"
-                );
-                // Direction vector is unit (within 1e-3, matching the
-                // decoder's relaxed tolerance).
-                let dir_len2 =
-                    line.direction.0 * line.direction.0 + line.direction.1 * line.direction.1;
-                let dir_len = dir_len2.sqrt();
-                assert!(
-                    (dir_len - 1.0).abs() < 1e-3,
-                    "decoded direction must be unit vector, got len={dir_len} for record {:?}",
-                    line
-                );
-                // Param range is sorted.
-                assert!(
-                    line.param_start < line.param_end,
-                    "decoded params must satisfy start < end, got [{}, {}]",
-                    line.param_start,
-                    line.param_end,
-                );
-                // All decoded fields finite.
-                assert!(line.origin.0.is_finite() && line.origin.1.is_finite());
-                assert!(line.direction.0.is_finite() && line.direction.1.is_finite());
-                assert!(line.param_start.is_finite() && line.param_end.is_finite());
+            let chain = sheet_chain(bytes);
+            let on_chain = chain
+                .keys()
+                .filter(|&&at| le_u16(bytes, at) & 0x3FFF == GLINE2D)
+                .count();
+            assert_eq!(
+                on_chain, 0,
+                "{fixture} {}: a 0x3FE6 record on the chain",
+                sheet.path
+            );
 
-                if sample_lines.len() < 5 {
-                    let (ax, ay) = line.endpoint_a();
-                    let (bx, by) = line.endpoint_b();
-                    sample_lines.push(format!(
-                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} \
-                        origin=({:+.4},{:+.4}) dir=({:+.5},{:+.5}) \
-                        param=[{:+.4},{:+.4}] A=({:+.4},{:+.4}) B=({:+.4},{:+.4})",
-                        sheet.path,
-                        line.byte_range.start,
-                        line.byte_range.end,
-                        line.oid,
-                        line.origin.0,
-                        line.origin.1,
-                        line.direction.0,
-                        line.direction.1,
-                        line.param_start,
-                        line.param_end,
-                        ax,
-                        ay,
-                        bx,
-                        by,
-                    ));
-                }
+            for (at, record) in
+                sliding_hits(bytes, decode_primitive_line_at, |r| r.byte_range.len())
+            {
+                hits += 1;
+                let (&host, &host_end) = chain
+                    .range(..=at)
+                    .next_back()
+                    .unwrap_or_else(|| panic!("{fixture} {} +{at}: no host record", sheet.path));
+                assert_eq!(
+                    le_u16(bytes, host) & 0x3FFF,
+                    SMART_FRAME,
+                    "{fixture} {} +{at}: the hit sits in a record at +{host} that is not a page frame",
+                    sheet.path
+                );
+                assert!(
+                    at < host_end,
+                    "{fixture} {} +{at}: the hit starts past its host",
+                    sheet.path
+                );
+                assert_eq!(
+                    at - host,
+                    160,
+                    "{fixture} {} +{at}: the hit sits on the top two bytes of the double at payload +148",
+                    sheet.path
+                );
+                let double_at = |at: usize| {
+                    f64::from_le_bytes(
+                        bytes[at..at + 8]
+                            .try_into()
+                            .expect("eight bytes of a frame"),
+                    )
+                };
+                // The frame's payload starts six bytes in: width at `+76`,
+                // height at `+84`, their ratio at `+148`.
+                let (width, height, ratio) = (
+                    double_at(host + 6 + 76),
+                    double_at(host + 6 + 84),
+                    double_at(at - 6),
+                );
+                assert!(
+                    (ratio - height / width).abs() < 1e-9 && (0.6875..0.71875).contains(&ratio),
+                    "{fixture} {} +{at}: the double the hit's type word ends is {ratio}, and the frame is {width} m by {height} m",
+                    sheet.path
+                );
+                assert_eq!(record.type_code, GLINE2D);
             }
-            per_fixture_count += decoded.len();
         }
-        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
-        total_decoded += per_fixture_count;
+        assert_eq!(
+            hits, slid,
+            "{fixture}: what a byte-sliding walk reads as GLine2d"
+        );
     }
-    eprintln!("--- PSM GLine2d decoder cross-fixture summary ---");
-    for (name, count) in &per_fixture_summary {
-        eprintln!("  {name}: {count} decoded GLine2d records");
-    }
-    for sample in &sample_lines {
-        eprintln!("  sample: {sample}");
-    }
-    eprintln!("  total decoded across present fixtures: {total_decoded}");
-    if per_fixture_summary.is_empty() {
+    if checked == 0 {
         eprintln!(
             "skipping: no Sheet-bearing fixture present (CI / contributors \
             without SmartPlant samples)"
         );
-        return;
     }
-    assert_eq!(
-        total_decoded, 0,
-        "the corpus contains no GLine2d record. A non-zero count is either a \
-        genuine one in a newly added fixture — in which case check it against \
-        radsrvitem.dll's type enumeration before raising this floor — or the \
-        chain-membership gate has been lost and scan artifacts are back. \
-        Per-fixture summary: {per_fixture_summary:?}"
-    );
 }
 
 /// Phase 15 Slice C: fixture-level ratchet for the conservative

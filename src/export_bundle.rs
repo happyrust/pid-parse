@@ -1059,9 +1059,7 @@ fn minimal_confidence_ledger(plan: &ExportBundlePlan) -> ExportBundleConfidenceL
             ExportBundleConfidenceEntry {
                 source_path: "/Sheet* decoded PSM records".to_string(),
                 bundle_path: "geometry/decoded_entities.json".to_string(),
-                family:
-                    "GLine2d, igLine2d, igLineString2d, igPoint2d, igTextBox, igSymbol2d"
-                        .to_string(),
+                family: "igLine2d, igLineString2d, igPoint2d, igTextBox, igSymbol2d".to_string(),
                 confidence: "Decoded".to_string(),
                 evidence: vec![
                     "typed Sheet PSM decoders".to_string(),

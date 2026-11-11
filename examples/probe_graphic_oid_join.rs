@@ -56,9 +56,12 @@ use std::path::{Path, PathBuf};
 use cfb::CompoundFile;
 use pid_parse::parsers::sheet_records::{
     decode_dependency_objects, decode_igboundaries, decode_iglines, decode_iglinestrings,
-    decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_primitive_lines,
-    decode_smartframes, JStyleOverrideDecoder, PsmRecordDecoder, SheetDependencyObjectDecoded,
+    decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_smartframes, PsmRecordDecoder,
+    SheetDependencyObjectDecoded,
 };
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{GLine2dDecoder, JStyleOverrideDecoder};
 
 /// Whether a record family's oids reach the canvas.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,10 +144,7 @@ fn sheet_oids(path: &Path) -> Vec<FamilyOids> {
 
     for (_, data) in sheet_streams(path) {
         let per_family: [Vec<u32>; 10] = [
-            decode_primitive_lines(&data)
-                .iter()
-                .map(|r| r.oid)
-                .collect(),
+            GLine2dDecoder.scan(&data).iter().map(|r| r.oid).collect(),
             decode_iglines(&data).iter().map(|r| r.oid).collect(),
             decode_iglinestrings(&data).iter().map(|r| r.oid).collect(),
             decode_igpoints(&data).iter().map(|r| r.oid).collect(),

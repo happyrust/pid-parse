@@ -25,6 +25,16 @@
 //! page's account to filing the stream as a suspect drop; a fourth copy,
 //! rewritten with nothing changed, holds it to saying nothing.
 //!
+//! Those three lengths run to zero or past the stream, where any walk stops.
+//! Two more copies carry a length that is wrong and still inside the stream:
+//! the walk goes on from an offset where no record starts and stops on the
+//! word it finds there, which no record opens with. Without that tripwire
+//! the first of them reads as a sound stream of 359 records — a page short
+//! of one text box and not a word said — and the second reads on through
+//! bytes that are not records to the stream's end. The program is held to
+//! one warning that names the first byte past the damaged record, the word
+//! found there and the record itself, and the page to the records before it.
+//!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
 //! wherever a font directory is present and says why it did not where none is;
@@ -631,6 +641,13 @@ enum Break {
     /// The header counts one live record more than the chain holds. No
     /// length is touched, so the walk reaches the stream's end.
     HeaderCountPlusOne,
+    /// The first record states eight bytes more than it has: a length that
+    /// is wrong and still inside the stream. The walk goes on from eight
+    /// bytes into the second record.
+    FirstLengthPlusEight,
+    /// The thirty-first record states sixteen bytes fewer than it has. The
+    /// walk goes on from sixteen bytes short of the thirty-second.
+    ThirtyFirstLengthMinusSixteen,
 }
 
 /// A copy of `DWG-0201GP06-01.pid` with one [`Break`] in its `/Sheet6`.
@@ -652,6 +669,12 @@ struct Broken {
     /// The live-record count the header is made to state, when the break
     /// is that count and nothing stops the walk.
     header_states: Option<u32>,
+    /// Offset of the stream's first record.
+    first_record: usize,
+    /// When the break is a length that is wrong and still in bounds: the
+    /// walk stops where that length ends, which is no record's start, and
+    /// the fault names the record the length belongs to.
+    wrong_length_of: Option<usize>,
 }
 
 /// Write `how`'s copy of the drawing under `case`'s scratch directory.
@@ -688,7 +711,23 @@ fn broken_copy(case: &str, how: Break) -> Broken {
         data[at + 2..at + 6].copy_from_slice(&value.to_le_bytes());
     };
     let mut header_states = None;
+    let mut wrong_length_of = None;
+    // A length changed by `delta` and still inside the stream: the walk
+    // has to stop at the first byte past what the record now states.
+    let mut in_bounds = |data: &mut [u8], record: usize, delta: i64| {
+        let wrong = u32::try_from(i64::from(stated(data, record)) + delta).expect("a length");
+        state(data, record, wrong);
+        wrong_length_of = Some(record);
+        let stop = record + 6 + wrong as usize;
+        assert!(
+            stop < len,
+            "{how:?}: the wrong length stays inside the stream"
+        );
+        (Some((stop, len - stop)), record)
+    };
     let (stop, first_touched) = match how {
+        Break::FirstLengthPlusEight => in_bounds(&mut data, starts[0], 8),
+        Break::ThirtyFirstLengthMinusSixteen => in_bounds(&mut data, starts[30], -16),
         Break::None => (None, len),
         Break::HeaderCountPlusOne => {
             let live = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
@@ -749,6 +788,8 @@ fn broken_copy(case: &str, how: Break) -> Broken {
         stop,
         first_touched,
         header_states,
+        first_record: starts[0],
+        wrong_length_of,
     }
 }
 
@@ -925,9 +966,12 @@ fn export_a_broken_chain(case: &str, how: Break) {
     // with the same pens, in the same order.
     let before = drawn_from_the_sheet_before(&intact, broken.first_touched);
     let after = drawn_from_the_sheet_before(&model, broken.first_touched);
-    assert!(
-        !before.is_empty(),
-        "{how:?}: the intact drawing draws nothing from the records before +{}",
+    // Something is drawn from the records before the break, unless the
+    // break is in the first record and there are none.
+    assert_eq!(
+        before.is_empty(),
+        broken.first_touched == broken.first_record,
+        "{how:?}: what the intact drawing draws from the records before +{}",
         broken.first_touched
     );
     assert_eq!(
@@ -944,15 +988,18 @@ fn export_a_broken_chain(case: &str, how: Break) {
         );
     }
     // And at the same place exactly when the frames read say the same of
-    // the page as the intact drawing's do; see the note above.
+    // the page as the intact drawing's do; see the note above. A break in
+    // the first record leaves nothing before it to place.
     let same_frames = page_frames(&broken.path) == page_frames(&dwg_0201());
-    assert_eq!(
-        after == before,
-        same_frames,
-        "{how:?}: the records before the stop are placed as on the intact drawing exactly \
-         when the page frame is among them (frames read: {:?})",
-        page_frames(&broken.path)
-    );
+    if !before.is_empty() {
+        assert_eq!(
+            after == before,
+            same_frames,
+            "{how:?}: the records before the stop are placed as on the intact drawing exactly \
+             when the page frame is among them (frames read: {:?})",
+            page_frames(&broken.path)
+        );
+    }
 
     // The page's ledger: the stream, once, as a suspect drop of the bytes
     // the walk left unread — or not at all when nothing is broken.
@@ -1028,6 +1075,20 @@ fn export_a_broken_chain(case: &str, how: Break) {
                     line.contains(&needle),
                     "{how:?}: the warning does not say `{needle}`\n{outcome}"
                 );
+            }
+            // A length that is wrong and in bounds: the stop is the first
+            // byte past the damaged record, on a word no record opens
+            // with, and the warning names that record as the last one read.
+            if let Some(record) = broken.wrong_length_of {
+                for needle in [
+                    "is not one a record opens with".to_string(),
+                    format!("the last of them at +{record},"),
+                ] {
+                    assert!(
+                        line.contains(&needle),
+                        "{how:?}: the warning does not say `{needle}`\n{outcome}"
+                    );
+                }
             }
         }
     }
@@ -1148,6 +1209,30 @@ fn a_chain_with_stray_bytes_at_its_end_exports_the_records_and_says_so() {
 #[test]
 fn a_header_that_counts_one_record_too_many_exports_the_page_and_says_so() {
     export_a_broken_chain("chain-header-count", Break::HeaderCountPlusOne);
+}
+
+/// The first record eight bytes too long: a length that is
+/// wrong and still inside the stream. Before the walk held a type word to
+/// the native reader's class table this copy read as a sound stream — 359
+/// records to the last byte, the live count the header states — and the
+/// page was one text box short with nothing said. The walk now stops at
+/// the first byte past the record, on a word no record opens with; the
+/// page is the first record's and the template's, and the program says so.
+#[test]
+fn a_first_record_too_long_stops_the_chain_past_it_and_says_so() {
+    export_a_broken_chain("chain-first-plus-eight", Break::FirstLengthPlusEight);
+}
+
+/// The thirty-first record sixteen bytes too short. The walk used to read
+/// on from inside it through whatever lay there; it stops where the wrong
+/// length ends, the page is the thirty-one records before that, and the
+/// warning names the record whose length is in doubt.
+#[test]
+fn a_record_too_short_stops_the_chain_inside_it_and_says_so() {
+    export_a_broken_chain(
+        "chain-thirty-first-minus-sixteen",
+        Break::ThirtyFirstLengthMinusSixteen,
+    );
 }
 
 /// A copy of `D06.pid` whose `JSheet` record lists, first, an object the

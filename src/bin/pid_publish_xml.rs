@@ -38,7 +38,7 @@ use pid_parse::publish::pid_writer::{
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
     check_publish_document, diff_pid_export, diff_publish_xml, diff_rel_defuids,
-    load_drawing_graph, load_publish_from_pid, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
+    load_drawing_graph, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
     write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml, MalformedPublishDocument,
     PublishDocumentSide, PublishError, PublishStyle,
 };
@@ -543,6 +543,11 @@ fn run(options: CliOptions) -> Result<i32, String> {
 }
 
 /// Backup directory: publish every `.pid` in the `PlantData` zips.
+///
+/// A drawing with a chain stream whose record chain does not hold gets one
+/// `warning:` line a stream on stderr, as [`run_pid`] prints for a single
+/// `.pid`; the exit code, `_Index.json` and the coverage reports are what
+/// they would be without it.
 fn run_package(options: &CliOptions) -> Result<i32, String> {
     let out_dir = options
         .out_dir
@@ -555,6 +560,12 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         options.diff_against.as_deref(),
     ) {
         Ok(report) => {
+            // A drawing whose chain stops is written and counted as
+            // written, short of what that stream holds: the same line the
+            // single-`.pid` mode prints, naming the zip and the entry.
+            for fault in &report.chain_faults {
+                eprintln!("warning: {}", fault.describe());
+            }
             let exit = i32::from(
                 report.failed > 0
                     || report
@@ -615,34 +626,28 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
 
 /// `.pid` input: read the drawing from the file alone and write only what
 /// it states.
-/// One sentence for each chain stream of the `.pid` at `path` whose record
-/// chain does not hold, with what the publish reader made of the stream.
 ///
-/// The reader takes a stream's records all or nothing, so a chain that
-/// stops short costs the delivery everything the stream holds while the
-/// exit code stays 0; this is the only place that says so.
-fn chain_fault_warnings(path: &Path) -> Vec<String> {
-    pid_parse::publish::pid_load::chain_faults_from_pid(path)
-        .unwrap_or_default()
-        .iter()
-        .map(|fault| {
-            let read = if fault.stop.is_some() {
-                "the publish reader takes nothing from a stream whose chain stops short, so \
-                 the items, labels and attributes it holds are not in the XML"
-            } else {
-                "the publish reader read the records the chain reached"
-            };
-            format!("{}; {read}", fault.describe())
-        })
-        .collect()
-}
-
+/// The file is read once. A chain stream of it whose record chain does not
+/// hold is said on stderr, one line a stream, with what the publish reader
+/// made of the stream: the reader takes a stream's records all or nothing,
+/// so a chain that stops short costs the delivery what that stream holds
+/// while the exit code stays 0, and this is the only place that says so.
+/// The lines are printed before the drawing is asked for, so a run that
+/// ends in "no DrawingNo" because the row's own stream is the damaged one
+/// has said why.
 fn run_pid(options: &CliOptions) -> Result<i32, String> {
-    let mut drawing = load_publish_from_pid(&options.input_path)
+    let read = pid_parse::publish::pid_load::read_publish_from_pid(&options.input_path)
         .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
-    for fault in chain_fault_warnings(&options.input_path) {
-        eprintln!("warning: {}: {fault}", options.input_path.display());
+    for fault in &read.chain_faults {
+        eprintln!(
+            "warning: {}: {}",
+            options.input_path.display(),
+            fault.describe()
+        );
     }
+    let mut drawing = read
+        .drawing
+        .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
     if let Some(dump_path) = &options.oracle_exp {
         let dump =
             std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;

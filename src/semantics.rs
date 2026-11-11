@@ -454,7 +454,6 @@ fn scan_published_xml(xml: &str) -> ScannedXml {
 /// the evidence did.
 fn sheet_oid_pool(geometry: &SheetGeometry) -> BTreeSet<u32> {
     let mut pool = BTreeSet::new();
-    pool.extend(geometry.decoded_primitive_lines.iter().map(|r| r.oid));
     pool.extend(geometry.decoded_iglines.iter().map(|r| r.oid));
     pool.extend(geometry.decoded_iglinestrings.iter().map(|r| r.oid));
     pool.extend(geometry.decoded_igpoints.iter().map(|r| r.oid));

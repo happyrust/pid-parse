@@ -62,21 +62,19 @@ use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     bspcurve_geometry, collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
-    decode_attribute_fragment_at, decode_dependency_object_at, decode_dependency_objects,
-    decode_double_value_at, decode_double_values, decode_flavor_holders, decode_igarc_at,
-    decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
-    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at,
-    decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions, decode_igellipse_at,
-    decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at,
-    decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
-    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
-    decode_igrectangles, decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols,
-    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_line_at,
-    decode_primitive_lines, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
-    decode_standard_relations, decode_sub_record_0x0010_at, decode_symbol_information_at,
-    decode_symbol_informations, decode_variables, decode_variables_at, parse_psm_header,
-    sheet_record_starts, IgLine2dDecoder, PsmRecordDecoder, SheetChain,
-    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_dependency_object_at, decode_dependency_objects, decode_double_value_at,
+    decode_double_values, decode_flavor_holders, decode_igarc_at, decode_igarcs,
+    decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at, decode_igbspcurves,
+    decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at, decode_igcomplexstrings,
+    decode_igdimension_at, decode_igdimensions, decode_igellipse_at, decode_igellipses,
+    decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at, decode_iggroups,
+    decode_igline_at, decode_iglines, decode_iglinestring_at, decode_iglinestrings,
+    decode_igpoint_at, decode_igpoints, decode_igrectangle_at, decode_igrectangles,
+    decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
+    decode_igtextboxes, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_standard_relations, decode_symbol_information_at, decode_symbol_informations,
+    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
+    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -317,7 +315,6 @@ fn exercise_all_parsers(input: &[u8]) {
     // are not a chain these return at the walk; `planted_streams` are the
     // inputs that carry them into the payload decoders. The `decode_*_at`
     // twins are called at every offset by `exercise_every_offset`.
-    let _ = decode_primitive_lines(input);
     let _ = decode_iglines(input);
     let _ = IgLine2dDecoder.scan(input);
     let _ = decode_iglinestrings(input);
@@ -363,17 +360,11 @@ fn exercise_all_parsers(input: &[u8]) {
     // read out of this, so a malformed frame must fail the record rather
     // than the parse.
     let _ = decode_smartframes(input);
-    // The three families no sheet chain holds a record of (`0x0030`,
-    // `0x0010`) are retired and have no stream entry point; their matchers
-    // still read at an offset, and walk a chain through the decoder seam.
-    {
-        use pid_parse::parsers::sheet_records::{
-            AttributeFragmentDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder,
-        };
-        let _ = JStyleOverrideDecoder.scan(input);
-        let _ = SubRecord0x0010Decoder.scan(input);
-        let _ = AttributeFragmentDecoder.scan(input);
-    }
+    // The four families no sheet chain holds a record of (`0x0030`,
+    // `0x0010`, and `0x3FE6`, which is no type code at all) are retired and
+    // have no entry point here: their matchers left the library for the
+    // test side (`tests/support/retired_matchers.rs`), and
+    // `every_at_entry_point_is_listed` fails if one comes back.
 
     // The chain walk every family decodes at, its all-or-nothing reading,
     // and the fault a stream whose framing does not hold is reported as:
@@ -409,9 +400,6 @@ type AtEntry = (&'static str, Option<u16>, fn(&[u8], usize));
 /// one belongs here in the commit that adds it;
 /// `every_at_entry_point_is_listed` counts the list against the sources.
 const AT_ENTRIES: &[AtEntry] = &[
-    ("decode_attribute_fragment_at", Some(0x0010), |data, at| {
-        let _ = decode_attribute_fragment_at(data, at);
-    }),
     ("decode_cluster_body_record_at", None, |data, at| {
         let _ = decode_cluster_body_record_at(data, at);
     }),
@@ -473,20 +461,11 @@ const AT_ENTRIES: &[AtEntry] = &[
     ("decode_igtextbox_at", Some(0x004D), |data, at| {
         let _ = decode_igtextbox_at(data, at);
     }),
-    ("decode_jstyle_override_at", Some(0x0030), |data, at| {
-        let _ = decode_jstyle_override_at(data, at);
-    }),
-    ("decode_primitive_line_at", Some(0x3FE6), |data, at| {
-        let _ = decode_primitive_line_at(data, at);
-    }),
     ("decode_smartframe_at", Some(0x003D), |data, at| {
         let _ = decode_smartframe_at(data, at);
     }),
     ("decode_standard_relation_at", Some(0x006F), |data, at| {
         let _ = decode_standard_relation_at(data, at);
-    }),
-    ("decode_sub_record_0x0010_at", Some(0x0010), |data, at| {
-        let _ = decode_sub_record_0x0010_at(data, at);
     }),
     ("decode_symbol_information_at", Some(0x00BD), |data, at| {
         let _ = decode_symbol_information_at(data, at);
@@ -554,6 +533,11 @@ fn planted_streams() -> Vec<Vec<u8>> {
     // classes have no `_at` twin; their stream entry points are in
     // `exercise_all_parsers`.
     codes.extend([0x00ED, 0x0081, 0x0042, 0x0057, 0x0114]);
+    // No family reads `0x3FE6` — it is what a family retired on 2026-11-11
+    // took for a type code — and it is planted for what the walk makes of
+    // a type code past the class table: every such stream stops on its
+    // first word.
+    codes.push(0x3FE6);
     codes.sort_unstable();
     codes.dedup();
 

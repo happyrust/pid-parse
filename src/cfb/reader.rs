@@ -791,7 +791,6 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: vec![],
-                decoded_primitive_lines: vec![],
                 decoded_iglines: vec![],
                 decoded_iglinestrings: vec![],
                 decoded_igpoints: vec![],

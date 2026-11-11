@@ -1211,8 +1211,9 @@ crate 拒绝公开文档链到私有项（`rustdoc::private_intra_doc_links`）�
   `SheetGeometry::decoded_jstyle_overrides` / `decoded_sub_records_0x0010` / `decoded_attribute_fragments` 与
   `DecodedJStyleOverrideRecord` / `DecodedSubRecord0x0010Record` / `DecodedAttributeFragment` /
   `DecodedAttributeStringRecord`；注册表 20 → 17 行，`DECODED_TYPE_CODES` 19 → 17。完好文件的解析结果不变
-  （三个字段本来恒为空）；坏流上读到的假记录不再被解成东西。三个 `decode_*_at` 匹配函数保留，只给证据用例和
-  探针用。链上没有族读的 `0x0030` 记录现在落在「无解码器」普查里而不是「被拒」。
+  （三个字段本来恒为空）；坏流上读到的假记录不再被解成东西（第五轮注：这句话当时只在入库的流上量过；全语料上
+  另有 10 条假记录被页框解码器认成页框，见下一条）。三个 `decode_*_at` 匹配函数保留，只给证据用例和
+  探针用（第五轮起挪到测试一侧）。链上没有族读的 `0x0030` 记录现在落在「无解码器」普查里而不是「被拒」。
 - **`pid_publish_xml <file.pid>`** 对链不成立的流在 stderr 上打一行 `warning:`（原先交付少掉那条流的全部属性
   而不出声）。`pid_load::chain_faults_from_reader` / `chain_faults_from_pid`。XML、`_Coverage.json`、退出码不变；
   备份包模式没有做。
@@ -1222,6 +1223,53 @@ crate 拒绝公开文档链到私有项（`rustdoc::private_intra_doc_links`）�
   失败而不是跳过；`pid-plot` 一侧补了流头记录数的端到端用例；「2 158 条边界」限定为 86 个文档上的数。
 - 文档：`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §17；
   `docs/analysis/2026-11-11-what-the-plant-backup-census-pins-and-why-none-of-it-draws.md`（完成审计的证据页）。
+
+### 记录链（续）：`GLine2d` 退役、匹配器出库、整包发布出声、样式表与页框（2026-11-11，第五轮）
+
+对 `f58a319` 的独立审查没有阻断项，另有三条应修、五条建议。逐条：
+
+- **`GLine2d`（`0x3FE6`）退役**。它是第四个没有任何链持有其记录的族，而且 `0x3FE6` 连类型码都不是（类表到
+  `0x0118` 为止）。Phase 14 解出的 3 条是逐字节滑动扫描撞出来的：页框在载荷 `+148` 写着自己的高宽比，ISO A 图幅上
+  约等于 `1/√2`，而 0.6875–0.71875 之间任何 double 的高两字节都是 `E6 3F`。8 月的 `e5ef8fb` 起它在语料上解不出东西，
+  第四轮的绊线之后在任何流上都解不出。删除：注册表一行（17 → 16）、`SheetGeometry::decoded_primitive_lines`、
+  `DecodedPrimitiveLineRecord`、发射器、`decode_primitive_lines`；`DECODED_TYPE_CODES` 17 → 16。解析结果、6 份几何金样、
+  7 份纸面金样、两本账不变。`inspect` 摘要那一行改成 `Lines (igLine2d)`，导出包的族名串去掉 `GLine2d`。
+  语料走查在每条链式流的每个偏移上试旧匹配器：全语料 13 处命中，每一处都在一条页框记录的 `+160`、其前的 double
+  等于该页框自己的 高 / 宽。`AGENTS.md` 关于这个族的五处叙述改成事实。
+- **四个退役族的匹配器不再是库的公开项**。`decode_primitive_line_at`、`decode_jstyle_override_at`、
+  `decode_sub_record_0x0010_at`、`decode_attribute_fragment_at`，连同 `GLine2dDecoder` / `JStyleOverrideDecoder` /
+  `SubRecord0x0010Decoder` / `AttributeFragmentDecoder`、`SheetPrimitiveLineDecoded` / `SheetJStyleOverrideDecoded` /
+  `SheetSubRecord0x0010Decoded` / `SheetAttributeFragmentDecoded` / `DecodedAttributeString`，以及常数
+  `PSM_TYPE_CODE_GLINE2D`、`GLINE2D_PAYLOAD_LEN`、`PSM_RECORD_HEADER_LEN`、`JSTYLE_OVERRIDE_*`（四个）、
+  `PSM_TYPE_CODE_SUB_RECORD_0X0010`、`SUB_RECORD_0X0010_*`（两个）、`ATTRIBUTE_FRAGMENT_*`（两个），从
+  `parsers::sheet_records` 原样搬到 `tests/support/retired_matchers.rs`；它们的 34 条单测在
+  `tests/retired_matchers.rs`。证据用例与探针按路径包含，钉值不变。`AT_ENTRIES` 27 → 23，
+  `every_at_entry_point_is_listed` 会在它们回到 `src/parsers` 时失败。`PSM_TYPE_CODE_JSTYLE_OVERRIDE` 留着
+  （`style_link` 在 `StyleCluster` 里读这个类）。
+- **发布线：一次读取，告警说实际损失，整包模式也出声**。新增 `pid_load::read_publish_from_reader` /
+  `read_publish_from_pid`，返回 `PidPublishRead { drawing, chain_faults }`；`PublishChainFault` 带
+  `publishable_records_read`（链在停点之前读到的属性行、文字框、依赖对象、符号放置的条数），`describe()` 据此说
+  「这 N 条不在 XML 里」或「停点之前没有这几类记录，读到的部分 XML 一条不缺」——样式表属于后者，原先那句
+  「属性不在 XML 里」对它不成立。告警在取图纸之前打印，所以 `DrawingNo` 所在的流坏了、以报错收场的那种运行也说了
+  原因。删除 `chain_faults_from_reader` / `chain_faults_from_pid`（要读第二遍，第二遍的错误被吞）。
+  `publish_backup_package` 的报告新增 `chain_faults: Vec<PackageChainFault>`（zip、成员、故障），
+  `pid_publish_xml <备份目录>` 每条流一行 `warning: <zip> <成员>: …`。退出码、`_Index.json`、`_Coverage.json` 不变。
+- **样式表读的就是告警说的那些记录**。`DocumentStyleTable::from_stylecluster_bytes` 改用 `SheetChain::walk`
+  （原来自己走链、没有绊线，长度「错了但没越界」时读过告警报的停点）。夹具三张样式表的 3 405 个让链停下的
+  长度变体里，旧走法在 122 个上读过了停点。
+- **页框必须声明自己的高宽比**。全语料（885 个文档）3 337 379 个长度变体读进 49 058 条假记录，其中 10 条被
+  `igSmartFrame2d` 解码器认成页框（`=` 的 UTF-16 是 `3D 00`，正是页框的类型字）。页框在 `+76` / `+84` 写宽、高，
+  在 `+148` 写 高/宽；178 条真页框全部自洽（差不超过 5e-16），10 条假的都不自洽。解码器现在拒收比值与 高/宽
+  相对相差超过百万分之一的记录：10 → 0，91 条活页框一条不少。探针
+  `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`。
+- **语料走查**开 `PlantData~*.zip`、读压缩包里的 `.pid` 成员：不重复文档 856 → 885，记录 259 821 → 265 492，0 故障。
+- **类表不是按 CLSID 排序**：只有 `0x0000`–`0x0088` 升序；表在 `0x0118` 结束的依据是其后的三个 double 与指针。
+  类表只读自 `radsrvitem.dll` 9.0.0.143 一个版本。
+- **测试**：`pid-plot` 一侧补了两条「长度错而未越界」的端到端用例（关掉绊线时这两条失败）。
+- **证据页**：`ComplexString`「只画成员」有了参考图证据——验收 A2 那张的模板上三条串，参考图沿每个成员各画一遍、
+  0.4 mm 走廊里没有别的墨、填充或文字（`pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is.rs`）；
+  「被拒 0」写明范围是 53 张图的 Sheet 流。
+- 文档：`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §18。
 
 ### 53 张备份图 PSM 普查：没出图的记录除 EF 那颗点外都不带墨（2026-11-07）
 
