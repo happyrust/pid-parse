@@ -2189,11 +2189,23 @@ pub const PSM_TYPE_FLAG_UNSEEN: u16 = 0b01;
 /// `radsrvitem.dll` keeps one CLSID per type code in a table the code
 /// indexes (`dword_5667B068`, 20 bytes a slot;
 /// `docs/analysis/2026-08-04-psm-type-code-registry.md`). It has 281
-/// slots, `0x0000` to `0x0118` — the table is sorted by CLSID, and what
-/// follows slot `0x0118` in the file is not a GUID. 230 of the slots name
-/// a class of the RAD registry in `jutil.dll`, 50 hold a CLSID that
+/// slots, `0x0000` to `0x0118`. What says the table ends there is what
+/// follows slot `0x0118` in the file: four zero bytes, three doubles
+/// (`1e-6`, `1e-10`, `0.001`) and then pointers into the image — not a
+/// GUID. (The slots are not in CLSID order, which this comment said until
+/// 2026-11-11: they ascend from `0x0000` through `0x0088` and not after,
+/// 78 slots sorting below the one before them.) 230 of the slots name a
+/// class of the RAD registry in `jutil.dll`, 50 hold a CLSID that
 /// registry does not list, and one, [`PSM_TYPE_CODE_EMPTY_SLOT`], holds
 /// none.
+///
+/// The table was read from one build of the reader, `radsrvitem.dll`
+/// 9.0.0.143. A later build that has a class past `0x0118` writes records
+/// this walk stops on: a drawing of it would be read as far as the first
+/// such record and reported with a
+/// [`SheetChainStop::NoSuchClass`] fault — loudly, and short of the rest
+/// of the stream. No record of the corpora states a type code the table
+/// lacks.
 pub const PSM_TYPE_CODE_LAST: u16 = 0x0118;
 
 /// The one slot of the native reader's class table that holds no CLSID.

@@ -1117,8 +1117,13 @@ the record chain of /Sheet6 does not hold: it stops at +29590 of 29594 bytes, wh
 
 依据：
 
-- `radsrvitem.dll` 的「类型码 → CLSID」表（`dword_5667B068`）整张读出：281 个槽，`0x0000`–`0x0118`，按 CLSID 排序，
+- `radsrvitem.dll` 的「类型码 → CLSID」表（`dword_5667B068`）整张读出：281 个槽，`0x0000`–`0x0118`，
   其后不是 GUID；230 个在 `jutil.dll` 的 RAD 注册表里有名字，50 个有 CLSID 而注册表没列，`0x00F8` 一个是空的。
+  （2026-11-11 更正：这里原来还写着「按 CLSID 排序」，不对。对 `f58a319` 的独立审查直接读 DLL 指出、我重读确认：只有
+  `0x0000`–`0x0088` 是升序，其后有 78 处比前一个槽小。表在 `0x0118` 结束的依据是它后面的字节——4 个零字节、
+  三个 double（`1e-6`、`1e-10`、`0.001`），然后是指向映像内部的指针——而不是排序。另：这张表只读自一个版本，
+  `radsrvitem.dll` 9.0.0.143；更新的版本若在 `0x0118` 之后多出类，它写的图会在第一条这样的记录上被截并报
+  `NoSuchClass`。语料里没有一条记录的类型码超出这张表；复审读到的最大值是 `0x0116`，我没有另量。）
 - `PSMSerializeIn` 把读到的类型字与对象的 14 位类型码比，不等就报 `Stream offset mismatch while reading serial data`：
   它读的记录不可能带 `0x4000`。
 - `0x0000`：类表不排除（0 号槽是 `JFeatureControlFrame Object`）。拦它是因为 0 是载荷里最常见的字，而语料里没有
