@@ -26,6 +26,23 @@
 改的是 `pid-plot/src/write/escapement.rs` 的模块注释、`AGENTS.md` 排字那一行和下面 2026-11-11 那一条里的
 两句；代码没有动。
 
+**验收门禁钉住被切开的标签每一段的位置（建议 2，加严）。** 以借来的 `℃` 结尾的标签在两页上都是两段（`L=35` 与
+`℃`），配成的对归在 `Left/Ascender part` 类里。上一批把 `℃` 之前的字逐字落在步进上之后，这一类的
+`max_shift_mm` 从 0.108～0.133 mm 降到 0.0015～0.0229 mm，但门禁读的是类的平均值和每条标签 0.15 mm / 0.05 mm
+的界限，把那次改动退回去两道门禁都过。现在 `reference_plots_acceptance.rs` 多两样：
+
+- `PIECE_SHIFT_MM` = 0.05 mm：带 ` part` 的类 `max_shift_mm` 的上限，掩膜视图与整页视图都查。取值在现在最大
+  读数（A2 页 0.0229 mm）的两倍以上、退回去之后最小读数的一半以下。
+- `WholePage::pieces`：每页归进这种类的对数精确钉——`I井场` 4、`L M井场` 4、`低温分离器A` 4、`换热器CD` 4、
+  空冷器 A / B / C 各 2、A2 2、其余三页 0，合计 24。上限只管得到读成「一段」的对，少一对就失败。
+
+红绿：现在的树上通过（`pieces of labels paired on the 11 pages: 24, each within 0.05 mm of the
+reference's`）。把 `727e4d1` 对 `write.rs` 与 `write/borrowed.rs` 的改动原样反向应用（`git apply -R`，没有
+冲突）再跑，门禁在第一张有这种标签的图上失败：`I井场 … masked Left/Ascender part: a piece of a label starts
+0.1177 mm from the reference's, past 0.05 mm, over 4 pieces`。同一棵退回去的树上把上限临时放开读完 11 页，8 页
+的读数是 0.1083～0.1328 mm（I 0.1177、L M 0.1104、低温分离器A 0.1083、空冷器 A / C / B 0.1100 / 0.1099 /
+0.1105、换热器CD 0.1179、A2 0.1328），每一页都过不了上限；源码随后还原，与提交的相同。
+
 ### 第九次独立审查之后：模板名不否决纸张；链的那一行把话说完（2026-11-12）
 
 审查固定在 `735de61`，结论是可以交付、可以并入，没有阻断项。应修 1 条、建议 7 条。
