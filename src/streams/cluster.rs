@@ -61,6 +61,13 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                     "/".to_string(),
                     DocumentStyleTable::from_stylecluster_bytes(&data),
                 );
+                // The table holds what the stream's chain yields before it
+                // stops, if it stops: the styles after a stop are unread,
+                // and the records that name them fall back to defaults. It
+                // is a chain stream like a sheet, and is named like one.
+                if let Some(fault) = crate::model::StreamChainFault::of_stream(&path, &data) {
+                    doc.chain_faults.push(fault);
+                }
             }
 
             let (string_table, probe_info) = if name == "PSMcluster0" && data.len() > 32 {

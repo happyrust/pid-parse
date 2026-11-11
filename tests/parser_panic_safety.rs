@@ -62,21 +62,21 @@ use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     bspcurve_geometry, collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
-    decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
-    decode_dependency_objects, decode_double_value_at, decode_double_values, decode_flavor_holders,
-    decode_igarc_at, decode_igarcs, decode_igboundaries, decode_igboundary_at,
-    decode_igbspcurve_at, decode_igbspcurves, decode_igcircle_at, decode_igcircles,
-    decode_igcomplexstring_at, decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions,
-    decode_igellipse_at, decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs,
-    decode_iggroup_at, decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
+    decode_attribute_fragment_at, decode_dependency_object_at, decode_dependency_objects,
+    decode_double_value_at, decode_double_values, decode_flavor_holders, decode_igarc_at,
+    decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
+    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at,
+    decode_igcomplexstrings, decode_igdimension_at, decode_igdimensions, decode_igellipse_at,
+    decode_igellipses, decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at,
+    decode_iggroups, decode_igline_at, decode_iglines, decode_iglinestring_at,
     decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
     decode_igrectangles, decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols,
-    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
-    decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
-    decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
-    decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
-    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_primitive_line_at,
+    decode_primitive_lines, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_standard_relations, decode_sub_record_0x0010_at, decode_symbol_information_at,
+    decode_symbol_informations, decode_variables, decode_variables_at, parse_psm_header,
+    sheet_record_starts, IgLine2dDecoder, PsmRecordDecoder, SheetChain,
+    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -338,10 +338,16 @@ fn exercise_all_parsers(input: &[u8]) {
     // than the parse.
     let _ = decode_smartframes(input);
     // The three families no sheet chain holds a record of (`0x0030`,
-    // `0x0010`); their decoders still read at any offset.
-    let _ = decode_jstyle_overrides(input);
-    let _ = decode_sub_records_0x0010(input);
-    let _ = decode_attribute_fragments(input);
+    // `0x0010`) are retired and have no stream entry point; their matchers
+    // still read at an offset, and walk a chain through the decoder seam.
+    {
+        use pid_parse::parsers::sheet_records::{
+            AttributeFragmentDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder,
+        };
+        let _ = JStyleOverrideDecoder.scan(input);
+        let _ = SubRecord0x0010Decoder.scan(input);
+        let _ = AttributeFragmentDecoder.scan(input);
+    }
 
     // The chain walk every family decodes at, its all-or-nothing reading,
     // and the fault a stream whose framing does not hold is reported as:
@@ -511,6 +517,11 @@ enum Fill {
 /// behind the envelope is a payload of a length the family may accept and
 /// content it has to refuse or survive. A last stream of each kind is cut
 /// in the middle of a record, which leaves a chain that stops short.
+///
+/// A plant whose type word no record opens with — the `0x4000` flag, and
+/// `0x3FE6`, a type code past the native reader's class table — is not a
+/// chain: the walk stops on its first word, and the decoders are handed
+/// nothing from it.
 fn planted_streams() -> Vec<Vec<u8>> {
     let mut codes: Vec<u16> = AT_ENTRIES.iter().filter_map(|(_, code, _)| *code).collect();
     // The symbol-information family's fifth member and the two layer
@@ -524,7 +535,7 @@ fn planted_streams() -> Vec<Vec<u8>> {
     for (index, &code) in codes.iter().enumerate() {
         let seed = 0x9E37_79B9u32.wrapping_mul(index as u32 + 1) | 1;
         for fill in [Fill::Noise(seed), Fill::Zeros, Fill::Ones] {
-            for flags in [0u16, 0x8000, 0x4000] {
+            for flags in [0u16, 0x4000, 0x8000] {
                 let mut state = match fill {
                     Fill::Noise(seed) => seed,
                     Fill::Zeros | Fill::Ones => 0,
@@ -584,28 +595,46 @@ fn parsers_do_not_panic_on_adversarial_inputs() {
 /// buffer that is envelopes and payloads from end to end.
 #[test]
 fn record_decoders_do_not_panic_on_planted_chains() {
+    use pid_parse::parsers::sheet_records::{psm_type_word_opens_a_record, SheetChainStop};
+
     let streams = planted_streams();
     let mut reached = 0usize;
+    let mut chains = 0usize;
+    let mut refused = 0usize;
     for stream in &streams {
-        // The plant is a chain: this is what makes the stream entry points
-        // decode rather than return at the walk.
         let chain = SheetChain::walk(stream);
-        assert!(
-            chain.starts.len() >= PLANTED_LENGTHS.len() - 1,
-            "a planted stream walks {} record(s)",
-            chain.starts.len()
-        );
-        reached += chain.starts.len();
+        let type_word = u16::from_le_bytes([stream[8], stream[9]]);
+        if psm_type_word_opens_a_record(type_word) {
+            // The plant is a chain: this is what makes the stream entry
+            // points decode rather than return at the walk.
+            assert!(
+                chain.starts.len() >= PLANTED_LENGTHS.len() - 1,
+                "a planted stream walks {} record(s)",
+                chain.starts.len()
+            );
+            reached += chain.starts.len();
+            chains += 1;
+        } else {
+            // A word no record opens with: the walk stops on the plant's
+            // first record and nothing of it is handed on.
+            assert_eq!(
+                (chain.starts.len(), chain.stop),
+                (0, Some(SheetChainStop::NoSuchClass { type_word })),
+                "a plant of type word 0x{type_word:04X} is not a chain"
+            );
+            refused += 1;
+        }
         exercise_all_parsers(stream);
         exercise_every_offset(stream);
     }
     eprintln!(
-        "{} planted stream(s), {reached} record(s) handed to the decoders",
+        "{} planted stream(s): {chains} chain(s) hand the decoders {reached} record(s), \
+         {refused} stop on their first word",
         streams.len()
     );
     assert!(
-        streams.len() >= 240 && reached >= streams.len() * (PLANTED_LENGTHS.len() - 1),
-        "{} planted stream(s) hand the decoders {reached} record(s)",
+        chains >= 160 && reached >= chains * (PLANTED_LENGTHS.len() - 1) && refused >= 80,
+        "{} planted stream(s): {chains} chain(s), {reached} record(s), {refused} refused",
         streams.len()
     );
 }

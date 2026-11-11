@@ -56,8 +56,8 @@ use std::path::{Path, PathBuf};
 use cfb::CompoundFile;
 use pid_parse::parsers::sheet_records::{
     decode_dependency_objects, decode_igboundaries, decode_iglines, decode_iglinestrings,
-    decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
-    decode_primitive_lines, decode_smartframes, SheetDependencyObjectDecoded,
+    decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_primitive_lines,
+    decode_smartframes, JStyleOverrideDecoder, PsmRecordDecoder, SheetDependencyObjectDecoded,
 };
 
 /// Whether a record family's oids reach the canvas.
@@ -150,7 +150,8 @@ fn sheet_oids(path: &Path) -> Vec<FamilyOids> {
             decode_igpoints(&data).iter().map(|r| r.oid).collect(),
             decode_igtextboxes(&data).iter().map(|r| r.oid).collect(),
             decode_igsymbols(&data).iter().map(|r| r.oid).collect(),
-            decode_jstyle_overrides(&data)
+            JStyleOverrideDecoder
+                .scan(&data)
                 .iter()
                 .map(|r| r.oid)
                 .collect(),

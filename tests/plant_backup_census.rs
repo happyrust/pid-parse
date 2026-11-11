@@ -119,22 +119,34 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     let mut refused_boundaries = Vec::new();
     let mut ef_ring = None;
     let mut smart_frames = 0usize;
-    // Records of the three families no sheet chain carries a type code for.
+    // Records of the two type codes no sheet chain carries (`0x0010`,
+    // `0x0030`), counted on the chains themselves: the three families that
+    // used to read them are retired.
     let mut chainless = 0usize;
     let mut complex_strings: Vec<(String, u32, usize, usize)> = Vec::new();
     let mut groups = 0usize;
     for path in &pids {
-        let doc = PidParser::new()
-            .parse_file(path)
+        let package = PidParser::new()
+            .parse_package(path)
             .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
+        let doc = &package.parsed;
         for sheet in &doc.sheet_streams {
+            if let Some(raw) = package.streams.get(&sheet.path) {
+                use pid_parse::parsers::sheet_records::{parse_psm_header, SheetChain};
+                chainless += SheetChain::walk(&raw.data)
+                    .starts
+                    .iter()
+                    .filter(|&&at| {
+                        parse_psm_header(&raw.data, at).is_some_and(|header| {
+                            header.type_code == 0x0010 || header.type_code == 0x0030
+                        })
+                    })
+                    .count();
+            }
             let Some(geometry) = sheet.geometry.as_ref() else {
                 continue;
             };
             smart_frames += geometry.decoded_igsmartframes.len();
-            chainless += geometry.decoded_jstyle_overrides.len()
-                + geometry.decoded_sub_records_0x0010.len()
-                + geometry.decoded_attribute_fragments.len();
             groups += geometry.decoded_iggroups.len();
             for string in &geometry.decoded_igcomplexstrings {
                 // A string states no coordinate; each curve it lists is a
@@ -186,7 +198,7 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
             .file_stem()
             .is_some_and(|stem| stem.to_string_lossy().starts_with("EF井场"))
         {
-            let geometry = build_normalized_geometry(&doc);
+            let geometry = build_normalized_geometry(doc);
             ef_ring = geometry.entities.iter().find_map(|entity| {
                 let PidGraphicKind::Polyline { points, closed } = &entity.kind else {
                     return None;
@@ -248,7 +260,7 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     // started a record.
     assert_eq!(
         chainless, 0,
-        "records of 0x0010 / 0x0030 decoded from sheets whose chains carry neither"
+        "records of 0x0010 / 0x0030 on the chains of the backup's sheets"
     );
     // What was held, in the log: a run that skipped prints the line above
     // and not this one.

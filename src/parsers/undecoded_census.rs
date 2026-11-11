@@ -66,9 +66,9 @@ pub const NATIVE_GRAPHIC_TYPE_CODES: [u16; 20] = [
 /// rules — a different diagnostic than the one this census reports.
 /// `model::sheet_families` asserts this list stays in sync with the family
 /// registry.
-pub const DECODED_TYPE_CODES: [u16; 19] = [
-    0x3FE6, 0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0030, 0x0010, 0x0020,
-    0x005D, 0x0115, 0x0061, 0x0059, 0x0021, 0x007B, 0x007E,
+pub const DECODED_TYPE_CODES: [u16; 17] = [
+    0x3FE6, 0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0020, 0x005D, 0x0115,
+    0x0061, 0x0059, 0x0021, 0x007B, 0x007E,
 ];
 
 /// True when `SmartPlant`'s native graphic predicate accepts `type_code`,
@@ -546,12 +546,16 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_style_record_is_counted_but_not_graphic() {
-        // A refused JStyleOverride costs the drawing styling, not strokes.
-        // Same predicate as the undecoded half, so one warn rule serves both.
+    fn a_style_record_no_family_reads_is_counted_but_not_graphic() {
+        // A JStyleOverride on a chain costs the drawing styling, not
+        // strokes. The sheet family that read `0x0030` is retired, so such
+        // a record has no decoder and lands in the undecoded half rather
+        // than the refused one. Same predicate in both, so one warn rule
+        // serves either.
         let data = record(0x0030, 64);
 
-        let census = refused_record_census(&data, &[]);
+        assert!(refused_record_census(&data, &[]).is_empty());
+        let census = undecoded_type_code_census(&data, &[]);
 
         assert_eq!(census.len(), 1);
         assert!(!census[0].is_graphic);

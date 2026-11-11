@@ -923,6 +923,34 @@ crate 拒绝公开文档链到私有项（`rustdoc::private_intra_doc_links`）�
 「可疑项 0 个，未归因 0」。`plant_backup_census` 钉成：没有解码器的只剩 `D04` 的 5 条
 `0x0019 KeyPoint Constraint`（不是图形记录），被拒 0。见同一文档 §2、§10.2–§10.8。
 
+### 记录链：类型字绊线、三个无链族退役、发布线出声（2026-11-11，第四轮）
+
+- **链在类型字不是记录开头的地方停下**。长度字段「错了但没越界」时，链原先从没有记录的偏移接着读：告警报的
+  停点不是坏点、未读字节数偏小，碰巧接回真记录且活记录数相等时完全不出声。现在类型码超出原生读取器的类表
+  （`0x0000`–`0x0118`，`0x00F8` 为空）、带 `0x4000` 位或为 0 的类型字让链停下（`SheetChainStop::NoSuchClass`），
+  故障带上这个类型字和链读到的最后一条记录的偏移。语料的 Sheet 流上逐条改长度（±1 … ±64，2 106 074 个变体）：
+  读进假记录的 620 049 → 35 074，完全不出声的 41 → 0；缓存流 312 → 0。语料里 499 289 条链记录没有一条被这条
+  规则拦住。告警与文档改说「链读到的记录」。
+- **API 变化**：`StreamChainStopReason::NoSuchClass`；`StreamChainStop` 新增 `type_word`、`last_record_offset`；
+  `psm_type_word_opens_a_record`、`PSM_TYPE_CODE_LAST`、`PSM_TYPE_CODE_EMPTY_SLOT`、`PSM_TYPE_FLAG_UNSEEN`、
+  `PsmHeader::type_word`。`decode_primitive_lines` 在任何流上都不再解出记录（`0x3FE6` 超出类表）。
+- **三个无链族退役**：`JStyleOverride`（Sheet 族）、`SubRecord0x0010`、`AttributeFragment`。删除
+  `decode_jstyle_overrides` / `decode_sub_records_0x0010` / `decode_attribute_fragments`、
+  `SheetGeometry::decoded_jstyle_overrides` / `decoded_sub_records_0x0010` / `decoded_attribute_fragments` 与
+  `DecodedJStyleOverrideRecord` / `DecodedSubRecord0x0010Record` / `DecodedAttributeFragment` /
+  `DecodedAttributeStringRecord`；注册表 20 → 17 行，`DECODED_TYPE_CODES` 19 → 17。完好文件的解析结果不变
+  （三个字段本来恒为空）；坏流上读到的假记录不再被解成东西。三个 `decode_*_at` 匹配函数保留，只给证据用例和
+  探针用。链上没有族读的 `0x0030` 记录现在落在「无解码器」普查里而不是「被拒」。
+- **`pid_publish_xml <file.pid>`** 对链不成立的流在 stderr 上打一行 `warning:`（原先交付少掉那条流的全部属性
+  而不出声）。`pid_load::chain_faults_from_reader` / `chain_faults_from_pid`。XML、`_Coverage.json`、退出码不变；
+  备份包模式没有做。
+- **`StyleCluster`** 链不成立时进 `PidDocument::chain_faults`；**`SymbolGeometry::chain_faults`** 带上 `.sym`
+  文件的故障。
+- **测试**：`-W` 模板的 Sheet 级椭圆弧（方向字节 0）与 B 样条有了用例；四条读 `XA-A1.igr` 的用例在文件不在时
+  失败而不是跳过；`pid-plot` 一侧补了流头记录数的端到端用例；「2 158 条边界」限定为 86 个文档上的数。
+- 文档：`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §17；
+  `docs/analysis/2026-11-11-what-the-plant-backup-census-pins-and-why-none-of-it-draws.md`（完成审计的证据页）。
+
 ### 53 张备份图 PSM 普查：没出图的记录除 EF 那颗点外都不带墨（2026-11-07）
 
 新增普查探针 `examples/probe_which_records_reach_no_page.rs`：53 张图的 Sheet 流（57 条 / 14 万条记录）、

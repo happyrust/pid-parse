@@ -34,11 +34,10 @@
 
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
-    decode_attribute_fragments, decode_dependency_objects, decode_igarcs, decode_igboundaries,
-    decode_igbspcurves, decode_igcircles, decode_igcomplexstrings, decode_igdimensions,
-    decode_igellipticalarcs, decode_iggroups, decode_iglines, decode_iglinestrings,
-    decode_igpoints, decode_igrectangles, decode_igsymbols, decode_igtextboxes,
-    decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
+    decode_dependency_objects, decode_igarcs, decode_igboundaries, decode_igbspcurves,
+    decode_igcircles, decode_igcomplexstrings, decode_igdimensions, decode_igellipticalarcs,
+    decode_iggroups, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igrectangles,
+    decode_igsymbols, decode_igtextboxes, decode_primitive_lines, decode_smartframes,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -65,9 +64,7 @@ pub enum SheetFamilyTraceClass {
 pub struct SheetRecordFamily {
     /// Family name as used in analysis docs (`"igLine2d"`, …).
     pub name: &'static str,
-    /// 14-bit PSM type code. Note `0x0010` appears twice: the raw
-    /// audit collection and the attribute-fragment view are two rows
-    /// over the same envelope by design.
+    /// 14-bit PSM type code. No two rows share one.
     pub type_code: u16,
     /// Whether the family's `GeometryEmitter` produces
     /// `PidGraphicEntity` values (`false` = registered no-op emitter,
@@ -328,84 +325,17 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
-    // The next three rows decode nothing on any sheet stream measured: no
-    // sheet chain carries a `0x0030` or a `0x0010` record, and a family
-    // decodes only what the chain starts. What they used to report — 13 671
-    // overrides, 66 190 sub-records, 12 531 fragments — were fields of other
-    // records read as record headers by a byte-sliding walk
+    // Three rows stood here until 2026-11-11: `JStyleOverride` (`0x0030`),
+    // `SubRecord0x0010` and `AttributeFragment` (`0x0010`). No chain of any
+    // stream holds a `0x0010` record, and the `0x0030` records are in
+    // `StyleCluster`, where `style_link` reads them; what the three rows
+    // used to report were fields of other records read as record headers
+    // by a byte-sliding walk, and since the families decode on the chain
+    // they decoded nothing — except from a record a walk read off the
+    // chain after a wrong length, which only they would make something of
     // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-    // §3). The rows are still here because retiring them takes three public
-    // `SheetGeometry` fields and their DTOs with them, which is a change of
-    // its own; until then they are rows whose decoders have never been handed
-    // a record.
-    SheetRecordFamily {
-        name: "JStyleOverride",
-        type_code: 0x0030,
-        emits_geometry: true,
-        trace_class: SheetFamilyTraceClass::Decoded,
-        geometry_field: "decoded_jstyle_overrides",
-        model_dto: "DecodedJStyleOverrideRecord",
-        decode_into: |data, geometry| {
-            geometry.decoded_jstyle_overrides = decode_jstyle_overrides(data)
-                .into_iter()
-                .map(Into::into)
-                .collect();
-        },
-        record_count: |geometry| geometry.decoded_jstyle_overrides.len(),
-        decoded_ranges: |data| {
-            decode_jstyle_overrides(data)
-                .into_iter()
-                .map(|r| r.byte_range)
-                .collect()
-        },
-    },
-    SheetRecordFamily {
-        name: "SubRecord0x0010",
-        type_code: 0x0010,
-        emits_geometry: false,
-        trace_class: SheetFamilyTraceClass::Probed,
-        geometry_field: "decoded_sub_records_0x0010",
-        model_dto: "DecodedSubRecord0x0010Record",
-        decode_into: |data, geometry| {
-            geometry.decoded_sub_records_0x0010 = decode_sub_records_0x0010(data)
-                .into_iter()
-                .map(Into::into)
-                .collect();
-        },
-        record_count: |geometry| geometry.decoded_sub_records_0x0010.len(),
-        decoded_ranges: |data| {
-            decode_sub_records_0x0010(data)
-                .into_iter()
-                .map(|r| r.byte_range)
-                .collect()
-        },
-    },
-    // Attribute fragments are a second, stricter view over the same
-    // `0x0010` envelope: every fragment byte range coincides with a
-    // raw `SubRecord0x0010` range, so its `Probed` byte-audit claims
-    // merge into the raw row's claims without changing coverage
-    // totals — the row exists for wiring/schema completeness.
-    SheetRecordFamily {
-        name: "AttributeFragment",
-        type_code: 0x0010,
-        emits_geometry: false,
-        trace_class: SheetFamilyTraceClass::Probed,
-        geometry_field: "decoded_attribute_fragments",
-        model_dto: "DecodedAttributeFragment",
-        decode_into: |data, geometry| {
-            geometry.decoded_attribute_fragments = decode_attribute_fragments(data)
-                .into_iter()
-                .map(Into::into)
-                .collect();
-        },
-        record_count: |geometry| geometry.decoded_attribute_fragments.len(),
-        decoded_ranges: |data| {
-            decode_attribute_fragments(data)
-                .into_iter()
-                .map(|r| r.byte_range)
-                .collect()
-        },
-    },
+    // §3, §12, §17.2).
+
     // A rectangle is the parent of the four `igLine2d` edges it lists; the
     // edges are records of the same stream and emit on their own, so the
     // rectangle decodes (its byte range is claimed, its edges are named)
@@ -597,8 +527,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_twenty_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 20);
+    fn registry_has_seventeen_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 17);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -607,13 +537,15 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            20,
+            17,
             "every registry row must own a distinct SheetGeometry field"
         );
     }
 
+    /// No two rows read one type code, and none reads a type code no chain
+    /// holds a record of: the three families that did are retired.
     #[test]
-    fn only_the_0x0010_envelope_is_shared_between_rows() {
+    fn no_type_code_is_shared_and_the_retired_families_have_no_row() {
         let mut codes: Vec<u16> = SHEET_RECORD_FAMILIES.iter().map(|f| f.type_code).collect();
         codes.sort_unstable();
         let duplicates: Vec<u16> = codes
@@ -621,11 +553,20 @@ mod tests {
             .filter(|w| w[0] == w[1])
             .map(|w| w[0])
             .collect();
-        assert_eq!(
-            duplicates,
-            vec![0x0010],
-            "0x0010 (raw + attribute-fragment view) is the only sanctioned duplicate"
-        );
+        assert_eq!(duplicates, Vec::<u16>::new(), "one row a type code");
+        for family in SHEET_RECORD_FAMILIES {
+            assert!(
+                family.type_code != 0x0010 && family.type_code != 0x0030,
+                "{} reads 0x{:04X}, a type code no sheet chain holds",
+                family.name,
+                family.type_code
+            );
+            assert!(
+                !["JStyleOverride", "SubRecord0x0010", "AttributeFragment"].contains(&family.name),
+                "{} is retired",
+                family.name
+            );
+        }
     }
 
     #[test]

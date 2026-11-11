@@ -23,7 +23,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{decode_igtextboxes, decode_jstyle_overrides};
+use pid_parse::parsers::sheet_records::{
+    decode_igtextboxes, JStyleOverrideDecoder, PsmRecordDecoder,
+};
 use pid_parse::PidPackage;
 
 // "\u{5DE5}\u{827A}..." is the gongyi fixture (Chinese file name kept as
@@ -82,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let bytes = raw.data.as_slice();
             let texts = decode_igtextboxes(bytes);
-            let styles = decode_jstyle_overrides(bytes);
+            let styles = JStyleOverrideDecoder.scan(bytes);
             if texts.is_empty() {
                 continue;
             }

@@ -80,7 +80,7 @@ pub struct LayoutLedger {
 ///
 /// The parser reads such a stream as far as its record chain reads and no
 /// further (`pid_parse::StreamChainFault`), so the page carries what the
-/// records before the stop draw and nothing of what follows it. A page like
+/// records the chain read draw and nothing of what follows the stop. A page like
 /// that is not a finished export of the drawing, and nothing on it says so:
 /// the account does, as a suspect item, and `pid_plot` does, on stderr.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -654,15 +654,17 @@ impl LedgerRecorder {
             );
         }
         // A chain stream whose framing does not hold was read as far as its
-        // record chain reads: the records before the stop are entities like
-        // any other, and whatever the bytes after it draw is not on the
-        // page. Nothing above counts that — a census cannot count records
-        // the walk never reached — so the stream itself is the item, once,
-        // with the bytes left unread where a stream that yielded nothing
-        // states its size. A stream already filed as yielding nothing has
-        // said all of it. A header that disagrees with a chain read to the
-        // end leaves no byte unread and is filed all the same: the count it
-        // states is the only thing that says records are missing.
+        // record chain reads: the records the chain read before the stop
+        // are entities like any other, and whatever the bytes after it draw
+        // is not on the page. Nothing above counts that — a census cannot
+        // count records the walk never reached — so the stream itself is
+        // the item, once, with the bytes left unread where a stream that
+        // yielded nothing states its size. A stream already filed as
+        // yielding nothing has said all of it. A header that disagrees with
+        // a chain read to the end leaves no byte unread and is filed all
+        // the same: the count it states is the only thing that says records
+        // are missing, and the item's zero bytes say only that the walk
+        // reached the end, not that nothing was lost on the way.
         for fault in &geometry.chain_faults {
             let filed = counts.items.iter().any(|item| {
                 item.reason == DropReason::SheetStreamWithoutGeometry
@@ -1352,6 +1354,8 @@ mod tests {
                 offset: stop,
                 reason: pid_parse::StreamChainStopReason::ZeroLength,
                 record_len: Some(0),
+                type_word: None,
+                last_record_offset: None,
             }),
             unread_bytes: len - stop,
             records_read: 3,
