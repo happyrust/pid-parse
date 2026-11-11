@@ -5323,6 +5323,100 @@ mod tests {
         assert!(!refused.contains("have no decoder"));
     }
 
+    /// One sheet with the two census tables it is given and nothing else.
+    fn sheet_with_gaps(
+        undecoded: Vec<crate::model::SheetUndecodedTypeCode>,
+        refused: Vec<crate::model::SheetRefusedRecord>,
+    ) -> PidDocument {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                undecoded_type_codes: undecoded,
+                refused_records: refused,
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+        doc
+    }
+
+    /// A sheet whose only gap is a refusal reports no missing decoder, in
+    /// the prose or in the structured list — and the other way round.
+    ///
+    /// `tests/render_gap_census.rs` held the first half on the one backup
+    /// sheet that carried a refusal and nothing else. That refusal has been
+    /// decoded away, and so has every other on the corpora, so no drawing
+    /// is left to hold it on: it is held here, on rows that cannot be fixed
+    /// out from under it.
+    #[test]
+    fn a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder() {
+        let worded = |geometry: &NormalizedPidGeometry, words: &str| {
+            geometry
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains(words))
+                .count()
+        };
+
+        let only_a_refusal = build_normalized_geometry(&sheet_with_gaps(
+            Vec::new(),
+            vec![crate::model::SheetRefusedRecord {
+                type_code: 0x00FA,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Dependency Object".into()),
+            }],
+        ));
+        assert_eq!(only_a_refusal.refused_graphic_records.len(), 1);
+        assert_eq!(worded(&only_a_refusal, "refuses"), 1);
+        assert!(
+            only_a_refusal.dropped_graphic_records.is_empty()
+                && worded(&only_a_refusal, "have no decoder") == 0,
+            "a sheet whose only gap is a refusal reports a missing decoder: {:?} {:?}",
+            only_a_refusal.dropped_graphic_records,
+            only_a_refusal.warnings
+        );
+
+        let only_a_missing_decoder = build_normalized_geometry(&sheet_with_gaps(
+            vec![crate::model::SheetUndecodedTypeCode {
+                type_code: 0x0021,
+                count: 3,
+                is_graphic: true,
+                rad_class_name: Some("ComplexString Object".into()),
+            }],
+            Vec::new(),
+        ));
+        assert_eq!(only_a_missing_decoder.dropped_graphic_records.len(), 1);
+        assert_eq!(worded(&only_a_missing_decoder, "have no decoder"), 1);
+        assert!(
+            only_a_missing_decoder.refused_graphic_records.is_empty()
+                && worded(&only_a_missing_decoder, "refuses") == 0,
+            "a sheet whose only gap is a missing decoder reports a refusal: {:?} {:?}",
+            only_a_missing_decoder.refused_graphic_records,
+            only_a_missing_decoder.warnings
+        );
+
+        // And a sheet with neither says neither.
+        let whole = build_normalized_geometry(&sheet_with_gaps(Vec::new(), Vec::new()));
+        assert!(
+            whole.dropped_graphic_records.is_empty() && whole.refused_graphic_records.is_empty()
+        );
+        assert_eq!(
+            worded(&whole, "refuses") + worded(&whole, "have no decoder"),
+            0
+        );
+    }
+
     fn border_frame(
         width_m: f64,
         height_m: f64,

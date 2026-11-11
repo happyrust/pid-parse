@@ -480,9 +480,14 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
     // lines and emits nothing) and none of its records is refused, so both of
     // its lists are empty and it has no refusal wording to read. The backup
     // sheet below used to have a refusal and no longer has either; the
-    // template after it had both and has neither; the synthetic pair in
-    // `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`)
-    // keeps the two wordings apart on rows of its own.
+    // template after it had both and has neither. With no document left
+    // that carries a refusal, what this test held on one — a sheet whose
+    // only gap is a refusal reports no missing decoder, in the prose or in
+    // the list — is held on synthetic rows in `geometry.rs`
+    // (`a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`),
+    // beside the pair that keeps the two wordings apart where both occur
+    // (`a_refusal_reads_differently_from_a_missing_decoder`). What is held
+    // here is that all three documents are empty in both, prose and list.
     let path = "test-file/DWG-0202GP06-01.pid";
     if !std::path::Path::new(path).exists() {
         eprintln!("skipping: fixture {path} not found");
