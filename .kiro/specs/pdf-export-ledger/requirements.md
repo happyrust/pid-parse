@@ -255,7 +255,7 @@
 | `record_refused` | 可疑 | 有解码器的类型码，记录形状被拒：`refused_graphic_records` | 已计数并告警 |
 | `record_native_skip` | 有意 | 类型字带 `0x8000` 原生跳过位，是文件自己退役的旧副本：`skipped_graphic_records` | 已计数，不告警 |
 | `sheet_stream_without_geometry` | 可疑 | `SheetStream::geometry` 为 `None`：流打不开，或没有任何族解码出记录且探针一无所获；这时该流的三类普查在 `sheet_geometry_from_probe`（`src/streams/cluster.rs`）里一并丢掉 | 静默（新发现） |
-| `record_without_display_place` | 可疑 | `paint_order` / `unplaced_records`（`pid-plot/src/model.rs`）：页上有图元、却在图纸的显示次序里没有位置的记录——图纸没有读到自己的对象表（`JSheet` 记录缺失，或它列的不全是这条流的记录），表够不到这条记录的拥有者，或记录在一张嵌入的图纸里而图纸列出的图框没有一个嵌着它。这样的记录照样画，画在有位置的全部之后；整页没有一张图纸给出次序时退到「先笔画后文字」。页上不少东西，少的是「谁盖住谁」的依据。按流记一项，计数是记录数；`LayoutLedger::unplaced` 留着原因与图元数，`pid_plot` 在 stderr 上各说一行（2026-11-11 加，附录由 44 行变 45 行，可疑 23 / 有意 22）。手头 71 页一项都没有 | 静默（审查发现） |
+| `record_without_display_place` | 可疑 | `paint_order` / `unplaced_records`（`pid-plot/src/model.rs`）：页上有图元、却在图纸的显示次序里没有位置的记录——图纸没有读到自己的对象表（`JSheet` 记录缺失，或它列的不全是这条流的记录），表够不到这条记录的拥有者，或记录在一张嵌入的图纸里而图纸列出的图框没有一个嵌着它。这样的记录照样画，画在有位置的全部之后；整页没有一张图纸给出次序时退到「先笔画后文字」。页上不少东西，少的是「谁盖住谁」的依据。按流记一项，计数是记录数；`LayoutLedger::unplaced` 留着原因与图元数，`pid_plot` 在 stderr 上各说一行（2026-11-11 加，附录由 44 行变 45 行，可疑 23 / 有意 22）。手头 71 页一项都没有。原因按流取自解析侧（`PidDocument::sheet_without_display_order`）：流里没有图纸自己的记录（`UnplacedWhy::NoRecordOfTheSheet`）与「没有表」分开记；链停在图纸自己的记录之前留下的正是前一种，这时账本照记本项，stderr 由链故障那一行说，不另起一行（2026-11-12） | 静默（审查发现） |
 | `record_symbol_body_cache` | 有意 | 嵌套 `JSite*/PSMcluster0` 的符号体记录，经引用它的放置画出，本身不是页面内容 | 只有告警文字 |
 | `cache_definition_unplaced` | 有意 | 缓存定义没有任何放置引用（例如参数化符号缓存的模板体），其记录不上页 | 未计数（新发现） |
 | `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |
@@ -355,7 +355,7 @@
 |---|---|---|---|
 | `template_candidate_unreadable` | 可疑 | `load_border_template` 中模板候选读不出（`read_archive_file`）或解析失败（`parse_file` / `parse_reader`）后 `continue` | 静默（新发现） |
 | `template_missing` | 可疑 | 页面点名的模板没有文件可答，页面不穿家具 | 已计数（`missing_templates`） |
-| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加） | 新增 |
+| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加）。没有读到图框的图纸，对照纸张的是模板名给出的页幅（`pid_parse::framed_page_dimensions_mm` 为 `None` 时），用同一个限值——它是在页框上量的，手头没有一张图只凭模板名带着纸张，所以这里是外推；来源写 `template name's size`，警告说「不是模板名给出的页幅，也没有读到图框」 | 新增 |
 | `page_size_source` | — | 页幅来自声明（`page_mm`）还是测得（`resolved_page_mm`） | 门禁读数 |
 
 ### A.9 不入账的内容

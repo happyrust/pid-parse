@@ -484,7 +484,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `record_refused` | `refused_graphic_records` | 同上 |
 | `record_native_skip` | `skipped_graphic_records` | 同上 |
 | `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None` 者 | 计数项（流），另记 `size` 字节数 |
-| `record_without_display_place` | 排版结束时 `unplaced_records`：页上图元所出自的记录里，`PageOrders::place` 给不出位置的 | 计数项（记录），按域与流各一项；原因与图元数在 `LayoutLedger::unplaced`（2026-11-11 加） |
+| `record_without_display_place` | 排版结束时 `unplaced_records`：页上图元所出自的记录里，`PageOrders::place` 给不出位置的 | 计数项（记录），按域与流各一项；原因与图元数在 `LayoutLedger::unplaced`（2026-11-11 加）；原因里「流里没有图纸自己的记录」由 `why_no_order` 从解析侧的 `NoDisplayOrder` 取，`display_order_warnings` 对已有带停点链故障的流上的这一种不另起一句（2026-11-12） |
 | `record_symbol_body_cache` | `doc.jsites[..].nested_geometry` 的 `len()` | 计数项（存储路径） |
 | `cache_definition_unplaced` | `geometry.symbol_definitions` 中没有任何 `SymbolInstance.definition` 指向的定义 | 计数项（`JSite<site>`），值为定义数，另记其体图元数 |
 | `record_audit_only_family` | `emitter_accounts` 中 `audit_only` 行的 `decoded` | 计数项（流，族） |
@@ -562,7 +562,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `furniture_endpoint_pair_drawn` | 家具循环里 `record_kind` 为 `EndpointPair` 的实体，经 `furniture_observations` |
 | `template_candidate_unreadable` | `load_border_template`（约 1862 行）的三处 `continue`（约 1873、1879、1882 行），经 `load_border_template_traced` 记候选名 |
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
-| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`（2026-11-12 加） |
+| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；`PaperRefused::held_to`（`SheetRectangle`）记下对照的是页框还是模板名给出的页幅，句子与来源照此分两种说法（2026-11-12 加） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models
