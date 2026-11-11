@@ -5717,6 +5717,20 @@ const IGSMARTFRAME_HEIGHT_AT: usize = 84;
 const IGSMARTFRAME_ASPECT_AT: usize = 148;
 /// Shortest payload that reaches every field above.
 const IGSMARTFRAME_MIN_PAYLOAD: usize = IGSMARTFRAME_ASPECT_AT + 8;
+/// How far the ratio at [`IGSMARTFRAME_ASPECT_AT`] may lie from the height
+/// at [`IGSMARTFRAME_HEIGHT_AT`] over the width at [`IGSMARTFRAME_WIDTH_AT`],
+/// as a fraction of that quotient.
+///
+/// The record states its extent twice, and on all 178 frames of the
+/// corpora's chains — 885 documents, the superseded copies included — the
+/// two statements agree to 5e-16
+/// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`). One part
+/// in a million leaves room for a writer that rounds and none for three
+/// doubles that merely happen to lie at these offsets. The bound is
+/// relative because such doubles are as often 1e-212 as 1e284: an absolute
+/// one in a million would pass a height of 4e-212 over a width of 0.6
+/// against a "ratio" of 7e-138, which one of the ten is.
+const IGSMARTFRAME_ASPECT_TOLERANCE: f64 = 1e-6;
 /// Payload offset of the framed content's placement: seven `f64` — a 2×2
 /// linear part, a translation in metres, and a uniform scale — laid out as
 /// RAD's 2D transform (`imagdex.dex` / `radsrvitem.dll` `sub_5644FD00`,
@@ -5781,7 +5795,9 @@ pub struct SheetIgSmartFrame2dDecoded {
     pub extent_width_m: f64,
     /// Framed extent height in metres (payload `+84`).
     pub extent_height_m: f64,
-    /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
+    /// Extent aspect ratio (payload `+148`): the height over the width,
+    /// which the decoder holds it to; `1/sqrt(2)` on an ISO A sheet, give
+    /// or take the frame's margins.
     pub aspect_ratio: f64,
     /// Where the framed content is placed in the frame (payload `+164`),
     /// when the record is long enough to carry it.
@@ -5906,6 +5922,19 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             || extent_height_m < 0.0
         {
             return None;
+        }
+        // The record states its extent twice over, and a frame's two
+        // statements agree. The three doubles of a run of bytes that is not
+        // a frame do not: this is what tells the ten "frames" a walk read
+        // off the corpora's chains after a wrong length from the 178 the
+        // chains hold. A frame of no width states nothing to hold it to.
+        if extent_width_m > 0.0 {
+            let stated_by_extent = extent_height_m / extent_width_m;
+            if (aspect_ratio - stated_by_extent).abs()
+                > IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent.abs()
+            {
+                return None;
+            }
         }
 
         let content_transform = (|| {
@@ -10073,6 +10102,79 @@ mod tests {
         record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         record.extend_from_slice(&payload);
         record
+    }
+
+    /// A frame states its extent twice over: width and height at `+76` and
+    /// `+84`, and height over width at `+148`. The three agree on every one
+    /// of the 178 frames the corpora's chains hold, to 5e-16; a record whose
+    /// third double is not the quotient of the other two is not a frame.
+    #[test]
+    fn a_frame_states_the_ratio_of_its_own_extent() {
+        let ratio_at = PSM_ENVELOPE_LEN + IGSMARTFRAME_ASPECT_AT;
+        let with_ratio = |ratio: f64| {
+            let mut record = smart_frame_record(22);
+            record[ratio_at..ratio_at + 8].copy_from_slice(&ratio.to_le_bytes());
+            record
+        };
+        // The record as built: 0.841 m by 0.594 m, the ratio typed to six
+        // places.
+        assert!(decode_smartframe_at(&smart_frame_record(22), 0).is_some());
+        assert!(decode_smartframe_at(&with_ratio(0.594 / 0.841), 0).is_some());
+        for wrong in [0.5, 0.706, 0.7064, 1.0 / 0.706_302, 0.0, -0.706_302, 1e300] {
+            assert!(
+                decode_smartframe_at(&with_ratio(wrong), 0).is_none(),
+                "a frame of 0.841 m by 0.594 m that states {wrong}"
+            );
+        }
+    }
+
+    /// What a walk that has left the record boundaries took for a frame.
+    /// A length 32 bytes too long sends the walk into the text of a label
+    /// (`A井场`'s `/Sheet6`, the record at `+12725` stating 88 bytes for
+    /// 56): the character `=` is `3D 00`, the type word of a frame, and
+    /// the four bytes after it state a payload of 262 144. The doubles at
+    /// the frame's offsets are whatever the next records hold there — here
+    /// three denormals — and until the ratio was held to the extent the
+    /// decoder took them for an empty frame. Ten of the 49 058 records such
+    /// walks read off the corpora's chains decoded so; none does now
+    /// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+    #[test]
+    fn what_a_walk_off_the_chain_took_for_a_frame_is_not_one() {
+        // Width, height and "ratio" of two of the ten: the one named above,
+        // and the one an absolute tolerance would let through — a height
+        // and a ratio both next to nothing, over a width of 0.6.
+        for (flags, width, height, ratio) in [
+            (
+                0x4C9D_3FD7_u32,
+                2.781_257_441_683_414e-309_f64,
+                5.562_684_646_279_97e-309_f64,
+                4.778_310_705_768_978e-299_f64,
+            ),
+            (
+                0xEBDE_3FD6,
+                6.121_645_546_997_917e-1,
+                3.861_592_247_633_563_3e-212,
+                6.717_881_233_056_225e-138,
+            ),
+        ] {
+            let mut payload = vec![0u8; 262_144];
+            payload[14..18].copy_from_slice(&flags.to_le_bytes());
+            for (at, value) in [
+                (IGSMARTFRAME_WIDTH_AT, width),
+                (IGSMARTFRAME_HEIGHT_AT, height),
+                (IGSMARTFRAME_ASPECT_AT, ratio),
+            ] {
+                payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            let mut record = Vec::new();
+            record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+            record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            record.extend_from_slice(&payload);
+            assert!(
+                decode_smartframe_at(&record, 0).is_none(),
+                "{width:e} by {height:e} stating {ratio:e}"
+            );
+        }
     }
 
     /// A family decodes the records its stream's chain starts, and nothing
