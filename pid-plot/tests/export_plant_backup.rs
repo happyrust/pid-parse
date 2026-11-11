@@ -56,9 +56,12 @@
 //!   a package and all 50 from disk in a share, held sheet by sheet;
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
-//!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
-//!   fix each page is 492–856 KiB (the lightest is `D03`, which has no object
-//!   of its own and carries its template alone), before it 6.6–7.1 MiB;
+//!   none — and weighs what a subset-embedded page weighs: each page is
+//!   313–676 KiB (the lightest is `D03`, which has no object of its own and
+//!   carries its template alone). A subset used to carry the whole face's
+//!   vertical metrics, its signature and its hinting tool's private table,
+//!   and each page was 642–1006 KiB; with the bitmap strike as well, before
+//!   the `EBDT` fix, 6.6–7.1 MiB;
 //! - `D04`'s own `igSymbol2d` placements reach the page: `test/U01/D04.pid`
 //!   writes its placement matrix tag's third byte `0x27` rather than the
 //!   corpus-wide `0xA7`, and a drawing with 0 decoded `igSymbol2d` and 5

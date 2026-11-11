@@ -531,13 +531,25 @@ fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, Strin
         unicodes.insert(u32::from(*ch));
     }
     let empty_gids: IntSet<GlyphId> = IntSet::empty();
-    // `klippa` passes the monochrome bitmap tables through whole: SimSun's
-    // `EBDT` + `EBLC` are 6.2 MiB of the face, so a three-character subset
-    // still weighed 6.4 MiB and every plotted page was ~6.8 MiB. A PDF draws
-    // the outline, never the bitmap strike, so the tables go.
-    let bitmap_tables: IntSet<Tag> = [Tag::new(b"EBDT"), Tag::new(b"EBLC"), Tag::new(b"EBSC")]
-        .into_iter()
-        .collect();
+    // `klippa` passes tables it does not subset through whole, and a page
+    // reads none of these:
+    //
+    // - the monochrome bitmap strike. SimSun's `EBDT` + `EBLC` are 6.2 MiB of
+    //   the face, so a three-character subset still weighed 6.4 MiB and every
+    //   plotted page was ~6.8 MiB. A PDF draws the outline, never the strike;
+    // - the vertical metrics. `vmtx` holds four bytes for every glyph of the
+    //   whole face — 115 488 of the 150 428 bytes of an NSimSun subset that
+    //   draws one `℃` — and the page sets every font horizontally: the
+    //   embedder names `Identity-H` and writes no `WMode`, `DW2` or `W2`;
+    // - the signature, which a subset no longer matches, and `TSIV`, the
+    //   private source of the hinting tool: 9 264 and 39 780 of the 90 972
+    //   bytes of an Arial Narrow subset.
+    let unread_tables: IntSet<Tag> = [
+        b"EBDT", b"EBLC", b"EBSC", b"vmtx", b"vhea", b"DSIG", b"TSIV",
+    ]
+    .into_iter()
+    .map(Tag::new)
+    .collect();
     let name_ids: IntSet<NameId> = IntSet::all();
     let langs: IntSet<u16> = IntSet::all();
     let layout_scripts: IntSet<Tag> = IntSet::all();
@@ -548,7 +560,7 @@ fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, Strin
         &unicodes,
         &font,
         SubsetFlags::default(),
-        &bitmap_tables,
+        &unread_tables,
         &layout_scripts,
         &layout_features,
         &name_ids,
@@ -772,6 +784,54 @@ mod tests {
             "subset is {} bytes of {} — the bitmap tables came back",
             subset.len(),
             bytes.len()
+        );
+    }
+
+    /// A subset carries none of the tables a page never reads. NSimSun's
+    /// vertical metrics came through whole — 115 488 bytes of `vmtx` in a
+    /// subset of 97 glyphs — and so did Arial Narrow's signature and the
+    /// private table of its hinting tool; the page sets every font
+    /// horizontally (`Identity-H`), a subset no longer matches its
+    /// signature, and no reader opens `TSIV`.
+    ///
+    /// Inter carries none of the four, so they are put in by hand: what
+    /// matters is that a table of that tag does not come out, whatever it
+    /// holds.
+    #[test]
+    fn a_subset_carries_no_table_a_page_never_reads() {
+        use fontcull_skrifa::{FontRef, Tag};
+        use fontcull_write_fonts::FontBuilder;
+
+        let unread = [b"vmtx", b"vhea", b"DSIG", b"TSIV"];
+        let inter = FontRef::new(pdfcraft_fonts::INTER_REGULAR).expect("Inter parses");
+        let mut builder = FontBuilder::new();
+        for tag in unread {
+            builder.add_raw(Tag::new(tag), vec![0u8; 64]);
+        }
+        let face = builder.copy_missing_tables(inter).build();
+        let carried = FontRef::new(&face).expect("the face parses");
+        for tag in unread {
+            assert!(
+                carried.table_data(Tag::new(tag)).is_some(),
+                "the face going in carries {}",
+                String::from_utf8_lossy(tag)
+            );
+        }
+        let chars = "AB".chars().collect();
+        let subset = super::subset_face(&face, &chars).expect("the face subsets");
+        assert!(
+            pdfcraft_fonts::embedding::validate(&subset).is_ok(),
+            "the subset has to stay embeddable"
+        );
+        let subset = FontRef::new(&subset).expect("the subset parses");
+        let came_through: Vec<String> = unread
+            .iter()
+            .filter(|tag| subset.table_data(Tag::new(tag)).is_some())
+            .map(|tag| String::from_utf8_lossy(*tag).into_owned())
+            .collect();
+        assert!(
+            came_through.is_empty(),
+            "the subset still carries {came_through:?}"
         );
     }
 
