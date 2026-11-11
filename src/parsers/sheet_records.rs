@@ -2726,7 +2726,7 @@ pub const PSM_TYPE_CODE_IGSYMBOL2D: u16 = 0x00CE;
 /// run 109 (the two title-block templates' placements) through 123 bytes, and
 /// the tail's optional members make the length vary without touching a byte
 /// the decoder reads. What a record must actually hold is checked per record
-/// against the matrix the tag anchors — see [`IGSYMBOL2D_MATRIX_AND_TAIL_LEN`].
+/// against the matrix the tag anchors — see `IGSYMBOL2D_MATRIX_AND_TAIL_LEN`.
 pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 8 + IGSYMBOL2D_MATRIX_AND_TAIL_LEN;
 
 /// What an `igSymbol2d` payload must hold from its matrix tag on: the 2×2
@@ -4330,8 +4330,8 @@ pub struct SheetIgSymbol2dDecoded {
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Third byte of the matrix tag this record actually carries: `0xA7`
-    /// (canonical, [`IGSYMBOL2D_MATRIX_TAG`]) on every corpus fixture but
-    /// one, `0x27` ([`IGSYMBOL2D_MATRIX_TAG_ALT`]) on every `igSymbol2d`
+    /// (canonical, `IGSYMBOL2D_MATRIX_TAG`) on every corpus fixture but
+    /// one, `0x27` (`IGSYMBOL2D_MATRIX_TAG_ALT`) on every `igSymbol2d`
     /// record in the plant backup's `D04`. The two differ only in this
     /// byte's `0x80` bit; every other field at and after the tag reads the
     /// same shape under both, which is why this is carried as data rather
@@ -4407,7 +4407,7 @@ pub struct SheetIgSymbol2dDecoded {
 /// Validation:
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [IGSYMBOL2D_MIN_PAYLOAD_LEN, 200]`;
-/// 3. one of [`IGSYMBOL2D_MATRIX_TAG_VARIANTS`] occurs within the first
+/// 3. one of `IGSYMBOL2D_MATRIX_TAG_VARIANTS` occurs within the first
 ///    `IGSYMBOL2D_TAG_SEARCH_END` payload bytes;
 /// 4. the payload holds everything from that tag on
 ///    (`matrix_at + IGSYMBOL2D_MATRIX_AND_TAIL_LEN`);

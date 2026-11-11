@@ -1338,7 +1338,7 @@ pub struct PidExportDiff {
     /// One rendered line per excused class, `excused <kind> <subject> <count> — <reason>`.
     pub exclusions: Vec<String>,
     /// Reference-only classes this run excused with "this run published no
-    /// <class>" where the catalog says the exp dump supplies the class
+    /// `<class>`" where the catalog says the exp dump supplies the class
     /// (`PidTagRole::Port` / `PidTagRole::Enrichment`), with the count.
     ///
     /// A `.pid`-only run may lose those classes by design; an `--oracle-exp`

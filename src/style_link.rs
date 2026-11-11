@@ -331,7 +331,7 @@ pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
 /// (W drawing, style id 26), a 234-byte payload naming a `JStyleTextPara`
 /// at `+32` and a `JStylePointSymbol` at [`COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET`],
 /// reached from the dash's trailing word — see
-/// [`read_complex_dash_pattern`].
+/// `read_complex_dash_pattern`.
 pub const PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT: u16 = 0x0034;
 
 /// Offset at which a complex-dash component names the `JStylePointSymbol`
@@ -913,7 +913,7 @@ impl DashPattern {
 /// with a shape embedded. The one corpus instance is the W drawing's
 /// `Hydraulic Line` dash (`[-7.62 mm, sentinel]` then component 26), whose
 /// line draws solid with the symbol stamped once per cell; see
-/// [`DocumentStyleTable::complex_dash_named`] for the resolved glyph.
+/// `DocumentStyleTable::complex_dash_named` for the resolved glyph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComplexDashPattern {
     /// The declared segments in order, metres. The symbol slot reads

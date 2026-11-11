@@ -441,7 +441,7 @@ pub struct SymbolLettering {
     /// The character style the record's **widest formatting run** names, when
     /// one won — `None` where the record stores no run (shape 1) or its runs
     /// do not resolve, and the paragraph default at
-    /// [`STYLE_INDEX_OFFSET`] alone answers.
+    /// `STYLE_INDEX_OFFSET` alone answers.
     ///
     /// Height, colour and typeface come off this style; `alignment` and
     /// `line_spacing` stay on the paragraph, which is the only place they are

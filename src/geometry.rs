@@ -491,7 +491,7 @@ pub struct PidEmitterAccount {
     /// Full CFB path of the Sheet stream the records sit in.
     pub stream_path: String,
     /// The record family's registry name, as
-    /// [`SheetRecordFamily`](crate::model::SheetRecordFamily)'s `name` states
+    /// [`SheetRecordFamily`]'s `name` states
     /// it.
     pub family: String,
     /// Whether the family registers a deliberate no-op emitter (audit-only).

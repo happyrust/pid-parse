@@ -121,7 +121,7 @@ pub fn decode_sheet_layer_managers(data: &[u8]) -> Vec<SheetLayerManagerDecoded>
 /// `PSMcluster0` is not a contiguous chain — the document storage's, on the
 /// real-drawing corpus, interleaves its records with padding the strict
 /// walker cannot cross. Each candidate still has to pass
-/// [`decode_layer_payload`]'s exact-tail layout check.
+/// `decode_layer_payload`'s exact-tail layout check.
 pub fn decode_sheet_layers_scattered(data: &[u8]) -> Vec<SheetLayerDecoded> {
     crate::parsers::cluster_header::resync_cluster_body_records(data)
         .into_iter()

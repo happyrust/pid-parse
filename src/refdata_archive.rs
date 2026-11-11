@@ -28,7 +28,7 @@
 //! * The name carries a **UTF-8 BOM** — `\u{feff}CPECCHBA2.igr`, every entry
 //!   in the archive, directory entries included. A `Path::file_name` keeps it,
 //!   so an exact-name lookup and a `ends_with(\"CPECCHBA2.igr\")` both fail
-//!   against the untouched name. [`member_name`] strips it.
+//!   against the untouched name. `member_name` strips it.
 //! * Names are stored with **either separator**; members are joined in
 //!   [`ArchiveFile::label`] with the platform separator after normalization to
 //!   `/`, so the label behaves like a path everywhere the plot side reports
@@ -37,7 +37,7 @@
 //! Reading a member never goes through `ZipArchive::by_name`: that matches the
 //! `zip` crate's own decoding of the stored name, which refuses the GBK names
 //! `SmartPlant` writes. Entries are walked by index and matched against
-//! [`member_name`], the same way [`crate::backup::zip_index`] lists them.
+//! `member_name`, the same way [`crate::backup::zip_index`] lists them.
 
 use std::fs;
 use std::io::{self, Read};
