@@ -760,6 +760,187 @@ fn a_length_that_is_wrong_and_in_bounds_stops_the_walk_past_its_record() {
     }
 }
 
+/// A style table is a chain stream too: `StyleCluster`, the document's own
+/// and each symbol cache's. `style_link` reads it record by record and
+/// stops at the first one that does not frame, so a broken chain leaves the
+/// styles after the stop unread — pens, fills and fonts the sheet's records
+/// name and then do not find — and it used to say nothing. The fault is
+/// raised for it as for a sheet: on the document, in the geometry's
+/// warnings, and through those in the export ledger and on `pid_plot`'s
+/// stderr.
+#[test]
+fn a_style_cluster_whose_chain_stops_is_reported_like_a_sheets() {
+    let package = PidParser::new()
+        .parse_package(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let intact_doc = &package.parsed;
+    assert!(intact_doc.chain_faults.is_empty());
+    let cached = package
+        .streams
+        .keys()
+        .filter(|path| path.starts_with("/JSite") && path.ends_with("/StyleCluster"))
+        .min()
+        .unwrap_or_else(|| panic!("{FIXTURE} has a symbol cache with a style table"))
+        .clone();
+    for stream in ["/StyleCluster", cached.as_str()] {
+        let intact = package
+            .get_stream(stream)
+            .unwrap_or_else(|| panic!("{FIXTURE} has a {stream}"))
+            .data
+            .clone();
+        let starts = sheet_record_starts(&intact);
+        assert!(starts.len() > 4, "{stream} walks {} records", starts.len());
+        let middle = starts[starts.len() / 2];
+        let mut broken = intact.clone();
+        put_u32(&mut broken, middle + 2, 0);
+        let plan = WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: stream.to_string(),
+                new_data: broken.clone(),
+            }],
+            ..WritePlan::default()
+        };
+        let bytes = PidWriter::write_to_bytes(&package, &plan)
+            .unwrap_or_else(|error| panic!("{stream}: the damaged copy is written: {error}"));
+        let doc = PidParser::new()
+            .parse_reader(Cursor::new(bytes))
+            .unwrap_or_else(|error| panic!("{stream}: the damaged copy parses: {error}"));
+
+        let fault = StreamChainFault::of_stream(stream, &broken)
+            .unwrap_or_else(|| panic!("{stream}: the chain does not hold"));
+        assert_eq!(
+            fault.stop.as_ref().map(|stop| (stop.offset, stop.reason)),
+            Some((middle, StreamChainStopReason::ZeroLength)),
+            "{stream}"
+        );
+        assert_eq!(doc.chain_faults, vec![fault.clone()], "{stream}");
+        let geometry = build_normalized_geometry(&doc);
+        assert_eq!(
+            geometry
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("record chain"))
+                .collect::<Vec<_>>(),
+            vec![&fault.describe()],
+            "{stream}: one warning, the fault's own sentence"
+        );
+        // The table is what the chain read before the stop: it lost styles,
+        // and no other storage's table moved.
+        let storage = stream
+            .strip_suffix("/StyleCluster")
+            .filter(|storage| !storage.is_empty())
+            .unwrap_or("/");
+        for (key, table) in &intact_doc.style_tables {
+            let read = &doc.style_tables[key];
+            if key == storage {
+                assert_ne!(
+                    read, table,
+                    "{stream}: the table of {key} is short of styles"
+                );
+            } else {
+                assert_eq!(read, table, "{stream}: the table of {key}");
+            }
+        }
+        // The sheets themselves are read whole.
+        for sheet in &intact_doc.sheet_streams {
+            let read = doc
+                .sheet_streams
+                .iter()
+                .find(|read| read.path == sheet.path)
+                .unwrap_or_else(|| panic!("{stream}: {} is still a sheet", sheet.path));
+            for family in SHEET_RECORD_FAMILIES {
+                let count = |sheet: &pid_parse::SheetStream| {
+                    sheet
+                        .geometry
+                        .as_ref()
+                        .map_or(0, |geometry| (family.record_count)(geometry))
+                };
+                assert_eq!(
+                    count(read),
+                    count(sheet),
+                    "{stream}: {} records of {}",
+                    family.name,
+                    sheet.path
+                );
+            }
+        }
+    }
+}
+
+/// A symbol file read as a library body. The body's reader takes a sheet
+/// whole or not at all, so a sheet whose chain stops gives it nothing — a
+/// body short of that sheet's strokes, and until now nothing that said so.
+/// The body carries the faults the parse of the file found.
+#[test]
+fn a_symbol_files_broken_sheet_is_named_on_the_body_it_leaves_short() {
+    use pid_parse::symbol_library::read_symbol_geometry_from_bytes;
+
+    let mut files = Vec::new();
+    documents(Path::new("test-file"), &mut files, &mut Vec::new());
+    let mut held = 0usize;
+    for file in files.iter().filter(|file| {
+        file.extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("sym"))
+    }) {
+        let label = file.display().to_string();
+        let bytes = std::fs::read(file).unwrap_or_else(|error| panic!("{label}: {error}"));
+        let intact = read_symbol_geometry_from_bytes(&bytes)
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert!(
+            intact.chain_faults.is_empty(),
+            "{label}: {:#?}",
+            intact.chain_faults
+        );
+        let package = PidParser::new()
+            .parse_package_from_reader(Cursor::new(bytes))
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        // The sheet that holds the most records.
+        let Some((stream, data)) = package
+            .streams
+            .iter()
+            .filter(|(path, _)| chain_stream_kind(path) == Some(true))
+            .map(|(path, raw)| (path.clone(), raw.data.clone()))
+            .max_by_key(|(_, data)| sheet_record_starts(data).len())
+        else {
+            continue;
+        };
+        let starts = sheet_record_starts(&data);
+        if starts.len() < 3 {
+            continue;
+        }
+        let middle = starts[starts.len() / 2];
+        let mut broken = data.clone();
+        put_u32(&mut broken, middle + 2, 0);
+        let plan = WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: stream.clone(),
+                new_data: broken.clone(),
+            }],
+            ..WritePlan::default()
+        };
+        let copy = PidWriter::write_to_bytes(&package, &plan)
+            .unwrap_or_else(|error| panic!("{label}: the damaged copy is written: {error}"));
+        let body = read_symbol_geometry_from_bytes(&copy)
+            .unwrap_or_else(|error| panic!("{label}: the damaged copy reads: {error}"));
+        assert_eq!(
+            body.chain_faults,
+            vec![StreamChainFault::of_stream(&stream, &broken).expect("the chain does not hold")],
+            "{label} {stream}"
+        );
+        assert!(
+            body.primitives.len() <= intact.primitives.len(),
+            "{label} {stream}: {} primitives against {}",
+            body.primitives.len(),
+            intact.primitives.len()
+        );
+        held += 1;
+    }
+    assert!(
+        held >= 3,
+        "{held} committed symbol file(s) hold a sheet of three records"
+    );
+}
+
 /// The fourteen changes made to each record's length field.
 const LENGTH_DELTAS: [i64; 14] = [1, -1, 2, -2, 4, -4, 8, -8, 16, -16, 32, -32, 64, -64];
 

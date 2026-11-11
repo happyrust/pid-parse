@@ -1778,8 +1778,8 @@ pub struct StreamChainStop {
     pub last_record_offset: Option<usize>,
 }
 
-/// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
-/// whose own framing does not hold, as
+/// A chain stream — a `Sheet*` stream, a symbol cache's `PSMcluster0`, or a
+/// style table (`StyleCluster`) — whose own framing does not hold, as
 /// [`crate::parsers::sheet_records::SheetChain`] read it.
 ///
 /// Three things can be wrong, alone or together: the stream does not open

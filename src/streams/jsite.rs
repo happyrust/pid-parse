@@ -233,6 +233,11 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
                 site.stroke_styles = resolve_stroke_styles(nested, &table);
             }
             doc.style_tables.insert(base.clone(), table);
+            // A cache's style table read short of its end, like the
+            // document's own (`streams/cluster.rs`).
+            if let Some(fault) = crate::model::StreamChainFault::of_stream(&cluster_path, &data) {
+                doc.chain_faults.push(fault);
+            }
         }
 
         if options.keep_unknown_streams {

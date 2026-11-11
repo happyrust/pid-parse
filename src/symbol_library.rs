@@ -597,6 +597,14 @@ pub struct SymbolGeometry {
     /// file's sheets by.
     #[serde(default)]
     pub sheet_views: Vec<SymbolSheetView>,
+    /// The chain streams of the file whose own framing does not hold — a
+    /// `Sheet*` stream, a `StyleCluster`, a cache — as the parse of the
+    /// file found them ([`crate::model::StreamChainFault`]). A sheet is
+    /// read whole or not at all, so one listed here with a stop gave the
+    /// body nothing, and the body is short of whatever that sheet holds.
+    /// Empty for every symbol of the corpora.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_faults: Vec<crate::model::StreamChainFault>,
 }
 
 /// One `JSheetLayer` of a `.sym` file: the oid a primitive's
@@ -1527,6 +1535,10 @@ fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, 
 
     let mut geometry = SymbolGeometry {
         sheet_layers: layer_tables.values().flatten().cloned().collect(),
+        // What the parse of the file found wrong with its chain streams. A
+        // sheet among them was not read below, and nothing else would say
+        // the body is short.
+        chain_faults: package.parsed.chain_faults.clone(),
         ..SymbolGeometry::default()
     };
     for (stream_path, raw) in &package.streams {
@@ -2726,6 +2738,7 @@ mod tests {
                 name: "HiddenObjects".to_owned(),
             }],
             sheet_views: Vec::new(),
+            chain_faults: Vec::new(),
         };
         assert_eq!(body.displayed_primitives().len(), 1);
     }
@@ -2762,6 +2775,7 @@ mod tests {
             skipped_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![view(6, 0b01), view(8, 0b11)],
+            chain_faults: Vec::new(),
         };
         assert_eq!(body.displayed_primitives().len(), 3);
     }
@@ -2800,6 +2814,7 @@ mod tests {
                     (2, "Heat Trace".to_owned()),
                 ],
             }],
+            chain_faults: Vec::new(),
         };
         let displayed = body.displayed_primitives();
         assert_eq!(
@@ -2876,6 +2891,7 @@ mod tests {
                 display: vec![0b0000_0001],
                 layers: vec![(0, "Default".to_owned()), (1, "Heat Trace".to_owned())],
             }],
+            chain_faults: Vec::new(),
         };
         let drawn = body.displayed_primitives();
         assert_eq!(drawn.len(), 3, "the body, not the hidden stub: {drawn:?}");
@@ -2922,6 +2938,7 @@ mod tests {
                     layers: vec![(0, "Default".to_owned()), (1, "Label".to_owned())],
                 },
             ],
+            chain_faults: Vec::new(),
         };
         let drawn = body.displayed_primitives();
         assert_eq!(drawn.len(), 4, "the normal view's own strokes: {drawn:?}");
@@ -3687,6 +3704,7 @@ mod tests {
             skipped_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: Vec::new(),
+            chain_faults: Vec::new(),
         };
         assert_eq!(body.bounds(), Some((-0.2, 0.0, 0.1, 0.3)));
     }
