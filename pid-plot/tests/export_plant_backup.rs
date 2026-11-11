@@ -398,14 +398,19 @@ const EDGE_SLACK_MM: f64 = 0.1;
 
 /// Sheets whose `.pid` states no page at all.
 ///
-/// None. `D井场`, `Q井场`, `换热器CD` and `凝析油一级闪蒸分离器B气相出口改造` carry
-/// neither an `igSmartFrame2d` nor a template name, and until the paper was
-/// read [`PaperModel::resolved_page_mm`] measured a page for them: A0, A1, A1
-/// and A2. Each of the four states its paper in its `JSheet` record like
-/// every other sheet, and it is the sheet they were measured at, so this was
-/// 4 and is 0 with no page of theirs changed. Pinned as an equality, both
-/// ways round — a new drawing that states neither fails here rather than
-/// quietly taking the ink's own box.
+/// None. Four sheets give the layout no frame rectangle to take a page from,
+/// and until the paper was read [`PaperModel::resolved_page_mm`] measured one
+/// for them: A0, A1, A1 and A2. Three of the four — `D井场`, `换热器CD` and
+/// `凝析油一级闪蒸分离器B气相出口改造` — carry neither an `igSmartFrame2d`
+/// nor a template name, and are the bare sheets of [`BARE_SHEETS`]. `Q井场`
+/// is not one of those: it has two frame records, one linking the border
+/// template it wears (`CPECCHB-SQ-A1`) and one embedding a sheet of eight
+/// lines, and a page is taken from the frames only when they state one
+/// extent between them. Each of the four states its paper in its `JSheet`
+/// record like every other sheet, and it is the sheet they were measured at,
+/// so this was 4 and is 0 with no page of theirs changed. Pinned as an
+/// equality, both ways round — a new drawing that states neither fails here
+/// rather than quietly taking the ink's own box.
 const DERIVED_PAGES: usize = 0;
 
 /// The papers the 53 sheets state, as `[width, height]` in millimetres, with
