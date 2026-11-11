@@ -1343,9 +1343,19 @@ pub fn lay_out_with_symbol_roots(
     // The paper is the page when it is the frame's paper. One that lies
     // farther from the frame than any real drawing's is not taken — it
     // would cut the page to whatever it says — and the page is the frame's
-    // rectangle. A sheet with no frame has nothing to hold its paper
-    // against but its own ink, and ink of the drawing's that falls off the
-    // page is filed as suspect (`DropReason::DrawingSegmentBeyondThePaper`).
+    // rectangle. `frame_mm` is not always a frame's: for a drawing no frame
+    // of which gives a page it is the size the template's name stands for,
+    // and a paper is held to that by the same limit, carried over (no
+    // drawing on hand states a paper beside a name alone). What is said of
+    // the page says which of the two it was. A sheet with neither has
+    // nothing to hold its paper against but its own ink, and ink of the
+    // drawing's that falls off the page is filed as suspect
+    // (`DropReason::DrawingSegmentBeyondThePaper`).
+    let sheet_rectangle = if pid_parse::framed_page_dimensions_mm(&doc).is_some() {
+        crate::ledger::SheetRectangle::Frame
+    } else {
+        crate::ledger::SheetRectangle::TemplateName
+    };
     let stated_paper = stated_paper_mm(&doc);
     let paper_refused = match (stated_paper, frame_mm) {
         (Some(paper), Some(frame)) if !paper_is_the_frames(paper, frame) => Some((paper, frame)),
@@ -1417,8 +1427,10 @@ pub fn lay_out_with_symbol_roots(
     // The order the template's own sheet draws its records in; kept for the
     // page's paint order once the template's document is gone.
     let mut template_order = None;
+    let mut template_gaps = None;
     if let Some((page, furniture)) = furniture {
         template_order = Some(furniture.doc.sheet_display_order.clone());
+        template_gaps = Some(furniture.doc.sheet_without_display_order.clone());
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
@@ -1632,16 +1644,22 @@ pub fn lay_out_with_symbol_roots(
         embedded: &doc.embedded_sheet_display_order,
         template: template_order.as_ref(),
         frame_place: border_frame_place(&doc),
+        drawing_gaps: Some(&doc.sheet_without_display_order),
+        template_gaps: template_gaps.as_ref(),
     };
     ledger.paint_order = paint_order(&primitives, &orders);
-    // What the page is, where it is not the paper the sheet states.
+    // What the page is, where it is not the paper the sheet states, and
+    // which rectangle it is instead.
     ledger.paper_refused = paper_refused.map(|(paper, frame)| crate::ledger::PaperRefused {
         paper_um: paper.map(crate::ledger::micrometres),
-        frame_um: frame.map(crate::ledger::micrometres),
+        held_to: sheet_rectangle,
+        held_to_um: frame.map(crate::ledger::micrometres),
     });
     if stated_paper.is_none() {
-        ledger.frame_for_want_of_a_paper =
-            frame_mm.map(|frame| frame.map(crate::ledger::micrometres));
+        ledger.page_for_want_of_a_paper = frame_mm.map(|frame| crate::ledger::PageInstead {
+            from: sheet_rectangle,
+            um: frame.map(crate::ledger::micrometres),
+        });
     }
     // What the sheets' lists place nowhere is painted all the same, and
     // said: a suspect item of the account and a line on `pid_plot`'s stderr.
@@ -1685,6 +1703,14 @@ pub fn lay_out_with_symbol_roots(
 ///
 /// It is not a tolerance on a drawing's geometry: a paper inside it is the
 /// page exactly, and the frame's rectangle places nothing on that page.
+///
+/// A drawing no frame of which gives a page has the size its template's
+/// name stands for in the frame's place (`pid_parse::framed_page_dimensions_mm`
+/// tells the two apart), and its paper is held to that by this same limit.
+/// None of the 65 drawings states a paper beside a name alone, so for a
+/// name the limit is carried over and not measured; what is said of such a
+/// page names the template's name and no frame
+/// (`ledger::SheetRectangle`).
 pub const PAPER_FRAME_REACH_MM: f64 = 2.707;
 
 /// Whether `paper_mm` is the paper of the sheet whose border frame states
@@ -1879,6 +1905,32 @@ struct PageOrders<'a> {
     template: Option<&'a SheetOrders>,
     /// Where the drawing lists its border frame, if it lists one.
     frame_place: Option<u32>,
+    /// Why each of the drawing's sheets that states no order has none.
+    drawing_gaps: Option<&'a SheetGaps>,
+    /// The same for the border template's sheets.
+    template_gaps: Option<&'a SheetGaps>,
+}
+
+/// Why each sheet stream that has no display order has none, by its path
+/// (`PidDocument::sheet_without_display_order`).
+type SheetGaps =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::NoDisplayOrder>;
+
+/// Why a record of a stream no order was read for takes no place, as the
+/// page's account says it: the one reason that is the stream's own doing —
+/// it holds no record of the sheet's to hold a list to — apart from every
+/// way of there being no list.
+fn why_no_order(
+    gap: Option<&pid_parse::parsers::sheet_display_order::NoDisplayOrder>,
+) -> UnplacedWhy {
+    use pid_parse::parsers::sheet_display_order::NoDisplayOrder;
+    match gap {
+        Some(NoDisplayOrder::NoRecordOfTheSheet) => UnplacedWhy::NoRecordOfTheSheet,
+        Some(
+            NoDisplayOrder::NoCluster | NoDisplayOrder::NoTable | NoDisplayOrder::TableNotTheSheets,
+        )
+        | None => UnplacedWhy::NoList,
+    }
 }
 
 /// Where a primitive is painted: the place on the sheet, the template ahead
@@ -1939,7 +1991,9 @@ impl PageOrders<'_> {
             let order = self
                 .template
                 .and_then(|orders| orders.get(stream))
-                .ok_or(UnplacedWhy::NoList)?;
+                .ok_or_else(|| {
+                    why_no_order(self.template_gaps.and_then(|gaps| gaps.get(stream)))
+                })?;
             let rank = order.ranks.get(&start).ok_or(UnplacedWhy::NotReached)?;
             return Ok((self.frame_place.unwrap_or(0), 0, (rank.place, rank.inner)));
         }
@@ -1950,7 +2004,10 @@ impl PageOrders<'_> {
         // A sheet a frame embeds is what the frame draws: it stands at the
         // frame's rank, behind anything the frame's own record draws, its
         // records in the order its own sheet lists them.
-        let sheet = self.embedded.get(stream).ok_or(UnplacedWhy::NoList)?;
+        let sheet = self
+            .embedded
+            .get(stream)
+            .ok_or_else(|| why_no_order(self.drawing_gaps.and_then(|gaps| gaps.get(stream))))?;
         let ordinal = ordinals
             .get(stream)
             .and_then(|ordinals| ordinals.get(&start))
@@ -7089,6 +7146,8 @@ mod tests {
             embedded: &no_sheet,
             template,
             frame_place,
+            drawing_gaps: None,
+            template_gaps: None,
         };
         let painted = super::paint_order(&primitives, &orders(&drawing, Some(&template), Some(1)));
         assert_eq!(painted, vec![4, 5, 1, 0, 3, 2, 6, 7]);
@@ -7185,6 +7244,64 @@ mod tests {
                 ),
             ]
         );
+        // The same page where the parser says why the streams have no
+        // order. A stream that holds no record of its sheet's own is its
+        // own reason; every way of there being no list — no cluster, no
+        // table, a table of other records, a stream nothing is said of —
+        // stays the one reason it was.
+        use pid_parse::parsers::sheet_display_order::NoDisplayOrder;
+        let gap = |stream: &str, why: NoDisplayOrder| -> super::SheetGaps {
+            std::iter::once((stream.to_string(), why)).collect()
+        };
+        let reasons = |drawing_gaps: Option<&super::SheetGaps>,
+                       template_gaps: Option<&super::SheetGaps>| {
+            let orders = super::PageOrders {
+                drawing: &none,
+                embedded: &no_sheet,
+                template: None,
+                frame_place: None,
+                drawing_gaps,
+                template_gaps,
+            };
+            super::unplaced_records(&primitives, &orders)
+                .into_iter()
+                .map(|item| (item.domain, item.why, item.records))
+                .collect::<Vec<_>>()
+        };
+        let no_list = [
+            (LedgerDomain::Drawing, UnplacedWhy::NoList, 4),
+            (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+            (LedgerDomain::Furniture, UnplacedWhy::NoList, 2),
+        ];
+        let no_own = gap("/Sheet6", NoDisplayOrder::NoRecordOfTheSheet);
+        assert_eq!(
+            reasons(Some(&no_own), Some(&no_own)),
+            [
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecordOfTheSheet, 4),
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+                (LedgerDomain::Furniture, UnplacedWhy::NoRecordOfTheSheet, 2),
+            ]
+        );
+        // Each domain reads its own document's reasons.
+        assert_eq!(
+            reasons(Some(&no_own), None),
+            [
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecordOfTheSheet, 4),
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+                (LedgerDomain::Furniture, UnplacedWhy::NoList, 2),
+            ]
+        );
+        for why in [
+            NoDisplayOrder::NoCluster,
+            NoDisplayOrder::NoTable,
+            NoDisplayOrder::TableNotTheSheets,
+        ] {
+            let stated = gap("/Sheet6", why);
+            assert_eq!(reasons(Some(&stated), Some(&stated)), no_list, "{why:?}");
+        }
+        let another = gap("/Sheet7", NoDisplayOrder::NoRecordOfTheSheet);
+        assert_eq!(reasons(Some(&another), Some(&another)), no_list);
+        assert_eq!(reasons(None, None), no_list);
     }
 
     /// A sheet a frame embeds is what the frame draws: it is painted where
@@ -7264,6 +7381,8 @@ mod tests {
             embedded: &embedded,
             template: None,
             frame_place: None,
+            drawing_gaps: None,
+            template_gaps: None,
         };
         // The valve, the embedded sheet's two listed records in its order,
         // the label, the pipe, and last what no list places.
@@ -7293,6 +7412,8 @@ mod tests {
             embedded: &embedded,
             template: None,
             frame_place: None,
+            drawing_gaps: None,
+            template_gaps: None,
         };
         assert_eq!(
             super::paint_order(&primitives, &orders),
@@ -7966,6 +8087,8 @@ mod tests {
                     embedded: &no_sheet,
                     template: None,
                     frame_place: None,
+                    drawing_gaps: None,
+                    template_gaps: None,
                 };
                 let mut ledger = LayoutLedger::default();
                 ledger.note_unplaced(super::unplaced_records(&[stroke], &orders));
@@ -8524,7 +8647,8 @@ mod tests {
                 );
                 model.ledger.paper_refused = Some(crate::ledger::PaperRefused {
                     paper_um: [297_000, 420_000],
-                    frame_um: [594_328, 420_566],
+                    held_to: crate::ledger::SheetRectangle::Frame,
+                    held_to_um: [594_328, 420_566],
                 });
                 let write = crate::write::write_ledger(&model).expect("the page writes");
                 let assembled = ExportLedger::assemble(&model, &write);

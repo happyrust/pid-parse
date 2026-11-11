@@ -57,7 +57,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pid_plot::fonts::font_dirs;
-use pid_plot::ledger::{DropReason, ExportLedger};
+use pid_plot::ledger::{DropReason, ExportLedger, LedgerDomain, UnplacedWhy};
 use pid_plot::model::{PaperModel, PaperPrimitive, border_template_places, lay_out_drawing};
 use pid_plot::read::read_plot;
 use pid_plot::write::write_ledger;
@@ -1146,6 +1146,68 @@ fn export_a_broken_chain(case: &str, how: Break) {
         }
     }
 
+    // What the chain read and no list places. The sheet's list is in the
+    // document storage, which no break touches, so it places every record
+    // the chain read — as long as the chain read one of the sheet's own to
+    // hold the list to. A first record eight bytes too long stops the chain
+    // behind that record, which hangs under an object the walk never
+    // reached: the one record is drawn, two primitives, and has no place.
+    // That is the chain's stop and nothing else, so the account files it
+    // beside the stream — two suspect items — and the program starts no
+    // second line for it: the one warning asserted above is the chain's.
+    let no_place: Vec<_> = model
+        .ledger
+        .unplaced
+        .iter()
+        .map(|item| {
+            (
+                item.domain,
+                item.stream.as_str(),
+                item.why,
+                item.records,
+                item.primitives,
+            )
+        })
+        .collect();
+    let filed_no_place: Vec<_> = account
+        .drawing
+        .suspect_sites
+        .iter()
+        .filter(|site| site.reason == DropReason::RecordWithoutDisplayPlace)
+        .map(|site| (site.stream.as_deref(), site.count))
+        .collect();
+    if matches!(how, Break::FirstLengthPlusEight) {
+        assert_eq!(
+            no_place,
+            [(
+                LedgerDomain::Drawing,
+                DWG_0201_SHEET,
+                UnplacedWhy::NoRecordOfTheSheet,
+                1,
+                2
+            )],
+            "{how:?}: what the chain read and no list places"
+        );
+        assert_eq!(
+            filed_no_place,
+            [(Some(DWG_0201_SHEET), 1)],
+            "{how:?}: the account files the record beside the stream"
+        );
+        assert_eq!(
+            summary.suspect,
+            intact_summary.suspect + 2,
+            "{how:?}: the stream and the record it left without a place: {summary}"
+        );
+    } else {
+        assert!(no_place.is_empty(), "{how:?}: {no_place:?}");
+        assert!(filed_no_place.is_empty(), "{how:?}: {filed_no_place:?}");
+    }
+    assert!(
+        model.ledger.display_order_warnings().is_empty(),
+        "{how:?}: a line of its own for what the chain's stop accounts for: {:?}",
+        model.ledger.display_order_warnings()
+    );
+
     match fonts {
         Ok(_) => {
             assert_eq!(outcome.code, Some(0), "{how:?}\n{outcome}");
@@ -1307,8 +1369,6 @@ fn d06_with_a_list_that_is_not_its_sheets(case: &str) -> PathBuf {
 /// reader told only about the order would take the page for the paper.
 #[test]
 fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
-    use pid_plot::ledger::{LedgerDomain, UnplacedWhy};
-
     let case = "order-unread";
     let corpus = fixtures();
     let committed = d06();
@@ -1488,15 +1548,19 @@ fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
     );
 }
 
-/// What to change in `D06.pid`'s `JSheet` record.
+/// What to change in the `JSheet` record of a drawing's sheet 6.
 #[derive(Clone, Copy, Debug)]
 enum SheetRecord {
     /// The paper the record states, as `[width, height]` in metres. The
-    /// record is otherwise the committed one.
+    /// record is otherwise the drawing's.
     Paper([f64; 2]),
     /// The record's count of children, raised by four: four entries are
     /// then read out of the tail and the paper from 56 bytes further on.
     FourChildrenMore,
+    /// The entry of the child with this oid, given an oid no record of the
+    /// sheet carries: the list then names an object that is not the
+    /// sheet's and leaves out one that is.
+    NotListed(u32),
 }
 
 /// A copy of `D06.pid` with one thing changed in its `JSheet` record and
@@ -1509,13 +1573,21 @@ enum SheetRecord {
 /// is checked against that: the two doubles read back as the 0.42 m by
 /// 0.594 m the sheet states before they are overwritten.
 fn d06_with_another_sheet_record(case: &str, change: SheetRecord) -> PathBuf {
+    let path = scratch(case).join("D06.pid");
+    with_another_sheet_record(&d06(), change, &path);
+    path
+}
+
+/// The same for any drawing whose sheet is oid 6 and states an A2 paper:
+/// `source` written to `path` with one thing changed in the `JSheet` record
+/// of its `/PSMcluster0`, every other stream as `source` holds it.
+fn with_another_sheet_record(source: &Path, change: SheetRecord, path: &Path) {
     use pid_parse::parsers::sheet_display_order::find_sheet_child_table;
     use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
     const CLUSTER: &str = "/PSMcluster0";
-    let source = d06();
     let package = pid_parse::PidParser::new()
-        .parse_package(&source)
+        .parse_package(source)
         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
     let mut cluster = package
         .get_stream(CLUSTER)
@@ -1545,7 +1617,8 @@ fn d06_with_another_sheet_record(case: &str, change: SheetRecord) -> PathBuf {
     assert_eq!(
         [double(&cluster, tail + 114), double(&cluster, tail + 102)],
         [0.594, 0.42],
-        "the paper D06 states, where the record keeps it"
+        "the paper {} states, where the record keeps it",
+        source.display()
     );
     match change {
         SheetRecord::Paper([width, height]) => {
@@ -1556,6 +1629,20 @@ fn d06_with_another_sheet_record(case: &str, change: SheetRecord) -> PathBuf {
             let count = u32::try_from(table.children.len()).expect("a count") + 4;
             cluster[entries - 4..entries].copy_from_slice(&count.to_le_bytes());
         }
+        SheetRecord::NotListed(oid) => {
+            let index = table
+                .children
+                .iter()
+                .position(|child| child.oid == oid)
+                .unwrap_or_else(|| panic!("{}: the list names no oid {oid}", source.display()));
+            let at = entries + 14 * index;
+            assert_eq!(
+                cluster[at..at + 4],
+                oid.to_le_bytes(),
+                "the entry of oid {oid}, where the list keeps it"
+            );
+            cluster[at..at + 4].copy_from_slice(&0x7fff_fff0u32.to_le_bytes());
+        }
     }
     let plan = WritePlan {
         stream_replacements: vec![StreamReplacement {
@@ -1564,10 +1651,8 @@ fn d06_with_another_sheet_record(case: &str, change: SheetRecord) -> PathBuf {
         }],
         ..WritePlan::default()
     };
-    let path = scratch(case).join("D06.pid");
-    PidWriter::write_to(&package, &plan, &path)
+    PidWriter::write_to(&package, &plan, path)
         .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
-    path
 }
 
 /// Start `pid_plot` on `drawing` against the fixtures, as far as this
@@ -1800,4 +1885,386 @@ fn a_list_four_entries_too_long_misplaces_the_paper_and_the_frame_refuses_it() {
             "the warning does not say {needle:?}\n{said}"
         );
     }
+}
+
+/// What takes no place in the display order of a page, as the layout found
+/// it: the domain, the stream, why, the records and the primitives.
+fn no_place(model: &PaperModel) -> Vec<(LedgerDomain, &str, UnplacedWhy, u64, u64)> {
+    model
+        .ledger
+        .unplaced
+        .iter()
+        .map(|item| {
+            (
+                item.domain,
+                item.stream.as_str(),
+                item.why,
+                item.records,
+                item.primitives,
+            )
+        })
+        .collect()
+}
+
+/// A sound stream that holds no record of its sheet's own says so itself,
+/// and says what is so.
+///
+/// `DWG-0201GP06-01.pid` cut cleanly behind its first record — the header's
+/// count put right, so the chain holds — keeps one record, a symbol that
+/// hangs under an object of the sheet's the stream no longer holds. The
+/// sheet's list is in the document storage, whole, with its 160 children,
+/// and there is no record of the sheet's own to hold it to: no order is
+/// read, and the record is drawn with no place in one. No chain fault says
+/// anything of this drawing, so the line about the display order is the
+/// only word there is, and it is printed. It does not say the sheet states
+/// no list, which it does; nor that the page is a border frame's rectangle,
+/// when no frame was read and the page is the size the template's name
+/// stands for.
+///
+/// The same stream behind a chain that stops there — the copy this one is
+/// the sound prefix of — is `a_first_record_too_long_stops_the_chain_past_
+/// it_and_says_so`: there the chain's warning is the word on it, and this
+/// line is not started.
+#[test]
+fn a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place() {
+    use pid_parse::parsers::sheet_display_order::find_sheet_child_table;
+
+    let case = "order-no-own-record";
+    let corpus = fixtures();
+    let drawing = broken_copy(case, Break::FirstLengthPlusEight).sound_prefix;
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+
+    // The chain holds, and the list is there.
+    assert!(
+        model.ledger.chain_faults.is_empty(),
+        "{:?}",
+        model.ledger.chain_faults
+    );
+    let package = pid_parse::PidParser::new()
+        .parse_package(&drawing)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    let cluster = &package
+        .get_stream("/PSMcluster0")
+        .expect("the document's cluster")
+        .data;
+    let listed = find_sheet_child_table(cluster, 6, |_| true).map(|table| table.children.len());
+    assert_eq!(listed, Some(160), "the sheet's list, in the cluster");
+
+    // One record, two primitives, and the reason is the stream's.
+    assert_eq!(
+        no_place(&model),
+        [(
+            LedgerDomain::Drawing,
+            DWG_0201_SHEET,
+            UnplacedWhy::NoRecordOfTheSheet,
+            1,
+            2
+        )]
+    );
+    let write = write_ledger(&model).unwrap_or_else(|error| panic!("{case}: {error}"));
+    let account = ExportLedger::assemble(&model, &write);
+    let sites: Vec<_> = account
+        .drawing
+        .suspect_sites
+        .iter()
+        .map(|site| (site.reason, site.stream.as_deref(), site.count))
+        .collect();
+    assert_eq!(
+        sites,
+        [(
+            DropReason::RecordWithoutDisplayPlace,
+            Some(DWG_0201_SHEET),
+            1
+        )]
+    );
+    assert_eq!(account.summary().suspect, 1, "{}", account.summary());
+
+    let said = export_against_the_fixtures(case, &drawing, "no-own-record.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "a stream with no record of the sheet's own is exactly one warning\n{said}"
+    );
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        "1 record(s) of /Sheet6, 2 primitive(s) on the page, take no place in the display order"
+            .to_string(),
+        "the stream holds no record of the sheet's own, so the list its sheet states has \
+         nothing to be held to"
+            .to_string(),
+        "the paper is stated in the same record and was not read either".to_string(),
+        "so the page is the size its template's name states, 594.000 x 420.000 mm".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "the warning does not say {needle:?}\n{said}"
+        );
+    }
+    for untrue in ["states no list", "border frame", "does not hold"] {
+        assert!(
+            !line.contains(untrue),
+            "the warning says {untrue:?} of a drawing whose list is whole, of which no frame \
+             was read and whose chain holds\n{said}"
+        );
+    }
+    assert_eq!(
+        model.ledger.display_order_warnings(),
+        [line
+            .strip_prefix(&format!("warning: {}: ", drawing.display()))
+            .expect("the warning opens with the drawing")],
+        "the program does not say what the library found"
+    );
+}
+
+/// A chain that stops, in a drawing whose list is not its sheet's: two
+/// things wrong, and two warnings.
+///
+/// The chain of `/Sheet6` stops in the middle, having read 179 records, the
+/// sheet's own among them, and the list in the document storage names, for
+/// the first of those, an oid no record carries. The list is then not the
+/// sheet's — it names an object that is not a record of the sheet's and
+/// leaves out one the chain read — and it would not be had the chain read
+/// to the end. So the records the chain read take no place for a reason
+/// that is not the stop, and the line that says so stands beside the
+/// chain's. Only records a stop alone leaves without a place go unsaid.
+#[test]
+fn a_stopped_chain_beside_a_list_that_is_not_the_sheets_is_two_warnings() {
+    let case = "chain-and-list";
+    let corpus = fixtures();
+    let broken = broken_copy(case, Break::MiddleLengthZero);
+    let (stop, unread) = broken.stop.expect("the chain stops");
+
+    // The first live record of the sheet's own the chain reads: its oid.
+    let package = pid_parse::PidParser::new()
+        .parse_package(&broken.path)
+        .unwrap_or_else(|error| panic!("{}: {error}", broken.path.display()));
+    let sheet = &package.get_stream(DWG_0201_SHEET).expect("the sheet").data;
+    let word = |at: usize| u32::from_le_bytes(sheet[at..at + 4].try_into().expect("four bytes"));
+    let mut at = 8usize;
+    let mut own = None;
+    while at + 14 <= stop {
+        let kind = u16::from_le_bytes(sheet[at..at + 2].try_into().expect("two bytes"));
+        if kind & 0x8000 == 0 && word(at + 10) == 6 {
+            own = Some(word(at + 6));
+            break;
+        }
+        at += 6 + word(at + 2) as usize;
+    }
+    let own = own.expect("a record of the sheet's own before the stop");
+    let drawing = scratch(case).join("DWG-0201GP06-01-not-listed.pid");
+    with_another_sheet_record(&broken.path, SheetRecord::NotListed(own), &drawing);
+
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    // Both findings: the chain, and every record that draws without a
+    // place — for want of a list, not for want of a record to hold one to.
+    assert_eq!(model.ledger.chain_faults.len(), 1);
+    let mut records: Vec<usize> = model
+        .primitives
+        .iter()
+        .filter(|primitive| !primitive.furniture)
+        .map(|primitive| primitive.byte_range.expect("a record")[0])
+        .collect();
+    let primitives = records.len() as u64;
+    records.sort_unstable();
+    records.dedup();
+    assert!(!records.is_empty());
+    assert_eq!(
+        no_place(&model),
+        [(
+            LedgerDomain::Drawing,
+            DWG_0201_SHEET,
+            UnplacedWhy::NoList,
+            records.len() as u64,
+            primitives
+        )]
+    );
+    let write = write_ledger(&model).unwrap_or_else(|error| panic!("{case}: {error}"));
+    let account = ExportLedger::assemble(&model, &write);
+    let mut sites: Vec<_> = account
+        .drawing
+        .suspect_sites
+        .iter()
+        .map(|site| (site.reason, site.stream.as_deref(), site.count))
+        .collect();
+    sites.sort();
+    assert_eq!(
+        sites,
+        [
+            (
+                DropReason::SheetStreamWithoutGeometry,
+                Some(DWG_0201_SHEET),
+                1
+            ),
+            (
+                DropReason::RecordWithoutDisplayPlace,
+                Some(DWG_0201_SHEET),
+                records.len() as u64
+            ),
+        ]
+    );
+
+    let said = export_against_the_fixtures(case, &drawing, "chain-and-list.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        2,
+        "a stopped chain and a list that is not the sheet's are two warnings\n{said}"
+    );
+    let chain = warned
+        .iter()
+        .find(|line| line.contains("the record chain of /Sheet6 does not hold"))
+        .unwrap_or_else(|| panic!("no warning of the chain\n{said}"));
+    for needle in [
+        drawing.display().to_string(),
+        format!("stops at +{stop} "),
+        format!("{unread} byte(s) from it on are not"),
+    ] {
+        assert!(
+            chain.contains(&needle),
+            "the chain's warning does not say {needle:?}\n{said}"
+        );
+    }
+    let order = warned
+        .iter()
+        .find(|line| line.contains("take no place in the display order"))
+        .unwrap_or_else(|| panic!("no warning of the display order\n{said}"));
+    for needle in [
+        drawing.display().to_string(),
+        format!(
+            "{} record(s) of /Sheet6, {primitives} primitive(s) on the page",
+            records.len()
+        ),
+        "the sheet states no list of its objects that could be read".to_string(),
+        // The paper is in the list's record, and the chain stopped ahead
+        // of the one live frame: the page is the template name's size.
+        "so the page is the size its template's name states, 594.000 x 420.000 mm".to_string(),
+    ] {
+        assert!(
+            order.contains(&needle),
+            "the display order's warning does not say {needle:?}\n{said}"
+        );
+    }
+    assert_eq!(
+        model.ledger.display_order_warnings(),
+        [order
+            .strip_prefix(&format!("warning: {}: ", drawing.display()))
+            .expect("the warning opens with the drawing")],
+        "the program does not say what the library found"
+    );
+}
+
+/// A paper held to the size a template's name states, for want of a frame,
+/// is refused in words that name no frame.
+///
+/// `DWG-0201GP06-01.pid` less its last record — its one live border frame —
+/// is a sound drawing no frame of which is read: its page dimensions are
+/// the 594 by 420 mm its template's name stands for, and its paper, read
+/// from the list's record, is the same. With the paper's width halved in
+/// that record the two are 297 mm apart. The paper is refused as a paper
+/// that is not a frame's is, and the page is the size the name states; but
+/// what it was held to is a name, and the warning and the account's site
+/// say so. No drawing on hand states a paper beside a name alone, so the
+/// limit that refuses it is the frames', carried over.
+#[test]
+fn a_paper_held_to_a_templates_name_is_refused_in_words_that_name_no_frame() {
+    let case = "paper-no-frame";
+    let corpus = fixtures();
+    let frameless = broken_copy(case, Break::LastLengthPlusOne).sound_prefix;
+    let doc = pid_parse::PidParser::new()
+        .parse_file(&frameless)
+        .unwrap_or_else(|error| panic!("{}: {error}", frameless.display()));
+    assert_eq!(
+        pid_parse::framed_page_dimensions_mm(&doc),
+        None,
+        "the drawing less its last record keeps a frame that gives a page"
+    );
+    assert_eq!(
+        pid_parse::build_normalized_geometry(&doc).page_dimensions_mm,
+        Some((594.0, 420.0)),
+        "the size the template's name states"
+    );
+    // As it is, the paper is the name's size and is the page; nothing is
+    // said of the page.
+    let sound = lay_out_drawing(&frameless, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", frameless.display()));
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert_eq!(sound.ledger.paper_refused, None);
+    assert!(sound.ledger.page_warnings().is_empty());
+
+    let drawing = scratch(case).join("DWG-0201GP06-01-halved.pid");
+    with_another_sheet_record(&frameless, SheetRecord::Paper([0.297, 0.42]), &drawing);
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert_eq!(
+        model.page_mm,
+        Some([594.0, 420.0]),
+        "the page is not the size the template's name states"
+    );
+    let primitives = |model: &PaperModel| -> Vec<String> {
+        model
+            .primitives
+            .iter()
+            .map(|primitive| format!("{:?} {:?}", identity(primitive), primitive.shape))
+            .collect()
+    };
+    assert_eq!(
+        primitives(&model),
+        primitives(&sound),
+        "the page lost or gained ink"
+    );
+
+    let write = write_ledger(&model).unwrap_or_else(|error| panic!("{case}: {error}"));
+    let account = ExportLedger::assemble(&model, &write);
+    let page: Vec<(&str, Option<&str>, u64)> = account
+        .page
+        .suspect_sites
+        .iter()
+        .map(|site| (site.reason.code(), site.name.as_deref(), site.count))
+        .collect();
+    assert_eq!(
+        page,
+        [(
+            "paper_unlike_the_frame",
+            Some("paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm"),
+            1
+        )]
+    );
+
+    let said = export_against_the_fixtures(case, &drawing, "halved.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "a paper that is not the name's size is exactly one warning\n{said}"
+    );
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        "the paper its sheet states, 297.000 x 420.000 mm".to_string(),
+        "is not the size its template's name states, 594.000 x 420.000 mm".to_string(),
+        "no border frame was read to hold it to".to_string(),
+        "the page is the size the template's name states".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "the warning does not say {needle:?}\n{said}"
+        );
+    }
+    for untrue in ["border frame's,", "frame's rectangle", "no drawing on hand"] {
+        assert!(
+            !line.contains(untrue),
+            "the warning says {untrue:?} of a drawing no frame of which was read\n{said}"
+        );
+    }
+    assert_eq!(
+        model.ledger.page_warnings(),
+        [line
+            .strip_prefix(&format!("warning: {}: ", drawing.display()))
+            .expect("the warning opens with the drawing")],
+        "the program does not say what the library found"
+    );
 }

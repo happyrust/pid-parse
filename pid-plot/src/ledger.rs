@@ -79,8 +79,8 @@ pub use baseline::{
 };
 pub use layout::{
     BodyItemLayout, BodyTally, Confidence, EntityKind, EntityLayout, EntityOutcome, EntityRecord,
-    LayoutLedger, LedgerRecorder, PageSources, PaperRefused, ParseCounts, ParseRecord,
-    PlacementAccount, PlacementLayout, Site, SourceKind, SourceName, TemplateTrace,
+    LayoutLedger, LedgerRecorder, PageInstead, PageSources, PaperRefused, ParseCounts, ParseRecord,
+    PlacementAccount, PlacementLayout, SheetRectangle, Site, SourceKind, SourceName, TemplateTrace,
     TextNormalization, UnplacedRecords, UnplacedWhy, micrometres,
 };
 pub use reason::{

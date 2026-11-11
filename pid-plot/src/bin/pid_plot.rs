@@ -100,14 +100,19 @@ fn main() -> ExitCode {
     // A record that draws and takes no place in the order its sheet draws
     // in is on the page, painted after the rest; what covers what there is
     // not the drawing's word. Each stream of them is named, and the account
-    // counts it as a suspect item.
+    // counts it as a suspect item. Records a stopped chain alone leaves
+    // without a place — the chain read none of the sheet's own to hold the
+    // sheet's list to — are the chain's warning above and get no line here;
+    // the account still counts both.
     for unplaced in model.ledger.display_order_warnings() {
         eprintln!("warning: {pid}: {unplaced}");
     }
     // A paper that is not the border frame's is not taken for the page: the
     // page is the frame's rectangle and the drawing is whole, but it is not
     // on the paper its sheet states. One line, with both rectangles; the
-    // account counts it as a suspect item.
+    // account counts it as a suspect item. Where no frame was read the
+    // paper is held to the size the template's name states, and the line
+    // says that and names no frame.
     for page in model.ledger.page_warnings() {
         eprintln!("warning: {pid}: {page}");
     }

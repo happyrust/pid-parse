@@ -335,6 +335,13 @@ pub enum DropReason {
     /// every page was before papers were read, so the drawing is whole.
     /// Counted once a page (`LayoutLedger::paper_refused`); no page of the
     /// corpora this crate is tested on has one.
+    ///
+    /// A drawing no frame of which was read has, for its sheet, the size
+    /// its template's name stands for, and its paper is held to that by the
+    /// same limit and filed under this code: the site says
+    /// `template name's size` where it would say `frame`. The limit was
+    /// measured on frames, and no drawing on hand states a paper beside a
+    /// name alone, so there it is carried over.
     PaperUnlikeTheFrame,
 }
 

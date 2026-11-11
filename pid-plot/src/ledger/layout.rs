@@ -100,25 +100,71 @@ pub struct LayoutLedger {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unplaced: Vec<UnplacedRecords>,
     /// The paper the drawing's sheet states, when it was read and not taken
-    /// for the page because it is not the border frame's
-    /// (`model::paper_is_the_frames`). The page is then the frame's
-    /// rectangle; the page account files one suspect
-    /// [`DropReason::PaperUnlikeTheFrame`] and `pid_plot` says it
-    /// ([`Self::page_warnings`]). `None` on every page of every corpus this
-    /// crate is tested on.
+    /// for the page because it is not the sheet's other rectangle
+    /// (`model::paper_is_the_frames`): the border frame's, or, for a
+    /// drawing no frame of which was read, the size its template's name
+    /// states ([`SheetRectangle`]). The page is then that rectangle; the
+    /// page account files one suspect [`DropReason::PaperUnlikeTheFrame`]
+    /// and `pid_plot` says it ([`Self::page_warnings`]). `None` on every
+    /// page of every corpus this crate is tested on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paper_refused: Option<PaperRefused>,
-    /// The border frame's rectangle, in micrometres, when it is the page
-    /// because no paper was read: the sheet's `JSheet` record, which states
-    /// the paper behind its list of objects, was not found or is not the
-    /// sheet's. A sheet whose list is not read says so already
-    /// ([`Self::display_order_warnings`]), and that sentence says this too.
+    /// What the page is, and where that was read, when it is not a paper
+    /// because none was read: the sheet's `JSheet` record, which states the
+    /// paper behind its list of objects, was not found, is not the sheet's,
+    /// or had no record of the sheet's to be held to. A sheet whose list is
+    /// not read says so already ([`Self::display_order_warnings`]), and
+    /// that sentence says this too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frame_for_want_of_a_paper: Option<[u64; 2]>,
+    pub page_for_want_of_a_paper: Option<PageInstead>,
 }
 
-/// A paper that was read and refused: the paper and the border frame's
-/// rectangle, each `[width, height]` in micrometres.
+/// The rectangle a drawing has for its sheet beside the paper: what a page
+/// is when no paper is taken, and what a paper is held to.
+///
+/// The two are not the same kind of thing, and a sentence about a page has
+/// to say which it had. A border frame states its rectangle to the
+/// nanometre, and every drawing on hand that states both keeps its paper
+/// within `model::PAPER_FRAME_REACH_MM` of it. A template's name states a
+/// size the way a label does — `A2` is 594 by 420 — and is what the parser
+/// falls back to for a drawing no frame of which gives a page
+/// (`pid_parse::framed_page_dimensions_mm`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetRectangle {
+    /// The rectangle the drawing's border frame states.
+    Frame,
+    /// The size the name of the drawing's template stands for: no frame
+    /// gave a page — the drawing carries none, its frames disagree, or its
+    /// stream was not read as far as one.
+    TemplateName,
+}
+
+impl SheetRectangle {
+    /// The rectangle as a sentence names it: `the border frame's rectangle`
+    /// or `the size its template's name states`.
+    #[must_use]
+    pub fn named(self) -> &'static str {
+        match self {
+            Self::Frame => "the border frame's rectangle",
+            Self::TemplateName => "the size its template's name states",
+        }
+    }
+}
+
+/// The page of a sheet no paper was read for: which rectangle it is, and
+/// its `[width, height]` in micrometres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageInstead {
+    /// Where the rectangle was read.
+    pub from: SheetRectangle,
+    /// Its sides.
+    pub um: [u64; 2],
+}
+
+/// A paper that was read and refused: the paper and the rectangle it was
+/// held to, each `[width, height]` in micrometres, and which rectangle that
+/// was.
 ///
 /// Whole micrometres rather than millimetres so that the ledger stays
 /// comparable for equality; a side that is not a positive finite length is
@@ -127,8 +173,11 @@ pub struct LayoutLedger {
 pub struct PaperRefused {
     /// The paper the sheet's record states.
     pub paper_um: [u64; 2],
-    /// The rectangle the border frame states.
-    pub frame_um: [u64; 2],
+    /// What the paper was held to: the border frame's rectangle, or the
+    /// size the template's name states where no frame was read.
+    pub held_to: SheetRectangle,
+    /// That rectangle's sides.
+    pub held_to_um: [u64; 2],
 }
 
 /// A length in millimetres as whole micrometres; zero for one that is not
@@ -157,14 +206,20 @@ fn sides_mm(sides_um: [u64; 2]) -> String {
 }
 
 impl PaperRefused {
-    /// The two rectangles, for the page account's suspect site and the
-    /// warning: `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`.
+    /// The two rectangles, for the page account's suspect site:
+    /// `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`, or
+    /// `paper …, template name's size 594.000 x 420.000 mm` where no frame
+    /// was read.
     #[must_use]
     pub fn sides(&self) -> String {
+        let held_to = match self.held_to {
+            SheetRectangle::Frame => "frame",
+            SheetRectangle::TemplateName => "template name's size",
+        };
         format!(
-            "paper {}, frame {}",
+            "paper {}, {held_to} {}",
             sides_mm(self.paper_um),
-            sides_mm(self.frame_um)
+            sides_mm(self.held_to_um)
         )
     }
 }
@@ -178,6 +233,17 @@ pub enum UnplacedWhy {
     /// be read: no `JSheet` record of its storage's cluster names the
     /// stream's records, or the stream is one nothing reads a list for.
     NoList,
+    /// The stream holds no record of the sheet's own, as far as it was
+    /// read, so the list its sheet states — which is there — has nothing to
+    /// be held to (`NoDisplayOrder::NoRecordOfTheSheet` of
+    /// `pid_parse::parsers::sheet_display_order`). The records that draw
+    /// hang under objects of the sheet's the stream does not hold.
+    ///
+    /// A chain that stops ahead of the sheet's first own record leaves a
+    /// stream like that, and the stream's chain fault is then the word on
+    /// it: [`LayoutLedger::display_order_warnings`] starts no sentence of
+    /// its own for records a stopped chain already accounts for.
+    NoRecordOfTheSheet,
     /// The sheet's list was read and does not reach the record: nothing it
     /// hangs under is listed.
     NotReached,
@@ -244,23 +310,38 @@ impl LayoutLedger {
     }
 
     /// What is to be said of the page itself: one sentence when the paper
-    /// the sheet states was refused for not being the border frame's, with
-    /// the paper, the frame's rectangle and which of them the page is.
-    /// Empty for a page written on the paper its sheet states, which is
-    /// every page of every corpus this crate is tested on.
+    /// the sheet states was refused, with the paper, the rectangle it was
+    /// held to — the border frame's, or the size the template's name states
+    /// where no frame was read, and the sentence says which — and that the
+    /// page is that rectangle. Empty for a page written on the paper its
+    /// sheet states, which is every page of every corpus this crate is
+    /// tested on.
+    ///
+    /// The limit is measured on drawings that state a frame. No drawing on
+    /// hand states a paper beside a template's name alone, so held to a
+    /// name the limit is carried over, and the sentence does not say that
+    /// drawings keep to it.
     #[must_use]
     pub fn page_warnings(&self) -> Vec<String> {
         let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
         self.paper_refused
             .iter()
-            .map(|refused| {
-                format!(
+            .map(|refused| match refused.held_to {
+                SheetRectangle::Frame => format!(
                     "the paper its sheet states, {}, is not its border frame's, {}: no \
                      drawing on hand has the two more than {limit_mm} mm apart on a side, so \
                      the paper is not taken for the page and the page is the frame's rectangle",
                     sides_mm(refused.paper_um),
-                    sides_mm(refused.frame_um)
-                )
+                    sides_mm(refused.held_to_um)
+                ),
+                SheetRectangle::TemplateName => format!(
+                    "the paper its sheet states, {}, is not the size its template's name \
+                     states, {}, and no border frame was read to hold it to: the two are \
+                     more than {limit_mm} mm apart on a side, so the paper is not taken for \
+                     the page and the page is the size the template's name states",
+                    sides_mm(refused.paper_um),
+                    sides_mm(refused.held_to_um)
+                ),
             })
             .collect()
     }
@@ -274,8 +355,16 @@ impl LayoutLedger {
     ///
     /// A drawing's own sheet whose list was not read has no paper either —
     /// the record that lists the objects states the paper behind them — so
-    /// its sentence goes on to say what the page is instead
-    /// ([`Self::frame_for_want_of_a_paper`]).
+    /// its sentence goes on to say what the page is instead, and where that
+    /// was read ([`Self::page_for_want_of_a_paper`]).
+    ///
+    /// Records a stopped chain already accounts for get no sentence here:
+    /// a stream that holds no record of the sheet's own
+    /// ([`UnplacedWhy::NoRecordOfTheSheet`]) and whose chain is reported as
+    /// stopping short ([`Self::chain_fault_warnings`]) has one cause, and
+    /// that sentence names it. The account keeps both items. Any other
+    /// reason is said beside a chain fault, being another matter; so is
+    /// this one on a stream whose chain reads to its end.
     #[must_use]
     pub fn display_order_warnings(&self) -> Vec<String> {
         let painted = if self.paint_order.is_empty() {
@@ -286,6 +375,7 @@ impl LayoutLedger {
         };
         self.unplaced
             .iter()
+            .filter(|item| !self.a_stopped_chain_accounts_for(item))
             .map(|item| {
                 let whose = match item.domain {
                     LedgerDomain::Drawing => "",
@@ -300,6 +390,10 @@ impl LayoutLedger {
                     UnplacedWhy::NoList => {
                         "the sheet states no list of its objects that could be read"
                     }
+                    UnplacedWhy::NoRecordOfTheSheet => {
+                        "the stream holds no record of the sheet's own, so the list its \
+                         sheet states has nothing to be held to"
+                    }
                     UnplacedWhy::NotReached => {
                         "the sheet's list of its objects does not reach them"
                     }
@@ -310,13 +404,17 @@ impl LayoutLedger {
                 };
                 // The drawing's own sheet: a stream of the document's root.
                 let own_sheet = item.domain == LedgerDomain::Drawing
-                    && item.why == UnplacedWhy::NoList
+                    && matches!(
+                        item.why,
+                        UnplacedWhy::NoList | UnplacedWhy::NoRecordOfTheSheet
+                    )
                     && item.stream.matches('/').count() == 1;
-                let page = match self.frame_for_want_of_a_paper {
-                    Some(frame) if own_sheet => format!(
+                let page = match self.page_for_want_of_a_paper {
+                    Some(page) if own_sheet => format!(
                         "; the paper is stated in the same record and was not read either, so \
-                         the page is the border frame's rectangle, {}",
-                        sides_mm(frame)
+                         the page is {}, {}",
+                        page.from.named(),
+                        sides_mm(page.um)
                     ),
                     _ => String::new(),
                 };
@@ -327,6 +425,18 @@ impl LayoutLedger {
                 )
             })
             .collect()
+    }
+
+    /// Whether a chain fault of the same stream is already the word on
+    /// `item`: its records take no place because the stream holds no record
+    /// of the sheet's own, and the stream's chain is one that stopped.
+    fn a_stopped_chain_accounts_for(&self, item: &UnplacedRecords) -> bool {
+        item.why == UnplacedWhy::NoRecordOfTheSheet
+            && self.chain_faults.iter().any(|record| {
+                record.domain == item.domain
+                    && record.fault.stream_path == item.stream
+                    && record.fault.stop.is_some()
+            })
     }
 
     /// One sentence per chain stream that was not read whole, naming the
@@ -1739,6 +1849,188 @@ mod tests {
 
         // A page whose streams are all sound has nothing to say.
         assert!(LayoutLedger::default().chain_fault_warnings().is_empty());
+    }
+
+    fn unplaced(domain: LedgerDomain, stream: &str, why: UnplacedWhy) -> UnplacedRecords {
+        UnplacedRecords {
+            domain,
+            stream: stream.to_string(),
+            why,
+            records: 1,
+            primitives: 2,
+        }
+    }
+
+    fn a_chain_fault(domain: LedgerDomain, stream: &str, stops: bool) -> ChainFaultRecord {
+        let mut fault = a_fault(stream, 30_000, 143);
+        if !stops {
+            fault.stop = None;
+            fault.unread_bytes = 0;
+            fault.stated_records = Some(41);
+        }
+        ChainFaultRecord { domain, fault }
+    }
+
+    /// Records a stopped chain accounts for get no sentence of their own;
+    /// everything else that takes no place does, beside a chain fault or
+    /// without one.
+    #[test]
+    fn a_stopped_chain_is_the_word_on_the_records_it_left_without_a_place() {
+        use LedgerDomain::{Drawing, Furniture};
+        let page = |items: Vec<UnplacedRecords>, faults: Vec<ChainFaultRecord>| LayoutLedger {
+            unplaced: items,
+            chain_faults: faults,
+            // Some sheet of the page states an order.
+            paint_order: vec![0],
+            ..LayoutLedger::default()
+        };
+        let no_own = || unplaced(Drawing, "/Sheet6", UnplacedWhy::NoRecordOfTheSheet);
+
+        // The chain of the same stream stopped: its warning is the one.
+        let stopped = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", true)],
+        );
+        assert!(stopped.display_order_warnings().is_empty());
+        assert_eq!(stopped.chain_fault_warnings().len(), 1);
+        assert_eq!(stopped.unplaced.len(), 1, "the finding is kept");
+
+        // No chain fault at all: this sentence is the only word there is,
+        // and it says what is so — the list is there, the stream is short.
+        let sound = page(vec![no_own()], Vec::new());
+        let said = sound.display_order_warnings();
+        assert_eq!(said.len(), 1);
+        assert_eq!(
+            said[0],
+            "1 record(s) of /Sheet6, 2 primitive(s) on the page, take no place in the \
+             display order: the stream holds no record of the sheet's own, so the list its \
+             sheet states has nothing to be held to; they are painted after everything that \
+             has a place"
+        );
+        assert!(!said[0].contains("states no list"));
+
+        // A chain that reads to its end and disagrees with its header's
+        // count did not stop: both are said.
+        let counted = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", false)],
+        );
+        assert_eq!(counted.display_order_warnings().len(), 1);
+        // Another stream's chain, and the template's chain of a stream of
+        // the same name, are not this stream's.
+        for fault in [
+            a_chain_fault(Drawing, "/Sheet7", true),
+            a_chain_fault(Furniture, "/Sheet6", true),
+        ] {
+            assert_eq!(
+                page(vec![no_own()], vec![fault])
+                    .display_order_warnings()
+                    .len(),
+                1
+            );
+        }
+        // Any other reason is another matter than the stop, and is said
+        // beside it.
+        for why in [
+            UnplacedWhy::NoList,
+            UnplacedWhy::NotReached,
+            UnplacedWhy::NoFrame,
+            UnplacedWhy::NoRecord,
+        ] {
+            let both = page(
+                vec![unplaced(Drawing, "/Sheet6", why)],
+                vec![a_chain_fault(Drawing, "/Sheet6", true)],
+            );
+            assert_eq!(both.display_order_warnings().len(), 1, "{why:?}");
+        }
+        // The template's own, by its own chain.
+        let template = page(
+            vec![unplaced(
+                Furniture,
+                "/Sheet6",
+                UnplacedWhy::NoRecordOfTheSheet,
+            )],
+            vec![a_chain_fault(Furniture, "/Sheet6", true)],
+        );
+        assert!(template.display_order_warnings().is_empty());
+    }
+
+    /// A page that is not a paper says which rectangle it is: a frame's,
+    /// or the size a template's name states.
+    #[test]
+    fn a_page_that_is_not_a_paper_says_which_rectangle_it_is() {
+        let frame = [594_328, 420_566];
+        let named = [594_000, 420_000];
+        // No paper read, and the list with it.
+        for (from, um, says) in [
+            (
+                SheetRectangle::Frame,
+                frame,
+                "so the page is the border frame's rectangle, 594.328 x 420.566 mm",
+            ),
+            (
+                SheetRectangle::TemplateName,
+                named,
+                "so the page is the size its template's name states, 594.000 x 420.000 mm",
+            ),
+        ] {
+            for why in [UnplacedWhy::NoList, UnplacedWhy::NoRecordOfTheSheet] {
+                let ledger = LayoutLedger {
+                    unplaced: vec![unplaced(LedgerDomain::Drawing, "/Sheet6", why)],
+                    page_for_want_of_a_paper: Some(PageInstead { from, um }),
+                    ..LayoutLedger::default()
+                };
+                let said = ledger.display_order_warnings();
+                assert_eq!(said.len(), 1);
+                assert!(said[0].ends_with(says), "{from:?} {why:?}: {}", said[0]);
+                assert_eq!(
+                    said[0].contains("frame"),
+                    from == SheetRectangle::Frame,
+                    "{}",
+                    said[0]
+                );
+            }
+        }
+        // A paper read and refused.
+        let refused = |held_to, held_to_um| LayoutLedger {
+            paper_refused: Some(PaperRefused {
+                paper_um: [297_000, 420_000],
+                held_to,
+                held_to_um,
+            }),
+            ..LayoutLedger::default()
+        };
+        let by_a_frame = refused(SheetRectangle::Frame, frame);
+        assert_eq!(
+            by_a_frame.page_warnings(),
+            [
+                "the paper its sheet states, 297.000 x 420.000 mm, is not its border frame's, \
+              594.328 x 420.566 mm: no drawing on hand has the two more than 2.707 mm apart on \
+              a side, so the paper is not taken for the page and the page is the frame's \
+              rectangle"
+            ]
+        );
+        assert_eq!(
+            by_a_frame.paper_refused.map(|refused| refused.sides()),
+            Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm".to_string())
+        );
+        let by_a_name = refused(SheetRectangle::TemplateName, named);
+        assert_eq!(
+            by_a_name.page_warnings(),
+            [
+                "the paper its sheet states, 297.000 x 420.000 mm, is not the size its \
+              template's name states, 594.000 x 420.000 mm, and no border frame was read to \
+              hold it to: the two are more than 2.707 mm apart on a side, so the paper is not \
+              taken for the page and the page is the size the template's name states"
+            ]
+        );
+        assert_eq!(
+            by_a_name.paper_refused.map(|refused| refused.sides()),
+            Some(
+                "paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm".to_string()
+            )
+        );
+        assert!(!by_a_name.page_warnings()[0].contains("frame's"));
     }
 
     #[test]
