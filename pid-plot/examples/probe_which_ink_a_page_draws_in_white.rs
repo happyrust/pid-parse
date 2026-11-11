@@ -1,6 +1,21 @@
 //! Which strokes a page draws in white, and whether the vendor's plot has ink
 //! there.
 //!
+//! **What "white" means moved on 2026-11-11.** This probe was written on
+//! 2026-11-10 against the rule of that day, described in the next paragraph,
+//! and its readings in
+//! `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+//! §11 are of that rule: the white strokes it listed were border-template
+//! rules the vendor prints black. The colour rule that landed on `main`
+//! (`dbc0468`, `docs/analysis/2026-11-11-white-prints-and-the-pages-colour-does-not.md`)
+//! prints a style that states literal white (`0x00FFFFFF`) black, leaves a
+//! stroke whose colour word is `0x8000_0000` — the page's colour — blank,
+//! and prints every other colour black. It is applied in the page model, so
+//! on a tree that carries it a white stroke of the model is one in the
+//! page's colour, and what this probe lists there is the strokes the page
+//! leaves blank: the label symbols' origin marks, where the vendor's plot
+//! has no ink either.
+//!
 //! The writer plots through one black pen, with one exception: a stroke or a
 //! fill whose style states exact white keeps it (`write.rs`'s `plot_ink`),
 //! because a white pen was taken for the plot's wipe. That rule was written
