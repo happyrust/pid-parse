@@ -877,10 +877,16 @@ fn push_layer(
     ops.push(Op::new("J", vec![Object::Int(ends)]));
     ops.push(Op::new("j", vec![Object::Int(ends)]));
 
+    // A label is set against the sheet its border frame states, as it was
+    // before the page became the paper: whether a run is put on the
+    // plotter's grid, and how much room it has, were measured against that
+    // rectangle, and the grid of a sheet whose frame is not its paper is not
+    // known. The page box cuts what lettering lies past the paper.
+    let lettered_on = model.frame_mm.unwrap_or(page);
     for index in order {
         let primitive = &model.primitives[index];
         if matches!(primitive.shape, PaperShape::Text { .. }) {
-            letter_primitive(ops, fonts, primitive, index, page, sink)?;
+            letter_primitive(ops, fonts, primitive, index, lettered_on, sink)?;
         } else {
             stroke_primitive(ops, primitive, index, page, sink, round_ends);
         }
@@ -1090,15 +1096,22 @@ fn paint_primitive(
         "w",
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
+    // What the page's edge decides about a piece: whether a stroke along it
+    // is the template's, and how far the pen reaches back onto the paper.
+    let edge = PageEdge {
+        page,
+        keep_sheet_edge: primitive.furniture,
+        half_pen_mm: pen_width_mm(pen.width_mm) / 2.0,
+    };
     if let Some(fit) = fitted_dash(&pen, &primitive.shape) {
-        let wrote_path = paint_fitted_pieces(ops, fit, &primitive.shape, page, primitive.furniture);
+        let wrote_path = paint_fitted_pieces(ops, fit, &primitive.shape, edge);
         ops.push(Op::new("Q", Vec::new()));
         return Painted { wrote_path };
     }
     if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
-    let wrote_path = paint_shape(ops, &primitive.shape, page, primitive.furniture);
+    let wrote_path = paint_shape(ops, &primitive.shape, edge);
     if wrote_path {
         ops.push(Op::new("S", Vec::new()));
     }
@@ -1143,11 +1156,10 @@ fn paint_fitted_pieces(
     ops: &mut Vec<Op>,
     fit: &DashFit,
     shape: &PaperShape,
-    page: [f64; 2],
-    keep_sheet_edge: bool,
+    edge: PageEdge,
 ) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
+    for run in stroke_runs(&shape_chain(shape), edge) {
         for pair in run.windows(2) {
             let steps: Vec<Object> = fit
                 .pattern_mm(hypot(pair[0], pair[1]))
@@ -1164,14 +1176,9 @@ fn paint_fitted_pieces(
     any
 }
 
-fn paint_shape(
-    ops: &mut Vec<Op>,
-    shape: &PaperShape,
-    page: [f64; 2],
-    keep_sheet_edge: bool,
-) -> bool {
+fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, edge: PageEdge) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
+    for run in stroke_runs(&shape_chain(shape), edge) {
         ops.push(Op::new("m", vec![pt(run[0][0]), pt(run[0][1])]));
         for point in &run[1..] {
             ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
@@ -1210,19 +1217,57 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
     }
 }
 
+/// What a stroke's pieces are held to at the page's edge
+/// ([`verdict::segment_fate`]).
+#[derive(Clone, Copy)]
+struct PageEdge {
+    /// The page, millimetres.
+    page: [f64; 2],
+    /// Whether a piece that runs along the sheet is content: it is in a
+    /// border template, whose outline is such a line.
+    keep_sheet_edge: bool,
+    /// Half the width the pieces are stroked at: how far a piece past the
+    /// paper's edge still reaches back onto the paper.
+    half_pen_mm: f64,
+}
+
+impl PageEdge {
+    /// The edge as the read-back sees `primitive`'s strokes: on its own
+    /// pen, with every stroke along the sheet left out as the reader
+    /// leaves it out.
+    fn read_back(primitive: &crate::model::PaperPrimitive, page: [f64; 2]) -> Self {
+        let declared_mm = primitive
+            .stroke
+            .as_ref()
+            .map_or(STROKE_MM, |pen| pen.width_mm);
+        Self {
+            page,
+            keep_sheet_edge: false,
+            half_pen_mm: pen_width_mm(declared_mm) / 2.0,
+        }
+    }
+}
+
 /// The parts of `points` that print, split where a dropped piece breaks the
 /// chain.
 ///
 /// One run becomes one subpath, so a dash pattern flows along a whole polyline
 /// instead of restarting at every vertex.
-fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Vec<Vec<[f64; 2]>> {
+fn stroke_runs(points: &[[f64; 2]], edge: PageEdge) -> Vec<Vec<[f64; 2]>> {
     let mut runs = Vec::new();
     let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
         let (start, end) = (pair[0], pair[1]);
         // One copy of the rule, in `write::verdict`, so the page and the
         // ledger cannot disagree about whether this segment prints.
-        let prints = segment_fate(start, end, page, keep_sheet_edge).is_none();
+        let prints = segment_fate(
+            start,
+            end,
+            edge.page,
+            edge.keep_sheet_edge,
+            edge.half_pen_mm,
+        )
+        .is_none();
         if !prints {
             if run.len() >= 2 {
                 runs.push(std::mem::take(&mut run));
@@ -2321,7 +2366,8 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
             .as_ref()
             .and_then(|pen| fitted_dash(pen, &primitive.shape))
         {
-            for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
+            let edge = PageEdge::read_back(primitive, page);
+            for run in stroke_runs(&shape_chain(&primitive.shape), edge) {
                 for pair in run.windows(2) {
                     let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
                     out.extend(walk.split(pair[0], pair[1]));
@@ -2335,7 +2381,8 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
             .map(|pen| pen.dash_mm.clone())
             .unwrap_or_default();
         let mut walk = DashWalk::new(&dash, 0.0);
-        for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
+        let edge = PageEdge::read_back(primitive, page);
+        for run in stroke_runs(&shape_chain(&primitive.shape), edge) {
             walk.restart();
             for pair in run.windows(2) {
                 for (start, end) in walk.split(pair[0], pair[1]) {
@@ -4258,6 +4305,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![thin, thick],
             missing_symbols: Vec::new(),
@@ -4312,6 +4360,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![line],
             missing_symbols: Vec::new(),
@@ -4366,6 +4415,7 @@ mod tests {
                 template: None,
                 page_mm: Some([200.0, 100.0]),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 primitives: vec![line],
                 missing_symbols: Vec::new(),
@@ -4396,6 +4446,7 @@ mod tests {
             template: None,
             page_mm: Some([594.33, 420.57]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: Vec::new(),
             missing_symbols: Vec::new(),
@@ -4421,6 +4472,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -4455,6 +4507,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive(
@@ -4893,6 +4946,7 @@ mod tests {
             template: None,
             page_mm: Some(page),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -4973,6 +5027,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape("AB", 40.0, 0.0, None)),
@@ -5060,6 +5115,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: [
                 shape("AB", 20.0, center, None),
@@ -5146,6 +5202,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape(40.0, None)),
@@ -5227,6 +5284,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape(40.0, None)),
@@ -5299,6 +5357,7 @@ mod tests {
                 template: None,
                 page_mm: Some(page_mm),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 primitives: vec![primitive(
                     "decoded",
@@ -5361,6 +5420,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5487,6 +5547,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5546,6 +5607,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5597,6 +5659,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5675,6 +5738,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 140.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5798,6 +5862,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 label("动火点", "SimSun", 20.0),
@@ -5891,6 +5956,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 label("动火点", "SimSun", 40.0, 20.0, TextAnchor::Left),
@@ -6018,6 +6084,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives,
             missing_symbols: Vec::new(),
@@ -7038,6 +7105,7 @@ mod tests {
             template: None,
             page_mm: Some(page_mm),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive],
             missing_symbols: Vec::new(),

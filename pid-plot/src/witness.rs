@@ -369,6 +369,7 @@ mod tests {
             template: None,
             primitives,
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),

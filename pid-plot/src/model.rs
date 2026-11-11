@@ -58,7 +58,32 @@ pub struct PaperModel {
     /// Which symbol library was searched, in order.
     pub library: Vec<String>,
     /// Page width and height in millimetres, when the drawing states them.
+    ///
+    /// The page is the paper the sheet states: the `0x0114 JSheet` record of
+    /// the drawing's root storage names it behind its list of children
+    /// (`pid_parse::parsers::sheet_display_order::SheetPaper`), 594 × 420,
+    /// 841 × 594 or 1189 × 841 mm on every file on hand, and the eleven
+    /// reference plots are printed on exactly that paper. A drawing whose
+    /// sheet states none is as large as its border frame says
+    /// ([`Self::frame_mm`]); one with neither is measured
+    /// ([`Self::resolved_page_mm`]).
     pub page_mm: Option<[f64; 2]>,
+    /// The sheet the drawing's border frame states, in millimetres: the
+    /// frame's own rectangle or, where no frame is read, the size the
+    /// template it links is named for. `None` for a sheet with no frame.
+    ///
+    /// Until the paper was read this was the page. It is still what picks
+    /// the border template and what the lettering is set against, and it
+    /// need not be the paper: a frame may be a little larger than its paper
+    /// and put its template off the paper's corner. The nine
+    /// `CPECCHB-SQ-A2` sheets state 594.328 × 420.566 mm for a 594 × 420 mm
+    /// paper and place the template at (0.388, 0.566) mm, so the top and the
+    /// right edge of its outline lie off the paper — where the A2 reference
+    /// plot inks nothing either. What a frame holds past the paper stays in
+    /// [`Self::primitives`] and is not printed
+    /// (`DropReason::SegmentBeyondThePaper`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_mm: Option<[f64; 2]>,
     /// The `.igr` border template drawn under the content, when the sheet has
     /// one.
     ///
@@ -299,14 +324,16 @@ impl PaperModel {
 
     /// The page the PDF will be given.
     ///
-    /// A drawing that states its sheet — a decoded `igSmartFrame2d` whose
-    /// extent is the page, or a template name — has that sheet here, exactly as
+    /// A drawing that states its sheet — the paper its `JSheet` record names
+    /// or, failing that, a decoded `igSmartFrame2d` whose extent is the page
+    /// or a template name — has that sheet here, exactly as
     /// [`PaperModel::page_mm`] reports it. One that states none is measured
     /// instead: the smallest [`STANDARD_SHEETS_MM`] sheet its ink fits, and only
-    /// when it fits none of them its ink's own box. Four drawings across the
-    /// plant backup and the five-drawing corpus take that path (their `.pid`
-    /// carries neither a frame nor a template name); the rule is stated once,
-    /// here, so the writer and every gate agree on the same number.
+    /// when it fits none of them its ink's own box. No drawing on hand takes
+    /// that path any more — the four that carry neither a frame nor a
+    /// template name state their paper, and it is the sheet they used to be
+    /// measured at; the rule is stated once, here, so the writer and every
+    /// gate agree on the same number.
     ///
     /// `None` means the drawing states no page **and** has no ink to measure.
     #[must_use]
@@ -1306,9 +1333,13 @@ pub fn lay_out_with_symbol_roots(
         &doc.jsites,
         &geometry,
     );
-    let page_mm = geometry
+    // Two rectangles, and they need not be the same one. The frame's is the
+    // sheet as the border frame states it; the page is the paper the sheet's
+    // own record states, which is what a plot is printed on.
+    let frame_mm = geometry
         .page_dimensions_mm
         .map(|(width, height)| [width, height]);
+    let page_mm = stated_paper_mm(&doc).or(frame_mm);
     let mut primitives = Vec::new();
     let mut placements = SymbolPlacements::default();
     let mut seen_sheet_fills = std::collections::HashSet::new();
@@ -1341,7 +1372,10 @@ pub fn lay_out_with_symbol_roots(
     // that name is the ticket every templated sheet was picked on — `Q井场`
     // links `CPECCHB-SQ-A1.igr` twice and its ink measures `841 × 594`, that
     // template exactly, so it wears the frame its own file asks for.
-    let furniture_page = match page_mm {
+    //
+    // The frame's rectangle picks the template, not the paper: a paper is
+    // stated by every sheet, framed or not, and `换热器CD` states one too.
+    let furniture_page = match frame_mm {
         Some(page) => Some(page),
         None if linked_prefixes.is_empty() => None,
         None => plottable_sheet_mm(&geometry),
@@ -1497,6 +1531,9 @@ pub fn lay_out_with_symbol_roots(
             continue;
         }
         let outcome: EntityOutcome = match &entity.kind {
+            // The rail a border template would have drawn is told by the
+            // frame's own rectangle, as it was before the paper was read; a
+            // sheet with no frame has no such rail.
             PidGraphicKind::SymbolInstance { .. } => push_symbol_instance(
                 &mut primitives,
                 entity,
@@ -1504,14 +1541,14 @@ pub fn lay_out_with_symbol_roots(
                 &mut symbols,
                 &line_styles,
                 &as_drawn,
-                page_mm,
+                frame_mm,
                 &mut placements,
             )
             .into(),
             _ => push_entity(
                 &mut primitives,
                 entity,
-                page_mm,
+                frame_mm,
                 &styles,
                 &line_styles,
                 &fill_styles,
@@ -1542,14 +1579,21 @@ pub fn lay_out_with_symbol_roots(
     // into a diagonal across the page that no plot has. The parse side keeps
     // them on purpose (they are audit evidence for the endpoint-pair reading,
     // pinned by `tests/parse_real_files.rs`); the page refuses them.
+    //
+    // What is held to is the sheet at its largest: the paper and the frame's
+    // rectangle together. A primitive inside the frame and off the paper is
+    // not a stroke that cannot reach the sheet — it is what the sheet's own
+    // frame put there — so it stays in the model, and the writer leaves it
+    // unprinted for what it is (`DropReason::SegmentBeyondThePaper`).
     let mut off_sheet = 0usize;
     if let Some(page) = page_mm {
+        let reach = frame_mm.map_or(page, |frame| [page[0].max(frame[0]), page[1].max(frame[1])]);
         // The ledger needs to know which primitive left, and `Vec::retain`
         // visits each element exactly once in order — so the survivors are
         // rebuilt as they are seen rather than searched for afterwards.
         let mut index = 0usize;
         primitives.retain(|primitive| {
-            let printable = !beyond_the_sheet(&primitive.shape, page);
+            let printable = !beyond_the_sheet(&primitive.shape, reach);
             if !printable {
                 off_sheet += 1;
             }
@@ -1572,6 +1616,7 @@ pub fn lay_out_with_symbol_roots(
     Ok(PaperModel {
         library: library.to_vec(),
         page_mm,
+        frame_mm,
         template,
         primitives,
         off_sheet_primitives: off_sheet,
@@ -1583,6 +1628,23 @@ pub fn lay_out_with_symbol_roots(
         symbols_referenced: placements.referenced.len(),
         ledger,
     })
+}
+
+/// The paper the drawing's sheets state, `[width, height]` in millimetres:
+/// the one every `JSheet` record that states a paper agrees on.
+///
+/// The record states metres as two doubles — 0.594 and 0.42 on an A2 sheet —
+/// and the millimetres are read to the nanometre, so that the page is
+/// `594 × 420` and not the last bit of `0.594 × 1000`.
+fn stated_paper_mm(doc: &PidDocument) -> Option<[f64; 2]> {
+    let millimetres = |metres: f64| (metres * 1e9).round() / 1e6;
+    let mut papers = doc
+        .sheet_display_order
+        .values()
+        .filter_map(|order| order.paper)
+        .map(|paper| [millimetres(paper.width_m), millimetres(paper.height_m)]);
+    let first = papers.next()?;
+    papers.all(|paper| paper == first).then_some(first)
 }
 
 /// The display order of each sheet stream of a document, by the stream's
@@ -5004,6 +5066,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 text([12.0, -1.546], "15-TD-4101416-B2-EH40"),
@@ -5579,6 +5642,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: out,
             missing_symbols: Vec::new(),
@@ -5904,7 +5968,8 @@ mod tests {
     /// The frame's own numbers settle where `DWG-0202GP06-01`'s content
     /// goes: its A2 template, 594 × 420 mm, scaled by the frame's `s` and
     /// moved by `t − lo`, fills exactly the 593.7458 × 419.6292 mm range the
-    /// frame states.
+    /// frame states. The page is not that range: it is the 594 × 420 mm
+    /// paper the sheet states, a quarter of a millimetre larger each way.
     #[test]
     fn a_scaled_frame_fills_its_range_with_the_template() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
@@ -5921,19 +5986,19 @@ mod tests {
         let offset = frame.template_offset_mm();
         assert!((offset[0] - 0.270).abs() < 0.001, "{frame:?}");
         assert!(offset[1].abs() < 0.001, "{frame:?}");
-        let page = super::lay_out_drawing(&pid, &corpus)
-            .expect("lays out")
-            .page_mm
-            .expect("the frame states its page");
+        let model = super::lay_out_drawing(&pid, &corpus).expect("lays out");
+        let range = model.frame_mm.expect("the frame states its range");
         for (axis, template) in [594.0, 420.0].into_iter().enumerate() {
             assert!(
-                (frame.scale * template + offset[axis] - page[axis]).abs() < 0.001,
+                (frame.scale * template + offset[axis] - range[axis]).abs() < 0.001,
                 "axis {axis}: {} × {template} + {} ≠ {}",
                 frame.scale,
                 offset[axis],
-                page[axis]
+                range[axis]
             );
         }
+        assert_eq!(model.page_mm, Some([594.0, 420.0]), "the paper");
+        assert!((range[0] - 593.7458).abs() < 1e-4 && (range[1] - 419.6292).abs() < 1e-4);
         let drawing = frame.drawing_offset_mm();
         assert!((drawing[0] - 0.051).abs() < 0.001, "{frame:?}");
         assert!((drawing[1] + 0.355).abs() < 0.001, "{frame:?}");
@@ -6011,6 +6076,7 @@ mod tests {
             page_mm: Some([1189.0, 841.0]),
             primitives: Vec::new(),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -6189,6 +6255,7 @@ mod tests {
                     })
                     .collect(),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 missing_symbols: Vec::new(),
                 missing_templates: Vec::new(),
@@ -6846,7 +6913,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 43 codes has to be reachable and has to be *recorded*
+    // Every one of the 44 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -7668,6 +7735,17 @@ mod tests {
                 page,
             )
             .expect("the print driver's frame is not content"),
+            DropReason::SegmentBeyondThePaper => write_reason(
+                &write_primitive(
+                    PaperShape::Line {
+                        start_mm: [841.328, 0.566],
+                        end_mm: [841.328, 300.0],
+                    },
+                    0.25,
+                ),
+                page,
+            )
+            .expect("a stroke past the paper's edge leaves no ink on it"),
             DropReason::TextEmpty => write_reason(&write_label([10.0, 10.0], Some(2.5), ""), page)
                 .expect("an empty string letters nothing"),
             DropReason::TextPlacementNonFinite => {
@@ -7787,7 +7865,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 43, "the appendix's 43 rows");
+        assert_eq!(DropReason::all().len(), 44, "the appendix's 44 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.
@@ -7815,6 +7893,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![write_label([10.0, 10.0], Some(2.5), "PT-101")],
             missing_symbols: Vec::new(),
@@ -7896,6 +7975,7 @@ mod tests {
                     template: None,
                     page_mm: Some([100.0, 100.0]),
                     off_sheet_primitives: 0,
+                    frame_mm: None,
                     skipped_endpoint_pairs: 0,
                     primitives: vec![write_label([50.0, 100.9], Some(2.5), "PT-101")],
                     missing_symbols: Vec::new(),

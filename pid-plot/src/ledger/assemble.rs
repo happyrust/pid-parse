@@ -687,11 +687,26 @@ impl ExportLedger {
                     .copied()
                     .unwrap_or(0),
             );
-        let expected = u64::try_from(model.primitives_past_the_edge(PAST_THE_EDGE_SLACK_MM).len())
-            .unwrap_or(u64::MAX);
+        // The mark is a partial one: it is given to a primitive that is on
+        // the page. One the writer leaves off altogether — a stroke the
+        // sheet's frame holds wholly past the paper — reaches past the edge
+        // and is no mark, so the count it is held to is of the ones written.
+        let written = |primitive: &crate::model::PaperPrimitive| {
+            model
+                .resolved_page_mm()
+                .is_none_or(|page| crate::write::primitive_verdict(primitive, page).is_on_page())
+        };
+        let expected = u64::try_from(
+            model
+                .primitives_past_the_edge(PAST_THE_EDGE_SLACK_MM)
+                .into_iter()
+                .filter(|primitive| written(primitive))
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
         if past != expected {
             mismatches.push(format!(
-                "8.7 past_the_edge {past} != primitives_past_the_edge(0.5) {expected}"
+                "8.7 past_the_edge {past} != primitives_past_the_edge(0.5) on the page {expected}"
             ));
         }
         mismatches
@@ -919,6 +934,10 @@ fn assemble_domain(
             (DropReason::SegmentNonFinite, fate.segments.non_finite),
             (DropReason::SegmentTooShort, fate.segments.too_short),
             (DropReason::SegmentOnSheetEdge, fate.segments.on_sheet_edge),
+            (
+                DropReason::SegmentBeyondThePaper,
+                fate.segments.beyond_the_paper,
+            ),
         ] {
             if count > 0 {
                 let entry = account.segments.dropped.entry(reason).or_insert(0);
@@ -1805,6 +1824,7 @@ mod tests {
             template: None,
             primitives,
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -2123,6 +2143,7 @@ mod tests {
                                     non_finite: 0,
                                     too_short: 0,
                                     on_sheet_edge: 1,
+                                    beyond_the_paper: 0,
                                 },
                                 segments_dropped: true,
                                 text: None,
@@ -2305,6 +2326,7 @@ mod tests {
                             non_finite,
                             too_short,
                             on_sheet_edge: on_edge,
+                            beyond_the_paper: 0,
                         },
                         segments_dropped,
                         text: None,
@@ -2448,6 +2470,7 @@ mod tests {
                 non_finite: 0,
                 too_short: 0,
                 on_sheet_edge: 1,
+                beyond_the_paper: 0,
             },
             segments_dropped: true,
             text: None,
@@ -2505,6 +2528,7 @@ mod tests {
                 non_finite: 0,
                 too_short: 0,
                 on_sheet_edge: 1,
+                beyond_the_paper: 0,
             },
             segments_dropped: true,
             text: None,
@@ -2782,10 +2806,22 @@ mod tests {
         assert!(mismatches[0].starts_with("8.6"), "{mismatches:?}");
 
         // 8.7: the page has ink past the edge and the ledger never marked it.
-        model.primitives = vec![a_line([10.0, 10.0], [841.9, 10.0])];
+        model.primitives = vec![a_line([800.0, 10.0], [841.9, 10.0])];
         let mismatches = assembled.cross_check(&model, None, None);
         assert_eq!(mismatches.len(), 1, "{mismatches:?}");
         assert!(mismatches[0].starts_with("8.7"), "{mismatches:?}");
+        // A stroke the writer leaves off the page altogether is past the
+        // edge and owes no mark: one that lies wholly beyond the paper, and
+        // one the reader takes for the sheet's own edge.
+        for unwritten in [
+            a_line([841.9, 10.0], [841.9, 90.0]),
+            a_line([10.0, 10.0], [841.9, 10.0]),
+        ] {
+            model.primitives = vec![unwritten];
+            assert_eq!(model.primitives_past_the_edge(0.5).len(), 1);
+            let mismatches = assembled.cross_check(&model, None, None);
+            assert!(mismatches.is_empty(), "{mismatches:?}");
+        }
     }
 
     #[test]

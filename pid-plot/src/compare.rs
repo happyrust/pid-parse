@@ -3127,6 +3127,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive([10.0, 90.0], [190.0, 90.0], true),
@@ -3244,6 +3245,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives,
             missing_symbols: Vec::new(),

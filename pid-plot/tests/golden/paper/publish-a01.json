@@ -4,6 +4,10 @@
     "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip"
   ],
   "page_mm": [
+    594.0,
+    420.0
+  ],
+  "frame_mm": [
     594.001041,
     420.001017
   ],

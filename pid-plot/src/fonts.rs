@@ -843,6 +843,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![PaperPrimitive {
                 confidence: "decoded",

@@ -96,6 +96,7 @@
       "Arial",
       "Arial Narrow",
       "FangSong",
+      "NSimSun",
       "SimSun"
     ]
   },
@@ -308,7 +309,7 @@
         "entities": {
           "total": 254,
           "on_page": 174,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -372,12 +373,18 @@
           "laid_out": 175,
           "off_sheet": 0,
           "on_page": 175,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 171,
-          "written": 171,
+          "written": 169,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
@@ -956,7 +963,7 @@
     },
     "00/00/D井场 注采阀组工艺及自控流程图.pid": {
       "page": {
-        "size_source": "measured"
+        "size_source": "declared"
       },
       "fonts_measured": true,
       "drawing": {
@@ -2699,7 +2706,7 @@
         "entities": {
           "total": 176,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -2747,12 +2754,19 @@
           "laid_out": 96,
           "off_sheet": 0,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 55,
-          "written": 55,
+          "written": 53,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
@@ -2964,7 +2978,7 @@
         "entities": {
           "total": 176,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -3012,12 +3026,18 @@
           "laid_out": 96,
           "off_sheet": 0,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 55,
-          "written": 55,
+          "written": 53,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
@@ -3223,7 +3243,7 @@
         "entities": {
           "total": 176,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -3271,19 +3291,25 @@
           "laid_out": 96,
           "off_sheet": 0,
           "on_page": 96,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 55,
-          "written": 55,
+          "written": 53,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
     },
     "00/00/Q井场 注采阀组工艺及自控流程图.pid": {
       "page": {
-        "size_source": "measured",
+        "size_source": "declared",
         "template": {
           "name": "CPECCHB-SQ-A1.igr",
           "source": "archive_member",
@@ -4426,7 +4452,7 @@
         "entities": {
           "total": 254,
           "on_page": 174,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -4490,12 +4516,19 @@
           "laid_out": 175,
           "off_sheet": 0,
           "on_page": 175,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 171,
-          "written": 171,
+          "written": 169,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
@@ -4665,7 +4698,7 @@
         "entities": {
           "total": 254,
           "on_page": 174,
-          "partial": 0,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
             "kind_unknown": 16
@@ -4729,12 +4762,19 @@
           "laid_out": 175,
           "off_sheet": 0,
           "on_page": 175,
-          "partial": 0,
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 171,
-          "written": 171,
+          "written": 169,
+          "dropped": {
+            "segment_beyond_the_paper": 2
+          },
           "unattributed": 0
         }
       }
@@ -7742,7 +7782,7 @@
     },
     "00/00/集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图.pid": {
       "page": {
-        "size_source": "measured"
+        "size_source": "declared"
       },
       "fonts_measured": true,
       "drawing": {
@@ -11087,17 +11127,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -11146,13 +11188,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -11330,17 +11382,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -11389,20 +11443,30 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
     },
     "00/02/集注站 凝析油一级闪蒸分离器B气相出口改造工艺及自控流程图.pid": {
       "page": {
-        "size_source": "measured"
+        "size_source": "declared"
       },
       "fonts_measured": true,
       "drawing": {
@@ -11747,17 +11811,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -11806,13 +11872,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -11979,17 +12055,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -12038,13 +12116,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -12141,17 +12229,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -12200,13 +12290,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -12368,17 +12468,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -12427,13 +12529,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -12591,17 +12703,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -12650,13 +12764,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -12836,17 +12960,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -12895,13 +13021,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -13073,17 +13209,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -13132,13 +13270,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }

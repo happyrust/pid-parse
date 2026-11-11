@@ -633,22 +633,19 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
 
 /// `D06`'s border frame reaches 594.33 × 420.57 mm — the `CPECCHB-SQ-A2`
 /// template, 593.94 × 420.00, where the frame puts it, 0.39 × 0.57 mm off the
-/// sheet's origin — and that is the page this crate writes. The sheet's own
-/// record states the paper it is drawn on: 0.42 × 0.594 m.
+/// sheet's origin. The sheet's own record states the paper it is drawn on,
+/// 0.42 × 0.594 m, and that is the page: the eleven reference plots are each
+/// printed on the paper their sheet states, and the one that wears this
+/// template, `轻烃分离器I`, is on 594 × 420 mm with the template's top and
+/// right edges off the paper.
 ///
-/// The eleven reference plots are each printed on the paper their sheet
-/// states. The one that wears this template, `轻烃分离器I`, is on 594 × 420
-/// mm with the template's top and right edges off the paper; our page for it
-/// is 0.329 mm wider and 0.566 mm taller, the two "not fixed yet" lines of
-/// the ink gate. So the page should be the paper, the template where the
-/// frame puts it, and what lies off the paper not printed.
-///
-/// Not landed, which is why this is ignored: the page is part of the paper
-/// model and of the seven goldens, and of the 71 pages on hand 20 would
-/// change (`docs/analysis/2026-11-11-a-sheet-states-its-paper.md`).
+/// So the page is the paper, the frame's rectangle is kept beside it, the
+/// template stays where the frame puts it, and what the frame holds off the
+/// paper is in the model and is not printed: the top and the right piece of
+/// the outline, and the line that restates its right edge — which the
+/// reference's content stream does not hold either
+/// (`docs/analysis/2026-11-11-a-sheet-states-its-paper.md`).
 #[test]
-#[ignore = "the page is still the frame's reach, 594.33 x 420.57 mm, not the 594 x 420 mm \
-            paper the sheet states"]
 fn an_a2_sheet_is_written_on_the_paper_its_sheet_states() {
     let fixture = fixture_dir().join("D06.pid");
     if !fixture.is_file() {
@@ -679,6 +676,69 @@ fn an_a2_sheet_is_written_on_the_paper_its_sheet_states() {
         paper.width_m * 1000.0,
         paper.height_m * 1000.0
     );
+    assert_eq!(model.page_mm, Some([594.0, 420.0]));
+    let frame = model
+        .frame_mm
+        .expect("the border frame states its rectangle");
+    assert!(
+        near(frame, [594.327_890, 420.565_694], 1e-6),
+        "the frame's rectangle is {frame:?}"
+    );
+
+    // What the frame holds past the paper: two template primitives, the
+    // outline and the line along its right edge, 0.328 mm past the right
+    // edge and 0.566 mm past the top one. Both are still in the model.
+    let past: Vec<_> = model.primitives_past_the_edge(0.01);
+    assert_eq!(past.len(), 2, "{past:?}");
+    assert!(past.iter().all(|primitive| primitive.furniture));
+    assert_eq!(model.off_sheet_primitives, 0);
+    // The writer's account of them, which takes no typeface: the outline
+    // is on the page less its top and right pieces, the other line is not
+    // printed, and neither is a suspect drop.
+    let fates = pid_plot::write::write_ledger(&model).expect("a page to judge");
+    let of = |primitive: &pid_plot::model::PaperPrimitive| {
+        let index = model
+            .primitives
+            .iter()
+            .position(|other| std::ptr::eq(other, primitive))
+            .expect("a primitive of the model");
+        fates.fates[index]
+    };
+    let outline = past
+        .iter()
+        .find(|primitive| matches!(primitive.shape, PaperShape::Polyline { .. }))
+        .expect("the outline");
+    let fate = of(outline);
+    assert!(fate.is_on_page() && fate.segments_dropped, "{fate:?}");
+    assert_eq!(
+        (
+            fate.segments.total,
+            fate.segments.written,
+            fate.segments.beyond_the_paper
+        ),
+        (4, 2, 2),
+        "{fate:?}"
+    );
+    let restated = past
+        .iter()
+        .find(|primitive| matches!(primitive.shape, PaperShape::Line { .. }))
+        .expect("the line along the right edge");
+    assert_eq!(
+        of(restated).reason(),
+        Some(pid_plot::ledger::DropReason::SegmentBeyondThePaper)
+    );
+    let unprinted = fates
+        .fates
+        .iter()
+        .filter(|fate| fate.reason() == Some(pid_plot::ledger::DropReason::SegmentBeyondThePaper))
+        .count();
+    assert_eq!(unprinted, 1, "primitives wholly off the paper");
+    let pieces: u64 = fates
+        .fates
+        .iter()
+        .map(|fate| fate.segments.beyond_the_paper)
+        .sum();
+    assert_eq!(pieces, 3, "pieces off the paper");
 }
 
 #[test]

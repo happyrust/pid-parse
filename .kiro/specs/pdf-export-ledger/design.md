@@ -168,7 +168,7 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 43]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `DropReason::ALL: [DropReason; 44]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
 - `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 22 个，有意 21 个。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
@@ -541,6 +541,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `segment_non_finite` | `segment_fate`（`stroke_runs` 约 702 行 `prints` 表达式的端点有限性两项） |
 | `segment_too_short` | 同上，段长 `>= 1e-4` 一项 |
 | `segment_on_sheet_edge` | 同上，`read::sheet_edge_mm` 一项（家具段豁免） |
+| `segment_beyond_the_paper` | 同上，整支笔落在纸张一条边之外（家具段不豁免；2026-11-11 加） |
 | `text_empty` | `text_fate`（`show_text` 约 962 行） |
 | `text_placement_non_finite` | 同一行的旋转与原点两项 |
 | `text_height_invalid` | 约 966 行 |

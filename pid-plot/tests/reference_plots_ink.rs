@@ -283,6 +283,10 @@ impl Field {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cause {
     /// A defect of ours whose fix is known and not landed.
+    ///
+    /// No line of the table is of this cause since the A2 sheet's page
+    /// became its paper (2026-11-11); the cause stays for the next one.
+    #[allow(dead_code)]
     NotFixed,
     /// The difference is in the source data: the reference was plotted from
     /// a state of the drawing we do not hold, and the page can only read as
@@ -400,10 +404,6 @@ const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipel
                               reference was plotted from a later state of the drawing than \
                               either copy of the `.pid`, the published XML and the backup's \
                               database, which all agree with what we draw";
-
-/// The A2 sheet's page.
-const A2_PAGE: &str = "the sheet states 594.33 × 420.57 mm and is written at that size; the \
-                       reference prints it on 594 × 420 mm paper";
 
 const SHEETS: [Sheet; 11] = [
     Sheet {
@@ -570,19 +570,13 @@ const SHEETS: [Sheet; 11] = [
         same_colour: [2806, 250, 1321],
         sheet_edges: 6,
         wipes: 3,
+        // Three lines left this table when the page became the paper the
+        // sheet states (2026-11-11): the page was 0.329 mm wider and
+        // 0.566 mm taller than the reference's, and it stroked three sheet
+        // edges the reference does not — the top edge of the template's
+        // outline and its right edge twice, all of them off the 594 ×
+        // 420 mm paper.
         defects: &[
-            Defect {
-                field: Field::PageWidthApart,
-                reads: 0.329,
-                cause: Cause::NotFixed,
-                what: A2_PAGE,
-            },
-            Defect {
-                field: Field::PageHeightApart,
-                reads: 0.566,
-                cause: Cause::NotFixed,
-                what: A2_PAGE,
-            },
             Defect {
                 field: Field::MaskedCoverage,
                 reads: 0.983088,
@@ -650,13 +644,6 @@ const SHEETS: [Sheet; 11] = [
                 reads: 100.0,
                 cause: Cause::SiteData,
                 what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::SheetEdgesApart,
-                reads: 3.0,
-                cause: Cause::NotFixed,
-                what: "the top sheet edge and the right one, which we stroke twice, lie off the \
-                       reference's 594 × 420 mm paper",
             },
             Defect {
                 field: Field::WipesSame,

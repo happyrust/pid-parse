@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 43 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 44 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -238,6 +238,23 @@ pub enum DropReason {
     /// the sheet edge — within 0.282 mm on one axis and past 0.9 of the page
     /// on the other. Counted per segment.
     SegmentOnSheetEdge,
+    /// `stroke_runs`: a segment the whole pen of which lies past one edge of
+    /// the paper — both ends at least half the pen it is stroked with beyond
+    /// the same edge — so it leaves no ink on the page. Counted per segment.
+    ///
+    /// A sheet states its paper, and its border frame may place the template
+    /// past the paper's corner: the nine `CPECCHB-SQ-A2` sheets by
+    /// (0.388, 0.566) mm, which puts the top and the right edge of the
+    /// template's outline off the paper. The A2 reference plot is the
+    /// witness that this ink is not printed: of the 4 586 `m` / `l`
+    /// operands of its content stream four lie outside the page box, all in
+    /// the outline's own path — the top edge is not written at all, the two
+    /// upright edges are cut one device unit past the paper, and the line
+    /// that restates the right edge (oid 109 of the template) is in no path.
+    /// A furniture segment is not exempt, as it is from
+    /// [`Self::SegmentOnSheetEdge`]: what is off the paper is off it
+    /// whichever file drew it.
+    SegmentBeyondThePaper,
     /// `show_text`: the text is the empty string.
     TextEmpty,
     /// `show_text`: the rotation or the origin is not finite.
@@ -265,7 +282,7 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 43] = [
+pub const ALL: [DropReason; 44] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
@@ -303,6 +320,7 @@ pub const ALL: [DropReason; 43] = [
     DropReason::SegmentNonFinite,
     DropReason::SegmentTooShort,
     DropReason::SegmentOnSheetEdge,
+    DropReason::SegmentBeyondThePaper,
     DropReason::TextEmpty,
     DropReason::TextPlacementNonFinite,
     DropReason::TextHeightInvalid,
@@ -360,6 +378,7 @@ impl DropReason {
             Self::SegmentNonFinite => "segment_non_finite",
             Self::SegmentTooShort => "segment_too_short",
             Self::SegmentOnSheetEdge => "segment_on_sheet_edge",
+            Self::SegmentBeyondThePaper => "segment_beyond_the_paper",
             Self::TextEmpty => "text_empty",
             Self::TextPlacementNonFinite => "text_placement_non_finite",
             Self::TextHeightInvalid => "text_height_invalid",
@@ -414,6 +433,7 @@ impl DropReason {
             | Self::ProbeOnly
             | Self::SegmentTooShort
             | Self::SegmentOnSheetEdge
+            | Self::SegmentBeyondThePaper
             | Self::TextEmpty
             | Self::TextWhitespaceOnly => Tier::Intentional,
         }
@@ -460,9 +480,10 @@ impl DropReason {
             | Self::TextPlacementNonFinite
             | Self::TextHeightInvalid
             | Self::TextWhitespaceOnly => ReasonLayer::Primitive,
-            Self::SegmentNonFinite | Self::SegmentTooShort | Self::SegmentOnSheetEdge => {
-                ReasonLayer::Segment
-            }
+            Self::SegmentNonFinite
+            | Self::SegmentTooShort
+            | Self::SegmentOnSheetEdge
+            | Self::SegmentBeyondThePaper => ReasonLayer::Segment,
             Self::TemplateCandidateUnreadable | Self::TemplateMissing => ReasonLayer::Page,
         }
     }
@@ -681,7 +702,7 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 43] = [
+    const APPENDIX_A: [&str; 44] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
@@ -724,6 +745,7 @@ mod tests {
         "segment_non_finite",
         "segment_too_short",
         "segment_on_sheet_edge",
+        "segment_beyond_the_paper",
         "text_empty",
         "text_placement_non_finite",
         "text_height_invalid",
@@ -741,11 +763,11 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 43, "the catalog is 43 codes");
+        assert_eq!(ALL.len(), 44, "the catalog is 44 codes");
     }
 
     #[test]
-    fn tiers_split_22_suspect_21_intentional() {
+    fn tiers_split_22_suspect_22_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -755,8 +777,8 @@ mod tests {
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
         assert_eq!(suspect, 22, "appendix A's suspect column");
-        assert_eq!(intentional, 21, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 43);
+        assert_eq!(intentional, 22, "appendix A's intentional column");
+        assert_eq!(suspect + intentional, 44);
     }
 
     #[test]

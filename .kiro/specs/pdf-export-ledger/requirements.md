@@ -320,6 +320,7 @@
 | `segment_non_finite` | 可疑 | `stroke_runs`：段端点非有限；按段计 | 未计数 |
 | `segment_too_short` | 有意 | `stroke_runs`：段长 < 1e-4 mm；按段计 | 未计数 |
 | `segment_on_sheet_edge` | 有意 | `stroke_runs`：非家具段被 `read::sheet_edge_mm` 判为贴页边（一个方向的差 < 0.282 mm，另一个方向的差 > 0.9 倍页边；对测得的页幅同样生效）；按段计 | 未计数 |
+| `segment_beyond_the_paper` | 有意 | `stroke_runs`：整支笔都落在纸张某一条边之外的段（两端都在同一条边之外至少半个笔宽），家具段不豁免；图框把模板放到纸角之外时模板外轮廓的上边、右边属于这一类，见证是 A2 参考图（内容流里页面框之外的坐标只有外轮廓那一条路径的 4 个，上边整条没写）；按段计（2026-11-11 加，附录由 43 行变 44 行） | 未计数 |
 | `text_empty` | 有意 | `show_text`：文本为空串 | 未计数 |
 | `text_placement_non_finite` | 可疑 | `show_text`：旋转角或原点非有限 | 未计数 |
 | `text_height_invalid` | 可疑 | `show_text`：高度非有限或 ≤ 0，包括排版层在记录与样式都没给高度时填的 `Some(0.0)`；`None` 回落到 `DEFAULT_TEXT_MM`，不算 | 未计数 |

@@ -803,9 +803,12 @@ fn eleven_reference_plots_hold_their_readings() {
                 pin.page_mm
             );
         }
+        // Ours is the paper the sheet states, to the nanometre; the
+        // reference's page box is that paper as its driver writes it, within
+        // 0.0014 mm.
         let page = model.resolved_page_mm().expect("page");
         assert!(
-            (page[0] - pin.page_mm[0]).abs() < 1.0 && (page[1] - pin.page_mm[1]).abs() < 1.0,
+            (page[0] - pin.page_mm[0]).abs() < 1e-6 && (page[1] - pin.page_mm[1]).abs() < 1e-6,
             "{name} page {page:?} is not the reference's {:?}",
             pin.page_mm
         );
