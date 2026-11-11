@@ -83,13 +83,18 @@ pub const DEFAULT_TEXT_MM: f64 = 2.5;
 /// colours, and the comparison is against the plot.
 const PLOT_INK: [u8; 3] = [0, 0, 0];
 
-/// What a pen declaring `rgb` inks on paper.
+/// What a pen the page model gives `rgb` paints on paper.
 ///
-/// Black for every colour except white: a white pen is the plot's wipe — the
-/// reference pages carry two to sixteen of them, thin and a millimetre long,
-/// where something has to un-ink a filled region (a valve's seal dot, a
-/// dimension's gap). Painting those black would put ink on the page where the
-/// reference has none, so the wipe survives the monochrome table.
+/// Black for every colour but one. `[255, 255, 255]` reaches the writer
+/// meaning the paper's own colour and nothing else: the page model turns a
+/// stroke its style *states* white into ink and keeps white for a stroke the
+/// sheet draws in the page's colour (`model::sheet_colour`). Those are the
+/// origin marks of the label symbols, two to twenty-five on a reference
+/// page, thin and about a millimetre long, and the reference plots paint
+/// every one of them in white where it stands among the sheet's objects — so
+/// that it takes a piece out of what was painted before it and none out of
+/// what is painted after. Painting them black would put a `+` or a tick
+/// beside each label where the reference shows nothing.
 fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     if rgb == [255, 255, 255] {
         [255, 255, 255]
@@ -3968,16 +3973,17 @@ mod tests {
     }
 
     #[test]
-    fn a_white_pen_is_the_plots_wipe_and_survives_the_monochrome_table() {
+    fn a_stroke_in_the_pages_colour_stays_paper_under_the_monochrome_table() {
         use super::plot_ink;
-        // The reference pages carry two to sixteen thin white strokes, each
-        // about a millimetre long: the plot's wipe. A white pen has to reach
-        // the page white even though every other colour is black.
+        // White is how the page model says "the page's own colour": a label
+        // symbol's origin mark, which the reference plots paint white. It
+        // has to reach the page white even though every other colour is
+        // black.
         assert_eq!(plot_ink([255, 255, 255]), [255, 255, 255]);
         for colour in [[128, 128, 0], [0, 128, 0], [128, 0, 0], [0, 0, 255]] {
             assert_eq!(plot_ink(colour), [0, 0, 0], "{colour:?}");
         }
-        // Nearly white is not white: the wipe is the one exact value.
+        // Nearly white is not the page's colour: that is the one exact value.
         assert_eq!(plot_ink([254, 255, 255]), [0, 0, 0]);
     }
 
