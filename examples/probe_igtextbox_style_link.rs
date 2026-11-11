@@ -17,7 +17,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{decode_igtextboxes, decode_jstyle_overrides};
+use pid_parse::parsers::sheet_records::{
+    decode_igtextboxes, JStyleOverrideDecoder, PsmRecordDecoder,
+};
 use pid_parse::PidPackage;
 
 const FIXTURES: &[&str] = &[
@@ -76,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let bytes = raw.data.as_slice();
             let texts = decode_igtextboxes(bytes);
-            let styles = decode_jstyle_overrides(bytes);
+            let styles = JStyleOverrideDecoder.scan(bytes);
             if texts.is_empty() && styles.is_empty() {
                 continue;
             }

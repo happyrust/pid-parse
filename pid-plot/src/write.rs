@@ -48,6 +48,7 @@
 //! a variable font.
 
 mod borrowed;
+mod escapement;
 mod script_runs;
 mod text_matrix;
 mod verdict;
@@ -1463,6 +1464,10 @@ struct TextSegment<'a> {
     text: String,
     typeface: &'a str,
     size_pt: f64,
+    /// The style height the stretch states — the label's own, or the one its
+    /// run of the record carries — which `size_pt` was sized from and which
+    /// the stretch is measured and spaced at.
+    height_mm: f64,
 }
 
 /// Split a label into the stretches it letters differently.
@@ -1507,6 +1512,7 @@ fn text_segments<'a>(
             text: inked.to_string(),
             typeface: text.typeface,
             size_pt: base_size,
+            height_mm,
         }]
     };
     if text.spans.is_empty() {
@@ -1520,7 +1526,9 @@ fn text_segments<'a>(
     if end <= lead {
         return plain();
     }
-    let mut per_char: Vec<(&'a str, f64)> = vec![(text.typeface, base_size); end - lead];
+    // Each character's face, its size and the style height that size is of.
+    let mut per_char: Vec<(&'a str, f64, f64)> =
+        vec![(text.typeface, base_size, height_mm); end - lead];
     for span in text.spans {
         let start = usize::from(span.start);
         let stop = start.saturating_add(usize::from(span.len)).min(chars.len());
@@ -1533,16 +1541,19 @@ fn text_segments<'a>(
             Some(named) => typeface_key(Some(named), text.value),
             None => text.typeface,
         };
-        let size_pt = size_in(typeface, span.height_mm.unwrap_or(height_mm));
+        let stated_mm = span.height_mm.unwrap_or(height_mm);
+        let size_pt = size_in(typeface, stated_mm);
         for index in start..stop {
             if index < lead || index >= end {
                 continue;
             }
-            per_char[index - lead] = (typeface, size_pt);
+            per_char[index - lead] = (typeface, size_pt, stated_mm);
         }
     }
+    // A stretch is what letters in one face at one size; two heights that
+    // come to the same size are one stretch, measured at the first's.
     let mut segments: Vec<TextSegment<'a>> = Vec::new();
-    for (offset, (typeface, size_pt)) in per_char.iter().enumerate() {
+    for (offset, (typeface, size_pt, stated_mm)) in per_char.iter().enumerate() {
         let ch = inked.chars().nth(offset).unwrap_or_default();
         match segments.last_mut() {
             Some(last) if last.typeface == *typeface && last.size_pt == *size_pt => {
@@ -1552,6 +1563,7 @@ fn text_segments<'a>(
                 text: ch.to_string(),
                 typeface,
                 size_pt: *size_pt,
+                height_mm: *stated_mm,
             }),
         }
     }
@@ -1564,9 +1576,10 @@ fn text_segments<'a>(
 /// Where the runs of a label's record start, other than its first: character
 /// offsets into `inked`, ascending.
 ///
-/// The record's partition is kept whatever the runs' styles are. `SP:` is the
-/// one label of the eleven reference sheets that states one — `SP` and `:`,
-/// both in the same face at the same height.
+/// Every start of the record's partition is listed, whatever the runs'
+/// styles are; `show_text` cuts at them only for a record in one style.
+/// `SP:` is the one label of the eleven reference sheets that states a
+/// partition — `SP` and `:`, both in the same face at the same height.
 fn record_run_starts(text: &ShownText<'_>, inked: &str) -> Vec<usize> {
     let leading = |value: &str| value.chars().take_while(|c| c.is_whitespace()).count();
     let lead = leading(text.value).saturating_sub(leading(inked));
@@ -1645,9 +1658,11 @@ fn cut_at_record_runs<'a>(
 /// What the plotter measures a run at, in its own pixels, before any glyph is
 /// put on a whole one: the sum [`run_advance`] rounds glyph by glyph.
 ///
-/// `sx` is the horizontal scale of the label's text matrix and `device` the
-/// scale of the plotter's own sheet, as [`run_advance`] takes them. A run the
-/// reference font has no cell for is measured at its own glyphs' widths.
+/// `height_mm` is the style height the run itself states, the one `size_pt`
+/// is sized from. `sx` is the horizontal scale of the label's text matrix and
+/// `device` the scale of the plotter's own sheet, as [`run_advance`] takes
+/// them. A run the reference font has no cell for is measured at its own
+/// glyphs' widths.
 #[allow(clippy::too_many_arguments)]
 fn measured_width_px(
     face: &ReadyFace<'_>,
@@ -1687,11 +1702,16 @@ fn measured_width_px(
 /// unrounded ([`measured_width_px`]); the label starts on `round(start_px)`
 /// and this run on `round(start_px + before_px)`.
 ///
-/// `SP:` is the case. Its `S` and `P` each measure 10.9756 pixels, so the
-/// colon starts 22 pixels after the label on six reference sheets and 21 on
-/// the three air-cooler sheets, whose label starts at 2281.523: the start
-/// rounds up and the colon's 2303.474 rounds down. Stepping `S` and `P` by
-/// their own whole pixels, 11 and 11, put it at 22 on every sheet.
+/// `SP:` is the case, and the only one: nine labels on the eleven reference
+/// sheets, two runs each in one face at one height. Its `S` and `P` each
+/// measure 10.9756 pixels. On six sheets the colon starts 22 pixels after
+/// the label, which is also where stepping `S` and `P` by their own whole
+/// pixels, 11 and 11, puts it — those six do not tell the two rules apart.
+/// The three air-cooler sheets do: their label starts at 2281.523, the start
+/// rounds up and the colon's 2303.474 rounds down, 21 pixels on. They are
+/// three sheets of one layout with the label at the same place, so the rule
+/// rests on one start read three times, and on no record whose runs differ
+/// in face or height: `show_text` applies it to a record in one style only.
 fn record_run_start_px(start_px: f64, before_px: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)]
     let pixels = ((start_px + before_px).round() - start_px.round()) as i64;
@@ -1845,13 +1865,25 @@ fn show_text(
     // lends it.
     let segments = text_segments(faces, &text, inked, height_mm);
     let mut runs: Vec<(f64, FaceRun<'_>)> = Vec::new();
-    for segment in &segments {
+    // The stretch each of `runs` is a piece of: it is measured and spaced at
+    // the height that stretch states, as it is sized from it, and set in the
+    // font that stretch names unless another face lends it.
+    let mut stretch_of: Vec<usize> = Vec::new();
+    for (stretch, segment) in segments.iter().enumerate() {
         for run in encode_runs(faces, &text, segment.typeface, &segment.text)? {
             runs.push((segment.size_pt, run));
+            stretch_of.push(stretch);
         }
     }
-    let (sin, cos) = text.rotation.sin_cos();
-    let upright = sin.abs() < 1e-9;
+    // The direction the label is lettered along. The plotter states an angle
+    // in whole tenths of a degree, so a label a hair off level, or off a
+    // quarter turn, is lettered exactly on it ([`escapement`]).
+    let escapement::Lettered {
+        rotation,
+        sin,
+        cos,
+        upright,
+    } = escapement::of(text.rotation);
     // A borrowed run is set at its stretch's size and spaced by its lender's
     // own widths, like any other run — except the one the reference plots
     // show: `borrowed` names it, and the size the reference sets it at.
@@ -1865,11 +1897,22 @@ fn show_text(
     // whole-pixel steps end. The plotter gives each run of the record its own
     // start ([`record_run_start_px`]), so the stretch is cut back where the
     // record cuts it. A label the borrowing samples letter is left as it is.
-    let (runs, starts_record_run) = if upright && as_the_reference.is_none() {
-        cut_at_record_runs(runs, &record_run_starts(&text, inked))
-    } else {
-        let whole = vec![false; runs.len()];
-        (runs, whole)
+    //
+    // That is the rule for a record in one style, which is all the reference
+    // plots show: `SP:`, two runs in one face at one height. A record whose
+    // runs differ in face or height — a pipeline number of the fixtures,
+    // with its hyphens in Arial among Arial Narrow — is not cut: each stretch
+    // carries on where the one before it ended, unrounded.
+    let (runs, starts_record_run, stretch_of) = match segments.as_slice() {
+        [_] if upright && as_the_reference.is_none() => {
+            let (cut, opens) = cut_at_record_runs(runs, &record_run_starts(&text, inked));
+            let stretch_of = vec![0; cut.len()];
+            (cut, opens, stretch_of)
+        }
+        _ => {
+            let whole = vec![false; runs.len()];
+            (runs, whole, stretch_of)
+        }
     };
     // The reference plot letters a border template's text one glyph narrower
     // than the em it sets it in, and letters the sheet's own text at the full
@@ -1889,33 +1932,37 @@ fn show_text(
         .find(|face| face.key == text.typeface)
         .or_else(|| runs.first().map(|(_, run)| run.face));
     let scale_heights = named_face.map_or(FaceHeights::ARIAL, |face| face.heights);
-    let plate = permille_scale(
-        text.typeface,
-        scale_heights,
-        text.height_basis,
-        height_mm,
-        text.width_permille,
-    );
-    // `plate` is the stretch the plotter asks GDI for. What the label's `Tm`
-    // states is the PDF driver's reading of that font, in whole 256ths
-    // ([`text_matrix`]): `0.797` along a SimSun label at `800` on a 30-unit
-    // cell where `plate` is 0.8, and `1.012` both ways for a turned Arial
-    // label, which is not stretched at all. The font is the one the label
-    // names, on the label's own cell; a piece in another face or at another
-    // size is set under the same matrix, where the driver would state one of
-    // its own — no reference plot turns or stretches such a label.
-    let cell_units = (scale_heights.ascent + scale_heights.descent) * scale_heights.em_units;
-    let px_per_unit = whole_pixel_cell(scale_heights, text.height_basis, height_mm)
-        .filter(|_| cell_units > 0.0)
-        .map(|cell_px| cell_px / cell_units);
-    let matrix = text_matrix::written(px_per_unit, plate, upright);
-    // The driver states a letter-spacing against the entry it keeps in
-    // 256ths; `run_advance` and [`script_runs`] figure it against `plate`.
-    let respaced = if plate.is_finite() && matrix.spacing > 0.0 {
-        plate / matrix.spacing
-    } else {
-        1.0
-    };
+    // The font each stretch of the label is set in: the face it names, on
+    // the cell of the height it states. `plate` is the stretch the plotter
+    // asks GDI for; what `Tm` states is the PDF driver's reading of that
+    // font, in whole 256ths ([`text_matrix`]): `0.797` along a SimSun label
+    // at `800` on a 30-unit cell where `plate` is 0.8, and `1.012` both ways
+    // for a turned Arial label, which is not stretched at all. A plain label
+    // is one stretch, in the face it names on its own cell. A stretch whose
+    // name is not embedded is lettered as the label's own face letters it
+    // ([`encode_runs`]), so that face is its font too.
+    let stretch_fonts: Vec<(Option<&ReadyFace<'_>>, SetFont)> = segments
+        .iter()
+        .map(|segment| {
+            let face = faces
+                .iter()
+                .find(|face| face.key == segment.typeface)
+                .or(named_face);
+            let heights = face.map_or(FaceHeights::ARIAL, |face| face.heights);
+            let plate = permille_scale(
+                segment.typeface,
+                heights,
+                text.height_basis,
+                segment.height_mm,
+                text.width_permille,
+            );
+            let cell_units = (heights.ascent + heights.descent) * heights.em_units;
+            let px_per_unit = whole_pixel_cell(heights, text.height_basis, segment.height_mm)
+                .filter(|_| cell_units > 0.0)
+                .map(|cell_px| cell_px / cell_units);
+            (face, SetFont::of(px_per_unit, plate, upright))
+        })
+        .collect();
     // Each run letters with `render.dll`'s own glyph-by-glyph advance — the
     // 72-unit reference font's advances scaled by `a8` and a per-glyph `Tc`,
     // the device font's natural width only for a lone glyph and, rounded to
@@ -1936,7 +1983,11 @@ fn show_text(
     // own pixels and before any glyph is put on a whole one: where a run of
     // the record opens.
     let mut measured_px = 0.0;
-    let mut width_mm = 0.0;
+    // What the plotter's own steps make of the label, in millimetres: each
+    // run's width under the stretch it is set at. Runs under one stretch are
+    // summed before they are stretched, as a label of one font always was.
+    let mut laid_out_mm = 0.0;
+    let mut under_one_plate: Option<(f64, f64)> = None;
     let device = device_scale(page).unwrap_or(1.0);
     for (index, (size_pt, run)) in runs.into_iter().enumerate() {
         let FaceRun {
@@ -1945,18 +1996,36 @@ fn show_text(
             text: run_text,
             ..
         } = run;
+        // A run is measured and stepped at the height it states and is sized
+        // from, which is the label's unless its run of the record says
+        // otherwise.
+        let run_mm = segments[stretch_of[index]].height_mm;
+        // A face at a size is a font to the plotter, and the driver states a
+        // transform for each font it is handed. The run's font is its
+        // stretch's, unless another face lends it: then it is the lender at
+        // the size the run is set at, under the stretch the style asks for.
+        let (stretch_face, stretch_font) = stretch_fonts[stretch_of[index]];
+        let font = if stretch_face.is_some_and(|own| std::ptr::eq(own, face)) {
+            stretch_font
+        } else {
+            let em_units = face.heights.em_units;
+            let px_per_unit = (em_units > 0.0).then_some(size_pt * PLOT_DPI / 72.0 / em_units);
+            SetFont::of(px_per_unit, stretch_font.plate, upright)
+        };
+        let plate = font.plate;
         let opens = starts_record_run[index].then_some(measured_px);
-        measured_px += measured_width_px(
+        let run_px = measured_width_px(
             face,
             &bytes,
             &run_text,
             text.height_basis,
-            height_mm,
+            run_mm,
             size_pt,
             text.width_permille,
             plate,
             device,
         );
+        measured_px += run_px;
         let advance = match named_face {
             // The run the reference shows steps by the face the label names.
             Some(named) if as_the_reference == Some(index) => borrowed::advance(
@@ -1983,7 +2052,7 @@ fn show_text(
                 &run_text,
                 face.heights,
                 text.height_basis,
-                height_mm,
+                run_mm,
                 size_pt,
                 text.width_permille,
                 plate,
@@ -1991,8 +2060,39 @@ fn show_text(
                 device,
             ),
         };
-        width_mm += advance.width_mm;
+        match &mut under_one_plate {
+            #[allow(clippy::float_cmp)]
+            Some((stretch, width_mm)) if *stretch == plate => *width_mm += advance.width_mm,
+            group => {
+                if let Some((stretch, width_mm)) = group.replace((plate, advance.width_mm)) {
+                    laid_out_mm += width_mm * stretch;
+                }
+            }
+        }
         let start = opens.map_or(PieceStart::Continues, PieceStart::RecordRun);
+        // The run before a lone borrowed glyph the reference shows is set
+        // glyph by glyph, every glyph on its step and the pen left on the
+        // last one's, which is where the reference starts the borrowed glyph
+        // ([`borrowed::steps_before_lone`]).
+        let before_borrowed = (as_the_reference == Some(index + 1))
+            .then(|| {
+                let glyphs = face.metrics.codes(&bytes).len();
+                borrowed::steps_before_lone(&advance.glyphs, glyphs, run_px)
+            })
+            .flatten();
+        if let Some(steps_px) = before_borrowed {
+            emitted.push(LetteredPiece {
+                size_pt,
+                face,
+                bytes,
+                tc_pt: 0.0,
+                steps_px,
+                start,
+                begins_string: true,
+                matrix: font.matrix,
+            });
+            continue;
+        }
         // The string is one call to GDI, which hands the driver a text
         // object for each script run of it ([`script_runs`]): `DWG-0100` and
         // `集05-37` are two on the reference page, each on the whole pixel
@@ -2007,6 +2107,9 @@ fn show_text(
         } else {
             Vec::new()
         };
+        // The driver states a letter-spacing against the entry it keeps in
+        // 256ths; `run_advance` and [`script_runs`] figure it against `plate`.
+        let respaced = font.respaced();
         if script.len() < 2 {
             emitted.extend(last_glyph_apart(LetteredPiece {
                 size_pt,
@@ -2016,6 +2119,7 @@ fn show_text(
                 steps_px: advance.steps_px,
                 start,
                 begins_string: true,
+                matrix: font.matrix,
             }));
             continue;
         }
@@ -2041,14 +2145,18 @@ fn show_text(
                     PieceStart::ScriptRun(script_runs::start_px(&advance.glyphs, glyphs.start))
                 },
                 begins_string: first,
+                matrix: font.matrix,
             }));
         }
     }
-    // What the plotter's own steps make of the run. The driver's matrix moves
-    // the drawn run off it by a fraction of a percent (a stretched label's
-    // glyphs no longer land on the steps exactly, a turned one's last glyph
-    // is a little larger); the page-edge test below reads the plotter's.
-    let laid_out_mm = width_mm * plate;
+    // `laid_out_mm` is what the plotter's own steps make of the run. The
+    // driver's matrix moves the drawn run off it by a fraction of a percent
+    // (a stretched label's glyphs no longer land on the steps exactly, a
+    // turned one's last glyph is a little larger); the page-edge test below
+    // reads the plotter's.
+    if let Some((stretch, width_mm)) = under_one_plate {
+        laid_out_mm += width_mm * stretch;
+    }
     // The anchor hangs a box from the insertion point as wide as the stored
     // run, its trailing pad included, and the paragraph sets the trimmed line
     // inside it. Both widths are the reference font's
@@ -2104,7 +2212,7 @@ fn show_text(
     let mut condensed = false;
     let mut clipped_at_floor = false;
     if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
-        let start = baseline_origin(origin_mm, text.rotation, line_mm, below_mm, text.anchor);
+        let start = baseline_origin(origin_mm, rotation, line_mm, below_mm, text.anchor);
         let reach = page_reach_mm(start, [cos, sin], page);
         if reach > 0.0 && laid_out_mm > reach {
             condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
@@ -2125,10 +2233,9 @@ fn show_text(
             }
         }
     }
-    let scale = matrix.along * condense;
     let origin_mm = baseline_origin(
         origin_mm,
-        text.rotation,
+        rotation,
         line_mm * condense,
         below_mm,
         text.anchor,
@@ -2142,30 +2249,24 @@ fn show_text(
     let origin_mm =
         device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
     ops.push(Op::new("BT", Vec::new()));
-    ops.push(Op::new(
-        "Tm",
-        vec![
-            Object::Real(cos * scale),
-            Object::Real(sin * scale),
-            Object::Real(-sin * matrix.across),
-            Object::Real(cos * matrix.across),
-            pt(origin_mm[0]),
-            pt(origin_mm[1]),
-        ],
-    ));
-    // `Tj` advances the text position itself, so consecutive runs continue
-    // along the same baseline — across a change of face, and across a change
-    // of size, since the advance is the glyph width at the size in force.
-    // `Tc` is a per-run correction ([`run_advance`]), so every run sets its
-    // own — including back to zero for a lone glyph that follows one that
-    // needed it. A rotated run instead sets each glyph on its own whole-pixel
-    // step ([`glyph_by_glyph`]).
+    // `Tj` advances the text position itself, so consecutive runs in one
+    // font continue along the same baseline — across a change of face, and
+    // across a change of size, since the advance is the glyph width at the
+    // size in force. `Tc` is a per-run correction ([`run_advance`]), so every
+    // run sets its own — including back to zero for a lone glyph that follows
+    // one that needed it. A rotated run instead sets each glyph on its own
+    // whole-pixel step ([`glyph_by_glyph`]).
     // Where the text line in force starts, where the next glyph would be set
     // and where the string in hand began: each in the plotter's pixels along
     // the baseline, after the label's own start and before any condensing.
     let mut line_px = 0.0;
     let mut pen_px = 0.0;
     let mut string_px = 0.0;
+    // The font transform in force. The label's first piece states its own,
+    // at the label's start, and so does every piece set in another font than
+    // the piece before it, from where that piece starts: where the one
+    // before it ended, unless it has a start of its own.
+    let mut stated: Option<text_matrix::TextMatrix> = None;
     for piece in &emitted {
         #[allow(clippy::cast_precision_loss)]
         let at_px = match piece.start {
@@ -2175,12 +2276,34 @@ fn show_text(
             }
             PieceStart::ScriptRun(steps) => Some(string_px + steps as f64),
         };
-        if let Some(at_px) = at_px {
-            // `Td` moves from the line's start, in text space: the label's
-            // `Tm` scales it by what it states along the baseline on its way
-            // to the page, and by `condense` where the page had to squeeze
-            // the label, together with its glyphs. A pixel is the page's own
-            // here, as it is for every glyph's step ([`stepped_advance`]).
+        let matrix = piece.matrix;
+        if stated != Some(matrix) {
+            let start_px = at_px.unwrap_or(pen_px);
+            // The page squeezes a label it cannot hold along its own
+            // direction, glyphs and the gaps between them alike.
+            let along_pt = start_px * (72.0 / PLOT_DPI) * condense;
+            let scale = matrix.along * condense;
+            ops.push(Op::new(
+                "Tm",
+                vec![
+                    Object::Real(cos * scale),
+                    Object::Real(sin * scale),
+                    Object::Real(-sin * matrix.across),
+                    Object::Real(cos * matrix.across),
+                    Object::Real(origin_mm[0] * PT_PER_MM + cos * along_pt),
+                    Object::Real(origin_mm[1] * PT_PER_MM + sin * along_pt),
+                ],
+            ));
+            stated = Some(matrix);
+            line_px = start_px;
+            pen_px = start_px;
+        } else if let Some(at_px) = at_px {
+            // `Td` moves from the line's start, in text space: the `Tm` in
+            // force scales it by what it states along the baseline on its
+            // way to the page, and by `condense` where the page had to
+            // squeeze the label, together with its glyphs. A pixel is the
+            // page's own here, as it is for every glyph's step
+            // ([`stepped_advance`]).
             let along_pt = (at_px - line_px) * (72.0 / PLOT_DPI) / matrix.along;
             ops.push(Op::new(
                 "Td",
@@ -2978,6 +3101,47 @@ enum PieceStart {
     ScriptRun(i64),
 }
 
+/// The font one piece of a label is set in, as the plotter asks for it and
+/// as the page states it.
+///
+/// A face at a size is a font to the plotter, and the PDF driver writes a
+/// transform for each font it is handed. A label in one face at one height
+/// is one font throughout. A stretch of the record that names another face
+/// or states another height is another, and so is a piece another face
+/// lends: each is set under the matrix the driver writes for it. No
+/// reference plot turns or stretches a label of more than one font — the
+/// borrowed `℃` and `动火点` are level and state no width, so every font
+/// of theirs is written plain — and this is the driver's rule
+/// ([`text_matrix`]) taken to a font it is known to be handed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SetFont {
+    /// The stretch the plotter asks GDI for ([`permille_scale`]).
+    plate: f64,
+    /// The driver's reading of the font so stretched.
+    matrix: text_matrix::TextMatrix,
+}
+
+impl SetFont {
+    /// The font of `px_per_unit` device units to a design unit across its
+    /// baseline, stretched by `plate` along it.
+    fn of(px_per_unit: Option<f64>, plate: f64, upright: bool) -> Self {
+        Self {
+            plate,
+            matrix: text_matrix::written(px_per_unit, plate, upright),
+        }
+    }
+
+    /// What a letter-spacing figured against `plate` is multiplied by to be
+    /// stated against the entry the driver keeps in 256ths.
+    fn respaced(&self) -> f64 {
+        if self.plate.is_finite() && self.matrix.spacing > 0.0 {
+            self.plate / self.matrix.spacing
+        } else {
+            1.0
+        }
+    }
+}
+
 /// One piece of a label as the page letters it.
 struct LetteredPiece<'f, 'a> {
     size_pt: f64,
@@ -2985,13 +3149,16 @@ struct LetteredPiece<'f, 'a> {
     bytes: Vec<u8>,
     /// Its `Tc`, in points of text space.
     tc_pt: f64,
-    /// The whole-pixel steps a rotated run is set at ([`glyph_by_glyph`]);
-    /// empty for a piece shown as one string.
+    /// The whole-pixel steps a piece set glyph by glyph takes
+    /// ([`glyph_by_glyph`]) — a rotated run, or the run before a borrowed
+    /// last glyph; empty for a piece shown as one string.
     steps_px: Vec<i64>,
     start: PieceStart,
     /// Whether it opens a string — one call to GDI — rather than carrying
     /// one on: the place a later script run of that string is counted from.
     begins_string: bool,
+    /// The text matrix its font is set under ([`SetFont`]).
+    matrix: text_matrix::TextMatrix,
 }
 
 /// A piece as the page shows it: one string under its `Tc`, or, where it has
@@ -3019,6 +3186,7 @@ fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'
         steps_px: Vec::new(),
         start: PieceStart::Continues,
         begins_string: false,
+        matrix: piece.matrix,
     };
     let mut head = piece;
     head.bytes.truncate(split);
@@ -3029,7 +3197,7 @@ fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'
 /// How far showing `piece` moves the text position along the baseline, in
 /// the plotter's pixels under a text matrix scaled by `sx`: every glyph's
 /// own width and the piece's `Tc`, or for a piece set glyph by glyph its
-/// steps and its last glyph's own width.
+/// steps and, where its last glyph has none, that glyph's own width.
 fn shown_px(piece: &LetteredPiece<'_, '_>, sx: f64) -> f64 {
     let metrics = &piece.face.metrics;
     let px_per_pt = PLOT_DPI / 72.0;
@@ -3041,21 +3209,30 @@ fn shown_px(piece: &LetteredPiece<'_, '_>, sx: f64) -> f64 {
             .sum();
     }
     let stepped: i64 = piece.steps_px.iter().sum();
-    let last = codes.last().map_or(0.0, |(code, _)| {
-        metrics.width(*code) * piece.size_pt * sx * px_per_pt
-    });
+    // A step for every glyph leaves the pen on the last one's
+    // ([`glyph_by_glyph`]); one short, the last glyph advances by itself.
+    let last = codes
+        .last()
+        .filter(|_| piece.steps_px.len() < codes.len())
+        .map_or(0.0, |(code, _)| {
+            metrics.width(*code) * piece.size_pt * sx * px_per_pt
+        });
     #[allow(clippy::cast_precision_loss)]
     let stepped = stepped as f64;
     stepped + last
 }
 
-/// A rotated run's `TJ` array: each glyph but the last followed by the
-/// adjustment that moves the next one onto its own whole-pixel step
-/// ([`RunAdvance::steps_px`]), the way the reference sets every glyph of a
-/// rotated run under its own `Tm`. A `TJ` number is thousandths of the `Tf`
-/// em taken off the glyph's own advance, so each step lands on its pixel
-/// whatever the 1/2400 in grid did to `size_pt`; `sx` is the horizontal
-/// scale of the label's `Tm` the steps were figured at.
+/// The `TJ` array of a run set glyph by glyph: each glyph that has a step
+/// followed by the adjustment that moves the next one onto its own
+/// whole-pixel step, the way the reference sets every glyph of such a run
+/// under its own `Tm`. A rotated run has a step for every glyph but its last
+/// ([`RunAdvance::steps_px`]); the run before a borrowed last glyph has one
+/// for every glyph, and the adjustment after its last leaves the pen where
+/// the borrowed glyph starts ([`borrowed::steps_before_lone`]). A `TJ`
+/// number is thousandths of the `Tf` em taken off the glyph's own advance,
+/// so each step lands on its pixel whatever the 1/2400 in grid did to
+/// `size_pt`; `sx` is the horizontal scale of the label's `Tm` the steps
+/// were figured at.
 fn glyph_by_glyph(
     metrics: &Metrics,
     bytes: &[u8],
@@ -3159,6 +3336,24 @@ mod tests {
             .collect()
     }
 
+    /// Every string `ops` show with `Tj`, in order, each with the `Tf` size
+    /// and the `Tc` in force when it is shown.
+    fn strings_as_set(ops: &[super::Op]) -> Vec<(f64, f64, Vec<u8>)> {
+        let (mut size, mut spacing) = (0.0, 0.0);
+        let mut shown = Vec::new();
+        for op in ops {
+            match (op.op.as_slice(), op.operands.as_slice()) {
+                (b"Tf", [_, super::Object::Real(value)]) => size = *value,
+                (b"Tc", [super::Object::Real(value)]) => spacing = *value,
+                (b"Tj", [super::Object::String(string)]) => {
+                    shown.push((size, spacing, string.bytes.clone()));
+                }
+                _ => {}
+            }
+        }
+        shown
+    }
+
     /// One label lettered on an A1 sheet in `face`, the operators it writes.
     fn label_ops(
         face: &super::ReadyFace<'_>,
@@ -3167,8 +3362,117 @@ mod tests {
         rotation: f64,
         width_permille: Option<u16>,
     ) -> Vec<super::Op> {
+        record_ops(face, value, height_mm, rotation, width_permille, &[])
+    }
+
+    /// One run of a record: `len` characters from `start`, at a height of
+    /// its own when it states one.
+    fn run_of(start: u16, len: u16, height_mm: Option<f64>) -> PaperTextSpan {
+        PaperTextSpan {
+            start,
+            len,
+            height_mm,
+            font: None,
+        }
+    }
+
+    /// [`label_ops`] for a label whose record is partitioned into `spans`.
+    fn record_ops(
+        face: &super::ReadyFace<'_>,
+        value: &str,
+        height_mm: f64,
+        rotation: f64,
+        width_permille: Option<u16>,
+        spans: &[PaperTextSpan],
+    ) -> Vec<super::Op> {
+        faces_ops(
+            std::slice::from_ref(face),
+            face.key,
+            value,
+            height_mm,
+            rotation,
+            width_permille,
+            spans,
+        )
+    }
+
+    /// `bytes` as a face embedded under `key` and `resource`, on `heights`.
+    fn ready(
+        key: &'static str,
+        resource: &str,
+        bytes: &[u8],
+        heights: super::FaceHeights,
+    ) -> super::ReadyFace<'static> {
+        super::ReadyFace {
+            key,
+            resource: resource.to_string(),
+            metrics: metrics_of(bytes),
+            heights,
+        }
+    }
+
+    /// How far the strings `ops` show move the text position, in points of
+    /// text space: every glyph's width at the size in force with the `Tc` in
+    /// force, less what a `TJ` array takes off it. `metrics` are the face's
+    /// that draws them all.
+    fn shown_pt(ops: &[super::Op], metrics: &Metrics) -> f64 {
+        let (mut size, mut spacing, mut shown) = (0.0, 0.0, 0.0);
+        let advance = |bytes: &[u8], size: f64, spacing: f64| -> f64 {
+            metrics
+                .codes(bytes)
+                .iter()
+                .map(|(code, _)| metrics.width(*code) * size + spacing)
+                .sum()
+        };
+        for op in ops {
+            match (op.op.as_slice(), op.operands.as_slice()) {
+                (b"Tf", [_, super::Object::Real(value)]) => size = *value,
+                (b"Tc", [super::Object::Real(value)]) => spacing = *value,
+                (b"Tj", [super::Object::String(string)]) => {
+                    shown += advance(&string.bytes, size, spacing);
+                }
+                (b"TJ", [super::Object::Array(array)]) => {
+                    for item in array {
+                        match item {
+                            super::Object::String(string) => {
+                                shown += advance(&string.bytes, size, spacing);
+                            }
+                            super::Object::Real(adjust) => shown -= adjust / 1000.0 * size,
+                            other => panic!("a TJ array holds strings and numbers, not {other:?}"),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        shown
+    }
+
+    /// The operators of `ops` from its `nth` `Tm` up to the next one.
+    fn under_matrix(ops: &[super::Op], nth: usize) -> &[super::Op] {
+        let starts: Vec<usize> = ops
+            .iter()
+            .enumerate()
+            .filter(|(_, op)| op.op == b"Tm")
+            .map(|(index, _)| index)
+            .collect();
+        let end = starts.get(nth + 1).copied().unwrap_or(ops.len());
+        &ops[starts[nth]..end]
+    }
+
+    /// One label lettered on an A1 sheet in the face of `faces` that
+    /// `typeface` names, the others lending: the operators it writes.
+    fn faces_ops(
+        faces: &[super::ReadyFace<'_>],
+        typeface: &str,
+        value: &str,
+        height_mm: f64,
+        rotation: f64,
+        width_permille: Option<u16>,
+        spans: &[PaperTextSpan],
+    ) -> Vec<super::Op> {
         let text = ShownText {
-            typeface: face.key,
+            typeface,
             origin_mm: [200.0, 100.0],
             height_mm: Some(height_mm),
             rotation,
@@ -3178,19 +3482,13 @@ mod tests {
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille,
             paragraph: None,
-            spans: &[],
+            spans,
             furniture: false,
         };
         let mut ops = Vec::new();
         let mut audit = super::PlotAudit::default();
-        super::show_text(
-            &mut ops,
-            std::slice::from_ref(face),
-            text,
-            [841.0, 594.0],
-            &mut audit,
-        )
-        .expect("the label letters");
+        super::show_text(&mut ops, faces, text, [841.0, 594.0], &mut audit)
+            .expect("the label letters");
         ops
     }
 
@@ -3429,6 +3727,367 @@ mod tests {
                 "glyph {index} lands {landed_px} device units on, not {step}"
             );
         }
+    }
+
+    /// Arial on the 29-unit cell of the reference's `Tf 12.45`, drawn with
+    /// Inter's glyphs: the face of the three cases below.
+    fn arial_on_29_units(value: &str) -> (super::ReadyFace<'static>, f64) {
+        let (metrics, _) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value);
+        let height_mm = 9.0 * 25.4 / 72.0;
+        assert_eq!(
+            super::whole_pixel_cell(
+                super::FaceHeights::ARIAL,
+                crate::model::TextHeightBasis::Cap,
+                height_mm
+            ),
+            Some(29.0),
+            "the style's cell"
+        );
+        let face = super::ReadyFace {
+            key: "Arial",
+            resource: "F1".to_string(),
+            metrics,
+            heights: super::FaceHeights::ARIAL,
+        };
+        (face, height_mm)
+    }
+
+    /// A label a hair off level is a level label. The plotter states a
+    /// label's angle to GDI in whole tenths of a degree
+    /// ([`super::escapement`]), so the 9e-8 to 2e-4 rad that ten labels of
+    /// the plant backup and one of the fixtures are off by is no angle at
+    /// all to it: such a label is set under the plain matrix and shown as
+    /// strings, byte for byte as the same label at no angle is — not under a
+    /// turned label's `1.012` with every glyph on a step of its own.
+    #[test]
+    fn a_label_a_hair_off_level_is_lettered_level() {
+        let value = "ABAB";
+        let (face, height_mm) = arial_on_29_units(value);
+        let level = label_ops(&face, value, height_mm, 0.0, None);
+        assert_eq!(
+            numbers(&level, "Tm")[0][..4],
+            [1.0, 0.0, -0.0, 1.0],
+            "a level label that is not stretched is set under the plain matrix"
+        );
+        assert!(
+            level.iter().all(|op| op.op != b"TJ"),
+            "a level label is shown as strings"
+        );
+        // The angles the corpora hold, either side of level, and the widest
+        // one a tenth of a degree still rounds to none.
+        for rotation in [9.0e-8, -2.59e-6, 2.0e-4, -2.0e-4, 0.049_f64.to_radians()] {
+            let ops = label_ops(&face, value, height_mm, rotation, None);
+            assert_eq!(
+                String::from_utf8_lossy(&super::serialize_ops(&ops)),
+                String::from_utf8_lossy(&super::serialize_ops(&level)),
+                "a label at {rotation} rad is the level label"
+            );
+        }
+    }
+
+    /// The same for a label a hair off a quarter turn: it is lettered on the
+    /// quarter turn, and the matrix says so in whole numbers — the reference
+    /// writes `0 1.012 -1.012 0`, with no trace of the 1e-13 rad that 45 of
+    /// its turned labels are short of a right angle in the drawing's doubles.
+    #[test]
+    fn a_label_a_hair_off_a_quarter_turn_is_lettered_on_it() {
+        use std::f64::consts::FRAC_PI_2;
+        let value = "ABAB";
+        let (face, height_mm) = arial_on_29_units(value);
+        let quarters: [(f64, [f64; 4]); 3] = [
+            (FRAC_PI_2, [0.0, 1.012, -1.012, 0.0]),
+            (3.0 * FRAC_PI_2, [0.0, -1.012, 1.012, 0.0]),
+            (-FRAC_PI_2, [0.0, -1.012, 1.012, 0.0]),
+        ];
+        for (quarter, entries) in quarters {
+            let on_it = label_ops(&face, value, height_mm, quarter, None);
+            let matrix = &numbers(&on_it, "Tm")[0];
+            for (got, want) in matrix[..4].iter().zip(entries) {
+                assert!(
+                    (got - want).abs() < 1e-12 && (want != 0.0 || *got == 0.0),
+                    "a label at {quarter} rad is set under {entries:?}, not {matrix:?}"
+                );
+            }
+            assert!(
+                on_it.iter().any(|op| op.op == b"TJ"),
+                "a turned label is shown glyph by glyph"
+            );
+            for off in [2.17e-6, -1.84e-6, 4.14e-13, -8.84e-13] {
+                let ops = label_ops(&face, value, height_mm, quarter + off, None);
+                assert_eq!(
+                    String::from_utf8_lossy(&super::serialize_ops(&ops)),
+                    String::from_utf8_lossy(&super::serialize_ops(&on_it)),
+                    "a label {off} rad off {quarter} is the label on the quarter turn"
+                );
+            }
+        }
+    }
+
+    /// Only a quarter turn is read that way. A label at any other angle keeps
+    /// the angle the drawing states — it is not rounded to its tenth of a
+    /// degree — and is lettered as a turned label is: 0.06° is 0.1° to GDI,
+    /// which is an angle.
+    #[test]
+    fn a_label_at_any_other_angle_keeps_the_angle_the_drawing_states() {
+        let value = "ABAB";
+        let (face, height_mm) = arial_on_29_units(value);
+        for degrees in [0.06_f64, -0.06, 37.26, 89.94, 180.06, 211.0] {
+            let rotation = degrees.to_radians();
+            let ops = label_ops(&face, value, height_mm, rotation, None);
+            let (sin, cos) = rotation.sin_cos();
+            let matrix = &numbers(&ops, "Tm")[0];
+            let stated = [cos * 1.012, sin * 1.012, -sin * 1.012, cos * 1.012];
+            assert_eq!(
+                matrix[..4],
+                stated,
+                "a label at {degrees}° is set at that angle under the turned matrix"
+            );
+            assert!(
+                ops.iter().any(|op| op.op == b"TJ"),
+                "a label at {degrees}° is shown glyph by glyph"
+            );
+        }
+    }
+
+    /// Inter under no name: a face with no row in the reference tables, on
+    /// its own heights.
+    fn inter_unnamed(value: &str) -> super::ReadyFace<'static> {
+        let (metrics, _) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value);
+        super::ReadyFace {
+            key: "",
+            resource: "F1".to_string(),
+            metrics,
+            heights: super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR),
+        }
+    }
+
+    /// A run of a record is measured at the size it is drawn at. `CDE` of
+    /// `ABCDEFG` states a height of its own, 3.5 mm in a 2.54 mm label, and
+    /// is spaced exactly as the label `CDE` at 3.5 mm is — not by steps
+    /// figured on the label's cell and shown at the run's own size, which is
+    /// how the hyphens of the fixtures' pipeline numbers were measured 6%
+    /// narrow.
+    #[test]
+    fn a_run_at_a_height_of_its_own_is_spaced_as_a_label_of_that_height() {
+        let value = "ABCDEFG";
+        let face = inter_unnamed(value);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (label_mm, run_mm) = (2.54, 3.5);
+        let run_size = super::plotted_size_pt(face.heights, basis, run_mm);
+        assert!(
+            run_size > super::plotted_size_pt(face.heights, basis, label_mm) + 1.0,
+            "the run is set larger than the label: {run_size}"
+        );
+        let spans = [
+            run_of(0, 2, None),
+            run_of(2, 3, Some(run_mm)),
+            run_of(5, 2, None),
+        ];
+        let record = record_ops(&face, value, label_mm, 0.0, None, &spans);
+        let alone = label_ops(&face, "CDE", run_mm, 0.0, None);
+        let at_the_runs_size = |ops: &[super::Op]| -> Vec<(f64, Vec<u8>)> {
+            strings_as_set(ops)
+                .into_iter()
+                .filter(|(size, _, _)| (size - run_size).abs() < 1e-9)
+                .map(|(_, spacing, bytes)| (spacing, bytes))
+                .collect()
+        };
+        let (in_the_record, by_itself) = (at_the_runs_size(&record), at_the_runs_size(&alone));
+        assert_eq!(
+            by_itself.len(),
+            2,
+            "`CD` under its spacing and `E` under none: {by_itself:?}"
+        );
+        assert!(
+            by_itself[0].0 != 0.0,
+            "the run must need spacing for this label to show what it is measured at"
+        );
+        assert_eq!(
+            in_the_record.len(),
+            by_itself.len(),
+            "the run of the record: {in_the_record:?}"
+        );
+        for (got, want) in in_the_record.iter().zip(&by_itself) {
+            assert_eq!(got.1, want.1, "the same glyphs");
+            assert!(
+                (got.0 - want.0).abs() < 1e-12,
+                "Tc {} in the record, {} as a label of its own",
+                got.0,
+                want.0
+            );
+        }
+    }
+
+    /// The rule that starts each run of a record on a whole pixel of its own
+    /// is what `SP:` shows, and `SP:` is two runs in one style. A record
+    /// whose runs differ in style — the fixtures' pipeline numbers, whose
+    /// hyphens are in another face at another height — has no reference
+    /// plot: it is lettered as it was before that rule, each run carrying on
+    /// where the one before it ended.
+    #[test]
+    fn only_a_record_in_one_style_starts_each_run_on_a_pixel_of_its_own() {
+        let value = "ABCDEFG";
+        let face = inter_unnamed(value);
+        let label_mm = 2.54;
+        let moves = |spans: &[PaperTextSpan]| {
+            let ops = record_ops(&face, value, label_mm, 0.0, None, spans);
+            assert_eq!(numbers(&ops, "Tm").len(), 1, "one text matrix");
+            numbers(&ops, "Td").len()
+        };
+        assert_eq!(
+            moves(&[run_of(0, 2, None), run_of(2, 3, None), run_of(5, 2, None)]),
+            2,
+            "each later run of a record in one style takes a start of its own"
+        );
+        // A run that states the label's own height is in the label's style.
+        assert_eq!(
+            moves(&[
+                run_of(0, 2, None),
+                run_of(2, 3, Some(label_mm)),
+                run_of(5, 2, None)
+            ]),
+            2,
+            "a run stating the label's own height is in its style"
+        );
+        assert_eq!(
+            moves(&[
+                run_of(0, 2, None),
+                run_of(2, 3, Some(3.5)),
+                run_of(5, 2, None)
+            ]),
+            0,
+            "a record in two styles carries on from run to run"
+        );
+    }
+
+    /// The first four entries of every `Tm` of `ops`.
+    fn matrices_stated(ops: &[super::Op]) -> Vec<[f64; 4]> {
+        numbers(ops, "Tm")
+            .iter()
+            .map(|matrix| [matrix[0], matrix[1], matrix[2], matrix[3]])
+            .collect()
+    }
+
+    /// A piece in another face is another font to the plotter, and the
+    /// driver states a transform for the font it is handed. A turned Arial
+    /// label on the 29-unit cell is written `0 1.012 -1.012 0`; a character
+    /// Arial does not draw, lent at the same size by a face of 256 units to
+    /// the em, is written under that face's own `0 1 -1 0`, from where the
+    /// Arial glyphs before it end.
+    #[test]
+    fn a_lent_piece_of_a_turned_label_is_set_under_its_own_fonts_matrix() {
+        let faces = [
+            ready(
+                "Arial",
+                "F1",
+                &crate::fonts::test_faces::ascii_only(),
+                super::FaceHeights::ARIAL,
+            ),
+            ready(
+                "SimSun",
+                "F2",
+                &crate::fonts::test_faces::drawing("集"),
+                SIMSUN_TABLES,
+            ),
+        ];
+        let height_mm = 9.0 * 25.4 / 72.0;
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let ops = faces_ops(&faces, "Arial", "AB集", height_mm, quarter, None, &[]);
+        assert_eq!(
+            matrices_stated(&ops),
+            [[0.0, 1.012, -1.012, 0.0], [0.0, 1.0, -1.0, 0.0]],
+            "one text matrix for each font"
+        );
+        let starts = numbers(&ops, "Tm");
+        let up_pt = shown_pt(under_matrix(&ops, 0), &faces[0].metrics) * 1.012;
+        assert!(
+            (starts[1][4] - starts[0][4]).abs() < 1e-9
+                && (starts[1][5] - starts[0][5] - up_pt).abs() < 1e-9,
+            "the lent piece starts {up_pt} pt up the baseline: {starts:?}"
+        );
+        // Level and not stretched, every font's matrix is the plain one, and
+        // the label is one text object's worth of matrix.
+        let level = faces_ops(&faces, "Arial", "AB集", height_mm, 0.0, None, &[]);
+        assert_eq!(matrices_stated(&level), [[1.0, 0.0, -0.0, 1.0]]);
+    }
+
+    /// The same for a stretched label: SimSun at `800` on a 30-unit cell is
+    /// `0.797 0 0 1`, and a character lent by a face of 2048 units to the
+    /// em, at the same size and the same stretch, is that face's own
+    /// `0.805 0 0 1.004` — 206/256 along and 257/256 across.
+    #[test]
+    fn a_lent_piece_of_a_stretched_label_is_set_under_its_own_fonts_matrix() {
+        let faces = [
+            ready(
+                "SimSun",
+                "F1",
+                &crate::fonts::test_faces::ascii_only(),
+                SIMSUN_TABLES,
+            ),
+            ready(
+                "Arial",
+                "F2",
+                &crate::fonts::test_faces::drawing("集"),
+                super::FaceHeights::ARIAL,
+            ),
+        ];
+        let ops = faces_ops(&faces, "SimSun", "ABCDE集", 3.5, 0.0, Some(800), &[]);
+        assert_eq!(
+            matrices_stated(&ops),
+            [[0.797, 0.0, -0.0, 1.0], [0.805, 0.0, -0.0, 1.004]],
+            "one text matrix for each font"
+        );
+        let starts = numbers(&ops, "Tm");
+        let along_pt = shown_pt(under_matrix(&ops, 0), &faces[0].metrics) * 0.797;
+        assert!(
+            (starts[1][4] - starts[0][4] - along_pt).abs() < 1e-9
+                && (starts[1][5] - starts[0][5]).abs() < 1e-9,
+            "the lent piece starts {along_pt} pt along the baseline: {starts:?}"
+        );
+    }
+
+    /// And for a run of the record at a height of its own: in a turned Arial
+    /// label on the 29-unit cell, a run on the 40-unit cell is another font,
+    /// `0 1.004 -1.004 0`, and the label's own matrix is stated again for
+    /// the run after it. Each starts where the one before it ends.
+    #[test]
+    fn a_run_at_another_height_of_a_turned_label_is_set_under_its_own_matrix() {
+        let value = "ABCDEFG";
+        let (face, label_mm) = arial_on_29_units(value);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let taller_mm = (300..900)
+            .map(|step| f64::from(step) * 0.01)
+            .find(|mm| super::whole_pixel_cell(super::FaceHeights::ARIAL, basis, *mm) == Some(40.0))
+            .expect("a height on the 40-unit cell");
+        let spans = [
+            run_of(0, 2, None),
+            run_of(2, 3, Some(taller_mm)),
+            run_of(5, 2, None),
+        ];
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let ops = record_ops(&face, value, label_mm, quarter, None, &spans);
+        assert_eq!(
+            matrices_stated(&ops),
+            [
+                [0.0, 1.012, -1.012, 0.0],
+                [0.0, 1.004, -1.004, 0.0],
+                [0.0, 1.012, -1.012, 0.0]
+            ],
+            "one text matrix for each font"
+        );
+        let starts = numbers(&ops, "Tm");
+        for (nth, along) in [(0, 1.012), (1, 1.004)] {
+            let up_pt = shown_pt(under_matrix(&ops, nth), &face.metrics) * along;
+            assert!(
+                (starts[nth + 1][4] - starts[nth][4]).abs() < 1e-9
+                    && (starts[nth + 1][5] - starts[nth][5] - up_pt).abs() < 1e-9,
+                "run {} starts {up_pt} pt up the baseline from run {nth}: {starts:?}",
+                nth + 1
+            );
+        }
+        // Level, the same record is set under the plain matrix throughout.
+        let level = record_ops(&face, value, label_mm, 0.0, None, &spans);
+        assert_eq!(matrices_stated(&level), [[1.0, 0.0, -0.0, 1.0]]);
     }
 
     /// A stretched string of two scripts, the shape of the A2 sheet's
@@ -6935,6 +7594,145 @@ mod tests {
         assert_eq!(lone[0].face, "NSimSun");
         assert!((lone[0].size_pt - 9.6).abs() < 1e-9, "{lone:?}");
         assert!(lone[0].tc_pt.abs() < 1e-12, "{lone:?}");
+    }
+
+    /// A label that ends in a borrowed glyph is set glyph by glyph. The
+    /// reference writes every glyph of `L=35℃` as a text object of its own
+    /// on a whole device unit — 0, 9, 19, 28 and 37 units from the label's
+    /// start — so the `℃` stands on the step of the digit before it, 9
+    /// units on, not after the 9.65 units that digit is wide in the device
+    /// font. Here the glyphs the label's own face draws go under one `TJ`,
+    /// each moved onto its step, the last one included, and the `℃` carries
+    /// on from there. The same label without the `℃` is one string under a
+    /// `Tc`, which is how the reference writes such a label.
+    #[test]
+    fn the_glyphs_before_a_borrowed_last_glyph_each_stand_on_their_step() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let latin = ascii_only();
+        let han = drawing("℃");
+        let dirs = scratch_dir(
+            "write-steps-before-a-borrowed-glyph",
+            &[("ARIALN.TTF", &latin), ("nsimsun.ttf", &han)],
+        );
+        let heights = super::FaceHeights::of(&latin);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let height_mm = height_on_cell(heights, 24.0);
+        let sheet = at_height(
+            lettered_sheet(&[
+                ("L=35℃", "Arial Narrow"),
+                ("L=35", "Arial Narrow"),
+                ("5℃", "Arial Narrow"),
+            ]),
+            height_mm,
+        );
+        let prepared = crate::fonts::prepare_fonts(&[&sheet], &dirs).expect("fonts");
+        let fonts = plot_fonts(&prepared);
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let faces = super::embed_faces(&mut doc, &mut font_resources, &fonts).expect("embed");
+        let labels = shown_labels(&sheet, &faces);
+        let texts: Vec<&str> = labels.iter().map(|(value, ..)| value.as_str()).collect();
+        assert_eq!(texts, ["L=35℃", "L=35", "5℃"]);
+        let named = faces
+            .iter()
+            .find(|face| face.key == "Arial Narrow")
+            .expect("the named face");
+        let size_pt = super::plotted_size_pt(heights, cap, height_mm);
+        // The whole units the plotter steps each glyph of `L=35` by.
+        let bytes = named.metrics.encode("L=35").expect("encodes");
+        let stepped = super::run_advance(
+            "Arial Narrow",
+            &named.metrics,
+            &bytes,
+            "L=35",
+            heights,
+            cap,
+            height_mm,
+            size_pt,
+            None,
+            1.0,
+            true,
+            1.0,
+        );
+        let steps: Vec<i64> = stepped.glyphs.iter().map(|glyph| glyph.step_px).collect();
+        assert_eq!(steps.len(), 4, "a step for each glyph: {steps:?}");
+        let widths: Vec<f64> = named
+            .metrics
+            .codes(&bytes)
+            .iter()
+            .map(|(code, _)| named.metrics.width(*code))
+            .collect();
+        let natural_px = widths[3] * size_pt * super::PLOT_DPI / 72.0;
+        #[allow(clippy::cast_precision_loss)]
+        let last_step_px = steps[3] as f64;
+        assert!(
+            (natural_px - last_step_px).abs() > 0.05,
+            "the last digit's own width, {natural_px} units, must differ from its step for the \
+             label to show which of the two the borrowed glyph follows"
+        );
+
+        // Every glyph of the label's own face lands on its step, and the pen
+        // is left on the last one's: where the borrowed glyph is shown.
+        let landed = |ops: &[super::Op], widths: &[f64]| -> Vec<f64> {
+            let shown = ops
+                .iter()
+                .find(|op| op.op == b"TJ")
+                .expect("the label's own glyphs are shown glyph by glyph");
+            let super::Object::Array(array) = &shown.operands[0] else {
+                panic!("TJ takes an array");
+            };
+            assert_eq!(
+                array.len(),
+                2 * widths.len(),
+                "each glyph is followed by its adjustment, the last one too"
+            );
+            widths
+                .iter()
+                .enumerate()
+                .map(|(index, width)| {
+                    let super::Object::Real(adjust) = &array[2 * index + 1] else {
+                        panic!("glyph {index} is followed by its adjustment");
+                    };
+                    (width - adjust / 1000.0) * size_pt * super::PLOT_DPI / 72.0
+                })
+                .collect()
+        };
+        let (_, _, ops) = &labels[0];
+        for (landed_px, step) in landed(ops, &widths).iter().zip(&steps) {
+            #[allow(clippy::cast_precision_loss)]
+            let step_px = *step as f64;
+            assert!(
+                (landed_px - step_px).abs() < 1e-9,
+                "a glyph of `L=35℃` advances {landed_px} units, not its step of {step}"
+            );
+        }
+        assert_eq!(numbers(ops, "Tm").len(), 1, "one text matrix");
+        assert!(numbers(ops, "Td").is_empty(), "nothing else moves the pen");
+        let borrowed = strings_as_set(ops);
+        assert_eq!(borrowed.len(), 1, "the borrowed glyph is the one `Tj`");
+        assert!(
+            (borrowed[0].0 - 9.6).abs() < 1e-9 && borrowed[0].1 == 0.0,
+            "the borrowed glyph is set at Tf 9.6 under no spacing: {borrowed:?}"
+        );
+
+        // The same label with nothing borrowed is strings under a `Tc`.
+        let (_, _, plain) = &labels[1];
+        assert!(
+            plain.iter().all(|op| op.op != b"TJ"),
+            "a label with nothing borrowed is not set glyph by glyph"
+        );
+
+        // One glyph of the label's own face before the borrowed one steps
+        // the same way: by its whole unit, not by its own width.
+        let (_, _, short) = &labels[2];
+        let one = named.metrics.encode("5").expect("encodes");
+        let one_width = [named.metrics.width(named.metrics.codes(&one)[0].0)];
+        let landed_px = landed(short, &one_width)[0];
+        assert!(
+            (landed_px - landed_px.round()).abs() < 1e-9 && (landed_px - natural_px).abs() > 0.05,
+            "the `5` of `5℃` advances {landed_px} units: a whole unit, not its own {natural_px}"
+        );
     }
 
     /// The reference's lettering of a borrowed run is applied where a

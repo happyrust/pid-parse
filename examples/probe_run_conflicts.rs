@@ -165,12 +165,6 @@ fn main() {
             for r in &geometry.decoded_dependency_objects {
                 count_flags("DependencyObject", r.type_flags, format!("oid {}", r.oid));
             }
-            for r in &geometry.decoded_sub_records_0x0010 {
-                count_flags("0x0010 sub-record", r.type_flags, String::new());
-            }
-            for r in &geometry.decoded_jstyle_overrides {
-                count_flags("JStyleOverride", r.type_flags, String::new());
-            }
 
             let Some(table) = doc.style_tables.get(&storage_of_sheet(&sheet.path)) else {
                 continue;

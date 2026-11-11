@@ -1583,9 +1583,9 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     }
 
     // A chain stream whose framing does not hold was read as far as its
-    // chain holds: the records before a stop are in the entities above and
-    // whatever follows it is not. Said last, so that every count above is
-    // read knowing which stream it may be short on.
+    // chain holds: the records the chain read before a stop are in the
+    // entities above and whatever follows it is not. Said last, so that
+    // every count above is read knowing which stream it may be short on.
     for fault in &doc.chain_faults {
         warnings.push(fault.describe());
     }
@@ -2428,7 +2428,6 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &IgPoint2dEmitter,
     &IgLineString2dEmitter,
     &IgLine2dEmitter,
-    &JStyleOverrideEmitter,
     // Emits since fills landed: a boundary ring whose style resolves to
     // a `JStyleSimpleFill` is an area the member lines cannot express.
     // It stays in this position — after the historical emitting block —
@@ -2445,14 +2444,13 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // instrument balloons are the first real-sheet evidence.
     &IgCircle2dEmitter,
     // And sheet-level elliptical arcs: the two that close the counters of
-    // an outlined letter on `XA-A1.igr`. Appended, so every family before
+    // an outlined letter on `XA-A1.igr`, and the four of the logo ring on
+    // each of `A0-W.igr` to `A3-W.igr`. Appended, so every family before
     // it keeps its golden order.
     &IgEllipticalArc2dEmitter,
     // Audit-only families: explicit no-op policy.
     &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
-    &SubRecord0x0010Emitter,
-    &AttributeFragmentEmitter,
     &IgRectangle2dEmitter,
     &IgDimensionEmitter,
     &IgComplexString2dEmitter,
@@ -3146,100 +3144,6 @@ impl GeometryEmitter for IgLine2dEmitter {
     }
 }
 
-/// Emits `ProbeOnly` [`PidGraphicKind::Unknown`] entities for the RAD
-/// `JStyleOverride` family (PSM `0x0030`).
-///
-/// This used to emit an `Inferred` annotation anchor. Phase 16 Slice F had
-/// recorded a genuine ambiguity: the IDA Version-3 schema calls the payload
-/// `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`, while cross-fixture probe v5
-/// evidence found that joining `+0..7` and `+8..15` into two `f64` gives
-/// consistently normalized coordinates, and the anchor reading won.
-///
-/// The native reader settles it the other way. `style.dll`'s version-3
-/// serializer makes four separate four-byte reads there, so those are four
-/// fields and the normalized coordinates were four `u32` that happen to
-/// spell a plausible small double. The record's real doubles are further in.
-/// See `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
-///
-/// A record of this family is surfaced as probe evidence rather than as an
-/// annotation with a position no renderer should trust.
-///
-/// On every sheet stream measured there is none to surface. The entities
-/// this emitter used to produce — 13 671 across the corpora — came from
-/// decodes that started inside `DependencyObject` records, on the length
-/// word of the block each one ends with; a family now decodes only what its
-/// stream's chain starts, and no sheet chain carries a `0x0030` record
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §3.2).
-struct JStyleOverrideEmitter;
-
-impl GeometryEmitter for JStyleOverrideEmitter {
-    fn family(&self) -> &'static str {
-        "JStyleOverride"
-    }
-
-    fn emit(
-        &self,
-        ctx: &EmitContext<'_>,
-        sheet: &SheetStream,
-        out: &mut Vec<PidGraphicEntity>,
-    ) -> EmitSkips {
-        let mut skips = EmitSkips::default();
-        let Some(geometry) = &sheet.geometry else {
-            return skips;
-        };
-        for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
-            let Some(byte_range) = source_range(
-                record.byte_start,
-                record.byte_end.saturating_sub(record.byte_start),
-                sheet.size,
-            ) else {
-                skips.out_of_range();
-                continue;
-            };
-            out.push(PidGraphicEntity {
-                id: format!("{}:jstyle-override:{index}", sheet.path),
-                drawing_id: None,
-                graphic_oid: Some(record.oid),
-                source_layer: None,
-                kind: PidGraphicKind::Unknown {
-                    note: format!(
-                        "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID \
-                         {{47FCC338-2D0F-11D0-A1FF-080036A1CF02}}); style record, \
-                         not drawable geometry; oid={} bytes_to_follow={} \
-                         payload +0..15 = 4 x u32 [{}, {}, {}, {}]",
-                        record.oid,
-                        record.bytes_to_follow,
-                        record.field_a_u32,
-                        record.field_b_u32,
-                        record.field_c_u32,
-                        record.field_d_u32,
-                    ),
-                },
-                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
-                source: PidGraphicProvenance {
-                    stream_path: Some(sheet.path.clone()),
-                    byte_range: Some(byte_range),
-                    record_id: Some(format!("jstyle-override:{index}")),
-                    record_kind: Some(SheetRecordKind::JStyleOverride),
-                    field_x: None,
-                    note: Some(format!(
-                        "Layout confirmed against style.dll's own version-3 \
-                         serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a \
-                         26-byte base block. The earlier annotation-anchor \
-                         reading of payload +0..15 is withdrawn -- the native \
-                         reader makes four separate 4-byte reads there. \
-                         oid={} bytes_to_follow={} field_1={:.6} field_2={:.6}",
-                        record.oid, record.bytes_to_follow, record.field_1_f64, record.field_2_f64,
-                    )),
-                },
-                confidence: PidGeometryConfidence::ProbeOnly,
-            });
-        }
-        skips
-    }
-}
-
 /// The signed area of a closed ring: positive when it runs
 /// counter-clockwise.
 fn ring_signed_area(ring: &[PidPoint]) -> f64 {
@@ -3514,30 +3418,6 @@ impl GeometryEmitter for DependencyObjectEmitter {
     }
 }
 
-/// No-op emitter: the polymorphic `0x0010` sub-record family is an
-/// audit-only typed collection (Phase 18); sub-kind discrimination is
-/// deferred pending IDA confirmation.
-struct SubRecord0x0010Emitter;
-
-impl GeometryEmitter for SubRecord0x0010Emitter {
-    fn family(&self) -> &'static str {
-        "SubRecord0x0010"
-    }
-
-    fn is_no_op(&self) -> bool {
-        true
-    }
-
-    fn emit(
-        &self,
-        _ctx: &EmitContext<'_>,
-        _sheet: &SheetStream,
-        _out: &mut Vec<PidGraphicEntity>,
-    ) -> EmitSkips {
-        EmitSkips::default()
-    }
-}
-
 /// How many straight segments each knot span of a B-spline is drawn with;
 /// shared with the symbol-body renderers so a curve looks the same whether it
 /// reaches the page directly or through a placement.
@@ -3546,10 +3426,11 @@ const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
 /// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every `igBspCurve2d`
 /// (PSM `0x005D`): the curve sampled span by span through
 /// [`crate::bspline::sample`]. The record is a leaf -- nothing else draws it
-/// -- so unlike a rectangle it has to be emitted to be seen. One top-level
-/// `Sheet*` stream of the corpora holds any: `XA-A1.igr`'s, with 23 of them,
-/// the bowls of an outlined wordmark, each drawn with the style its `index`
-/// names like the lines and arcs it joins
+/// -- so unlike a rectangle it has to be emitted to be seen. Five border
+/// templates hold any on a top-level `Sheet*` stream: `XA-A1.igr` 23, the
+/// bowls of an outlined wordmark, and `A0-W.igr` to `A3-W.igr` four each,
+/// strokes of a logo. Each is drawn with the style its `index` names, like
+/// the lines and arcs it joins
 /// ([`crate::style_link::line_styles_for_document`]). The drawings' own are
 /// in symbol bodies, and reach the page through
 /// [`NormalizedPidGeometry::symbol_definitions`].
@@ -3847,30 +3728,6 @@ impl GeometryEmitter for IgDimensionEmitter {
     }
 }
 
-/// No-op emitter: attribute fragments (Phase 26 view of `0x0010`)
-/// carry engineering attribute text for audit; they are not placed
-/// text geometry (no decoded insertion point).
-struct AttributeFragmentEmitter;
-
-impl GeometryEmitter for AttributeFragmentEmitter {
-    fn family(&self) -> &'static str {
-        "AttributeFragment"
-    }
-
-    fn is_no_op(&self) -> bool {
-        true
-    }
-
-    fn emit(
-        &self,
-        _ctx: &EmitContext<'_>,
-        _sheet: &SheetStream,
-        _out: &mut Vec<PidGraphicEntity>,
-    ) -> EmitSkips {
-        EmitSkips::default()
-    }
-}
-
 fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
     PidCoordinateContext {
         coordinate_space: PidCoordinateSpace::SourceSheet,
@@ -3940,9 +3797,8 @@ mod tests {
     use super::*;
     use crate::model::{
         DecodedIgBoundary2dRecord, DecodedIgBoundary2dSegment, DecodedIgBspCurve2dRecord,
-        DecodedIgLine2dRecord, DecodedIgLineString2dRecord, DecodedJStyleOverrideRecord,
-        SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord, SheetGeometry,
-        SheetObjectGeometryHint, SheetStream, SheetText,
+        DecodedIgLine2dRecord, DecodedIgLineString2dRecord, SheetCoordinateHintDto, SheetEndpoint,
+        SheetEndpointRecord, SheetGeometry, SheetObjectGeometryHint, SheetStream, SheetText,
     };
 
     /// One sheet stream carrying exactly the records a test wants to walk.
@@ -4090,99 +3946,10 @@ mod tests {
     }
 
     #[test]
-    fn jstyle_override_projection_withdraws_the_annotation_anchor() {
-        // The payload words below spell two plausible normalized f64 when
-        // joined pairwise -- exactly the reading style.dll's own version-3
-        // serializer rules out, since it makes four separate 4-byte reads
-        // there. The record must surface as probe-only evidence, never as an
-        // annotation with a position a renderer would place.
-        let anchor_x = 0.25_f64;
-        let anchor_y = 0.5_f64;
-        let anchor_x_bytes = anchor_x.to_le_bytes();
-        let anchor_y_bytes = anchor_y.to_le_bytes();
-        let mut doc = PidDocument::default();
-        doc.sheet_streams.push(SheetStream {
-            name: "Sheet6".into(),
-            path: "/Sheet6".into(),
-            size: 128,
-            extracted_texts: Vec::new(),
-            magic_u32_le: None,
-            magic_tag: None,
-            header: None,
-            attribute_records: Vec::new(),
-            probe_summary: None,
-            geometry: Some(SheetGeometry {
-                decoded_jstyle_overrides: vec![DecodedJStyleOverrideRecord {
-                    byte_start: 8,
-                    byte_end: 78,
-                    type_code: 0x0030,
-                    type_flags: 0,
-                    bytes_to_follow: 64,
-                    oid: 42,
-                    field_a_u32: u32::from_le_bytes(
-                        anchor_x_bytes[0..4].try_into().expect("first anchor word"),
-                    ),
-                    field_b_u32: u32::from_le_bytes(
-                        anchor_x_bytes[4..8].try_into().expect("second anchor word"),
-                    ),
-                    field_c_u32: u32::from_le_bytes(
-                        anchor_y_bytes[0..4].try_into().expect("first anchor word"),
-                    ),
-                    field_d_u32: u32::from_le_bytes(
-                        anchor_y_bytes[4..8].try_into().expect("second anchor word"),
-                    ),
-                    field_1_f64: anchor_x,
-                    field_2_f64: 0.0,
-                    field_3_f64: 0.0,
-                    field_4_f64: 0.0,
-                    field_e_u32: 0,
-                    field_f_u32: 0,
-                    field_g_u32: 0,
-                    field_h_u16: 0,
-                    field_i_u16: 0,
-                    raw_attribute_tail: Vec::new(),
-                }],
-                ..SheetGeometry::default()
-            }),
-            endpoint_records: Vec::new(),
-            endpoint_decode_error: None,
-        });
-
-        let geometry = build_normalized_geometry(&doc);
-        assert!(
-            !geometry
-                .entities
-                .iter()
-                .any(|entity| matches!(entity.kind, PidGraphicKind::Annotation { .. })),
-            "the withdrawn anchor reading must not come back"
-        );
-
-        let style_record = geometry
-            .entities
-            .iter()
-            .find(|entity| entity.source.record_kind == Some(SheetRecordKind::JStyleOverride))
-            .expect("JStyleOverride should still be surfaced");
-
-        assert_eq!(style_record.confidence, PidGeometryConfidence::ProbeOnly);
-        assert!(matches!(style_record.kind, PidGraphicKind::Unknown { .. }));
-        assert_eq!(
-            style_record.source.byte_range,
-            Some(PidByteRange { start: 8, end: 78 })
-        );
-        assert!(style_record.source.note.as_deref().is_some_and(|note| note
-            .contains("annotation-anchor reading")
-            && note.contains("withdrawn")));
-        assert!(geometry.warnings.iter().any(|warning| {
-            warning.contains("1 Sheet evidence item")
-                && warning.contains("0 decoded, 0 inferred, 1 probe-only")
-        }));
-    }
-
-    #[test]
     fn audit_only_families_register_no_op_emitters() {
-        // M2 seam policy test: igBoundary2d / DependencyObject / 0x0010 /
-        // attribute fragments are registered in EMITTERS as explicit
-        // no-ops — decoded records must produce zero entities.
+        // M2 seam policy test: a boundary that is not a closed loop and a
+        // DependencyObject are registered in EMITTERS and emit nothing —
+        // decoded records must produce zero entities.
         let mut doc = PidDocument::default();
         doc.sheet_streams.push(SheetStream {
             name: "Sheet6".into(),
@@ -4238,23 +4005,6 @@ mod tests {
                     group_kind_word: 2,
                     sub_type_word: 1,
                     raw_reference_payload: vec![0u8; 26],
-                }],
-                decoded_sub_records_0x0010: vec![crate::model::DecodedSubRecord0x0010Record {
-                    byte_start: 260,
-                    byte_end: 280,
-                    type_code: 0x0010,
-                    type_flags: 0,
-                    bytes_to_follow: 14,
-                    raw_payload: vec![0u8; 14],
-                    leading_word: Some(0x0002),
-                }],
-                decoded_attribute_fragments: vec![crate::model::DecodedAttributeFragment {
-                    byte_start: 300,
-                    byte_end: 330,
-                    type_code: 0x0010,
-                    marker: 0x0001_0002,
-                    aux: vec![0u8; 8],
-                    strings: Vec::new(),
                 }],
                 ..SheetGeometry::default()
             }),
@@ -4368,9 +4118,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
@@ -4479,9 +4226,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
@@ -4629,9 +4373,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
@@ -4731,9 +4472,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
@@ -4804,9 +4542,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
@@ -4897,9 +4632,6 @@ mod tests {
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
                 decoded_dependency_objects: Vec::new(),
-                decoded_jstyle_overrides: Vec::new(),
-                decoded_sub_records_0x0010: Vec::new(),
-                decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),

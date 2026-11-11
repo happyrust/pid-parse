@@ -153,8 +153,6 @@ mod tests {
             "trailing_double_1",
             "transform_00",
             "insertion_x",
-            "field_a_u32",
-            "raw_attribute_tail",
             // Phase 34-D nested igBoundary2d DTOs.
             "DecodedIgBoundary2dSegment",
             "DecodedIgBoundary2dMemberRef",
@@ -163,11 +161,6 @@ mod tests {
             "closed_loop",
             // A boundary of several loops: a fill with holes.
             "loop_segment_counts",
-            // Phase 19: PSM 0x0010 leading_word audit field
-            // (= payload[0..2] as little-endian u16).
-            "leading_word",
-            // Phase 26 nested attribute-fragment string DTO.
-            "DecodedAttributeStringRecord",
             // Phase 25-A: read-only spatial-distribution analysis DTO.
             "DecodedSpatialAnalysis",
             "DecodedSpatialCluster",

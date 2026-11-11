@@ -90,7 +90,6 @@ enum Family {
     IgBoundary2d,
     IgSmartFrame2d,
     DependencyObject,
-    JStyleOverride,
 }
 
 impl Family {
@@ -105,7 +104,6 @@ impl Family {
             Self::IgBoundary2d => "igBoundary2d",
             Self::IgSmartFrame2d => "igSmartFrame2d",
             Self::DependencyObject => "DependencyObject",
-            Self::JStyleOverride => "JStyleOverride",
         }
     }
 
@@ -310,9 +308,6 @@ fn families_of(g: &SheetGeometry) -> BTreeMap<u32, BTreeSet<Family>> {
     g.decoded_dependency_objects
         .iter()
         .for_each(|r| add(r.oid, Family::DependencyObject));
-    g.decoded_jstyle_overrides
-        .iter()
-        .for_each(|r| add(r.oid, Family::JStyleOverride));
     out
 }
 

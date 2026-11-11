@@ -22,7 +22,7 @@
 use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_records::{
-    decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
+    decode_igsymbols, decode_igtextboxes, JStyleOverrideDecoder, PsmRecordDecoder,
 };
 use pid_parse::PidPackage;
 
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let bytes = raw.data.as_slice();
             let symbols = decode_igsymbols(bytes);
-            let styles = decode_jstyle_overrides(bytes);
+            let styles = JStyleOverrideDecoder.scan(bytes);
             if symbols.is_empty() {
                 continue;
             }
