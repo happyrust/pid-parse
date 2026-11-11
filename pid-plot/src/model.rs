@@ -6535,6 +6535,7 @@ mod tests {
                 SheetDisplayOrder {
                     sheet_oid: 6,
                     children: ranks.len(),
+                    paper: None,
                     ranks: ranks
                         .iter()
                         .map(|(start, place, inner)| {

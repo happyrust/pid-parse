@@ -19,7 +19,8 @@
 //! +24  u32  number of children
 //! +28  one 14-byte entry per child:
 //!        u32 oid, i16 x0, i16 y0, i16 x1, i16 y1, u16 flags
-//! …    164 bytes naming the sheet and its section (not read)
+//! …    164 bytes: the sheet's name and its section's, then a fixed part
+//!      that states the sheet's paper ([`decode_sheet_paper`])
 //! ```
 //!
 //! An entry's four words are the child's range box in `scale × 2⁻¹⁵` m —
@@ -92,6 +93,25 @@ pub struct SheetChild {
     pub flags: u16,
 }
 
+/// The paper a sheet is drawn on, as the tail of its `JSheet` record states
+/// it.
+///
+/// On the 71 files on hand it is one of three: 0.42 × 0.594 m with code 33,
+/// 0.594 × 0.841 m with 35, 0.841 × 1.189 m with 37 — ISO A2, A1 and A0 the
+/// long way across. The eleven reference plots are printed on exactly this
+/// paper, the A2 sheet included, whose border template is 0.33 × 0.57 mm
+/// larger than it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SheetPaper {
+    /// Height of the paper, metres.
+    pub height_m: f64,
+    /// The word between the two sizes, as stored: 33, 35 or 37 on the
+    /// corpus. It moves with the size and is read as nothing else.
+    pub size_code: u32,
+    /// Width of the paper, metres.
+    pub width_m: f64,
+}
+
 /// The child list of one `0x0114 JSheet` record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetChildTable {
@@ -102,6 +122,9 @@ pub struct SheetChildTable {
     pub range_scale: f64,
     /// The sheet's children, in the order the sheet draws them.
     pub children: Vec<SheetChild>,
+    /// The paper the record states behind its entries, when it states one
+    /// ([`decode_sheet_paper`]).
+    pub paper: Option<SheetPaper>,
 }
 
 impl SheetChildTable {
@@ -151,6 +174,49 @@ pub fn decode_sheet_child_table(payload: &[u8]) -> Option<SheetChildTable> {
         sheet_oid,
         range_scale,
         children,
+        paper: payload.get(end..).and_then(decode_sheet_paper),
+    })
+}
+
+/// Bytes of a `JSheet` tail ahead of the sheet's name.
+const SHEET_TAIL_NAMES_AT: usize = 9;
+/// Where the paper stands in the part of the tail behind the two names:
+/// an `f64` height, a `u32`, an `f64` width.
+const SHEET_PAPER_AT: usize = 61;
+/// The largest side a paper is taken to have, metres. An A0 sheet is 1.189.
+const SHEET_PAPER_MAX_M: f64 = 10.0;
+
+/// Decode the paper a `JSheet` record states in what follows its entries.
+///
+/// The tail is nine bytes, the sheet's name and its section's as counted
+/// UTF-16 strings, and a fixed part; the paper is 61 bytes into that part.
+/// On the corpus the names are always `Sheet1` and `Section1` and the tail
+/// 164 bytes, which puts the height at `+102`, the code at `+110` and the
+/// width at `+114`; the names are walked rather than assumed, though no file
+/// on hand has others to hold the walk to.
+///
+/// `None` when the tail is too short for that, or either size is not a
+/// positive finite length under ten metres. Bounds-checked and panic-free on
+/// arbitrary bytes.
+#[must_use]
+pub fn decode_sheet_paper(tail: &[u8]) -> Option<SheetPaper> {
+    let mut at = SHEET_TAIL_NAMES_AT;
+    for _name in 0..2 {
+        let count = tail.get(at..at.checked_add(2)?)?;
+        let units = usize::from(u16::from_le_bytes([count[0], count[1]]));
+        at = at.checked_add(2)?.checked_add(units.checked_mul(2)?)?;
+    }
+    let paper = tail.get(at.checked_add(SHEET_PAPER_AT)?..)?;
+    let side = |at: usize| -> Option<f64> {
+        let bytes: [u8; 8] = paper.get(at..at + 8)?.try_into().ok()?;
+        let metres = f64::from_le_bytes(bytes);
+        (metres.is_finite() && metres > 0.0 && metres < SHEET_PAPER_MAX_M).then_some(metres)
+    };
+    let code: [u8; 4] = paper.get(8..12)?.try_into().ok()?;
+    Some(SheetPaper {
+        height_m: side(0)?,
+        size_code: u32::from_le_bytes(code),
+        width_m: side(12)?,
     })
 }
 
@@ -343,12 +409,14 @@ pub fn sheet_display_ranks(sheet: &[u8], table: &SheetChildTable) -> BTreeMap<us
 
 /// The display order of one sheet stream: what [`sheet_display_order`] reads
 /// off a storage's `PSMcluster0` and the sheet's own stream.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SheetDisplayOrder {
     /// Oid of the sheet.
     pub sheet_oid: u32,
     /// How many children the sheet's `JSheet` record lists.
     pub children: usize,
+    /// The paper the record states, when it states one.
+    pub paper: Option<SheetPaper>,
     /// The rank of every live record of the stream the list reaches, by the
     /// offset its envelope starts at ([`sheet_display_ranks`]).
     pub ranks: BTreeMap<usize, DisplayRank>,
@@ -399,6 +467,7 @@ pub fn sheet_display_order(
     Some(SheetDisplayOrder {
         sheet_oid,
         children: table.children.len(),
+        paper: table.paper,
         ranks: sheet_display_ranks(sheet, &table),
     })
 }
@@ -428,8 +497,8 @@ fn named_in_order(payload: &[u8], dependents: &[u32]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_sheet_child_table, find_sheet_child_table, sheet_display_ranks, DisplayRank,
-        SheetChild, SheetChildTable, SHEET_TABLE_CANDIDATES,
+        decode_sheet_child_table, decode_sheet_paper, find_sheet_child_table, sheet_display_ranks,
+        DisplayRank, SheetChild, SheetChildTable, SheetPaper, SHEET_TABLE_CANDIDATES,
     };
 
     /// A `JSheet` payload: the fixed part, `children` entries, and a tail.
@@ -448,11 +517,88 @@ mod tests {
             }
             payload.extend_from_slice(&flags.to_le_bytes());
         }
-        // What follows the entries on the corpus: the sheet's name and its
-        // section's, 164 bytes in all. Its content is not read.
-        payload.extend_from_slice(&[0x01, 0x01, 0x02, 0x00, 0x00, 0x01]);
-        payload.extend_from_slice(&[0u8; 158]);
+        payload.extend_from_slice(&sheet_tail("Sheet1", "Section1", [0.594, 0.841], 35));
         payload
+    }
+
+    /// What follows the entries: nine bytes, the sheet's name and its
+    /// section's as counted UTF-16, and a fixed part of 123 bytes that
+    /// states the paper — 164 bytes in all for `Sheet1` / `Section1`, as on
+    /// every file of the corpus. The bytes are those of the 闪蒸B sheet.
+    fn sheet_tail(sheet: &str, section: &str, paper_m: [f64; 2], code: u32) -> Vec<u8> {
+        let mut tail = vec![0x01, 0x01, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00];
+        for name in [sheet, section] {
+            let units: Vec<u16> = name.encode_utf16().collect();
+            tail.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for unit in units {
+                tail.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        let fixed_at = tail.len();
+        tail.extend_from_slice(&[0x07, 0x00, 0x00, 0x00]);
+        tail.extend_from_slice(&[0u8; 19]);
+        tail.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+        tail.extend_from_slice(&[0u8; 30]);
+        tail.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+        assert_eq!(tail.len() - fixed_at, 61);
+        tail.extend_from_slice(&paper_m[0].to_le_bytes());
+        tail.extend_from_slice(&code.to_le_bytes());
+        tail.extend_from_slice(&paper_m[1].to_le_bytes());
+        tail.extend_from_slice(&0f64.to_le_bytes());
+        tail.extend_from_slice(&1f64.to_le_bytes());
+        tail.extend_from_slice(&1f64.to_le_bytes());
+        tail.extend_from_slice(&[0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]);
+        tail.extend_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00]);
+        assert_eq!(tail.len() - fixed_at, 123);
+        tail
+    }
+
+    #[test]
+    fn the_tail_of_a_jsheet_states_the_paper() {
+        // The A1 sheet of the corpus: 164 bytes behind the entries.
+        let tail = sheet_tail("Sheet1", "Section1", [0.594, 0.841], 35);
+        assert_eq!(tail.len(), 164);
+        assert_eq!(
+            decode_sheet_paper(&tail),
+            Some(SheetPaper {
+                height_m: 0.594,
+                size_code: 35,
+                width_m: 0.841,
+            })
+        );
+        // The table carries it.
+        let payload = sheet_payload(6, 2.0, &[(22, [0, 0, 1, 1], 0)]);
+        let table = decode_sheet_child_table(&payload).expect("a table");
+        assert_eq!(table.paper.map(|paper| paper.width_m), Some(0.841));
+        // The sizes stand behind the two names, wherever those end.
+        let renamed = sheet_tail("图纸", "A longer section name", [0.42, 0.594], 33);
+        assert_ne!(renamed.len(), 164);
+        assert_eq!(
+            decode_sheet_paper(&renamed).map(|paper| (paper.height_m, paper.width_m)),
+            Some((0.42, 0.594))
+        );
+        // The paper ends 122 bytes into this tail. Cut anywhere short of
+        // that the tail states none, and so does one whose sizes are not
+        // sizes; the table is still a table.
+        for len in 0..tail.len() {
+            assert_eq!(
+                decode_sheet_paper(&tail[..len]).is_some(),
+                len >= 122,
+                "{len} bytes"
+            );
+        }
+        for bad in [0.0, -0.594, f64::NAN, f64::INFINITY, 1.0e9] {
+            let tail = sheet_tail("Sheet1", "Section1", [bad, 0.841], 35);
+            assert_eq!(decode_sheet_paper(&tail), None, "{bad}");
+        }
+        let mut cut = payload.clone();
+        cut.truncate(payload.len() - 60);
+        let table = decode_sheet_child_table(&cut).expect("the entries are whole");
+        assert_eq!((table.children.len(), table.paper), (1, None));
+        // A name count that runs past the tail does not panic.
+        let mut overrun = tail.clone();
+        overrun[9..11].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert_eq!(decode_sheet_paper(&overrun), None);
     }
 
     fn record(type_code: u16, payload: &[u8]) -> Vec<u8> {
@@ -772,6 +918,7 @@ mod tests {
                 range: [0, 0, 1, 1],
                 flags: 0,
             }],
+            paper: None,
         };
         let ranks: Vec<u32> = sheet_display_ranks(&stream, &table)
             .values()
@@ -787,6 +934,7 @@ mod tests {
             sheet_oid: 6,
             range_scale: 2.0,
             children: Vec::new(),
+            paper: None,
         };
         assert!(sheet_display_ranks(&[], &table).is_empty());
         assert!(sheet_display_ranks(&[0u8; 7], &table).is_empty());

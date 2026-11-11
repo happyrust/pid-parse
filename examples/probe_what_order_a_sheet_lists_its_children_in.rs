@@ -22,12 +22,10 @@
 //! A stream the cluster holds no table for is printed as such; on the
 //! corpus those are extra `Sheet<N>` streams that own no record.
 //!
-//! The paper is not part of what `sheet_display_order` decodes. It is read
-//! here from the 164 bytes behind the entries — two counted UTF-16 names,
-//! then at `+102` an `f64` height, at `+110` a `u32`, at `+114` an `f64`
-//! width — because the eleven reference plots are printed on exactly that
-//! paper, the A2 sheet included, whose border template is 0.33 × 0.57 mm
-//! larger.
+//! The paper is what the record states behind its entries
+//! (`SheetChildTable::paper`): the eleven reference plots are printed on
+//! exactly that paper, the A2 sheet included, whose border template is
+//! 0.33 × 0.57 mm larger.
 //!
 //! Run (PowerShell):
 //!
@@ -43,10 +41,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pid_parse::parsers::sheet_display_order::{
-    find_sheet_child_table, sheet_display_ranks, SheetChildTable, SHEET_CHILD_ENTRY_LEN,
-    SHEET_CHILD_TABLE_AT,
-};
+use pid_parse::parsers::sheet_display_order::{find_sheet_child_table, sheet_display_ranks};
 use pid_parse::parsers::sheet_records::{parse_live_psm_header, sheet_record_starts};
 use pid_parse::PidPackage;
 
@@ -55,10 +50,6 @@ const SMART_FRAME: u16 = 0x003D;
 
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
-}
-
-fn f64_at(bytes: &[u8], at: usize) -> Option<f64> {
-    Some(f64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
 }
 
 fn collect(path: &Path, out: &mut Vec<PathBuf>) {
@@ -95,44 +86,6 @@ fn live_records(sheet: &[u8]) -> Vec<(u16, u32, u32)> {
         records.push((header.type_code, oid, parent));
     }
     records
-}
-
-/// The paper the record's tail states, `(height m, size code, width m)`.
-///
-/// The table is looked up again by its bytes: the decoder keeps the entries
-/// and not what follows them.
-fn paper(cluster: &[u8], table: &SheetChildTable) -> Option<(f64, u32, f64)> {
-    let needle = table.sheet_oid.to_le_bytes();
-    let entries_end = SHEET_CHILD_TABLE_AT + table.children.len() * SHEET_CHILD_ENTRY_LEN;
-    let count = u32::try_from(table.children.len()).ok()?.to_le_bytes();
-    let mut from = 0usize;
-    while let Some(found) = cluster
-        .get(from..)?
-        .windows(4)
-        .position(|window| window == needle)
-    {
-        let body = from + found;
-        from = body + 1;
-        let Some(header) = body
-            .checked_sub(6)
-            .and_then(|envelope| parse_live_psm_header(cluster, envelope))
-        else {
-            continue;
-        };
-        if header.type_code != 0x0114 || cluster.get(body + 24..body + 28) != Some(&count[..]) {
-            continue;
-        }
-        let tail = body + entries_end;
-        if tail + 122 > body + header.bytes_to_follow as usize {
-            continue;
-        }
-        return Some((
-            f64_at(cluster, tail + 102)?,
-            u32_at(cluster, tail + 110)?,
-            f64_at(cluster, tail + 114)?,
-        ));
-    }
-    None
 }
 
 fn main() -> ExitCode {
@@ -232,9 +185,14 @@ fn main() -> ExitCode {
                 .windows(2)
                 .filter(|pair| pair[1].oid > pair[0].oid)
                 .count();
-            let paper = paper(&cluster.data, &table).map_or_else(
+            let paper = table.paper.map_or_else(
                 || "-".to_string(),
-                |(height, code, width)| format!("{height} x {width} m, code {code}"),
+                |paper| {
+                    format!(
+                        "{} x {} m, code {}",
+                        paper.height_m, paper.width_m, paper.size_code
+                    )
+                },
             );
             let ranked = sheet_display_ranks(&raw.data, &table).len();
             println!(
