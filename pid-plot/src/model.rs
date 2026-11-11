@@ -7566,7 +7566,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 47 codes has to be reachable and has to be *recorded*
+    // Every one of the 48 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -8422,20 +8422,42 @@ mod tests {
                 page,
             )
             .expect("the print driver's frame is not content"),
-            DropReason::SegmentBeyondThePaper => write_reason(
-                &write_primitive(
-                    PaperShape::Line {
-                        start_mm: [841.328, 0.566],
-                        end_mm: [841.328, 300.0],
-                    },
-                    0.25,
-                ),
-                page,
-            )
-            .expect("a stroke past the paper's edge leaves no ink on it"),
+            // A border template's stroke wholly past the paper's right edge,
+            // on a page that wears the template where its plot shows it.
+            DropReason::SegmentBeyondThePaper => filed_past_the_paper(Some(placed_template(
+                "CPECCHB-SQ-A2.igr",
+                [0.388_407, 0.565_648],
+            ))),
+            // The same stroke of a template no plot shows placed so — and of
+            // a page that says nothing of its template at all.
+            DropReason::SegmentBeyondThePaperNoPlotOfTemplate => {
+                let reason = filed_past_the_paper(Some(placed_template(
+                    "CPECCHB-SQ-A1.igr",
+                    [1.297_400, 1.553_387],
+                )));
+                for unwitnessed in [
+                    Some(placed_template("CPE-SQ-A1.igr", [1.042_526, 1.042_526])),
+                    Some(placed_template("CPECCHB-SQ-A2.igr", [0.150_015, 0.399_965])),
+                    None,
+                ] {
+                    assert_eq!(filed_past_the_paper(unwitnessed), reason);
+                }
+                reason
+            }
             // The same stroke as the drawing's own: the writer states the
             // one fact, and the account files it as suspect.
-            DropReason::DrawingSegmentBeyondThePaper => filed_past_the_paper(false),
+            DropReason::DrawingSegmentBeyondThePaper => {
+                // Whatever template the page wears: the stroke is not its.
+                let reason = drawing_filed_past_the_paper(None);
+                assert_eq!(
+                    drawing_filed_past_the_paper(Some(placed_template(
+                        "CPECCHB-SQ-A2.igr",
+                        [0.388_407, 0.565_648],
+                    ))),
+                    reason
+                );
+                reason
+            }
             DropReason::TextEmpty => write_reason(&write_label([10.0, 10.0], Some(2.5), ""), page)
                 .expect("an empty string letters nothing"),
             DropReason::TextPlacementNonFinite => {
@@ -8556,10 +8578,37 @@ mod tests {
         }
     }
 
+    /// A border template as a page wears it: the file and where the frame
+    /// puts it.
+    fn placed_template(path: &str, offset_mm: [f64; 2]) -> BorderTemplate {
+        BorderTemplate {
+            path: path.to_string(),
+            extent_mm: [841.0, 594.0],
+            offset_mm,
+            scale: 1.0,
+            primitives: 1,
+            symbols: Vec::new(),
+        }
+    }
+
+    /// The code the account files a template's stroke under when its whole
+    /// pen lies past the page's right edge, on a page that wears `template`.
+    fn filed_past_the_paper(template: Option<BorderTemplate>) -> DropReason {
+        stroke_filed_past_the_paper(true, template)
+    }
+
+    /// The same for a stroke of the drawing's own.
+    fn drawing_filed_past_the_paper(template: Option<BorderTemplate>) -> DropReason {
+        stroke_filed_past_the_paper(false, template)
+    }
+
     /// The code the account files a stroke under when its whole pen lies
     /// past the page's right edge: the writer's verdict on a real page of
     /// one stroke, read back out of `assemble`.
-    fn filed_past_the_paper(furniture: bool) -> DropReason {
+    fn stroke_filed_past_the_paper(
+        furniture: bool,
+        template: Option<BorderTemplate>,
+    ) -> DropReason {
         let mut stroke = write_primitive(
             PaperShape::Line {
                 start_mm: [841.328, 0.566],
@@ -8568,7 +8617,8 @@ mod tests {
             0.25,
         );
         stroke.furniture = furniture;
-        let model = one_stroke_model(stroke, [841.0, 594.0]);
+        let mut model = one_stroke_model(stroke, [841.0, 594.0]);
+        model.template = template;
         let write = crate::write::write_ledger(&model).expect("the page writes");
         // The writer states one fact, whoever drew the segment.
         assert_eq!(
@@ -8715,7 +8765,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 47, "the appendix's 47 rows");
+        assert_eq!(DropReason::all().len(), 48, "the appendix's 48 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.

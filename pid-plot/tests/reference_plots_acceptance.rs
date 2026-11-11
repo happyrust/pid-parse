@@ -137,6 +137,7 @@ use pid_plot::compare::{
 use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
 use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot_with_faces};
+use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
@@ -775,6 +776,52 @@ fn eleven_reference_plots_hold_their_readings() {
             })
         })
         .collect();
+
+    // Which template placements past a paper's corner a plot shows is these
+    // plots' to say, and `PAPER_EDGE_WITNESSES` is where it is said: the
+    // ledger files a template's unprinted ink as witnessed on the strength
+    // of a row. So the table is held to the sheets it was read from, both
+    // ways round: a sheet here that wears its template off the corner has a
+    // row, and every row is a sheet here wearing that template so.
+    let mut off_the_corner: Vec<(&str, &str)> = Vec::new();
+    for (pin, model) in PINS.iter().zip(&models) {
+        let Some(template) = &model.template else {
+            continue;
+        };
+        let offset = template.offset_mm;
+        if offset
+            .iter()
+            .all(|side| side.abs() < PAPER_EDGE_OFFSET_SLACK_MM)
+        {
+            continue;
+        }
+        let witness = paper_edge_witness(template).unwrap_or_else(|| {
+            panic!(
+                "{}: wears {} ({:.6}, {:.6}) mm off its paper's corner and has a reference \
+                 plot, and PAPER_EDGE_WITNESSES has no row for that placement",
+                pin.name, template.path, offset[0], offset[1]
+            )
+        });
+        off_the_corner.push((pin.name, witness.template));
+    }
+    for witness in &PAPER_EDGE_WITNESSES {
+        assert!(
+            off_the_corner.contains(&(witness.plot, witness.template)),
+            "PAPER_EDGE_WITNESSES says the plot of {} shows {} at ({:.6}, {:.6}) mm; the \
+             sheets of this gate that wear a template off the corner are {off_the_corner:?}",
+            witness.plot,
+            witness.template,
+            witness.offset_mm[0],
+            witness.offset_mm[1]
+        );
+    }
+    eprintln!(
+        "template placements past a paper's corner with a plot: {} of {} sheet(s) — \
+         {off_the_corner:?}",
+        off_the_corner.len(),
+        PINS.len()
+    );
+
     let dirs = font_search_dirs(&corpus);
     let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
     let fonts: Vec<PlotFont<'_>> = prepared

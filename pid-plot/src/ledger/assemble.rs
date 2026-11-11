@@ -783,18 +783,37 @@ impl std::fmt::Display for LedgerSummary {
 ///
 /// The writer states that one fact one way, [`DropReason::SegmentBeyondThePaper`],
 /// and does not print the segment whoever drew it. What it says of the page
-/// depends on whose it is: a border template put past the paper's corner by
-/// its frame is ink the plots do not print, and a stroke of the drawing's
-/// own off its own page is not something any plot shows, so the drawing's
-/// is filed under the suspect [`DropReason::DrawingSegmentBeyondThePaper`].
+/// depends on whose it is, and the account files it three ways:
+///
+/// - a border template placed as a vendor's plot shows it
+///   ([`crate::witness::paper_edge_witness`]) keeps the code: the plot is the
+///   witness that this ink is not printed;
+/// - a border template no plot shows placed so is filed under
+///   [`DropReason::SegmentBeyondThePaperNoPlotOfTemplate`] — the same rule,
+///   carried over to a placement it was not read from, and counted apart so
+///   that the two are not one number;
+/// - a stroke of the drawing's own off its own page is not something any
+///   plot shows, and is the suspect
+///   [`DropReason::DrawingSegmentBeyondThePaper`].
 #[derive(Debug, Clone, Copy)]
 struct PaperEdge(DropReason);
 
 impl PaperEdge {
-    fn of(domain: LedgerDomain) -> Self {
+    fn of(domain: LedgerDomain, model: &PaperModel) -> Self {
         match domain {
             LedgerDomain::Drawing => Self(DropReason::DrawingSegmentBeyondThePaper),
-            LedgerDomain::Furniture => Self(DropReason::SegmentBeyondThePaper),
+            LedgerDomain::Furniture => {
+                let plotted = model
+                    .template
+                    .as_ref()
+                    .and_then(crate::witness::paper_edge_witness)
+                    .is_some();
+                Self(if plotted {
+                    DropReason::SegmentBeyondThePaper
+                } else {
+                    DropReason::SegmentBeyondThePaperNoPlotOfTemplate
+                })
+            }
         }
     }
 
@@ -816,7 +835,7 @@ fn assemble_domain(
     write: &WriteLedger,
     past_the_edge: &BTreeSet<usize>,
 ) -> DomainAccount {
-    let paper_edge = PaperEdge::of(domain);
+    let paper_edge = PaperEdge::of(domain, model);
     let mut account = DomainAccount {
         parse: parse_account(ledger.parse.get(domain)),
         ..DomainAccount::default()

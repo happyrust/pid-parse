@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 47 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 48 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -267,11 +267,36 @@ pub enum DropReason {
     /// [`Self::SegmentOnSheetEdge`]: what is off the paper is off it
     /// whichever file drew it.
     ///
-    /// This is the border template's code. The same segment of the
-    /// drawing's own is [`Self::DrawingSegmentBeyondThePaper`]: the writer
-    /// states the one fact for both, and the account files it by whose
-    /// segment it is (`ExportLedger::assemble`).
+    /// This is the code of a border template a vendor's plot shows put past
+    /// its paper so: the template and the offset are a row of
+    /// `witness::PAPER_EDGE_WITNESSES`. The writer states the one fact for
+    /// every segment past the paper, and the account files it by whose
+    /// segment it is (`ExportLedger::assemble`): a template no plot shows
+    /// placed so is [`Self::SegmentBeyondThePaperNoPlotOfTemplate`], and the
+    /// same segment of the drawing's own is
+    /// [`Self::DrawingSegmentBeyondThePaper`].
     SegmentBeyondThePaper,
+    /// A segment of a border template the whole pen of which lies past one
+    /// edge of the paper, where **no vendor plot on hand shows this template
+    /// put past its paper by this offset**: the fact of
+    /// [`Self::SegmentBeyondThePaper`] without its witness.
+    ///
+    /// The reference plots show three templates. `CPECCHB-SQ-A2` is plotted
+    /// off its paper's corner and is the witnessed case. `CPE-SQ-A0` and
+    /// `CPE-SQ-A1` are plotted only with the template on the paper's corner,
+    /// which says nothing of an outline past the paper, and `CPECCHB-SQ-A1`
+    /// is on no plot at all. Six sheets of the plant backup wear one of
+    /// those three off the corner — `A井场`, `N井场`, `O井场`, `P井场` and the
+    /// two `凝析油稳定塔` sheets — and the top and the right piece of each
+    /// one's outline are filed here: left unprinted by the rule the A2 plot
+    /// witnesses, carried over to a placement no plot shows.
+    ///
+    /// Intentional all the same, and counted apart so that what rests on a
+    /// plot and what is carried over from one are not one number. Once the
+    /// page is the paper, a segment wholly past the paper's edge can leave
+    /// no ink on it whatever a plotter does; what no plot shows for these
+    /// sheets is that their page is their paper. Counted per segment.
+    SegmentBeyondThePaperNoPlotOfTemplate,
     /// A segment of the drawing's own the whole pen of which lies past one
     /// edge of the page: the fact of [`Self::SegmentBeyondThePaper`], on
     /// ink no plot shows left off. A border template can be put past the
@@ -319,7 +344,7 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 47] = [
+pub const ALL: [DropReason; 48] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
@@ -359,6 +384,7 @@ pub const ALL: [DropReason; 47] = [
     DropReason::SegmentTooShort,
     DropReason::SegmentOnSheetEdge,
     DropReason::SegmentBeyondThePaper,
+    DropReason::SegmentBeyondThePaperNoPlotOfTemplate,
     DropReason::DrawingSegmentBeyondThePaper,
     DropReason::TextEmpty,
     DropReason::TextPlacementNonFinite,
@@ -420,6 +446,9 @@ impl DropReason {
             Self::SegmentTooShort => "segment_too_short",
             Self::SegmentOnSheetEdge => "segment_on_sheet_edge",
             Self::SegmentBeyondThePaper => "segment_beyond_the_paper",
+            Self::SegmentBeyondThePaperNoPlotOfTemplate => {
+                "segment_beyond_the_paper_no_plot_of_template"
+            }
             Self::DrawingSegmentBeyondThePaper => "drawing_segment_beyond_the_paper",
             Self::TextEmpty => "text_empty",
             Self::TextPlacementNonFinite => "text_placement_non_finite",
@@ -480,6 +509,7 @@ impl DropReason {
             | Self::SegmentTooShort
             | Self::SegmentOnSheetEdge
             | Self::SegmentBeyondThePaper
+            | Self::SegmentBeyondThePaperNoPlotOfTemplate
             | Self::TextEmpty
             | Self::TextWhitespaceOnly => Tier::Intentional,
         }
@@ -531,6 +561,7 @@ impl DropReason {
             | Self::SegmentTooShort
             | Self::SegmentOnSheetEdge
             | Self::SegmentBeyondThePaper
+            | Self::SegmentBeyondThePaperNoPlotOfTemplate
             | Self::DrawingSegmentBeyondThePaper => ReasonLayer::Segment,
             Self::TemplateCandidateUnreadable
             | Self::TemplateMissing
@@ -752,7 +783,7 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 47] = [
+    const APPENDIX_A: [&str; 48] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
@@ -797,6 +828,7 @@ mod tests {
         "segment_too_short",
         "segment_on_sheet_edge",
         "segment_beyond_the_paper",
+        "segment_beyond_the_paper_no_plot_of_template",
         "drawing_segment_beyond_the_paper",
         "text_empty",
         "text_placement_non_finite",
@@ -816,11 +848,11 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 47, "the catalog is 47 codes");
+        assert_eq!(ALL.len(), 48, "the catalog is 48 codes");
     }
 
     #[test]
-    fn tiers_split_25_suspect_22_intentional() {
+    fn tiers_split_25_suspect_23_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -830,8 +862,8 @@ mod tests {
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
         assert_eq!(suspect, 25, "appendix A's suspect column");
-        assert_eq!(intentional, 22, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 47);
+        assert_eq!(intentional, 23, "appendix A's intentional column");
+        assert_eq!(suspect + intentional, 48);
     }
 
     #[test]

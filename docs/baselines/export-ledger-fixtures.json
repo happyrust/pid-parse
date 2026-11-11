@@ -608,7 +608,7 @@
           "written": 131,
           "dropped": {
             "segment_too_short": 2,
-            "segment_beyond_the_paper": 2
+            "segment_beyond_the_paper_no_plot_of_template": 2
           },
           "unattributed": 0
         }

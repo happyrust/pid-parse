@@ -436,10 +436,12 @@ const PAPERS: [([f64; 2], usize); 3] = [
 /// right pieces lie off the paper — and nothing else of the template but, on
 /// the nine `CPECCHB-SQ-A2` sheets, the line that restates the outline's
 /// right edge. The title block and the inner frame are on the paper on all
-/// fifteen. None of this ink is printed
-/// (`DropReason::SegmentBeyondThePaper`), as none of it is on the A2
+/// fifteen. None of this ink is printed, as none of it is on the A2
 /// reference plot; it was on the page while the page was the frame's
-/// rectangle, which is why this pin did not exist before 2026-11-11.
+/// rectangle, which is why this pin did not exist before 2026-11-11. That
+/// plot shows one template at one offset, so the ledger files the nine
+/// sheets it covers and the six it does not under two codes
+/// ([`PLOTTED_PAST_THE_PAPER`], [`UNPLOTTED_PAST_THE_PAPER`]).
 const TEMPLATE_PAST_THE_PAPER: [(&str, usize, [f64; 2]); 15] = [
     (
         "00/00/A井场 注采阀组工艺及自控流程图.pid",
@@ -492,6 +494,91 @@ const TEMPLATE_PAST_THE_PAPER: [(&str, usize, [f64; 2]); 15] = [
     ("test/U01/D06.pid", 2, [0.327801, 0.565648]),
     ("test/U01/D07.pid", 2, [0.327801, 0.565648]),
     ("test/U01/TESTDWG-0002TP03-01.pid", 2, [0.327801, 0.565648]),
+];
+
+/// The code the ledger files a template's unprinted segment under where a
+/// vendor's plot shows the template placed so.
+const PLOTTED_CODE: &str = "segment_beyond_the_paper";
+
+/// The code it files the same segment under where no plot does.
+const UNPLOTTED_CODE: &str = "segment_beyond_the_paper_no_plot_of_template";
+
+/// The template every sheet of [`PLOTTED_PAST_THE_PAPER`] wears.
+const PLOTTED_TEMPLATE: &str = "CPECCHB-SQ-A2.igr";
+
+/// The sheets whose template ink past the paper is left unprinted **as a
+/// reference plot shows it**, with how many segments of it the ledger files
+/// under [`PLOTTED_CODE`].
+///
+/// All nine wear `CPECCHB-SQ-A2` where the plot of
+/// `轻烃分离器I气出口接口位置改造` is printed with it, (0.388407, 0.565648) mm
+/// off the paper's corner (`pid_plot::witness::PAPER_EDGE_WITNESSES`): the
+/// top and the right piece of the template's outline and the line that
+/// restates its right edge, three segments.
+const PLOTTED_PAST_THE_PAPER: [(&str, u64); 9] = [
+    ("00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid", 3),
+    (
+        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+        3,
+    ),
+    (
+        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
+        3,
+    ),
+    ("test/U01/D01.pid", 3),
+    ("test/U01/D03.pid", 3),
+    ("test/U01/D04.pid", 3),
+    ("test/U01/D06.pid", 3),
+    ("test/U01/D07.pid", 3),
+    ("test/U01/TESTDWG-0002TP03-01.pid", 3),
+];
+
+/// The sheets whose template ink past the paper is left unprinted **with no
+/// plot of that template placed so**: the sheet, the template it wears and
+/// how many segments the ledger files under [`UNPLOTTED_CODE`].
+///
+/// `A井场` wears `CPE-SQ-A0` and the two `凝析油稳定塔` sheets `CPE-SQ-A1`
+/// off the paper's corner, and the plots of those two templates show them
+/// on it; `N井场`, `O井场` and `P井场` wear `CPECCHB-SQ-A1`, of which there is
+/// no plot at all. Two segments on each, the top and the right piece of the
+/// outline, left unprinted by the rule the A2 plot shows carried over to a
+/// placement none shows.
+///
+/// Which side a sheet falls on is decided by the witness table and not by
+/// these names: the two tables pin what that decision comes to on the 53
+/// sheets, so that a row added to the witnesses, or one lost, moves a sheet
+/// here and says so.
+const UNPLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 6] = [
+    (
+        "00/00/A井场 注采阀组工艺及自控流程图.pid",
+        "CPE-SQ-A0.igr",
+        2,
+    ),
+    (
+        "00/00/N井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/O井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/P井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(1200td)工艺及自控流程图.pid",
+        "CPE-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(600td)工艺及自控流程图.pid",
+        "CPE-SQ-A1.igr",
+        2,
+    ),
 ];
 
 /// How the 53 pages end their strokes, read back from the PDFs: the inked
@@ -2038,6 +2125,11 @@ fn every_backup_drawing_exports_a_readable_page() {
     // What each sheet's template holds past the paper: the sheet's key, how
     // many primitives, and the furthest reach past the right and top edges.
     let mut template_past_the_paper: Vec<(String, usize, [f64; 2])> = Vec::new();
+    // How the ledger files the segments of it the writer leaves unprinted:
+    // the sheet's key, the code, how many segments, and the template's file.
+    let mut filed_past_the_paper: Vec<(String, &'static str, u64, String)> = Vec::new();
+    // The same of a drawing's own, which no page should have.
+    let mut own_past_the_paper: Vec<String> = Vec::new();
     let mut papers = [0usize; PAPERS.len()];
     let mut ledger_pages: Vec<(String, ExportLedger)> = Vec::new();
     // Inked paths stroked butt-ended and round-ended, over the 53 pages and
@@ -2157,6 +2249,37 @@ fn every_backup_drawing_exports_a_readable_page() {
             written.ledger.mismatches
         );
         let ledger = ExportLedger::assemble(model, &written.ledger);
+        // What the account files as past the paper, by whose it is.
+        let worn = model
+            .template
+            .as_ref()
+            .map_or_else(String::new, |template| {
+                template
+                    .path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(&template.path)
+                    .to_string()
+            });
+        for (reason, count) in &ledger.furniture.segments.dropped {
+            if reason.code().contains("beyond_the_paper") {
+                filed_past_the_paper.push((
+                    page_key(path, &backup),
+                    reason.code(),
+                    *count,
+                    worn.clone(),
+                ));
+            }
+        }
+        for (reason, count) in &ledger.drawing.segments.dropped {
+            if reason.code().contains("beyond_the_paper") {
+                own_past_the_paper.push(format!(
+                    "  {}: {count} segment(s) of the drawing's own filed as {}",
+                    page_key(path, &backup),
+                    reason.code()
+                ));
+            }
+        }
         // Requirement 5.5/5.6 on real corpus: the face-free account reaches the
         // same verdicts as the written one, except for the two marks that need
         // a typeface to measure.
@@ -2304,6 +2427,59 @@ fn every_backup_drawing_exports_a_readable_page() {
         template_differences.is_empty(),
         "what the border templates hold past the paper is not what is pinned:\n{}",
         template_differences.join("\n")
+    );
+    // How the ledger files the part of it that is not printed: under the
+    // witnessed code on the sheets a plot shows placed so, under the other
+    // on the sheets none does, sheet by sheet.
+    let mut filing_differences: Vec<String> = own_past_the_paper;
+    let pinned_filing = |sheet: &str| -> Vec<(&'static str, u64, &'static str)> {
+        let plotted = PLOTTED_PAST_THE_PAPER
+            .iter()
+            .filter(|(pinned, _)| *pinned == sheet)
+            .map(|(_, segments)| (PLOTTED_CODE, *segments, PLOTTED_TEMPLATE));
+        let unplotted = UNPLOTTED_PAST_THE_PAPER
+            .iter()
+            .filter(|(pinned, ..)| *pinned == sheet)
+            .map(|(_, template, segments)| (UNPLOTTED_CODE, *segments, *template));
+        plotted.chain(unplotted).collect()
+    };
+    for (sheet, code, count, template) in &filed_past_the_paper {
+        match pinned_filing(sheet).as_slice() {
+            [(pinned_code, pinned_count, pinned_template)]
+                if pinned_code == code && pinned_count == count && pinned_template == template => {}
+            [(pinned_code, pinned_count, pinned_template)] => filing_differences.push(format!(
+                "  {sheet}: {count} segment(s) of {template} filed as {code}; pinned \
+                 {pinned_count} of {pinned_template} as {pinned_code}"
+            )),
+            pinned => filing_differences.push(format!(
+                "  {sheet}: {count} segment(s) of {template} filed as {code}; the sheet is in \
+                 {} row(s) of PLOTTED_PAST_THE_PAPER and UNPLOTTED_PAST_THE_PAPER",
+                pinned.len()
+            )),
+        }
+    }
+    let pinned_sheets = PLOTTED_PAST_THE_PAPER
+        .iter()
+        .map(|(sheet, _)| *sheet)
+        .chain(UNPLOTTED_PAST_THE_PAPER.iter().map(|(sheet, ..)| *sheet));
+    for sheet in pinned_sheets {
+        let found = filed_past_the_paper
+            .iter()
+            .filter(|(filed, ..)| filed == sheet)
+            .count();
+        if found != 1 {
+            filing_differences.push(format!(
+                "  {sheet}: the ledger files its template's ink past the paper under {found} \
+                 code(s); it is pinned under one"
+            ));
+        }
+    }
+    assert!(
+        filing_differences.is_empty(),
+        "how the ledger files what is past the paper is not what is pinned — a template a \
+         plot shows placed so under {PLOTTED_CODE}, any other under {UNPLOTTED_CODE}, nothing \
+         of a drawing's own:\n{}",
+        filing_differences.join("\n")
     );
     // One primitive of a drawing's own reaches past its page, and it is the
     // sideways run in `N井场`: origin 0.208 mm under the bottom edge, nineteen
