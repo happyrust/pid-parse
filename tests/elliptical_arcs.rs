@@ -266,3 +266,238 @@ fn a01s_heads_bulge_outward_from_their_bodies() {
         }
     }
 }
+
+const XA_TEMPLATE: &str = "test-file/Ref/Template Files/XA-A1.igr";
+
+/// The 熊安 border template draws two elliptical arcs on its own sheet, and
+/// they close the two counters of a letter.
+///
+/// `XA-A1.igr`'s `/Sheet6` holds the only `0x007E` records any corpus keeps
+/// at sheet level: oids 1012 and 1013, on layer 14 with style 11, among the
+/// lines and the B-spline of one outlined `B` two millimetres high in the
+/// title block (oids 1004–1016). The family was read in cached symbol bodies
+/// and `.sym` files only, so the letter printed with both counters open on
+/// the right.
+///
+/// Each arc reaches the page as the polyline `bspline::sample` makes of the
+/// rational B-spline `bspline::elliptical_arc_directed` builds from the
+/// record's own fields — the function, and the reading of the direction
+/// byte, that a cached body's dome is drawn through and the reference plots
+/// hold to the vendor's ink (`sym_elliptical_arc_matches_cached_body.rs`).
+/// What says the reading is right on this sheet, which has no vendor plot:
+/// each arc starts on the right end of its counter's lower edge, ends on the
+/// right end of its upper edge, and bulges away from the counter. Turned the
+/// other way it would run through the inside of the box it closes.
+#[test]
+fn the_xa_templates_sheet_level_arcs_close_the_counters_of_its_b() {
+    use pid_parse::bspline::{elliptical_arc_directed, sample};
+    use pid_parse::parsers::sheet_records::{decode_igellipticalarcs, decode_iglines};
+    use pid_parse::PidGraphicKind;
+
+    if !std::path::Path::new(XA_TEMPLATE).exists() {
+        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
+        return;
+    }
+    let package = PidParser::new()
+        .parse_package(XA_TEMPLATE)
+        .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));
+    let data = package
+        .streams
+        .get("/Sheet6")
+        .unwrap_or_else(|| panic!("{XA_TEMPLATE} has a /Sheet6"))
+        .data
+        .as_slice();
+    let arcs = decode_igellipticalarcs(data);
+    let lines = decode_iglines(data);
+    assert_eq!(
+        arcs.iter().map(|arc| arc.oid).collect::<Vec<_>>(),
+        [1012, 1013],
+        "the sheet's elliptical arcs"
+    );
+    let normalized = build_normalized_geometry(&package.parsed);
+
+    // (arc, the counter's lower edge, its upper edge, centre in mm, semi-axes in mm)
+    let counters = [
+        (
+            1012u32,
+            1008u32,
+            1007u32,
+            (682.934_1, 56.147_1),
+            (0.227_9, 0.208_2),
+        ),
+        (1013, 1010, 1009, (682.948_5, 55.320_9), (0.269_4, 0.261_7)),
+    ];
+    for (oid, lower, upper, centre_mm, (major_mm, minor_mm)) in counters {
+        let arc = arcs
+            .iter()
+            .find(|arc| arc.oid == oid)
+            .expect("listed above");
+        assert_eq!(
+            (arc.sheet_layer_ref, arc.index, arc.flag),
+            (14, 11, 1),
+            "oid {oid}: layer, style, direction byte"
+        );
+        assert!(
+            (arc.sweep_start - PI).abs() < 1e-9 && (arc.sweep_end - TAU).abs() < 1e-9,
+            "oid {oid} sweeps {} -> {}",
+            arc.sweep_start,
+            arc.sweep_end
+        );
+        assert!(
+            (arc.center.0 * 1e3 - centre_mm.0).abs() < 1e-4
+                && (arc.center.1 * 1e3 - centre_mm.1).abs() < 1e-4,
+            "oid {oid} centre {:?}",
+            arc.center
+        );
+        let major = arc.major_axis.0.hypot(arc.major_axis.1);
+        assert!(
+            (major * 1e3 - major_mm).abs() < 1e-4
+                && (major * arc.ratio * 1e3 - minor_mm).abs() < 1e-4,
+            "oid {oid} semi-axes {} / {} mm",
+            major * 1e3,
+            major * arc.ratio * 1e3
+        );
+
+        // What the page is given: the record's own B-spline, sampled.
+        let (poles, weights, knots) = elliptical_arc_directed(
+            arc.center,
+            arc.major_axis,
+            arc.ratio,
+            arc.sweep_start,
+            arc.sweep_end,
+            arc.flag == 0,
+        )
+        .expect("a half ellipse");
+        let expected = sample(&poles, &weights, &knots, SEGMENTS_PER_SPAN);
+        let entity = normalized
+            .entities
+            .iter()
+            .find(|entity| {
+                entity.graphic_oid == Some(oid)
+                    && entity.source.stream_path.as_deref() == Some("/Sheet6")
+            })
+            .unwrap_or_else(|| panic!("oid {oid} reaches no entity of the template's sheet"));
+        let PidGraphicKind::Polyline { points, closed } = &entity.kind else {
+            panic!("oid {oid} is drawn as {:?}", entity.kind);
+        };
+        assert!(!closed, "oid {oid} is an arc, not a ring");
+        assert_eq!(
+            points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+            expected,
+            "oid {oid} is the sampled B-spline of its own fields"
+        );
+        assert_eq!(
+            entity
+                .source
+                .byte_range
+                .as_ref()
+                .map(|range| (range.start, range.end)),
+            Some((arc.byte_range.start, arc.byte_range.end)),
+            "oid {oid} names the record it was drawn from"
+        );
+
+        // Where it lies among the letter's own lines.
+        let right_end = |line_oid: u32| {
+            let line = lines
+                .iter()
+                .find(|line| line.oid == line_oid)
+                .unwrap_or_else(|| panic!("line oid {line_oid} is on the sheet"));
+            if line.start.0 > line.end.0 {
+                line.start
+            } else {
+                line.end
+            }
+        };
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-6;
+        let (first, last) = (expected[0], expected[expected.len() - 1]);
+        assert!(
+            near(first, right_end(lower)),
+            "oid {oid} starts at {first:?}, the lower edge ends at {:?}",
+            right_end(lower)
+        );
+        assert!(
+            near(last, right_end(upper)),
+            "oid {oid} ends at {last:?}, the upper edge ends at {:?}",
+            right_end(upper)
+        );
+        let reach = expected
+            .iter()
+            .map(|point| point.0 - arc.center.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (reach * 1e3 - minor_mm).abs() < 1e-3
+                && expected.iter().all(|point| point.0 >= arc.center.0 - 1e-9),
+            "oid {oid} bulges {} mm to the right of its centre and nowhere to the left",
+            reach * 1e3
+        );
+    }
+}
+
+/// Every stroke of the template's outlined wordmark draws with the pen its
+/// style names: the lines, the two elliptical arcs of the `B`'s counters, and
+/// the B-splines of every letter's bowls.
+///
+/// `XA-A1.igr`'s `/Sheet6` keeps 23 `igBspCurve2d` records on its own chain
+/// — oid 1014, the two outer bowls of the `B`, is one — and across the 71
+/// pages the export is recorded on it is the only sheet that keeps any. The
+/// family's records carry the same style reference at payload `+14` the
+/// lines and arcs do, and a symbol body's B-spline is drawn with it; the
+/// line-style index did not list the family, so the bowls printed with the
+/// default pen, twice the width of the strokes they join.
+#[test]
+fn the_xa_templates_wordmark_draws_every_stroke_with_the_pen_it_names() {
+    use pid_parse::parsers::sheet_records::decode_igbspcurves;
+
+    if !std::path::Path::new(XA_TEMPLATE).exists() {
+        eprintln!("skipping: fixture {XA_TEMPLATE} not found");
+        return;
+    }
+    let package = PidParser::new()
+        .parse_package(XA_TEMPLATE)
+        .unwrap_or_else(|e| panic!("Failed to parse {XA_TEMPLATE}: {e}"));
+    let styles = pid_parse::style_link::line_styles_for_document(&package.parsed);
+    let pen = |oid: u32| {
+        styles
+            .get(&("/Sheet6".to_string(), oid))
+            .map(|style| (style.symbology.width_mm(), style.symbology.rgb()))
+    };
+    // A line of the `B`: the lower edge of its lower counter.
+    let line = pen(1010).expect("the letter's lines resolve their style");
+    assert!(
+        (line.0 - 0.25).abs() < 1e-9,
+        "style 11 states a 0.25 mm pen, read {} mm",
+        line.0
+    );
+    for (oid, what) in [
+        (1012, "the upper counter's arc"),
+        (1013, "the lower counter's arc"),
+    ] {
+        assert_eq!(
+            pen(oid),
+            Some(line),
+            "oid {oid}, {what}, draws with the pen of the letter's lines"
+        );
+    }
+
+    let data = package
+        .streams
+        .get("/Sheet6")
+        .unwrap_or_else(|| panic!("{XA_TEMPLATE} has a /Sheet6"))
+        .data
+        .as_slice();
+    let curves = decode_igbspcurves(data);
+    assert_eq!(curves.len(), 23, "the sheet's own B-splines");
+    assert!(
+        curves.iter().any(|curve| curve.oid == 1014),
+        "the B's outer bowls are one of them"
+    );
+    for curve in &curves {
+        assert_eq!(curve.index, 11, "oid {} names style 11", curve.oid);
+        assert_eq!(
+            pen(curve.oid),
+            Some(line),
+            "oid {}, a B-spline, draws with the pen of the letter's lines",
+            curve.oid
+        );
+    }
+}

@@ -31,10 +31,31 @@ if ! [[ "${baseline}" =~ ^[0-9]+$ ]]; then
 fi
 
 echo "missing_docs ratchet: running cargo rustdoc --lib --locked -- -W missing-docs ..."
-# We tee the output so CI logs still show where the docs are missing if
-# the check fails; the count is derived from the full stream.
-rustdoc_output=$(cargo rustdoc --lib --locked -- -W missing-docs 2>&1 || true)
+# The output is kept so CI logs still show where the docs are missing if
+# the check fails; the count is derived from the full stream. The exit
+# status is kept too: a rustdoc that stops on an error — the crate denies
+# broken and private intra-doc links — has not finished documenting the
+# crate, and a count taken from what it printed before it stopped is not
+# the crate's count.
+set +e
+rustdoc_output=$(cargo rustdoc --lib --locked -- -W missing-docs 2>&1)
+rustdoc_status=$?
+set -e
 current=$(printf '%s\n' "${rustdoc_output}" | grep -c 'missing documentation for' || true)
+
+if (( rustdoc_status != 0 )); then
+  echo ""
+  echo "FAIL: cargo rustdoc exited ${rustdoc_status}; the documentation does not build."
+  echo ""
+  echo "Fix what it reports below before reading the missing_docs count"
+  echo "(${current} so far): a link in public documentation to a private item"
+  echo "is written as plain code, \`name\`, not as a link, [\`name\`]."
+  echo ""
+  printf '%s\n' "${rustdoc_output}" \
+    | grep -E '^(error|warning)|--> ' \
+    | head -n 60
+  exit 1
+fi
 
 echo "missing_docs ratchet: current=${current}, baseline=${baseline}"
 

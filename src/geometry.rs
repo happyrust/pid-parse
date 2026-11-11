@@ -99,6 +99,14 @@ pub struct NormalizedPidGeometry {
     /// JSON it always did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emitter_accounts: Vec<PidEmitterAccount>,
+    /// The chain streams this geometry was read from whose own framing does
+    /// not hold ([`crate::model::PidDocument::chain_faults`], verbatim): a
+    /// stream listed here was read as far as its record chain holds and no
+    /// further, so the entities above may be short of what the file holds.
+    /// Each is also one line of [`Self::warnings`]. Empty on every document
+    /// of the corpora.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_faults: Vec<crate::model::StreamChainFault>,
 }
 
 /// Which embedded symbol body a placement draws: the definition cache
@@ -483,7 +491,7 @@ pub struct PidEmitterAccount {
     /// Full CFB path of the Sheet stream the records sit in.
     pub stream_path: String,
     /// The record family's registry name, as
-    /// [`SheetRecordFamily`](crate::model::SheetRecordFamily)'s `name` states
+    /// [`SheetRecordFamily`]'s `name` states
     /// it.
     pub family: String,
     /// Whether the family registers a deliberate no-op emitter (audit-only).
@@ -1574,6 +1582,14 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         });
     }
 
+    // A chain stream whose framing does not hold was read as far as its
+    // chain holds: the records before a stop are in the entities above and
+    // whatever follows it is not. Said last, so that every count above is
+    // read knowing which stream it may be short on.
+    for fault in &doc.chain_faults {
+        warnings.push(fault.describe());
+    }
+
     NormalizedPidGeometry {
         entities,
         page_dimensions_mm: page_dims,
@@ -1583,6 +1599,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         skipped_graphic_records,
         symbol_definitions: embedded_symbol_definitions(doc),
         emitter_accounts,
+        chain_faults: doc.chain_faults.clone(),
     }
 }
 
@@ -2427,6 +2444,10 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // Same leaf-curve story: sheet-level circles draw directly. W's
     // instrument balloons are the first real-sheet evidence.
     &IgCircle2dEmitter,
+    // And sheet-level elliptical arcs: the two that close the counters of
+    // an outlined letter on `XA-A1.igr`. Appended, so every family before
+    // it keeps its golden order.
+    &IgEllipticalArc2dEmitter,
     // Audit-only families: explicit no-op policy.
     &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
@@ -2434,6 +2455,8 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &AttributeFragmentEmitter,
     &IgRectangle2dEmitter,
     &IgDimensionEmitter,
+    &IgComplexString2dEmitter,
+    &IgGroupEmitter,
 ];
 
 /// `(family name, is_no_op)` for every registered emitter, in table
@@ -3138,9 +3161,16 @@ impl GeometryEmitter for IgLine2dEmitter {
 /// spell a plausible small double. The record's real doubles are further in.
 /// See `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
 ///
-/// The record is still surfaced, because it is in the file and its byte
-/// provenance is sound, but as probe evidence rather than as an annotation
-/// with a position no renderer should trust.
+/// A record of this family is surfaced as probe evidence rather than as an
+/// annotation with a position no renderer should trust.
+///
+/// On every sheet stream measured there is none to surface. The entities
+/// this emitter used to produce — 13 671 across the corpora — came from
+/// decodes that started inside `DependencyObject` records, on the length
+/// word of the block each one ends with; a family now decodes only what its
+/// stream's chain starts, and no sheet chain carries a `0x0030` record
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.2).
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {
@@ -3210,6 +3240,113 @@ impl GeometryEmitter for JStyleOverrideEmitter {
     }
 }
 
+/// The signed area of a closed ring: positive when it runs
+/// counter-clockwise.
+fn ring_signed_area(ring: &[PidPoint]) -> f64 {
+    ring.iter()
+        .zip(ring.iter().cycle().skip(1))
+        .map(|(from, to)| from.x * to.y - to.x * from.y)
+        .sum::<f64>()
+        / 2.0
+}
+
+/// Whether `point` lies inside the closed `ring`, by the even-odd rule.
+fn ring_contains(ring: &[PidPoint], point: &PidPoint) -> bool {
+    let mut inside = false;
+    for (from, to) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        if (from.y > point.y) != (to.y > point.y)
+            && point.x < from.x + (point.y - from.y) * (to.x - from.x) / (to.y - from.y)
+        {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// `ring` and `other` as one ring: `ring` to its vertex nearest `other`,
+/// across to `other`, all the way round it and back onto the vertex it was
+/// entered at, and across again to carry on along `ring`.
+///
+/// The two crossings lie on one segment and enclose nothing, so the joined
+/// ring's signed area is the sum of the two rings'. Returns it with the
+/// crossing's length.
+fn rings_joined(ring: &[PidPoint], other: &[PidPoint]) -> (Vec<PidPoint>, f64) {
+    let mut nearest = (f64::INFINITY, 0usize, 0usize);
+    for (at_ring, from) in ring.iter().enumerate() {
+        for (at_other, to) in other.iter().enumerate() {
+            let distance = (from.x - to.x).hypot(from.y - to.y);
+            if distance < nearest.0 {
+                nearest = (distance, at_ring, at_other);
+            }
+        }
+    }
+    let (distance, at_ring, at_other) = nearest;
+    let mut joined = Vec::with_capacity(ring.len() + other.len() + 2);
+    joined.extend(ring[..=at_ring].iter().cloned());
+    joined.extend(other[at_other..].iter().cloned());
+    joined.extend(other[..=at_other].iter().cloned());
+    joined.extend(ring[at_ring..].iter().cloned());
+    (joined, distance)
+}
+
+/// The area the loops of one boundary fill, as one ring, with how many of
+/// the loops are holes and the longest crossing that joins two of them.
+///
+/// A loop that lies inside an odd number of the others is a hole; one inside
+/// an even number bounds an area. That is the even-odd rule, the rule the
+/// vendor's own plots paint every fill with (`f*`), made explicit: every
+/// area is walked counter-clockwise and every hole clockwise, and the loops
+/// are joined by crossings walked both ways ([`rings_joined`]), so one ring
+/// paints the same under the even-odd rule and by winding number and a
+/// renderer holding one ring per record needs no rule of its own.
+///
+/// A boundary of one loop is that loop, untouched. Whether one loop lies in
+/// another is asked of its first vertex: loops that touch or cross are not
+/// told apart, and the corpora hold none.
+fn boundary_fill_ring(loops: &[Vec<PidPoint>]) -> (Vec<PidPoint>, usize, f64) {
+    let Some((first, rest)) = loops.split_first() else {
+        return (Vec::new(), 0, 0.0);
+    };
+    if rest.is_empty() {
+        return (first.clone(), 0, 0.0);
+    }
+    let is_hole: Vec<bool> = (0..loops.len())
+        .map(|inner| {
+            let around = (0..loops.len())
+                .filter(|&outer| {
+                    outer != inner
+                        && loops[inner]
+                            .first()
+                            .is_some_and(|vertex| ring_contains(&loops[outer], vertex))
+                })
+                .count();
+            around % 2 == 1
+        })
+        .collect();
+    // A loop the way it has to be walked, from the vertex it starts at.
+    let walked = |index: usize| -> Vec<PidPoint> {
+        let ring = &loops[index];
+        if (ring_signed_area(ring) > 0.0) == is_hole[index] {
+            ring.iter()
+                .take(1)
+                .chain(ring.iter().skip(1).rev())
+                .cloned()
+                .collect()
+        } else {
+            ring.clone()
+        }
+    };
+    let mut ring = walked(0);
+    let mut longest = 0.0f64;
+    for index in 1..loops.len() {
+        let (joined, crossing) = rings_joined(&ring, &walked(index));
+        ring = joined;
+        longest = longest.max(crossing);
+    }
+    let holes = is_hole.iter().filter(|hole| **hole).count();
+    (ring, holes, longest)
+}
+
 /// Emits `Decoded` closed [`PidGraphicKind::Polyline`] entities for the
 /// `igBoundary2d` family (PSM `0x0013`).
 ///
@@ -3256,22 +3393,41 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 skips.out_of_range();
                 continue;
             };
-            // The segments chain end-to-start, so their starts are the ring's
-            // vertices and the closing edge is implied by `closed`.
-            let points: Vec<PidPoint> = record
-                .segments
-                .iter()
-                .map(|segment| PidPoint {
-                    x: segment.start_x,
-                    y: segment.start_y,
+            // The segments of a loop chain end-to-start, so their starts are
+            // the loop's vertices and the closing edge is implied by
+            // `closed`. A record of one loop is that ring. A record of
+            // several is a fill with holes, and stays one ring: one record,
+            // one entity, which is what the emitter's account counts by.
+            let loops: Vec<Vec<PidPoint>> = record
+                .loops()
+                .map(|segments| {
+                    segments
+                        .iter()
+                        .map(|segment| PidPoint {
+                            x: segment.start_x,
+                            y: segment.start_y,
+                        })
+                        .collect()
                 })
                 .collect();
-            if points.len() < 3 {
-                // A boundary needs three segments to enclose anything; a
+            if loops.is_empty() || loops.iter().any(|ring| ring.len() < 3) {
+                // A loop needs three segments to enclose anything; a
                 // shorter one is a run, not a fill ring.
                 skips.shape_rejected();
                 continue;
             }
+            let (points, holes, crossing) = boundary_fill_ring(&loops);
+            let cut = if loops.len() < 2 {
+                String::new()
+            } else {
+                format!(
+                    " The record states {} loops, {holes} of them holes: the ring walks \
+                     every loop, areas one way and holes the other, joined by crossings \
+                     walked both ways (the longest {crossing:.6} m), so it encloses the \
+                     areas less the holes.",
+                    loops.len(),
+                )
+            };
             out.push(PidGraphicEntity {
                 id: format!("{}:igboundary2d:{index}", sheet.path),
                 drawing_id: None,
@@ -3294,7 +3450,7 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                          segments, so a renderer must fill it rather than stroke \
                          it -- the outline is already on the sheet. Join \
                          style_link::fill_styles_for_file on (stream, oid) for \
-                         the fill.",
+                         the fill.{cut}",
                         record.oid,
                         record.segments.len(),
                         record.member_refs.len(),
@@ -3390,9 +3546,12 @@ const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
 /// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every `igBspCurve2d`
 /// (PSM `0x005D`): the curve sampled span by span through
 /// [`crate::bspline::sample`]. The record is a leaf -- nothing else draws it
-/// -- so unlike a rectangle it has to be emitted to be seen. None sits in a
-/// top-level `Sheet*` stream on the corpus; the one the corpus has is in a
-/// symbol body, and reaches the drawing through
+/// -- so unlike a rectangle it has to be emitted to be seen. One top-level
+/// `Sheet*` stream of the corpora holds any: `XA-A1.igr`'s, with 23 of them,
+/// the bowls of an outlined wordmark, each drawn with the style its `index`
+/// names like the lines and arcs it joins
+/// ([`crate::style_link::line_styles_for_document`]). The drawings' own are
+/// in symbol bodies, and reach the page through
 /// [`NormalizedPidGeometry::symbol_definitions`].
 struct IgBspCurve2dEmitter;
 
@@ -3470,6 +3629,107 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
     }
 }
 
+/// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every sheet-level
+/// `igEllipticalArc2d` (PSM `0x007E`): the exact rational B-spline
+/// [`crate::bspline::elliptical_arc_directed`] builds from the record,
+/// sampled span by span through [`crate::bspline::sample`] -- the curve, and
+/// the reading of the direction byte, a cached symbol body draws the same
+/// record with, so the two paths cannot disagree on an arc. It is a leaf,
+/// like `igBspCurve2d`: nothing lists it, so it has to be emitted to be
+/// seen. A record that sweeps nothing has no curve and is counted as
+/// shape-rejected.
+struct IgEllipticalArc2dEmitter;
+
+impl GeometryEmitter for IgEllipticalArc2dEmitter {
+    fn family(&self) -> &'static str {
+        "igEllipticalArc2d"
+    }
+
+    fn emit(
+        &self,
+        ctx: &EmitContext<'_>,
+        sheet: &SheetStream,
+        out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        let mut skips = EmitSkips::default();
+        let Some(geometry) = &sheet.geometry else {
+            return skips;
+        };
+        for (index, record) in geometry.decoded_igellipticalarcs.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                skips.out_of_range();
+                continue;
+            };
+            let Some((poles, weights, knots)) = crate::bspline::elliptical_arc_directed(
+                (record.center_x, record.center_y),
+                (record.major_x, record.major_y),
+                record.ratio,
+                record.sweep_start,
+                record.sweep_end,
+                record.flag == 0,
+            ) else {
+                skips.shape_rejected();
+                continue;
+            };
+            let points: Vec<PidPoint> =
+                crate::bspline::sample(&poles, &weights, &knots, BSPLINE_SEGMENTS_PER_SPAN)
+                    .into_iter()
+                    .map(|(x, y)| PidPoint { x, y })
+                    .collect();
+            if points.len() < 2 {
+                skips.shape_rejected();
+                continue;
+            }
+            out.push(PidGraphicEntity {
+                id: format!("{}:igellipticalarc2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                kind: PidGraphicKind::Polyline {
+                    points,
+                    closed: false,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igellipticalarc2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igEllipticalArc2d record (type 0x007E); oid={} parent_ref={} \
+                         index={} center=({:.6}, {:.6}) major=({:.6}, {:.6}) ratio={:.6} \
+                         sweep {:.6} -> {:.6} direction={}; drawn as the rational B-spline of \
+                         that arc, {} segments per knot span",
+                        record.oid,
+                        record.parent_ref,
+                        record.index,
+                        record.center_x,
+                        record.center_y,
+                        record.major_x,
+                        record.major_y,
+                        record.ratio,
+                        record.sweep_start,
+                        record.sweep_end,
+                        if record.flag == 0 {
+                            "clockwise"
+                        } else {
+                            "counter-clockwise"
+                        },
+                        BSPLINE_SEGMENTS_PER_SPAN,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+        skips
+    }
+}
+
 /// No-op emitter: an `igRectangle2d` (PSM `0x0020`) is the parent of the
 /// four `igLine2d` edges it lists by oid, and those edges are records of the
 /// same stream that emit on their own. Every corpus rectangle's four edges
@@ -3480,6 +3740,68 @@ struct IgRectangle2dEmitter;
 impl GeometryEmitter for IgRectangle2dEmitter {
     fn family(&self) -> &'static str {
         "igRectangle2d"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
+    }
+}
+
+/// No-op emitter: a `ComplexString` (PSM `0x0021`) is a run of curves joined
+/// end to end, and it states none of their coordinates. Each curve it lists
+/// is an `igLine2d` or `igArc2d` of the same stream that names the string as
+/// its owner and carries its layer and style id, and each emits on its own
+/// with the pen the string states; emitting the string too would draw them
+/// twice. The vendor strokes the string as one path — the inner frame of
+/// `CPECCHB-SQ-A2` is one five-point path in 轻烃分离器I's reference plot —
+/// and the same ink results from the members' strokes wherever the page
+/// rounds its line ends, as that plot does (`1 J 1 j`)
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §10.4).
+struct IgComplexString2dEmitter;
+
+impl GeometryEmitter for IgComplexString2dEmitter {
+    fn family(&self) -> &'static str {
+        "igComplexString2d"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(
+        &self,
+        _ctx: &EmitContext<'_>,
+        _sheet: &SheetStream,
+        _out: &mut Vec<PidGraphicEntity>,
+    ) -> EmitSkips {
+        EmitSkips::default()
+    }
+}
+
+/// No-op emitter: a Group (PSM `0x007B`) is a set of graphic objects that
+/// select and move as one, and states no coordinate of its own. Of the
+/// corpora's twelve sheet groups eight list the two `igRectangle2d` of a
+/// border, and a rectangle's strokes are the `igLine2d` edges it lists in
+/// turn; the other four, in the `-W` templates of a backup's reference
+/// data, list the 37 records of a logo — lines, arcs, B-splines, elliptical
+/// arcs, boundaries, a point. Every member is a record of the same stream
+/// that names the group as its owner and emits, or deliberately does not,
+/// through its own family; emitting the group would draw them twice.
+struct IgGroupEmitter;
+
+impl GeometryEmitter for IgGroupEmitter {
+    fn family(&self) -> &'static str {
+        "igGroup"
     }
 
     fn is_no_op(&self) -> bool {
@@ -3709,6 +4031,7 @@ mod tests {
                     }
                 })
                 .collect(),
+            loop_segment_counts: Vec::new(),
             anchor_x: 0.25,
             anchor_y: 0.1,
             trailer_flag: 1,
@@ -3892,6 +4215,7 @@ mod tests {
                         end_x: 0.4,
                         end_y: 0.1,
                     }],
+                    loop_segment_counts: Vec::new(),
                     anchor_x: 0.25,
                     anchor_y: 0.1,
                     trailer_flag: 1,
@@ -4050,6 +4374,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4158,6 +4485,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4305,6 +4635,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4404,6 +4737,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4474,6 +4810,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4564,6 +4903,9 @@ mod tests {
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
                 decoded_igdimensions: Vec::new(),
+                decoded_igcomplexstrings: Vec::new(),
+                decoded_iggroups: Vec::new(),
+                decoded_igellipticalarcs: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -4787,6 +5129,7 @@ mod tests {
             skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
             emitter_accounts: Vec::new(),
+            chain_faults: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");
@@ -4978,6 +5321,100 @@ mod tests {
         assert!(!no_decoder.contains("refuses"));
         assert!(refused.contains("refuses"));
         assert!(!refused.contains("have no decoder"));
+    }
+
+    /// One sheet with the two census tables it is given and nothing else.
+    fn sheet_with_gaps(
+        undecoded: Vec<crate::model::SheetUndecodedTypeCode>,
+        refused: Vec<crate::model::SheetRefusedRecord>,
+    ) -> PidDocument {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                undecoded_type_codes: undecoded,
+                refused_records: refused,
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+        doc
+    }
+
+    /// A sheet whose only gap is a refusal reports no missing decoder, in
+    /// the prose or in the structured list — and the other way round.
+    ///
+    /// `tests/render_gap_census.rs` held the first half on the one backup
+    /// sheet that carried a refusal and nothing else. That refusal has been
+    /// decoded away, and so has every other on the corpora, so no drawing
+    /// is left to hold it on: it is held here, on rows that cannot be fixed
+    /// out from under it.
+    #[test]
+    fn a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder() {
+        let worded = |geometry: &NormalizedPidGeometry, words: &str| {
+            geometry
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains(words))
+                .count()
+        };
+
+        let only_a_refusal = build_normalized_geometry(&sheet_with_gaps(
+            Vec::new(),
+            vec![crate::model::SheetRefusedRecord {
+                type_code: 0x00FA,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Dependency Object".into()),
+            }],
+        ));
+        assert_eq!(only_a_refusal.refused_graphic_records.len(), 1);
+        assert_eq!(worded(&only_a_refusal, "refuses"), 1);
+        assert!(
+            only_a_refusal.dropped_graphic_records.is_empty()
+                && worded(&only_a_refusal, "have no decoder") == 0,
+            "a sheet whose only gap is a refusal reports a missing decoder: {:?} {:?}",
+            only_a_refusal.dropped_graphic_records,
+            only_a_refusal.warnings
+        );
+
+        let only_a_missing_decoder = build_normalized_geometry(&sheet_with_gaps(
+            vec![crate::model::SheetUndecodedTypeCode {
+                type_code: 0x0021,
+                count: 3,
+                is_graphic: true,
+                rad_class_name: Some("ComplexString Object".into()),
+            }],
+            Vec::new(),
+        ));
+        assert_eq!(only_a_missing_decoder.dropped_graphic_records.len(), 1);
+        assert_eq!(worded(&only_a_missing_decoder, "have no decoder"), 1);
+        assert!(
+            only_a_missing_decoder.refused_graphic_records.is_empty()
+                && worded(&only_a_missing_decoder, "refuses") == 0,
+            "a sheet whose only gap is a missing decoder reports a refusal: {:?} {:?}",
+            only_a_missing_decoder.refused_graphic_records,
+            only_a_missing_decoder.warnings
+        );
+
+        // And a sheet with neither says neither.
+        let whole = build_normalized_geometry(&sheet_with_gaps(Vec::new(), Vec::new()));
+        assert!(
+            whole.dropped_graphic_records.is_empty() && whole.refused_graphic_records.is_empty()
+        );
+        assert_eq!(
+            worded(&whole, "refuses") + worded(&whole, "have no decoder"),
+            0
+        );
     }
 
     fn border_frame(
@@ -5283,6 +5720,143 @@ mod tests {
         assert_eq!(account.shape_rejected, 1);
     }
 
+    fn ring(points: &[(f64, f64)]) -> Vec<PidPoint> {
+        points.iter().map(|&(x, y)| PidPoint { x, y }).collect()
+    }
+
+    /// A hole is joined into the edge it lies in: one ring whose area is the
+    /// edge's less the hole's, which holds a point of the area and not a
+    /// point of the hole.
+    #[test]
+    fn a_boundary_with_a_hole_is_one_ring_around_the_area_between() {
+        let outer = ring(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]);
+        // Wound against the outer edge, as the corpus's two are, and wound
+        // with it: the ring comes out the same either way.
+        let against = ring(&[(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)]);
+        let with = ring(&[(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)]);
+        let mut rings = Vec::new();
+        for hole in [against, with] {
+            let (filled, holes, crossing) = boundary_fill_ring(&[outer.clone(), hole]);
+            assert_eq!(holes, 1);
+            assert_eq!(filled.len(), 4 + 4 + 2, "both loops, each closed on itself");
+            assert!((ring_signed_area(&filled) - (16.0 - 4.0)).abs() < 1e-12);
+            assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 2.0 }));
+            assert!(!ring_contains(&filled, &PidPoint { x: 2.0, y: 2.0 }));
+            // The crossing joins the two nearest vertices.
+            assert!((crossing - 2f64.sqrt()).abs() < 1e-12);
+            assert_eq!(
+                (filled[0].x, filled[0].y),
+                (0.0, 0.0),
+                "the ring starts where the outer loop does"
+            );
+            rings.push(filled);
+        }
+        assert_eq!(rings[0], rings[1]);
+    }
+
+    /// Loops side by side are two areas in the one ring; a loop inside a
+    /// hole is an area again; an outer edge stored clockwise is turned.
+    #[test]
+    fn loops_fill_by_how_many_loops_they_lie_in() {
+        let left = ring(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        let right = ring(&[(2.0, 0.0), (3.0, 0.0), (3.0, 1.0), (2.0, 1.0)]);
+        let (filled, holes, crossing) = boundary_fill_ring(&[left.clone(), right]);
+        assert_eq!(holes, 0);
+        assert!((ring_signed_area(&filled) - 2.0).abs() < 1e-12);
+        assert!((crossing - 1.0).abs() < 1e-12);
+        assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 0.5 }));
+        assert!(ring_contains(&filled, &PidPoint { x: 2.5, y: 0.5 }));
+        assert!(!ring_contains(&filled, &PidPoint { x: 1.5, y: 0.5 }));
+
+        let outer = ring(&[(0.0, 0.0), (9.0, 0.0), (9.0, 9.0), (0.0, 9.0)]);
+        let hole = ring(&[(1.0, 1.0), (1.0, 8.0), (8.0, 8.0), (8.0, 1.0)]);
+        let island = ring(&[(3.0, 3.0), (6.0, 3.0), (6.0, 6.0), (3.0, 6.0)]);
+        let (filled, holes, _) = boundary_fill_ring(&[outer, hole, island]);
+        assert_eq!(holes, 1);
+        assert!((ring_signed_area(&filled) - (81.0 - 49.0 + 9.0)).abs() < 1e-12);
+        assert!(ring_contains(&filled, &PidPoint { x: 0.5, y: 4.0 }));
+        assert!(!ring_contains(&filled, &PidPoint { x: 2.0, y: 2.5 }));
+        assert!(ring_contains(&filled, &PidPoint { x: 4.5, y: 4.0 }));
+
+        // One loop is itself, whichever way it runs.
+        let clockwise = ring(&[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]);
+        let (filled, holes, crossing) = boundary_fill_ring(std::slice::from_ref(&clockwise));
+        assert_eq!((filled, holes), (clockwise.clone(), 0));
+        assert!(crossing.abs() < f64::EPSILON);
+        // Two loops whose outer edge runs clockwise: turned, from the same
+        // first vertex.
+        let inner = ring(&[(0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75)]);
+        let (filled, holes, _) = boundary_fill_ring(&[clockwise, inner]);
+        assert_eq!(holes, 1);
+        assert_eq!((filled[0].x, filled[0].y), (0.0, 0.0));
+        assert!((ring_signed_area(&filled) - (1.0 - 0.25)).abs() < 1e-12);
+    }
+
+    /// A boundary record of two loops emits one ring under the record's own
+    /// id, says in its note that a hole was cut, and counts as one record
+    /// emitted.
+    #[test]
+    fn a_two_loop_boundary_record_emits_one_filled_ring() {
+        let mut record = ig_boundary(0);
+        let outer = [(0.0, 0.0), (0.4, 0.0), (0.4, 0.4), (0.0, 0.4)];
+        let hole = [(0.1, 0.1), (0.1, 0.3), (0.3, 0.3), (0.3, 0.1)];
+        for loop_ in [outer, hole] {
+            for index in 0..4 {
+                let (from, to) = (loop_[index], loop_[(index + 1) % 4]);
+                record.segments.push(DecodedIgBoundary2dSegment {
+                    tag_offset: 28,
+                    start_x: from.0,
+                    start_y: from.1,
+                    end_x: to.0,
+                    end_y: to.1,
+                });
+            }
+        }
+        record.segment_count = 8;
+        record.loop_segment_counts = vec![4, 4];
+        // A third loop of two segments encloses nothing and refuses the
+        // record whole, rather than painting two loops of three.
+        let mut short = record.clone();
+        short.segments.extend(record.segments[..2].iter().cloned());
+        short.loop_segment_counts.push(2);
+
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igboundaries: vec![record, short],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let entity = &geometry.entities[0];
+        let PidGraphicKind::Polyline { points, closed } = &entity.kind else {
+            panic!("a boundary emits a ring: {:?}", entity.kind);
+        };
+        assert!(*closed);
+        assert_eq!(points.len(), 10);
+        assert!((ring_signed_area(points) - (0.16 - 0.04)).abs() < 1e-12);
+        assert_eq!(entity.source.record_id.as_deref(), Some("igboundary2d:0"));
+        assert!(
+            entity
+                .source
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("states 2 loops, 1 of them holes")),
+            "{:?}",
+            entity.source.note
+        );
+        let account = geometry
+            .emitter_account("/Sheet6", "igBoundary2d")
+            .expect("the igBoundary2d emitter must account for its stream");
+        assert_eq!(
+            (account.decoded, account.emitted, account.shape_rejected),
+            (2, 1, 1)
+        );
+    }
+
     /// A curve that samples to under two points is not a curve.
     #[test]
     fn a_curve_sampling_to_under_two_points_counts_as_shape_rejected() {
@@ -5398,6 +5972,7 @@ mod tests {
             skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
             emitter_accounts: Vec::new(),
+            chain_faults: Vec::new(),
         };
 
         let json = serde_json::to_string(&geometry).expect("an empty geometry serializes");
@@ -5405,6 +5980,10 @@ mod tests {
         assert!(
             !json.contains("emitter_accounts"),
             "an empty account must not appear in the JSON, got {json}"
+        );
+        assert!(
+            !json.contains("chain_faults"),
+            "an empty fault list must not appear in the JSON, got {json}"
         );
     }
 

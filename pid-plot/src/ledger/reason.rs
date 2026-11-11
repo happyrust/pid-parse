@@ -88,10 +88,21 @@ pub enum DropReason {
     /// native-skip bit `PSMSerializeIn` tests before reading the oid
     /// (`NormalizedPidGeometry::skipped_graphic_records`).
     RecordNativeSkip,
-    /// A `Sheet*` stream whose geometry is `None` — the stream could not be
-    /// opened, or no family decoded a record from it and the probe found
-    /// nothing. Its three censuses are lost with it in
-    /// `sheet_geometry_from_probe` (`src/streams/cluster.rs`).
+    /// A `Sheet*` stream longer than its 8-byte header whose geometry is
+    /// `None` — the stream could not be opened, or no family decoded a
+    /// record from it and the probe found nothing. Its three censuses are
+    /// lost with it in `sheet_geometry_from_probe`
+    /// (`src/streams/cluster.rs`). A stream that is its header alone holds
+    /// no record and is not counted: an empty sheet has dropped nothing.
+    ///
+    /// Also a chain stream — a `Sheet*` stream or a symbol cache's
+    /// `PSMcluster0` — whose own framing does not hold
+    /// (`NormalizedPidGeometry::chain_faults`): its record walk stops before
+    /// the stream's end, or its header states another magic or another
+    /// record count than the chain has. Such a stream is read as far as the
+    /// chain reads, so it has geometry and is still not the whole sheet; it
+    /// is counted once, with the bytes left unread
+    /// (`LedgerRecorder::parse`).
     SheetStreamWithoutGeometry,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as
@@ -102,7 +113,11 @@ pub enum DropReason {
     CacheDefinitionUnplaced,
     /// A decoded record whose family registers a deliberate no-op emitter in
     /// `EMITTERS`: `igSmartFrame2d`, `DependencyObject`, the `0x0010`
-    /// sub-records, the attribute fragments, `igRectangle2d`, `igDimension`.
+    /// sub-records, the attribute fragments, `igRectangle2d`, `igDimension`,
+    /// and the two associations whose strokes are the records they list —
+    /// `igComplexString2d` (its `igLine2d` / `igArc2d` curves) and `igGroup`
+    /// (the two `igRectangle2d` of a border, or the curves, fills and point
+    /// of a logo).
     RecordAuditOnlyFamily,
     /// A decoded record whose byte range falls outside the stream it was read
     /// from: each emitter's `source_range(..)` returned `None` and it

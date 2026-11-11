@@ -85,6 +85,7 @@
 
 1. THE Ledger_Builder SHALL 按（流路径，类型码）把 `NormalizedPidGeometry` 的 `dropped_graphic_records`、`refused_graphic_records`、`skipped_graphic_records` 分别记为 `record_no_decoder`、`record_refused`、`record_native_skip`。
 2. THE Ledger_Builder SHALL 按流路径记下 `SheetStream::geometry` 为 `None` 的 Sheet 流及其字节数，原因 `sheet_stream_without_geometry`。
+   > 实现注记（2026-11-10）：只有 8 字节流头的流不记；实现注记（2026-11-11）：记录链立不住的链式流也按这个原因记一项，字节数是没读的那部分。两条都写在附录 A.1 的表后。
 3. THE Ledger_Builder SHALL 按存储记下嵌套 `JSite*/PSMcluster0` 的符号体记录数（`record_symbol_body_cache`），并记下没有任何放置引用的缓存定义数及其记录数（`cache_definition_unplaced`）。
 4. THE Ledger_Builder SHALL 按记录族记下已解码、但所属族在 `EMITTERS` 中为无操作发射器的记录数（`record_audit_only_family`）。
 5. THE Ledger_Builder SHALL 按记录族记下已解码、但被发射器跳过的记录数（`record_emitter_out_of_range`、`record_emitter_shape_rejected`）。
@@ -259,6 +260,12 @@
 | `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |
 | `record_emitter_out_of_range` | 可疑 | 已解码记录的字节范围超出所属流：每个发射器在 `source_range(..)` 为 `None` 时 `continue` | 静默（新发现） |
 | `record_emitter_shape_rejected` | 可疑 | 发射器拒绝已解码记录：`igLineString2d` 的 x/y 顶点数不等，或全重合却没有顶点；`igBoundary2d` 环点少于 3；`igBspCurve2d` 采样少于 2 点 | 静默（新发现） |
+
+> 实现注记（2026-11-10）：`sheet_stream_without_geometry` 在实现里多一个条件——流要长于 8 字节流头才记。只有流头（魔数 + 记录数）的流不含记录，没有哪条记录没变成实体，也没有普查可丢，它是一张空的 Sheet，不是丢弃。此前这样的空流 7 条（备份 `N井场` 2 条、`Q井场` 1 条，夹具 `A01` 嵌入图框的 4 条）被记成了可疑项（`99aa9da`；`LedgerRecorder::parse` 里 `stream.size <= SHEET_STREAM_HEADER_LEN` 的 `continue`）。
+>
+> 实现注记（2026-11-10，2026-11-11 补）：`record_audit_only_family` 的无操作发射器多了两个族——笔画由所列成员记录画出的两种关联记录 `igComplexString2d` 与 `igGroup`（`5c015b1`）。`igComplexString2d` 的成员是 `igLine2d` / `igArc2d` 和连接它们的 `KeyPoint Constraint`。`igGroup` 的成员在语料里有两种：边框的两个 `igRectangle2d`，或者徽标的线、弧、B 样条、椭圆弧、填充边界和点（后一种是 2026-11-11 复核独立审查时补的，此前这里只写了矩形）。每个成员都是同一条流上认这条关联记录作所有者的记录，由自己的族解码，发射或有意不发射。
+>
+> 实现注记（2026-11-11）：`sheet_stream_without_geometry` 另记一种流——自己的记录链立不住的链式流（`Sheet*` 流，或符号缓存的 `JSite*/PSMcluster0`）：链在流尾之前停下（记录长度为零、长度越过流尾、剩下的字节不够一个 6 字节信封、流不足 8 字节流头），或者链走到了流尾而流头的魔数、活记录数与链对不上（`NormalizedPidGeometry::chain_faults`，`pid_parse::StreamChainFault`）。这样的流只读到停点为止，停点之前的记录照常成为实体，所以它的 `geometry` 不是 `None`、页上有它的墨，却不是整张图；它按流记一项（计数 1），`bytes` 记的是停点之后没有读的字节数，流头对不上而链走到流尾的记 0。同一条流已经因为 `geometry` 为 `None` 记过的，不再记第二项。`LayoutLedger::chain_faults` 留着解析器给出的整条事实（停点偏移、原因、读到的记录数），`pid_plot` 据此在 stderr 打一行 `warning:`。没有另立原因码：它与这一行原有的判据说的是同一件事——这条流没有被完整地读成记录——档位也相同；全部语料的完好流上没有这样的项（`tests/sheet_chain_faults.rs`）。
 
 ### A.2 排版层：实体没有产出页面图元
 

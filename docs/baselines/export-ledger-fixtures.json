@@ -177,20 +177,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 3
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 21
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 20
             },
             {
               "reason": "record_audit_only_family",
@@ -202,14 +190,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 101,
+          "total": 98,
           "on_page": 13,
           "partial": 0,
           "dropped": {
             "layer_hidden": 2,
             "layer_consistency_checks": 10,
             "point_no_marker": 64,
-            "kind_unknown": 11,
+            "kind_unknown": 8,
             "text_whitespace_only": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -241,7 +229,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 11
+                "kind_unknown": 8
               }
             }
           },
@@ -282,12 +270,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -297,6 +279,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -370,15 +358,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "DWG-0201GP06-01.pid": {
@@ -425,20 +405,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 34
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 136
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 161
             },
             {
               "reason": "record_audit_only_family",
@@ -450,7 +418,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 422,
+          "total": 402,
           "on_page": 120,
           "partial": 0,
           "dropped": {
@@ -458,7 +426,7 @@
             "layer_consistency_checks": 64,
             "endpoint_pair_guess": 59,
             "point_no_marker": 128,
-            "kind_unknown": 29,
+            "kind_unknown": 9,
             "text_empty": 2,
             "text_whitespace_only": 9
           },
@@ -503,7 +471,7 @@
             "unknown": {
               "probe_only": {
                 "endpoint_pair_guess": 10,
-                "kind_unknown": 29
+                "kind_unknown": 9
               }
             }
           },
@@ -565,12 +533,12 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 35,
+          "total": 33,
           "on_page": 4,
           "partial": 1,
           "dropped": {
             "point_no_marker": 22,
-            "kind_unknown": 9
+            "kind_unknown": 7
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -591,7 +559,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 9
+                "kind_unknown": 7
               }
             }
           },
@@ -672,20 +640,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 26
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 84
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 104
             },
             {
               "reason": "record_audit_only_family",
@@ -697,7 +653,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 340,
+          "total": 310,
           "on_page": 128,
           "partial": 0,
           "dropped": {
@@ -705,7 +661,7 @@
             "layer_consistency_checks": 27,
             "endpoint_pair_guess": 26,
             "point_no_marker": 80,
-            "kind_unknown": 49,
+            "kind_unknown": 19,
             "text_whitespace_only": 10
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -751,7 +707,7 @@
             "unknown": {
               "probe_only": {
                 "endpoint_pair_guess": 23,
-                "kind_unknown": 49
+                "kind_unknown": 19
               }
             }
           },
@@ -892,40 +848,10 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/JSite204/Sheet6",
-              "type_code": "0x007B",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/JSite204/Sheet6",
               "type_code": "0x0018",
               "count": 4
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet22",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet32",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet41",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/JSite204/Sheet51",
-              "count": 1,
-              "bytes": 8
             },
             {
               "reason": "record_symbol_body_cache",
@@ -958,8 +884,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/JSite204/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 4
+              "family": "igGroup",
+              "count": 1
             },
             {
               "reason": "record_audit_only_family",
@@ -982,12 +908,6 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 7
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
               "count": 1
             }
@@ -995,7 +915,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 264,
+          "total": 263,
           "on_page": 98,
           "partial": 0,
           "dropped": {
@@ -1003,7 +923,7 @@
             "layer_consistency_checks": 3,
             "line_on_sheet_edge": 8,
             "point_no_marker": 133,
-            "kind_unknown": 20
+            "kind_unknown": 19
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -1040,7 +960,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 20
+                "kind_unknown": 19
               }
             }
           },
@@ -1072,35 +992,7 @@
           "total": 140,
           "written": 140,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/JSite204/Sheet6",
-            "type_code": "0x007B",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet22",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet32",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet41",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/JSite204/Sheet51",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
@@ -1235,20 +1127,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 26
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 84
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 104
             },
             {
               "reason": "record_audit_only_family",
@@ -1260,7 +1140,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 340,
+          "total": 310,
           "on_page": 128,
           "partial": 0,
           "dropped": {
@@ -1268,7 +1148,7 @@
             "layer_consistency_checks": 27,
             "endpoint_pair_guess": 26,
             "point_no_marker": 80,
-            "kind_unknown": 49,
+            "kind_unknown": 19,
             "text_whitespace_only": 10
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -1314,7 +1194,7 @@
             "unknown": {
               "probe_only": {
                 "endpoint_pair_guess": 23,
-                "kind_unknown": 49
+                "kind_unknown": 19
               }
             }
           },
@@ -1491,20 +1371,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 24
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 125
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 306
             },
             {
               "reason": "record_audit_only_family",
@@ -1516,14 +1384,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 532,
+          "total": 485,
           "on_page": 347,
           "partial": 0,
           "dropped": {
             "layer_hidden": 16,
             "layer_consistency_checks": 34,
             "point_no_marker": 71,
-            "kind_unknown": 59,
+            "kind_unknown": 12,
             "segment_too_short": 3,
             "text_whitespace_only": 2
           },
@@ -1566,7 +1434,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 59
+                "kind_unknown": 12
               }
             }
           },
@@ -1609,31 +1477,11 @@
       },
       "furniture": {
         "parse": {
-          "items": [
-            {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x007E",
-              "count": 2
-            },
-            {
-              "reason": "record_refused",
-              "stream": "/Sheet6",
-              "type_code": "0x0013",
-              "count": 2
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 11
-            }
-          ],
           "unattributed": 0
         },
         "entities": {
-          "total": 5100,
-          "on_page": 5000,
+          "total": 5104,
+          "on_page": 5004,
           "partial": 0,
           "dropped": {
             "point_no_marker": 84,
@@ -1648,7 +1496,7 @@
             },
             "polyline": {
               "decoded": {
-                "on_page": 25
+                "on_page": 29
               }
             },
             "point": {
@@ -1682,31 +1530,17 @@
           "trailing_empty_lines": 0
         },
         "primitives": {
-          "laid_out": 5000,
+          "laid_out": 5004,
           "off_sheet": 0,
-          "on_page": 5000,
+          "on_page": 5004,
           "partial": 0,
           "unattributed": 0
         },
         "segments": {
-          "total": 6990,
-          "written": 6990,
+          "total": 7054,
+          "written": 7054,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x007E",
-            "count": 2
-          },
-          {
-            "reason": "record_refused",
-            "stream": "/Sheet6",
-            "type_code": "0x0013",
-            "count": 2
-          }
-        ]
+        }
       }
     },
     "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid": {
@@ -1752,20 +1586,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 101
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 377
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 392
             },
             {
               "reason": "record_audit_only_family",
@@ -1777,7 +1599,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 770,
+          "total": 675,
           "on_page": 340,
           "partial": 0,
           "dropped": {
@@ -1785,7 +1607,7 @@
             "layer_consistency_checks": 153,
             "fill_duplicate": 4,
             "point_no_marker": 82,
-            "kind_unknown": 111
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -1837,7 +1659,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 111
+                "kind_unknown": 16
               }
             }
           },
