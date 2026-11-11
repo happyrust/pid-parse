@@ -22,7 +22,11 @@
 //!   allowance beyond what the reference states its own size to;
 //! * the **line ends**: how much of our ink is stroked with another cap or
 //!   another join than the reference's stroke at the same place
-//!   ([`ends_apart`]).
+//!   ([`ends_apart`]);
+//! * the **order**: wherever the reference paints a stroke in the paper's
+//!   colour on ink — a label's origin mark on a box edge or on a character —
+//!   whether our page paints the two in the same order, which is what
+//!   decides whether the mark takes a piece out of the ink ([`wipe_order`]).
 //!
 //! # How a page is pinned
 //!
@@ -56,9 +60,9 @@ use std::path::PathBuf;
 
 use pid_plot::compare::{CompareReport, MaskRect, compare_plots_with_model, template_masks};
 use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours};
+use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours, wipe_order};
 use pid_plot::model::{PaperModel, lay_out_drawing};
-use pid_plot::read::SheetEdge;
+use pid_plot::read::{SheetEdge, read_plot_sequence};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// One number a page is held to.
@@ -120,6 +124,13 @@ enum Field {
     /// Our ink on a reference stroke that ends or turns its corners another
     /// way than ours, millimetres.
     EndsOther,
+    /// Places where the reference paints a stroke in the paper's colour on
+    /// ink.
+    Wipes,
+    /// Of those, the ones our page paints in the reference's order.
+    WipesSame,
+    /// Of those, the ones our page paints in the other order.
+    WipesOther,
 }
 
 /// Which way a reading gets better.
@@ -136,7 +147,7 @@ enum Better {
 }
 
 impl Field {
-    const ALL: [Self; 26] = [
+    const ALL: [Self; 29] = [
         Self::PageWidthApart,
         Self::PageHeightApart,
         Self::MaskedCoverage,
@@ -163,6 +174,9 @@ impl Field {
         Self::SheetEdges,
         Self::SheetEdgesApart,
         Self::EndsOther,
+        Self::Wipes,
+        Self::WipesSame,
+        Self::WipesOther,
     ];
 
     fn name(self) -> &'static str {
@@ -193,6 +207,9 @@ impl Field {
             Self::SheetEdges => "reference sheet edges",
             Self::SheetEdgesApart => "sheet edges apart",
             Self::EndsOther => "our ink under other ends than the reference's (mm)",
+            Self::Wipes => "places the reference strokes in the paper's colour on ink",
+            Self::WipesSame => "such places painted in the reference's order",
+            Self::WipesOther => "such places painted in the other order",
         }
     }
 
@@ -206,7 +223,8 @@ impl Field {
             | Self::PenAgreed
             | Self::StrokesSameColour
             | Self::LabelsSameColour
-            | Self::GlyphsSameColour => Better::Up,
+            | Self::GlyphsSameColour
+            | Self::WipesSame => Better::Up,
             Self::MaskedUncovered
             | Self::MaskedExtra
             | Self::MaskedLabelsAlone
@@ -219,8 +237,11 @@ impl Field {
             | Self::LabelsOtherColour
             | Self::InkColoursApart
             | Self::SheetEdgesApart
-            | Self::EndsOther => Better::Down,
-            Self::MaskedLabels | Self::WholeLabels | Self::SheetEdges => Better::Neither,
+            | Self::EndsOther
+            | Self::WipesOther => Better::Down,
+            Self::MaskedLabels | Self::WholeLabels | Self::SheetEdges | Self::Wipes => {
+                Better::Neither
+            }
         }
     }
 
@@ -305,6 +326,9 @@ struct Sheet {
     same_colour: [usize; 3],
     /// Inked strokes along the sheet on the reference.
     sheet_edges: usize,
+    /// Places where the reference paints a stroke in the paper's colour on
+    /// ink.
+    wipes: usize,
     defects: &'static [Defect],
 }
 
@@ -320,6 +344,7 @@ impl Sheet {
             Field::LabelsSameColour => self.same_colour[1] as f64,
             Field::GlyphsSameColour => self.same_colour[2] as f64,
             Field::SheetEdges => self.sheet_edges as f64,
+            Field::Wipes | Field::WipesSame => self.wipes as f64,
             Field::PageWidthApart
             | Field::PageHeightApart
             | Field::MaskedUncovered
@@ -334,7 +359,8 @@ impl Sheet {
             | Field::LabelsOtherColour
             | Field::InkColoursApart
             | Field::SheetEdgesApart
-            | Field::EndsOther => 0.0,
+            | Field::EndsOther
+            | Field::WipesOther => 0.0,
         }
     }
 
@@ -362,6 +388,13 @@ const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing
                            another way than the rest, and nothing on hand says which, nor \
                            whether the drawing had its frame then";
 
+/// The one mark `一级闪蒸分离器A`'s plot paints on the other side of its ink.
+const OTHER_ORDER: &str = "the origin mark of the label `P` at (339.85, 384.39) mm: the reference \
+                           letters the `P` after the mark and our page before it. This is one of \
+                           the two plots that do not paint in the order the sheet on hand lists \
+                           its objects in (see the border they do not print), so the sheet's \
+                           order is not this plot's";
+
 /// The A2 sheet's instrument loop and its two pipeline strings.
 const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
                               reference was plotted from a later state of the drawing than \
@@ -379,6 +412,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 9334,
         same_colour: [9370, 583, 3520],
         sheet_edges: 8,
+        wipes: 20,
         defects: &[],
     },
     Sheet {
@@ -387,6 +421,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 14661,
         same_colour: [14709, 813, 4922],
         sheet_edges: 8,
+        wipes: 20,
         defects: &[],
     },
     Sheet {
@@ -395,6 +430,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 17812,
         same_colour: [17866, 959, 5846],
         sheet_edges: 8,
+        wipes: 20,
         defects: &[],
     },
     Sheet {
@@ -403,6 +439,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1272,
         same_colour: [1278, 155, 1279],
         sheet_edges: 0,
+        wipes: 3,
         defects: &[
             // 3478.925 until the page was painted in the sheet's own order
             // (2026-11-11). The ink is the same; the comparison fits the two
@@ -433,6 +470,18 @@ const SHEETS: [Sheet; 11] = [
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
+            Defect {
+                field: Field::WipesSame,
+                reads: 2.0,
+                cause: Cause::Undetermined,
+                what: OTHER_ORDER,
+            },
+            Defect {
+                field: Field::WipesOther,
+                reads: 1.0,
+                cause: Cause::Undetermined,
+                what: OTHER_ORDER,
+            },
         ],
     },
     Sheet {
@@ -441,6 +490,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1419,
         same_colour: [1425, 161, 1136],
         sheet_edges: 8,
+        wipes: 3,
         defects: &[],
     },
     Sheet {
@@ -449,6 +499,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1691,
         same_colour: [1695, 171, 1189],
         sheet_edges: 0,
+        wipes: 2,
         defects: &[
             Defect {
                 field: Field::WholeExtra,
@@ -482,6 +533,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3192,
         same_colour: [3196, 253, 1672],
         sheet_edges: 0,
+        wipes: 2,
         defects: &[],
     },
     Sheet {
@@ -490,6 +542,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3394,
         same_colour: [3404, 326, 2144],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -498,6 +551,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3401,
         same_colour: [3411, 328, 2172],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -506,6 +560,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3268,
         same_colour: [3278, 321, 2127],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -514,6 +569,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 2802,
         same_colour: [2806, 250, 1321],
         sheet_edges: 6,
+        wipes: 3,
         defects: &[
             Defect {
                 field: Field::PageWidthApart,
@@ -602,6 +658,14 @@ const SHEETS: [Sheet; 11] = [
                 what: "the top sheet edge and the right one, which we stroke twice, lie off the \
                        reference's 594 × 420 mm paper",
             },
+            Defect {
+                field: Field::WipesSame,
+                reads: 2.0,
+                cause: Cause::SiteData,
+                what: "the origin mark of the `SP=` label in the instrument cluster the later \
+                       revision moved: the reference paints it at (506.14, 237.91) mm, and the \
+                       drawing on hand holds that label, mark and all, at (508.24, 254.72)",
+            },
         ],
     },
 ];
@@ -665,6 +729,11 @@ fn read_page(
     let labels = label_colours(&reference, &ours, &whole);
     let edges = sheet_edges(&reference.pens, &ours.pens, &whole.fit);
     let ends = ends_apart(&reference.pens, &ours.pens, &whole.fit);
+    let wipes = wipe_order(
+        &read_plot_sequence(reference_pdf).unwrap_or_else(|e| panic!("{name}: {e}")),
+        &read_plot_sequence(our_pdf).unwrap_or_else(|e| panic!("{name}: ours: {e}")),
+        &whole.fit,
+    );
     let colours_apart = reference
         .pens
         .inks
@@ -756,6 +825,36 @@ fn read_page(
         ends.alone_mm
     ));
     notes.push(format!(
+        "order: the reference strokes in the paper's colour on ink at {} place(s), the ink \
+         painted first at {}; ours paints {} in that order, {} in the other, and lacks the \
+         stroke or the ink at {}",
+        wipes.sites, wipes.ink_first, wipes.same, wipes.other, wipes.absent
+    ));
+    for place in &wipes.apart {
+        let ink = place.glyph.as_ref().map_or_else(
+            || {
+                format!(
+                    "a stroke at ({:.2}, {:.2})",
+                    place.ink_mm[0], place.ink_mm[1]
+                )
+            },
+            |glyph| {
+                format!(
+                    "the character {glyph:?} at ({:.2}, {:.2})",
+                    place.ink_mm[0], place.ink_mm[1]
+                )
+            },
+        );
+        notes.push(format!(
+            "order apart: the stroke in the paper's colour at ({:.2}, {:.2}) lies on {ink}, which \
+             the reference paints {} it; ours: {:?}",
+            place.mark_mm[0],
+            place.mark_mm[1],
+            if place.ink_first { "before" } else { "after" },
+            place.ours
+        ));
+    }
+    notes.push(format!(
         "sheet edges: reference {}, ours {}, {} the same",
         edges.reference, edges.ours, edges.same
     ));
@@ -810,6 +909,9 @@ fn read_page(
             Field::SheetEdges => edges.reference as f64,
             Field::SheetEdgesApart => edges.apart() as f64,
             Field::EndsOther => ends.other_mm,
+            Field::Wipes => wipes.sites as f64,
+            Field::WipesSame => wipes.same as f64,
+            Field::WipesOther => wipes.other as f64,
         })
         .collect();
     PageReading { values, notes }
@@ -931,14 +1033,24 @@ fn table(sheet: &Sheet, reading: &PageReading) -> String {
     );
     let _ = writeln!(
         out,
-        "   pins: labels: [{}, {}], pen_agreed: {}, same_colour: [{}, {}, {}], sheet_edges: {}",
+        "   order: {} place(s) where the reference strokes in the paper's colour on ink, {} \
+         painted in its order and {} in the other",
+        get(Field::Wipes),
+        get(Field::WipesSame),
+        get(Field::WipesOther)
+    );
+    let _ = writeln!(
+        out,
+        "   pins: labels: [{}, {}], pen_agreed: {}, same_colour: [{}, {}, {}], sheet_edges: {}, \
+         wipes: {}",
         get(Field::MaskedLabels),
         get(Field::WholeLabels),
         get(Field::PenAgreed),
         get(Field::StrokesSameColour),
         get(Field::LabelsSameColour),
         get(Field::GlyphsSameColour),
-        get(Field::SheetEdges)
+        get(Field::SheetEdges),
+        get(Field::Wipes)
     );
     for note in &reading.notes {
         let _ = writeln!(out, "   {note}");

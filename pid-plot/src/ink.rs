@@ -17,7 +17,9 @@
 //! * [`sheet_edges`] — the strokes along the sheet, paired by where they lie
 //!   and held to their widths;
 //! * [`ends_apart`] — how much of our ink is stroked with another cap or
-//!   another join than the reference's stroke at the same place.
+//!   another join than the reference's stroke at the same place;
+//! * [`wipe_order`] — where the reference paints a stroke in the paper's
+//!   colour on ink, whether our page paints the two in the same order.
 //!
 //! The comparison of ink itself — coverage, extra ink, label pairing, pen
 //! agreement — stays [`crate::compare`]'s: it is run on the two pages' ink
@@ -30,8 +32,8 @@ use serde::Serialize;
 
 use crate::compare::{CompareReport, Fit};
 use crate::read::{
-    InkSegment, LineCap, LineJoin, Painted, PlotInk, PlotPens, PlotReadError, SheetEdge,
-    read_plot_painted, read_plot_pens,
+    InkSegment, LineCap, LineJoin, Painted, PaintedGlyph, PlotInk, PlotPens, PlotReadError,
+    PlotSequence, SheetEdge, read_plot_painted, read_plot_pens,
 };
 
 /// How far off a reference stroke's own line a stroke of ours may lie and
@@ -94,6 +96,21 @@ const EDGE_WIDTH_MM: f64 = 0.02;
 /// path's, so a stroke need not be read finer than the shortest dash a page
 /// draws (0.35 mm).
 const ENDS_STEP_MM: f64 = 0.25;
+/// How far from a reference glyph's origin one of ours may start and be the
+/// same glyph, paper millimetres. Half [`LABEL_ON_MM`]: a label is looked
+/// for by its start, a glyph by its own.
+const GLYPH_ON_MM: f64 = 0.5;
+/// What two pens must overlap by before one is painted on the other, paper
+/// millimetres: a hundredth of a point, under any pen's width and over what
+/// two strokes that only meet come to.
+const TOUCH_MM: f64 = 0.01 * 25.4 / 72.0;
+/// The part of a glyph's cell that is taken to be its ink: the middle three
+/// fifths of its advance, and of the em above its baseline, 0.05 to 0.65.
+///
+/// A reader has the cell and not the outline. A stroke that only clips the
+/// side bearing or runs under the baseline does not touch the character; one
+/// through the middle of the cell does.
+const GLYPH_BODY: [[f64; 2]; 2] = [[0.2, 0.8], [0.05, 0.65]];
 
 /// One page read for what it prints.
 #[derive(Clone, Debug, PartialEq)]
@@ -557,6 +574,353 @@ pub fn ends_apart(reference: &PlotPens, ours: &PlotPens, fit: &Fit) -> EndsApart
     apart
 }
 
+/// Where the reference paints a path in the paper's colour on ink, by
+/// whether our page paints the two in the same order.
+///
+/// A stroke in the paper's colour takes a piece out of what was painted
+/// before it and none out of what is painted after, so on paper the order
+/// shows: a label's origin mark either nicks the box edge and the character
+/// it lies on or it does not.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct WipeOrder {
+    /// Places where a path the reference strokes in the paper's colour lies
+    /// on a path it strokes in ink, or on a glyph it letters in ink.
+    pub sites: usize,
+    /// Of [`Self::sites`], the ones whose ink the reference paints first,
+    /// so that the stroke takes a piece out of it.
+    pub ink_first: usize,
+    /// Sites our page paints in the reference's order.
+    pub same: usize,
+    /// Sites our page paints in the other order, or partly so.
+    pub other: usize,
+    /// Sites our page lacks a part of: no stroke of ours in the paper's
+    /// colour lies where the reference's does, or no ink of ours where the
+    /// reference's ink is.
+    pub absent: usize,
+    /// Every site that is not [`Self::same`], in the reference's painting
+    /// order.
+    pub apart: Vec<WipePlace>,
+}
+
+/// One place where the reference paints a stroke in the paper's colour on
+/// ink and our page does not paint the two in the reference's order.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WipePlace {
+    /// The middle of the first piece of the reference's stroke in the paper's
+    /// colour, reference paper millimetres.
+    pub mark_mm: [f64; 2],
+    /// The character the stroke lies on, or `None` for an inked stroke.
+    pub glyph: Option<String>,
+    /// Where the ink is: the glyph's origin, or the point of the inked
+    /// stroke nearest the mark.
+    pub ink_mm: [f64; 2],
+    /// Whether the reference paints the ink before the stroke.
+    pub ink_first: bool,
+    /// What our page does there.
+    pub ours: WipeSide,
+}
+
+/// How our page paints one of the reference's [`WipePlace`]s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum WipeSide {
+    /// All of our ink there on the other side of our strokes in the paper's
+    /// colour than the reference paints it.
+    Other,
+    /// Some of our ink there before one of those strokes and some after.
+    Mixed,
+    /// No stroke of ours in the paper's colour along the reference's.
+    NoMark,
+    /// No ink of ours where the reference's ink is.
+    NoInk,
+}
+
+/// Read, for every place the reference paints a stroke in the paper's colour
+/// on ink, which of the two it paints first, and hold our page to it.
+///
+/// A *site* is one path the reference strokes in the paper's colour and one
+/// inked path or glyph it touches: a path whose pen overlaps the stroke's,
+/// or a glyph whose body ([`GLYPH_BODY`]) the stroke's pen reaches. On our
+/// page — carried into the reference's frame by `fit` — the same two things
+/// are found by where they lie: our strokes in the paper's colour along the
+/// reference's stroke, our inked strokes along the reference's ink where the
+/// two touch, our glyph of the same character within half a millimetre. The
+/// site is *same* when all of that ink of ours is painted on the reference's
+/// side of all of those strokes, *other* when it is not, *absent* when our
+/// page has no such stroke or no such ink.
+///
+/// Fills are left out on both pages: a fill in the paper's colour is a
+/// shape, not a mark, and the eleven references have none on ink.
+#[must_use]
+pub fn wipe_order(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> WipeOrder {
+    // Our strokes in the reference's frame, the paper's and the inked apart.
+    let mut our_marks: Vec<InkSegment> = Vec::new();
+    let mut our_mark_steps: Vec<u32> = Vec::new();
+    let mut our_ink: Vec<InkSegment> = Vec::new();
+    let mut our_ink_steps: Vec<u32> = Vec::new();
+    for stroke in ours.strokes.iter().filter(|stroke| !stroke.filled) {
+        let piece = InkSegment {
+            start_mm: into_reference(stroke.segment.start_mm, fit),
+            end_mm: into_reference(stroke.segment.end_mm, fit),
+            width_mm: stroke.segment.width_mm,
+        };
+        if stroke.paper {
+            our_marks.push(piece);
+            our_mark_steps.push(stroke.step);
+        } else {
+            our_ink.push(piece);
+            our_ink_steps.push(stroke.step);
+        }
+    }
+    let marks_along = Along::new(&our_marks);
+    let ink_along = Along::new(&our_ink);
+    // The steps of our strokes that are the reference's `piece` at `point`:
+    // those along it there and on its pen. A stroke of another pen that
+    // happens to run beside it — a pipe a device unit from a box edge — is
+    // another stroke; only when none of ours is on the reference's pen are
+    // they all taken, so that a pen we print differently is still found.
+    let steps_at = |along: &Along<'_>, steps: &[u32], piece: &InkSegment, point: [f64; 2]| {
+        let length = hypot(piece.start_mm, piece.end_mm);
+        let found: Vec<usize> = if length < 1e-9 {
+            along.near(point).collect()
+        } else {
+            let unit = [
+                (piece.end_mm[0] - piece.start_mm[0]) / length,
+                (piece.end_mm[1] - piece.start_mm[1]) / length,
+            ];
+            along.at(point, unit).map(|(index, _)| index).collect()
+        };
+        let same_pen = |index: &usize| {
+            (along.segments[*index].width_mm - piece.width_mm).abs() <= EDGE_WIDTH_MM
+        };
+        let on_pen: Vec<u32> = found
+            .iter()
+            .filter(|index| same_pen(index))
+            .map(|index| steps[*index])
+            .collect();
+        if on_pen.is_empty() {
+            found.into_iter().map(|index| steps[index]).collect()
+        } else {
+            on_pen
+        }
+    };
+
+    // The reference's strokes in the paper's colour, path by path, and its
+    // inked strokes, path by path.
+    let mut marks: BTreeMap<u32, Vec<&InkSegment>> = BTreeMap::new();
+    let mut inked: BTreeMap<u32, Vec<&InkSegment>> = BTreeMap::new();
+    for stroke in reference.strokes.iter().filter(|stroke| !stroke.filled) {
+        let paths = if stroke.paper { &mut marks } else { &mut inked };
+        paths.entry(stroke.step).or_default().push(&stroke.segment);
+    }
+
+    let mut order = WipeOrder::default();
+    // File one site: what it is, the reference's order, and our steps there.
+    let mut file = |place: WipePlace, ink_steps: &[u32], mark_steps: &[u32]| {
+        order.sites += 1;
+        order.ink_first += usize::from(place.ink_first);
+        let ours = if mark_steps.is_empty() {
+            WipeSide::NoMark
+        } else if ink_steps.is_empty() {
+            WipeSide::NoInk
+        } else {
+            let ours_first = ink_steps
+                .iter()
+                .all(|ink| mark_steps.iter().all(|mark| ink < mark));
+            let ours_last = ink_steps
+                .iter()
+                .all(|ink| mark_steps.iter().all(|mark| ink > mark));
+            if (place.ink_first && ours_first) || (!place.ink_first && ours_last) {
+                order.same += 1;
+                return;
+            }
+            if ours_first || ours_last {
+                WipeSide::Other
+            } else {
+                WipeSide::Mixed
+            }
+        };
+        if matches!(ours, WipeSide::NoMark | WipeSide::NoInk) {
+            order.absent += 1;
+        } else {
+            order.other += 1;
+        }
+        order.apart.push(WipePlace { ours, ..place });
+    };
+    for (mark_step, pieces) in &marks {
+        // Our strokes in the paper's colour along this path: at the middle
+        // of each of its pieces.
+        let mut mark_steps: Vec<u32> = Vec::new();
+        for piece in pieces {
+            let middle = [
+                (piece.start_mm[0] + piece.end_mm[0]) / 2.0,
+                (piece.start_mm[1] + piece.end_mm[1]) / 2.0,
+            ];
+            mark_steps.extend(steps_at(&marks_along, &our_mark_steps, piece, middle));
+        }
+        let mark_mm = [
+            (pieces[0].start_mm[0] + pieces[0].end_mm[0]) / 2.0,
+            (pieces[0].start_mm[1] + pieces[0].end_mm[1]) / 2.0,
+        ];
+        for (ink_step, ink_pieces) in &inked {
+            // Our ink where this path's pen and the mark's overlap.
+            let mut touched: Option<[f64; 2]> = None;
+            let mut ink_steps: Vec<u32> = Vec::new();
+            for ink_piece in ink_pieces {
+                for piece in pieces {
+                    let reach = (piece.width_mm + ink_piece.width_mm) / 2.0 - TOUCH_MM;
+                    let (distance, on_ink) = segments_apart(piece, ink_piece);
+                    if distance < reach {
+                        touched.get_or_insert(on_ink);
+                        ink_steps.extend(steps_at(&ink_along, &our_ink_steps, ink_piece, on_ink));
+                    }
+                }
+            }
+            if let Some(ink_mm) = touched {
+                file(
+                    WipePlace {
+                        mark_mm,
+                        glyph: None,
+                        ink_mm,
+                        ink_first: ink_step < mark_step,
+                        ours: WipeSide::Other,
+                    },
+                    &ink_steps,
+                    &mark_steps,
+                );
+            }
+        }
+        for glyph in reference.glyphs.iter().filter(|glyph| !glyph.paper) {
+            if !pieces.iter().any(|piece| reaches_glyph(piece, glyph)) {
+                continue;
+            }
+            let glyph_steps: Vec<u32> = ours
+                .glyphs
+                .iter()
+                .filter(|other| {
+                    !other.paper
+                        && other.text == glyph.text
+                        && hypot(into_reference(other.origin_mm, fit), glyph.origin_mm)
+                            <= GLYPH_ON_MM
+                })
+                .map(|other| other.step)
+                .collect();
+            file(
+                WipePlace {
+                    mark_mm,
+                    glyph: Some(glyph.text.clone()),
+                    ink_mm: glyph.origin_mm,
+                    ink_first: glyph.step < *mark_step,
+                    ours: WipeSide::Other,
+                },
+                &glyph_steps,
+                &mark_steps,
+            );
+        }
+    }
+    order
+}
+
+/// How far apart two pieces' centre lines are, and the point of `ink`
+/// nearest `mark`.
+fn segments_apart(mark: &InkSegment, ink: &InkSegment) -> (f64, [f64; 2]) {
+    if let Some(crossing) = crossing(mark, ink) {
+        return (0.0, crossing);
+    }
+    // No crossing: the least distance is at an end of one of them.
+    let on_ink = |point: [f64; 2]| nearest_on(point, ink.start_mm, ink.end_mm);
+    let from_mark = [mark.start_mm, mark.end_mm].map(|end| {
+        let foot = on_ink(end);
+        (hypot(end, foot), foot)
+    });
+    let from_ink = [ink.start_mm, ink.end_mm]
+        .map(|end| (dist_point_seg(end, mark.start_mm, mark.end_mm), end));
+    from_mark
+        .into_iter()
+        .chain(from_ink)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("four candidates")
+}
+
+/// Where two pieces' centre lines cross, when they do.
+fn crossing(a: &InkSegment, b: &InkSegment) -> Option<[f64; 2]> {
+    let r = [a.end_mm[0] - a.start_mm[0], a.end_mm[1] - a.start_mm[1]];
+    let s = [b.end_mm[0] - b.start_mm[0], b.end_mm[1] - b.start_mm[1]];
+    let denominator = r[0] * s[1] - r[1] * s[0];
+    if denominator.abs() < 1e-12 {
+        return None;
+    }
+    let q = [b.start_mm[0] - a.start_mm[0], b.start_mm[1] - a.start_mm[1]];
+    let t = (q[0] * s[1] - q[1] * s[0]) / denominator;
+    let u = (q[0] * r[1] - q[1] * r[0]) / denominator;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u))
+        .then(|| [a.start_mm[0] + r[0] * t, a.start_mm[1] + r[1] * t])
+}
+
+/// The point of `start` → `end` nearest `point`.
+fn nearest_on(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> [f64; 2] {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length2 = dx * dx + dy * dy;
+    let t = if length2 <= 1e-18 {
+        0.0
+    } else {
+        (((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2).clamp(0.0, 1.0)
+    };
+    [start[0] + dx * t, start[1] + dy * t]
+}
+
+/// Whether a stroke's pen reaches the body of a glyph ([`GLYPH_BODY`]).
+fn reaches_glyph(piece: &InkSegment, glyph: &PaintedGlyph) -> bool {
+    let along = glyph.direction;
+    let up = [-along[1], along[0]];
+    // The piece in the glyph's own frame: along its baseline, and up from it.
+    let local = |point: [f64; 2]| {
+        let offset = [point[0] - glyph.origin_mm[0], point[1] - glyph.origin_mm[1]];
+        [
+            offset[0] * along[0] + offset[1] * along[1],
+            offset[0] * up[0] + offset[1] * up[1],
+        ]
+    };
+    let low = [
+        GLYPH_BODY[0][0] * glyph.advance_mm,
+        GLYPH_BODY[1][0] * glyph.height_mm,
+    ];
+    let high = [
+        GLYPH_BODY[0][1] * glyph.advance_mm,
+        GLYPH_BODY[1][1] * glyph.height_mm,
+    ];
+    if high[0] <= low[0] || high[1] <= low[1] {
+        return false;
+    }
+    let start = local(piece.start_mm);
+    let end = local(piece.end_mm);
+    let inside = |point: [f64; 2]| {
+        (low[0]..=high[0]).contains(&point[0]) && (low[1]..=high[1]).contains(&point[1])
+    };
+    if inside(start) || inside(end) {
+        return true;
+    }
+    let centre = InkSegment {
+        start_mm: start,
+        end_mm: end,
+        width_mm: 0.0,
+    };
+    let corners = [
+        [low[0], low[1]],
+        [high[0], low[1]],
+        [high[0], high[1]],
+        [low[0], high[1]],
+    ];
+    (0..4).any(|index| {
+        let edge = InkSegment {
+            start_mm: corners[index],
+            end_mm: corners[(index + 1) % 4],
+            width_mm: 0.0,
+        };
+        segments_apart(&centre, &edge).0 < piece.width_mm / 2.0
+    })
+}
+
 /// A point of our page in the reference's paper millimetres: the inverse of
 /// `our ≈ scale × reference + translation`.
 fn into_reference(point: [f64; 2], fit: &Fit) -> [f64; 2] {
@@ -661,6 +1025,19 @@ impl<'a> Along<'a> {
             })
     }
 
+    /// The segments `point` lies on, whichever way they run.
+    fn near(&self, point: [f64; 2]) -> impl Iterator<Item = usize> + '_ {
+        self.cells
+            .get(&(cell(point[0]), cell(point[1])))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(move |index| {
+                let segment = &self.segments[*index];
+                dist_point_seg(point, segment.start_mm, segment.end_mm) <= ON_MM
+            })
+    }
+
     /// Whether every point of `start` → `end` lies on one of the segments
     /// that runs along it.
     fn carries(&self, start: [f64; 2], end: [f64; 2]) -> bool {
@@ -683,10 +1060,14 @@ impl<'a> Along<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PageInk, SheetEdgePairs, ends_apart, label_colours, sheet_edges, stroke_colours};
+    use super::{
+        PageInk, SheetEdgePairs, WipeOrder, WipePlace, WipeSide, ends_apart, label_colours,
+        sheet_edges, stroke_colours, wipe_order,
+    };
     use crate::compare::{Fit, compare_plots};
     use crate::read::{
-        InkSegment, LineCap, LineJoin, PlotInk, PlotPens, SheetEdge, StrokeEnds, TextSpan,
+        InkSegment, LineCap, LineJoin, PaintedGlyph, PaintedStroke, PlotInk, PlotPens,
+        PlotSequence, SheetEdge, StrokeEnds, TextSpan,
     };
 
     const PAGE: [f64; 2] = [200.0, 100.0];
@@ -1182,5 +1563,280 @@ mod tests {
         )];
         let apart = ends_apart(&reference, &ours, &identity());
         assert!((apart.other_mm - 0.2).abs() < 1e-9, "{apart:?}");
+    }
+
+    fn painted(step: u32, start: [f64; 2], end: [f64; 2], paper: bool) -> PaintedStroke {
+        PaintedStroke {
+            step,
+            segment: stroke(start, end),
+            paper,
+            filled: false,
+        }
+    }
+
+    /// One character, 3 mm high and 2 mm wide, lettered along `direction`.
+    fn glyph(step: u32, text: &str, origin: [f64; 2], direction: [f64; 2]) -> PaintedGlyph {
+        PaintedGlyph {
+            step,
+            text: text.to_string(),
+            origin_mm: origin,
+            height_mm: 3.0,
+            advance_mm: 2.0,
+            direction,
+            paper: false,
+        }
+    }
+
+    fn sequence(strokes: Vec<PaintedStroke>, glyphs: Vec<PaintedGlyph>) -> PlotSequence {
+        PlotSequence {
+            page_mm: PAGE,
+            strokes,
+            glyphs,
+        }
+    }
+
+    /// A box edge, a label's origin mark across it and through the body of
+    /// the label's first character, and a pipe the mark comes nowhere near.
+    /// `edge`, `mark` and `letter` are the steps the three are painted at.
+    fn marked_label(edge: u32, mark: Option<u32>, letter: Option<u32>) -> PlotSequence {
+        let mut strokes = vec![
+            painted(edge, [10.0, 10.0], [60.0, 10.0], false),
+            painted(edge + 100, [10.0, 30.0], [60.0, 30.0], false),
+        ];
+        if let Some(mark) = mark {
+            strokes.push(painted(mark, [20.0, 9.5], [20.0, 10.6], true));
+        }
+        let glyphs = letter
+            .map(|step| glyph(step, "P", [19.0, 9.0], [1.0, 0.0]))
+            .into_iter()
+            .collect();
+        sequence(strokes, glyphs)
+    }
+
+    /// The reference paints the edge, then the mark, then the character: the
+    /// mark nicks the edge and not the character. A page is held to both.
+    #[test]
+    fn a_mark_is_held_to_the_side_of_the_ink_the_reference_paints_it_on() {
+        let reference = marked_label(1, Some(2), Some(3));
+        let read = |ours: &PlotSequence| wipe_order(&reference, ours, &identity());
+        // The same order at other steps: both places the same.
+        assert_eq!(
+            read(&marked_label(40, Some(50), Some(60))),
+            WipeOrder {
+                sites: 2,
+                ink_first: 1,
+                same: 2,
+                other: 0,
+                absent: 0,
+                apart: Vec::new(),
+            }
+        );
+        // The mark painted after everything, as a page that puts its white
+        // strokes last would: it nicks the character too, and the reading
+        // says where.
+        let last = read(&marked_label(1, Some(9), Some(3)));
+        assert_eq!((last.same, last.other, last.absent), (1, 1, 0), "{last:?}");
+        assert_eq!(
+            last.apart,
+            vec![WipePlace {
+                mark_mm: [20.0, 10.05],
+                glyph: Some("P".to_string()),
+                ink_mm: [19.0, 9.0],
+                ink_first: false,
+                ours: WipeSide::Other,
+            }]
+        );
+        // The mark painted before everything: it nicks nothing.
+        let first = read(&marked_label(5, Some(1), Some(7)));
+        assert_eq!(
+            (first.same, first.other, first.absent),
+            (1, 1, 0),
+            "{first:?}"
+        );
+        // A page with no mark there, or no character, lacks that part.
+        let unmarked = read(&marked_label(1, None, Some(3)));
+        assert_eq!(
+            (unmarked.same, unmarked.other, unmarked.absent),
+            (0, 0, 2),
+            "{unmarked:?}"
+        );
+        assert!(
+            unmarked
+                .apart
+                .iter()
+                .all(|place| place.ours == WipeSide::NoMark),
+            "{unmarked:?}"
+        );
+        let unlettered = read(&marked_label(1, Some(2), None));
+        assert_eq!(
+            (unlettered.same, unlettered.other, unlettered.absent),
+            (1, 0, 1),
+            "{unlettered:?}"
+        );
+        assert_eq!(unlettered.apart[0].ours, WipeSide::NoInk);
+        // An edge of ours stroked twice there, once before the mark and once
+        // after, is neither order.
+        let mut twice = marked_label(1, Some(5), Some(9));
+        twice
+            .strokes
+            .push(painted(7, [10.0, 10.0], [60.0, 10.0], false));
+        let twice = read(&twice);
+        assert_eq!((twice.same, twice.other), (1, 1), "{twice:?}");
+        assert_eq!(twice.apart[0].ours, WipeSide::Mixed);
+        assert_eq!(twice.apart[0].glyph, None);
+        // The reading is the reference's: a reference with no mark has no
+        // place to hold a page to, whatever the page paints.
+        let bare = wipe_order(
+            &marked_label(1, None, Some(3)),
+            &marked_label(1, Some(2), Some(3)),
+            &identity(),
+        );
+        assert_eq!(bare, WipeOrder::default());
+    }
+
+    /// `J K井场`, at (299.2, 545.6) mm: a label's box edge with the label's
+    /// origin mark on it, and a 0.68 mm pipe one device unit beside the edge,
+    /// drawn after both. The mark's pen overlaps the edge's and the pipe's,
+    /// so the place is two sites — the edge painted before the mark and the
+    /// pipe after — and our page, which paints the three in that order too,
+    /// is the same at both. The pipe is within reach of the point where the
+    /// mark meets the edge, and is not our edge: it is on another pen.
+    #[test]
+    fn a_wide_stroke_beside_the_marked_one_is_another_site() {
+        let page = |shift: f64| {
+            let mut pipe = painted(
+                307,
+                [299.043 + shift, 496.8],
+                [299.043 + shift, 566.3],
+                false,
+            );
+            pipe.segment.width_mm = 0.677;
+            sequence(
+                vec![
+                    painted(
+                        77,
+                        [299.212 + shift, 555.244],
+                        [299.212 + shift, 542.544],
+                        false,
+                    ),
+                    painted(
+                        79,
+                        [299.212 + shift, 545.592],
+                        [299.212 + shift, 544.237],
+                        true,
+                    ),
+                    pipe,
+                ],
+                vec![],
+            )
+        };
+        // Ours 0.09 mm to the right, as that page lies under its fit.
+        let read = wipe_order(&page(0.0), &page(0.09), &identity());
+        assert_eq!(
+            (
+                read.sites,
+                read.ink_first,
+                read.same,
+                read.other,
+                read.absent
+            ),
+            (2, 1, 2, 0, 0),
+            "{read:?}"
+        );
+    }
+
+    /// A mark is on a stroke when their pens overlap, and on a character when
+    /// its pen reaches the body of the character's cell.
+    #[test]
+    fn a_mark_that_only_comes_near_ink_is_not_on_it() {
+        let site = |mark: PaintedStroke, ink: Vec<PaintedStroke>, glyphs: Vec<PaintedGlyph>| {
+            let mut strokes = ink;
+            strokes.push(mark);
+            let page = sequence(strokes, glyphs);
+            wipe_order(&page, &page, &identity()).sites
+        };
+        let edge = || vec![painted(1, [10.0, 10.0], [60.0, 10.0], false)];
+        // Two 0.169 mm pens: centre lines 0.1 mm apart overlap, 0.2 mm apart
+        // do not, and a mark that stops short of the edge by its own pen does
+        // not either.
+        let beside = |gap: f64| painted(2, [20.0, 10.0 + gap], [30.0, 10.0 + gap], true);
+        assert_eq!(site(beside(0.1), edge(), vec![]), 1);
+        assert_eq!(site(beside(0.2), edge(), vec![]), 0);
+        assert_eq!(
+            site(painted(2, [20.0, 12.0], [20.0, 10.2], true), edge(), vec![]),
+            0
+        );
+        // A filled path is a shape, not a stroke: no place.
+        let mut filled = edge();
+        filled[0].filled = true;
+        assert_eq!(site(beside(0.0), filled, vec![]), 0);
+        // The character `P` at (19, 9): its body is x 19.4..20.6, y 9.15..10.95.
+        let letter = || vec![glyph(3, "P", [19.0, 9.0], [1.0, 0.0])];
+        let down = |x: f64, from: f64, to: f64| painted(2, [x, from], [x, to], true);
+        assert_eq!(
+            site(down(20.0, 9.5, 10.6), vec![], letter()),
+            1,
+            "through it"
+        );
+        assert_eq!(
+            site(down(19.2, 9.5, 10.6), vec![], letter()),
+            0,
+            "in the side bearing"
+        );
+        assert_eq!(
+            site(down(20.0, 8.0, 9.0), vec![], letter()),
+            0,
+            "under the baseline"
+        );
+        assert_eq!(
+            site(down(20.0, 11.2, 12.0), vec![], letter()),
+            0,
+            "above the body"
+        );
+        // The same character lettered up the page: its body is x 17.05..18.85,
+        // y 9.4..10.6.
+        let upright = || vec![glyph(3, "P", [19.0, 9.0], [0.0, 1.0])];
+        assert_eq!(site(down(18.0, 9.5, 10.5), vec![], upright()), 1);
+        assert_eq!(site(down(20.0, 9.5, 10.5), vec![], upright()), 0);
+    }
+
+    /// Our page is found where the fit puts it, and a character by what it
+    /// spells.
+    #[test]
+    fn a_marked_place_is_looked_for_where_the_fit_puts_our_page() {
+        let reference = marked_label(1, Some(2), Some(3));
+        // Our page 0.4 mm to the right and 0.3 mm up, as the fit says.
+        let mut fit = identity();
+        fit.translation_mm = [0.4, 0.3];
+        let mut ours = marked_label(1, Some(2), Some(3));
+        for stroke in &mut ours.strokes {
+            for point in [&mut stroke.segment.start_mm, &mut stroke.segment.end_mm] {
+                point[0] += 0.4;
+                point[1] += 0.3;
+            }
+        }
+        for glyph in &mut ours.glyphs {
+            glyph.origin_mm[0] += 0.4;
+            glyph.origin_mm[1] += 0.3;
+        }
+        let read = wipe_order(&reference, &ours, &fit);
+        assert_eq!((read.same, read.other, read.absent), (2, 0, 0), "{read:?}");
+        // Read with no fit, our mark is 0.4 mm beside the reference's, which
+        // is no stroke along it: both places lack their mark.
+        let unfitted = wipe_order(&reference, &ours, &identity());
+        assert_eq!(unfitted.absent, 2, "{unfitted:?}");
+        // A character is the reference's while it starts within half a
+        // millimetre of it, and another character past that.
+        let mut moved = marked_label(1, Some(2), Some(3));
+        moved.glyphs[0].origin_mm[0] += 0.4;
+        let near = wipe_order(&reference, &moved, &identity());
+        assert_eq!((near.same, near.absent), (2, 0), "{near:?}");
+        moved.glyphs[0].origin_mm[0] += 0.2;
+        let far = wipe_order(&reference, &moved, &identity());
+        assert_eq!((far.same, far.absent), (1, 1), "{far:?}");
+        // Another character at the same place is not this one.
+        ours.glyphs[0].text = "T".to_string();
+        let other = wipe_order(&reference, &ours, &fit);
+        assert_eq!((other.same, other.absent), (1, 1), "{other:?}");
     }
 }
