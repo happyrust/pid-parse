@@ -2444,7 +2444,8 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // instrument balloons are the first real-sheet evidence.
     &IgCircle2dEmitter,
     // And sheet-level elliptical arcs: the two that close the counters of
-    // an outlined letter on `XA-A1.igr`. Appended, so every family before
+    // an outlined letter on `XA-A1.igr`, and the four of the logo ring on
+    // each of `A0-W.igr` to `A3-W.igr`. Appended, so every family before
     // it keeps its golden order.
     &IgEllipticalArc2dEmitter,
     // Audit-only families: explicit no-op policy.
@@ -3425,10 +3426,11 @@ const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
 /// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every `igBspCurve2d`
 /// (PSM `0x005D`): the curve sampled span by span through
 /// [`crate::bspline::sample`]. The record is a leaf -- nothing else draws it
-/// -- so unlike a rectangle it has to be emitted to be seen. One top-level
-/// `Sheet*` stream of the corpora holds any: `XA-A1.igr`'s, with 23 of them,
-/// the bowls of an outlined wordmark, each drawn with the style its `index`
-/// names like the lines and arcs it joins
+/// -- so unlike a rectangle it has to be emitted to be seen. Five border
+/// templates hold any on a top-level `Sheet*` stream: `XA-A1.igr` 23, the
+/// bowls of an outlined wordmark, and `A0-W.igr` to `A3-W.igr` four each,
+/// strokes of a logo. Each is drawn with the style its `index` names, like
+/// the lines and arcs it joins
 /// ([`crate::style_link::line_styles_for_document`]). The drawings' own are
 /// in symbol bodies, and reach the page through
 /// [`NormalizedPidGeometry::symbol_definitions`].

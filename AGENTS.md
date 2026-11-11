@@ -300,8 +300,11 @@ decompilation.
   (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows,
   and so does `igEllipticalArc2d` (`0x007E`) since 2026-11-10: a sheet's
   own chain can hold both curve families. `XA-A1.igr`'s `/Sheet6`
-  carries 23 `igBspCurve2d` (the bowls of its wordmark) and the only
-  two sheet-level `igEllipticalArc2d` of the corpora; both families
+  carries 23 `igBspCurve2d` (the bowls of its wordmark) and two
+  sheet-level `igEllipticalArc2d`, direction byte 1; `A0-W.igr` to
+  `A3-W.igr`, inside the committed `RefData~4~682.zip`, carry four of
+  each in their logo, the arcs with direction byte 0 (no page wears a
+  `-W` template; `tests/elliptical_arcs.rs` holds both); both families
   emit a sampled `Polyline`, and both take their pen from the style id
   at `+14` through `style_link::line_styles_for_document`.
   In the test-file corpus the remaining members (12 circles, 12 arcs,

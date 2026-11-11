@@ -194,8 +194,14 @@ pub struct SheetGeometry {
     /// [`crate::bspline::elliptical_arc_directed`] builds from it -- the
     /// curve a cached symbol body draws for the same record.
     ///
-    /// One sheet of the corpora carries any: `XA-A1.igr`'s two half
-    /// ellipses, which close the counters of an outlined letter.
+    /// Five border templates carry any on their own chain. `XA-A1.igr` has
+    /// two half ellipses, which close the counters of an outlined letter
+    /// and run counter-clockwise (direction byte 1). `A0-W.igr` to
+    /// `A3-W.igr`, inside the committed `RefData~4~682.zip`, have four
+    /// each: one ellipse's top and bottom caps and two short pieces of its
+    /// left side, the ring of a logo, all clockwise (direction byte 0). No
+    /// drawing of the corpora carries one at sheet level, and no page
+    /// wears a `-W` template.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igellipticalarcs: Vec<super::DecodedIgEllipticalArc2dRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
