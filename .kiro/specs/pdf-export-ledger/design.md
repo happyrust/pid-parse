@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 47]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 25 个，有意 22 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`）。
+- `DropReason::ALL: [DropReason; 48]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 25 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -543,6 +543,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `segment_too_short` | 同上，段长 `>= 1e-4` 一项 |
 | `segment_on_sheet_edge` | 同上，`read::sheet_edge_mm` 一项（家具段豁免） |
 | `segment_beyond_the_paper` | 同上，整支笔落在纸张一条边之外（家具段不豁免；2026-11-11 加） |
+| `segment_beyond_the_paper_no_plot_of_template` | 写出器不产生这个码。`ledger::assemble` 的 `PaperEdge::of(domain, model)`：家具域里，`witness::paper_edge_witness(&BorderTemplate)`（文件名、偏移到一微米、1:1）在 `PAPER_EDGE_WITNESSES` 里找不到这一页的模板摆放时，段、图元、实体三处都记本码；找得到则记 `segment_beyond_the_paper`（2026-11-12 加） |
 | `drawing_segment_beyond_the_paper` | 写出器不产生这个码：它对两个域都报 `segment_beyond_the_paper`。`ledger::assemble` 的 `PaperEdge::of(domain)` 在三处把图纸域的这个事实改记到本码——段层的计数、图元的 `Dropped` 原因、实体取第一原因时（2026-11-12 加） |
 | `text_empty` | `text_fate`（`show_text` 约 962 行） |
 | `text_placement_non_finite` | 同一行的旋转与原点两项 |
