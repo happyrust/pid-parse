@@ -3789,10 +3789,14 @@ impl GeometryEmitter for IgComplexString2dEmitter {
 }
 
 /// No-op emitter: a Group (PSM `0x007B`) is a set of graphic objects that
-/// select and move as one. The corpus's five sheet groups each list the two
-/// `igRectangle2d` of a border, and a rectangle's strokes are the `igLine2d`
-/// edges it lists in turn — records of the same stream that emit on their
-/// own.
+/// select and move as one, and states no coordinate of its own. Of the
+/// corpora's twelve sheet groups eight list the two `igRectangle2d` of a
+/// border, and a rectangle's strokes are the `igLine2d` edges it lists in
+/// turn; the other four, in the `-W` templates of a backup's reference
+/// data, list the 37 records of a logo — lines, arcs, B-splines, elliptical
+/// arcs, boundaries, a point. Every member is a record of the same stream
+/// that names the group as its owner and emits, or deliberately does not,
+/// through its own family; emitting the group would draw them twice.
 struct IgGroupEmitter;
 
 impl GeometryEmitter for IgGroupEmitter {

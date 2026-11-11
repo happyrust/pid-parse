@@ -505,10 +505,12 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
-    // Graphic objects that select and move as one. The corpus's groups
+    // Graphic objects that select and move as one. The corpora's groups
     // list the two `igRectangle2d` of a border, which draw through their
-    // own `igLine2d` edges; the group emits nothing for the reason a
-    // rectangle emits nothing.
+    // own `igLine2d` edges, or the lines, arcs, B-splines, elliptical arcs,
+    // boundaries and point of a logo, which draw through their own
+    // families; the group emits nothing for the reason a rectangle emits
+    // nothing.
     SheetRecordFamily {
         name: "igGroup",
         type_code: 0x007B,

@@ -116,7 +116,8 @@ pub enum DropReason {
     /// sub-records, the attribute fragments, `igRectangle2d`, `igDimension`,
     /// and the two associations whose strokes are the records they list —
     /// `igComplexString2d` (its `igLine2d` / `igArc2d` curves) and `igGroup`
-    /// (its `igRectangle2d` members).
+    /// (the two `igRectangle2d` of a border, or the curves, fills and point
+    /// of a logo).
     RecordAuditOnlyFamily,
     /// A decoded record whose byte range falls outside the stream it was read
     /// from: each emitter's `source_range(..)` returned `None` and it

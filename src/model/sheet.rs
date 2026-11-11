@@ -223,9 +223,13 @@ pub struct SheetGeometry {
     /// [`crate::parsers::sheet_records::decode_iggroups`]: graphic objects
     /// that select and move as one.
     ///
-    /// Audit only, for the reason a rectangle is: the corpus's groups list
-    /// `igRectangle2d` records, whose strokes are the `igLine2d` edges those
-    /// list in turn.
+    /// Audit only: a group states no coordinate, and every member it lists
+    /// is a record of the same stream that names the group as its owner.
+    /// The corpora's groups are the two `igRectangle2d` of a border, whose
+    /// strokes are the `igLine2d` edges those list in turn, or — in the four
+    /// `-W` templates of a backup's reference data — the lines, arcs,
+    /// B-splines, elliptical arcs, boundaries and point of a logo, each of
+    /// which decodes and emits on its own.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_iggroups: Vec<DecodedIgGroupRecord>,
     /// PSM `0x007E` `igEllipticalArc2d` records emitted by
@@ -1131,11 +1135,21 @@ pub struct DecodedAssociationMember {
     /// Oid of the member record, in the same stream.
     pub oid: u32,
     /// The member's range box, `[min x, min y, max x, max y]`, in units of
-    /// 1/32768 m.
+    /// the listing record's `range_scale` over 32768 metres.
     pub range_box: [i16; 4],
     /// The word that closes the entry: `0x8000` on a `ComplexString`'s
     /// `KeyPoint Constraint` members, a small value otherwise.
     pub word: u16,
+}
+
+impl DecodedAssociationMember {
+    /// The range box in metres, `[min x, min y, max x, max y]`, read in the
+    /// unit of the record that lists the member: `range_scale / 32768` m.
+    #[must_use]
+    pub fn range_box_m(&self, range_scale: f64) -> [f64; 4] {
+        self.range_box
+            .map(|units| f64::from(units) * range_scale / 32768.0)
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetAssociationMember> for DecodedAssociationMember {
@@ -1167,12 +1181,21 @@ pub struct DecodedIgComplexString2dRecord {
     pub sub_type_word: u16,
     /// Index / style reference; every curve member carries the same one.
     pub index: u32,
+    /// The scale of the members' range boxes: a box is in units of
+    /// `range_scale / 32768` m. `1.0` or `2.0` on the corpora.
+    pub range_scale: f64,
     /// The members, in on-disk order: the curves, then the constraints that
     /// join them.
     pub members: Vec<DecodedAssociationMember>,
 }
 
 impl DecodedIgComplexString2dRecord {
+    /// The range box of one of this string's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &DecodedAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
+
     /// Oids of the members that are curves, in order.
     pub fn curve_oids(&self) -> impl Iterator<Item = u32> + '_ {
         self.members
@@ -1196,6 +1219,7 @@ impl From<crate::parsers::sheet_records::SheetIgComplexString2dDecoded>
             sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             index: d.index,
+            range_scale: d.range_scale,
             members: d.members.into_iter().map(Into::into).collect(),
         }
     }
@@ -1216,8 +1240,19 @@ pub struct DecodedIgGroupRecord {
     pub parent_ref: u32,
     /// Oid of the `JSheetLayer` the group sits on; zero on the corpus.
     pub sheet_layer_ref: u32,
+    /// The scale of the members' range boxes: a box is in units of
+    /// `range_scale / 32768` m. `1.0` or `2.0` on the corpora.
+    pub range_scale: f64,
     /// The members, in on-disk order.
     pub members: Vec<DecodedAssociationMember>,
+}
+
+impl DecodedIgGroupRecord {
+    /// The range box of one of this group's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &DecodedAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetIgGroupDecoded> for DecodedIgGroupRecord {
@@ -1228,6 +1263,7 @@ impl From<crate::parsers::sheet_records::SheetIgGroupDecoded> for DecodedIgGroup
             oid: d.oid,
             parent_ref: d.parent_ref,
             sheet_layer_ref: d.sheet_layer_ref,
+            range_scale: d.range_scale,
             members: d.members.into_iter().map(Into::into).collect(),
         }
     }

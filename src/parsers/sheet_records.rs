@@ -9029,19 +9029,34 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 // §2.1, §2.4):
 //
 // * `0x0021` **ComplexString** — a run of curves joined end to end. Its
-//   payload is a style id, a member count and one 14-byte entry per member:
-//   the member's oid, its range box, and a word that is `0x8000` on the
-//   `0x0019 KeyPoint Constraint` records that pin one curve's end to the
-//   next one's start and `0x0000` / `0x0005` on the curves. Every curve
-//   member of the eight sheet records the corpora hold is a live `igLine2d`
-//   or `igArc2d` of the same stream whose owner is the string's oid and
-//   whose layer and style id are the string's — so the members, which decode
-//   and emit on their own, already draw what the string draws, with the pen
-//   the string would draw it with.
-// * `0x007B` **Group** — a count and the same 14-byte entries. The corpora's
-//   five sheet groups each list the two `igRectangle2d` of a border (outer
-//   frame and inner frame), whose owner is the group's oid and whose edges
-//   are `igLine2d` records of their own.
+//   payload is a style id, a member count, the scale of the members' range
+//   boxes and one 14-byte entry per member: the member's oid, its range
+//   box, and a word that is `0x8000` on the `0x0019 KeyPoint Constraint`
+//   records that pin one curve's end to the next one's start and `0x0000` /
+//   `0x0005` on the curves. Every curve member of the eight sheet records
+//   the corpora hold is a live `igLine2d` or `igArc2d` of the same stream
+//   whose owner is the string's oid and whose layer and style id are the
+//   string's — so the members, which decode and emit on their own, already
+//   draw what the string draws, with the pen the string would draw it with.
+// * `0x007B` **Group** — a count, the same scale and the same 14-byte
+//   entries. The corpora hold twelve on their sheets. Eight list the two
+//   `igRectangle2d` of a border (outer frame and inner frame), whose edges
+//   are `igLine2d` records of their own. Four — one in each of `A0-W.igr`
+//   to `A3-W.igr`, templates a backup package keeps in its
+//   `RefData~4~682.zip` — list the 37 records of a logo: sixteen lines,
+//   seven arcs, four B-splines, four elliptical arcs, five boundaries and a
+//   point. In both kinds every member is a live record of the same stream
+//   whose owner is the group's oid.
+//
+// The double after the count is the unit of the range boxes: a box is in
+// `scale / 32768` m. It is `1.0` on fourteen of the twenty records and `2.0`
+// on six — `CPECCHB-SQ-A1.igr`'s outer frame, and the groups of the A0 and
+// A1 `-W` templates. Read with it, the box of every line and arc member
+// lies within 0.76 mm of the member's own extent (a template string's box
+// is grown by half its pen); read in 1/32768 m, those six are out by up to
+// 529 mm
+// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+// §16).
 //
 // Both decode so that they stop being graphic records nothing reads, and
 // both emit nothing: emitting either would draw its members twice.
@@ -9079,7 +9094,10 @@ pub struct SheetAssociationMember {
     /// Oid of the member record, in the same stream.
     pub oid: u32,
     /// The member's range box, `[min x, min y, max x, max y]`, in units of
-    /// 1/32768 m. Measured against the members' own geometry: a Group's
+    /// the record's range scale over 32768 metres
+    /// ([`SheetIgComplexString2dDecoded::range_scale`],
+    /// [`SheetIgGroupDecoded::range_scale`]; [`Self::range_box_m`] reads it
+    /// in metres). Measured against the members' own geometry: a Group's
     /// rectangle and each curve of `D04`'s string (entry word `0x0005`) read
     /// the bare extent of the curve to within 0.041 mm — an arc's is the box
     /// of the part it sweeps, not of its circle — while the lines of the
@@ -9092,8 +9110,19 @@ pub struct SheetAssociationMember {
     /// The word that closes the entry. On a `ComplexString` it is
     /// [`IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER`] for a `KeyPoint Constraint`
     /// and `0x0000` or `0x0005` for a curve; on a Group, `0x0006` and
-    /// `0x000C` on the corpus. What the low values mean is not decoded.
+    /// `0x000C` on a border's two rectangles and `0x0003` or `0x0000` on a
+    /// logo's members. What the low values mean is not decoded.
     pub word: u16,
+}
+
+impl SheetAssociationMember {
+    /// The range box in metres, `[min x, min y, max x, max y]`, read in the
+    /// unit of the record that lists the member: `range_scale / 32768` m.
+    #[must_use]
+    pub fn range_box_m(&self, range_scale: f64) -> [f64; 4] {
+        self.range_box
+            .map(|units| f64::from(units) * range_scale / 32768.0)
+    }
 }
 
 /// One decoded `0x0021` `ComplexString` record.
@@ -9115,11 +9144,17 @@ pub struct SheetIgComplexString2dDecoded {
     /// corpus string carries the same one.
     pub index: u32,
     /// The three bytes between the style id and the count (payload `+18`),
-    /// verbatim: `01 06 00` on every corpus record.
+    /// verbatim: `01 06 00` on seven of the corpora's eight records and
+    /// `01 00 00` on one, oid 31 of `CPECCHB-SQ-A1.igr`. Not decoded.
     pub head: [u8; 3],
-    /// The double after the count (payload `+25`); `1.0` on every corpus
-    /// record.
-    pub head_double: f64,
+    /// The scale of the members' range boxes (payload `+25`, the double
+    /// after the count): a box is in units of `range_scale / 32768` m.
+    /// `1.0` on seven of the corpora's eight records and `2.0` on one, the
+    /// outer frame of `CPECCHB-SQ-A1.igr` (oid 21): its top edge runs from
+    /// x = 25 mm to 831 mm at y = 584 mm and reads
+    /// `[407, 9565, 13617, 9571]`, which is 24.84 .. 831.12 by 583.80 ..
+    /// 584.17 mm at 2/32768 m and half of each at 1/32768 m.
+    pub range_scale: f64,
     /// The members, in on-disk order: the curves first, then the constraints
     /// that join them.
     pub members: Vec<SheetAssociationMember>,
@@ -9134,6 +9169,12 @@ impl SheetIgComplexString2dDecoded {
         self.members
             .iter()
             .filter(|member| member.word != IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER)
+    }
+
+    /// The range box of one of this string's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &SheetAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
     }
 }
 
@@ -9153,14 +9194,27 @@ pub struct SheetIgGroupDecoded {
     pub sheet_layer_ref: u32,
     /// The `u32` at payload `+12`, verbatim; zero on the corpus.
     pub head: u32,
-    /// The double after the count (payload `+20`); `1.0` on every corpus
-    /// record.
-    pub head_double: f64,
+    /// The scale of the members' range boxes (payload `+20`, the double
+    /// after the count): a box is in units of `range_scale / 32768` m.
+    /// `1.0` on seven of the corpora's twelve records and `2.0` on five:
+    /// the border groups of `A0-W.igr`, `A0-W - New.igr`, `A1-W.igr` and
+    /// `A1-W - New.igr`, and the logo of `A0-W.igr`. An A0 border's outer
+    /// rectangle reads `[0, 0, 19480, 13779]`, 1189 by 841 mm at 2/32768 m;
+    /// a box in 1/32768 m ends at one metre.
+    pub range_scale: f64,
     /// The members, in on-disk order.
     pub members: Vec<SheetAssociationMember>,
     /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
     /// sheet.
     pub trailing: Vec<u8>,
+}
+
+impl SheetIgGroupDecoded {
+    /// The range box of one of this group's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &SheetAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
 }
 
 /// `count` member entries from `payload[at..]`, or `None` when the payload
@@ -9191,9 +9245,9 @@ fn association_members(
 ///
 /// At each record the chain starts: type code
 /// [`PSM_TYPE_CODE_IGCOMPLEXSTRING2D`]; a member count of at least one whose
-/// entries the payload has room for; a finite double before them. The count
-/// is bounded by the payload, not by a constant: a string is as long as the
-/// record that holds it.
+/// entries the payload has room for; a finite range scale before them. The
+/// count is bounded by the payload, not by a constant: a string is as long
+/// as the record that holds it.
 pub fn decode_igcomplexstrings(data: &[u8]) -> Vec<SheetIgComplexString2dDecoded> {
     IgComplexString2dDecoder.scan(data)
 }
@@ -9211,7 +9265,7 @@ pub fn decode_igcomplexstring_at(
 ///
 /// At each record the chain starts: type code [`PSM_TYPE_CODE_IGGROUP`]; a
 /// member count of at least one whose entries the payload has room for; a
-/// finite double before them.
+/// finite range scale before them.
 pub fn decode_iggroups(data: &[u8]) -> Vec<SheetIgGroupDecoded> {
     IgGroupDecoder.scan(data)
 }
@@ -9249,8 +9303,8 @@ impl PsmRecordDecoder for IgComplexString2dDecoder {
         let head = <[u8; 3]>::try_from(payload.get(CURVE_GEOMETRY_AT..IGCOMPLEXSTRING2D_COUNT_AT)?)
             .ok()?;
         let count = usize::try_from(u32_le(payload, IGCOMPLEXSTRING2D_COUNT_AT)?).ok()?;
-        let head_double = f64_le(payload, IGCOMPLEXSTRING2D_COUNT_AT + 4)?;
-        if count == 0 || !head_double.is_finite() {
+        let range_scale = f64_le(payload, IGCOMPLEXSTRING2D_COUNT_AT + 4)?;
+        if count == 0 || !range_scale.is_finite() {
             return None;
         }
         let members = association_members(payload, IGCOMPLEXSTRING2D_MEMBERS_AT, count)?;
@@ -9266,7 +9320,7 @@ impl PsmRecordDecoder for IgComplexString2dDecoder {
             sub_type_word: sub.sub_type_word,
             index: sub.index,
             head,
-            head_double,
+            range_scale,
             members,
             trailing,
         })
@@ -9304,8 +9358,8 @@ impl PsmRecordDecoder for IgGroupDecoder {
             .checked_add(usize::try_from(header.bytes_to_follow).ok()?)?;
         let payload = data.get(header.body_start..end)?;
         let count = usize::try_from(u32_le(payload, IGGROUP_COUNT_AT)?).ok()?;
-        let head_double = f64_le(payload, IGGROUP_COUNT_AT + 4)?;
-        if count == 0 || !head_double.is_finite() {
+        let range_scale = f64_le(payload, IGGROUP_COUNT_AT + 4)?;
+        if count == 0 || !range_scale.is_finite() {
             return None;
         }
         let members = association_members(payload, IGGROUP_MEMBERS_AT, count)?;
@@ -9319,7 +9373,7 @@ impl PsmRecordDecoder for IgGroupDecoder {
             parent_ref: u32_le(payload, 4)?,
             sheet_layer_ref: u32_le(payload, 8)?,
             head: u32_le(payload, 12)?,
-            head_double,
+            range_scale,
             members,
             trailing,
         })
@@ -9358,6 +9412,41 @@ mod association_family_tests {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x4c, 0xc2, 0x35, 0x06, 0x00, 0x00, 0x02, 0x00, 0x00,
     ];
 
+    /// `CPECCHB-SQ-A1.igr`'s `/Sheet6 +8`, oid 21, payload verbatim: the
+    /// sheet's outer frame, a string of four lines and the four constraints
+    /// that close it — and the one string of the corpora whose range scale
+    /// is 2.
+    const FRAME_AT_SCALE_TWO: [u8; 149] = [
+        0x15, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x40, 0x16, 0x00, 0x00, 0x00, 0x97, 0x01, 0x5d, 0x25, 0x31, 0x35, 0x63, 0x25,
+        0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x2b, 0x35, 0xa1, 0x00, 0x31, 0x35, 0x63, 0x25, 0x00,
+        0x00, 0x18, 0x00, 0x00, 0x00, 0x97, 0x01, 0xa1, 0x00, 0x31, 0x35, 0xa7, 0x00, 0x00, 0x00,
+        0x19, 0x00, 0x00, 0x00, 0x97, 0x01, 0xa1, 0x00, 0x9d, 0x01, 0x63, 0x25, 0x00, 0x00, 0x1a,
+        0x00, 0x00, 0x00, 0x2e, 0x35, 0x5f, 0x25, 0x2f, 0x35, 0x60, 0x25, 0x00, 0x80, 0x1b, 0x00,
+        0x00, 0x00, 0x2e, 0x35, 0xa3, 0x00, 0x2f, 0x35, 0xa4, 0x00, 0x00, 0x80, 0x1c, 0x00, 0x00,
+        0x00, 0x99, 0x01, 0xa3, 0x00, 0x9a, 0x01, 0xa4, 0x00, 0x00, 0x80, 0x1d, 0x00, 0x00, 0x00,
+        0x99, 0x01, 0x5f, 0x25, 0x9a, 0x01, 0x60, 0x25, 0x00, 0x80, 0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// The first two members of that frame, payloads verbatim: `+163`,
+    /// oid 22, the top edge from (25, 584) to (831, 584) mm, and `+219`,
+    /// oid 23, the right edge from there down to (831, 10) mm.
+    const FRAME_EDGES: [[u8; 50]; 2] = [
+        [
+            0x16, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x09, 0x00, 0x00, 0x00, 0x5f, 0xba, 0x2d, 0x93, 0x98, 0x99, 0x99, 0x3f, 0x49, 0x20,
+            0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f,
+            0x49, 0x20, 0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f,
+        ],
+        [
+            0x17, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x09, 0x00, 0x00, 0x00, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f, 0x49, 0x20,
+            0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f,
+            0x00, 0xac, 0x4c, 0x7f, 0xe0, 0x7a, 0x84, 0x3f,
+        ],
+    ];
+
     fn framed(type_code: u16, payload: &[u8]) -> Vec<u8> {
         let mut record = Vec::new();
         record.extend_from_slice(&type_code.to_le_bytes());
@@ -9382,7 +9471,7 @@ mod association_family_tests {
         );
         assert_eq!((string.sub_type_word, string.index), (0, 12));
         assert_eq!(string.head, [0x01, 0x06, 0x00]);
-        assert_eq!(string.head_double, 1.0);
+        assert_eq!(string.range_scale, 1.0);
         assert_eq!(
             string.members,
             vec![
@@ -9408,12 +9497,75 @@ mod association_family_tests {
             vec![68, 69]
         );
         assert_eq!(string.trailing, [0x00, 0x02, 0x00, 0x00]);
-        // The box is the member's range in 1/32768 m: oid 68 is the line
-        // from x = 586.869 mm to 388.889 mm at y = 111.717 mm.
-        let metres = |units: i16| f64::from(units) / 32768.0;
-        assert!((metres(12723) - 0.388_889).abs() < 0.001);
-        assert!((metres(19248) - 0.586_869).abs() < 0.001);
-        assert!((metres(3660) - 0.111_717).abs() < 0.001);
+        // The box is the member's range in `range_scale / 32768` m, and this
+        // string's scale is one: oid 68 is the line from x = 586.869 mm to
+        // 388.889 mm at y = 111.717 mm.
+        let [min_x, min_y, max_x, max_y] = string.range_box_m(&string.members[0]);
+        assert!((min_x - 0.388_889).abs() < 0.001);
+        assert!((max_x - 0.586_869).abs() < 0.001);
+        assert!((min_y - 0.111_717).abs() < 0.001 && (max_y - 0.111_717).abs() < 0.001);
+    }
+
+    /// The double after the count is the unit of the range boxes, and it is
+    /// not always one. `CPECCHB-SQ-A1.igr`'s outer frame states 2.0, and its
+    /// members' boxes are their own extent — grown by half the pen, as on
+    /// every template string — only when read in 2/32768 m. Read in
+    /// 1/32768 m each is half the size, a quarter of a sheet away.
+    #[test]
+    fn the_double_after_the_count_is_the_scale_of_the_range_boxes() {
+        let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &FRAME_AT_SCALE_TWO);
+        let string = decode_igcomplexstring_at(&record, 0).expect("the frame decodes");
+        assert_eq!((string.oid, string.index, string.members.len()), (21, 9, 8));
+        assert_eq!(string.head, [0x01, 0x06, 0x00]);
+        assert_eq!(string.range_scale, 2.0);
+        assert_eq!(
+            string.members[0],
+            SheetAssociationMember {
+                oid: 22,
+                range_box: [407, 9565, 13617, 9571],
+                word: 0,
+            }
+        );
+        assert_eq!(string.curve_members().count(), 4);
+
+        for (member, payload) in string.members.iter().zip(&FRAME_EDGES) {
+            let line = decode_igline_at(&framed(PSM_TYPE_CODE_IGLINE2D, payload), 0)
+                .expect("an edge of the frame decodes");
+            assert_eq!(
+                (line.oid, line.parent_ref, line.index),
+                (member.oid, string.oid, string.index),
+                "the member is the string's own line, with the string's pen"
+            );
+            let extent = [
+                line.start.0.min(line.end.0),
+                line.start.1.min(line.end.1),
+                line.start.0.max(line.end.0),
+                line.start.1.max(line.end.1),
+            ];
+            // In the record's own unit: the edge, grown by under 0.3 mm.
+            let stated = string.range_box_m(member);
+            for (side, (boxed, own)) in stated.iter().zip(&extent).enumerate() {
+                assert!(
+                    (boxed - own).abs() < 0.000_3,
+                    "oid {} side {side}: the box reads {boxed} m, the edge {own} m",
+                    member.oid
+                );
+            }
+            // Outward on every side: a box, not a guess that happens to land.
+            assert!(stated[0] <= extent[0] && stated[1] <= extent[1]);
+            assert!(stated[2] >= extent[2] && stated[3] >= extent[3]);
+            // In 1/32768 m the far corner is 0.2 m and more from the edge's.
+            let unit = member.range_box_m(1.0);
+            assert!(
+                (unit[2] - extent[2]).abs() > 0.2 && (unit[3] - extent[3]).abs() > 0.2,
+                "oid {}: read at scale one the box is {unit:?}, the edge {extent:?}",
+                member.oid
+            );
+        }
+        // The first edge, in millimetres.
+        let top = string.range_box_m(&string.members[0]).map(|m| m * 1000.0);
+        assert!((top[0] - 24.841).abs() < 0.001 && (top[2] - 831.116).abs() < 0.001);
+        assert!((top[1] - 583.801).abs() < 0.001 && (top[3] - 584.167).abs() < 0.001);
     }
 
     #[test]
@@ -9426,7 +9578,7 @@ mod association_family_tests {
             (group.oid, group.parent_ref, group.sheet_layer_ref),
             (311, 6, 0)
         );
-        assert_eq!((group.head, group.head_double), (0, 1.0));
+        assert_eq!((group.head, group.range_scale), (0, 1.0));
         assert_eq!(
             group.members,
             vec![
@@ -9443,6 +9595,11 @@ mod association_family_tests {
             ]
         );
         assert_eq!(group.trailing, [0x00, 0x02, 0x00, 0x00]);
+        // `A01`'s embedded border is an A2 sheet, and at this group's scale
+        // of one the outer rectangle's box is that sheet: 594 by 420 mm.
+        let outer = group.range_box_m(&group.members[1]);
+        assert_eq!((outer[0], outer[1]), (0.0, 0.0));
+        assert!((outer[2] - 0.594).abs() < 0.000_1 && (outer[3] - 0.420).abs() < 0.000_1);
     }
 
     #[test]
@@ -9481,7 +9638,7 @@ mod association_family_tests {
     }
 
     #[test]
-    fn a_non_finite_double_before_the_members_is_refused() {
+    fn a_non_finite_range_scale_is_refused() {
         let mut payload = STRING_OF_TWO.to_vec();
         payload[IGCOMPLEXSTRING2D_COUNT_AT + 4..IGCOMPLEXSTRING2D_COUNT_AT + 12]
             .copy_from_slice(&f64::NAN.to_le_bytes());
