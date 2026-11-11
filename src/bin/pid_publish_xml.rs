@@ -543,6 +543,11 @@ fn run(options: CliOptions) -> Result<i32, String> {
 }
 
 /// Backup directory: publish every `.pid` in the `PlantData` zips.
+///
+/// A drawing with a chain stream whose record chain does not hold gets one
+/// `warning:` line a stream on stderr, as [`run_pid`] prints for a single
+/// `.pid`; the exit code, `_Index.json` and the coverage reports are what
+/// they would be without it.
 fn run_package(options: &CliOptions) -> Result<i32, String> {
     let out_dir = options
         .out_dir
@@ -555,6 +560,12 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         options.diff_against.as_deref(),
     ) {
         Ok(report) => {
+            // A drawing whose chain stops is written and counted as
+            // written, short of what that stream holds: the same line the
+            // single-`.pid` mode prints, naming the zip and the entry.
+            for fault in &report.chain_faults {
+                eprintln!("warning: {}", fault.describe());
+            }
             let exit = i32::from(
                 report.failed > 0
                     || report

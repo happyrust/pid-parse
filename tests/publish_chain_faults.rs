@@ -24,6 +24,12 @@
 //! line is said from the one read that makes the drawing, so it is there
 //! when the damaged stream is the one the drawing's own row is in and the
 //! run ends in an error.
+//!
+//! A backup package is held to the same: publishing a directory reads every
+//! `.pid` of its `PlantData` zips through the same reader, and a drawing of
+//! it whose chain stops used to lose what that stream held with nothing
+//! said at all — the run printed "0 failed" and exited 0. Each such stream
+//! now gets the same line, naming the zip and the entry the drawing is.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -427,4 +433,221 @@ fn a_chain_fault_is_said_before_the_error_it_causes() {
     assert_eq!(read.chain_faults.len(), 1);
     assert_eq!(read.chain_faults[0].fault.stream_path, ATTRIBUTES);
     assert_eq!(read.chain_faults[0].publishable_records_read, 0);
+}
+
+/// One stored ZIP member, as `tests/publish_from_pid.rs` builds its mini
+/// packages: the backup publisher inflates this the way it inflates a
+/// `PlantData~*.zip`.
+fn stored_zip(name: &str, payload: &[u8]) -> Vec<u8> {
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+    let name = name.as_bytes();
+    let crc = crc32(payload);
+    let size = u32::try_from(payload.len()).expect("member fits in a zip32 size");
+    let name_len = u16::try_from(name.len()).expect("name fits in a zip name length");
+    let mut out = Vec::new();
+    let push16 = |out: &mut Vec<u8>, value: u16| out.extend_from_slice(&value.to_le_bytes());
+    let push32 = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
+    push32(&mut out, 0x0403_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    out.extend_from_slice(name);
+    out.extend_from_slice(payload);
+    let cd_at = u32::try_from(out.len()).expect("zip offset");
+    push32(&mut out, 0x0201_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, 0);
+    push32(&mut out, 0);
+    out.extend_from_slice(name);
+    let cd_size = u32::try_from(out.len()).expect("zip size") - cd_at;
+    push32(&mut out, 0x0605_4b50);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 1);
+    push16(&mut out, 1);
+    push32(&mut out, cd_size);
+    push32(&mut out, cd_at);
+    push16(&mut out, 0);
+    out
+}
+
+/// The top-level keys of a JSON object file, sorted.
+fn json_keys(path: &Path) -> Vec<String> {
+    let value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{path:?}: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("{path:?}: {error}"));
+    let mut keys: Vec<String> = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{path:?} is an object"))
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// A backup package of two drawings, one of them with a `/Sheet6` whose
+/// chain stops: the run publishes both, exits 0, and says on stderr which
+/// drawing lost what — one line, naming the zip and the entry. Neither the
+/// index nor a coverage report gains a key for it.
+#[test]
+fn a_package_names_the_drawing_whose_chain_stops() {
+    const SOUND: &str = "test-file/D06.pid";
+    let scratch = Scratch::new("package");
+    let (intact, broken, middle) = middle_length_zeroed(SHEET);
+    let lost = publishable_before(&intact, middle);
+    let damaged = copy_with_stream(
+        &scratch.0.join("copies"),
+        "broken.pid",
+        SHEET,
+        broken.clone(),
+    );
+    let damaged = std::fs::read(damaged).expect("the damaged copy");
+
+    // Two packages that differ in one drawing's one length field.
+    let package = |name: &str, second: &[u8]| {
+        let dir = scratch.0.join(name);
+        std::fs::create_dir_all(&dir).expect("the package directory");
+        std::fs::write(dir.join("Manifest.txt"), "BackupType<<|>>2\n").expect("manifest");
+        std::fs::write(
+            dir.join("PlantData~2~1.zip"),
+            stored_zip("U01/D06.pid", &std::fs::read(SOUND).expect("D06.pid")),
+        )
+        .expect("the first zip");
+        std::fs::write(
+            dir.join("PlantData~2~2.zip"),
+            stored_zip("U01/DWG-0201.pid", second),
+        )
+        .expect("the second zip");
+        dir
+    };
+    let sound_package = package("sound", &std::fs::read(FIXTURE).expect("the fixture"));
+    let damaged_package = package("damaged", &damaged);
+
+    let (code, stderr) = publish(&sound_package, &scratch.0.join("sound-out"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(warnings(&stderr).is_empty(), "a sound package: {stderr}");
+    assert!(stderr.contains("Published 2 drawings"), "{stderr}");
+
+    let (code, stderr) = publish(&damaged_package, &scratch.0.join("damaged-out"));
+    assert_eq!(code, Some(0), "the exit code does not change: {stderr}");
+    assert!(
+        stderr.contains("Published 2 drawings") && stderr.contains("(0 failed"),
+        "{stderr}"
+    );
+    let lines = warnings(&stderr);
+    assert_eq!(lines.len(), 1, "one warning: {stderr}");
+    for needle in [
+        "PlantData~2~2.zip U01/DWG-0201.pid".to_string(),
+        format!("the record chain of {SHEET} does not hold"),
+        format!("stops at +{middle} of {} bytes", broken.len()),
+        format!(
+            "so the {lost} attribute row(s), text box(es), dependency object(s) and symbol \
+             placement(s) the chain read before the stop are not in the XML"
+        ),
+    ] {
+        assert!(lines[0].contains(&needle), "`{needle}` in: {}", lines[0]);
+    }
+    assert!(
+        !lines[0].contains("D06.pid"),
+        "the sound drawing is not named: {}",
+        lines[0]
+    );
+
+    // The damaged drawing is delivered, and its delivery is not the sound
+    // one's: without the stream's text boxes, dependencies and placements
+    // no label value reaches an item, and its items are written without
+    // what those would have told (the XML is the longer for it).
+    let delivered = |out: &str, file: &str| {
+        std::fs::read(scratch.0.join(out).join(file))
+            .unwrap_or_else(|error| panic!("{out}/{file}: {error}"))
+    };
+    assert!(
+        delivered("damaged-out", "DWG-0201_Data.xml")
+            != delivered("sound-out", "DWG-0201_Data.xml"),
+        "the damaged drawing's XML is not the sound drawing's"
+    );
+    assert!(
+        delivered("damaged-out", "D06_Data.xml") == delivered("sound-out", "D06_Data.xml"),
+        "the other drawing is untouched"
+    );
+
+    // What is said is said on stderr alone: the index and the coverage
+    // report keep their keys, and the index lists no problem.
+    for file in ["_Index.json", "DWG-0201_Coverage.json", "D06_Coverage.json"] {
+        assert_eq!(
+            json_keys(&scratch.0.join("damaged-out").join(file)),
+            json_keys(&scratch.0.join("sound-out").join(file)),
+            "{file} keeps its keys"
+        );
+    }
+    let index = std::fs::read_to_string(scratch.0.join("damaged-out").join("_Index.json"))
+        .expect("the index");
+    assert!(
+        !index.contains("record chain"),
+        "the index does not carry the fault"
+    );
+
+    // The library reports the same fault, with the drawing it belongs to.
+    let report = pid_parse::publish::backup_package::publish_backup_package(
+        &damaged_package,
+        &scratch.0.join("library-out"),
+        "P01",
+        None,
+    )
+    .expect("the package publishes");
+    assert_eq!((report.written, report.failed), (2, 0));
+    assert_eq!(report.chain_faults.len(), 1);
+    let fault = &report.chain_faults[0];
+    assert_eq!(
+        (fault.zip_file.as_str(), fault.zip_entry.as_str()),
+        ("PlantData~2~2.zip", "U01/DWG-0201.pid")
+    );
+    assert_eq!(
+        fault.fault,
+        PublishChainFault {
+            fault: StreamChainFault::of_stream(SHEET, &broken).expect("the chain does not hold"),
+            publishable_records_read: lost,
+        }
+    );
+    assert_eq!(lines[0], format!("warning: {}", fault.describe()));
+    let sound = pid_parse::publish::backup_package::publish_backup_package(
+        &sound_package,
+        &scratch.0.join("library-sound-out"),
+        "P01",
+        None,
+    )
+    .expect("the package publishes");
+    assert!(sound.chain_faults.is_empty());
 }
