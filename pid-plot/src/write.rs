@@ -848,6 +848,16 @@ struct WriteSink<'a> {
 ///
 /// So the rule reads the pen and nothing else: the first stroke on a pen
 /// wider than the thin one.
+///
+/// Those three are what the plots do. Our page states the caps at the same
+/// places because it paints in the same order, which for the A2 border took
+/// the members of a `ComplexString` standing where their string is listed
+/// (`sheet_display_ranks`): the frame's four lines are painted second, as on
+/// the plot, where before that they were painted at the end of the template
+/// and the statement stood ahead of a title-block rule instead. One case no
+/// plot shows: a drawing's own thin stroke listed ahead of its first wide
+/// one is butt-ended by this rule (one sheet of the plant backup has 47
+/// such paths; `export_plant_backup` pins them).
 fn starts_round_ends(primitive: &crate::model::PaperPrimitive) -> bool {
     if matches!(
         primitive.shape,
