@@ -22,6 +22,12 @@
 //! A stream the cluster holds no table for is printed as such; on the
 //! corpus those are extra `Sheet<N>` streams that own no record.
 //!
+//! `ranked` is every live record on all 71 drawings and on the border
+//! templates: a record the sheet does not own hangs under one it does — a
+//! `DependencyObject`, or the `ComplexString` of `D04` and of the two
+//! `CPECCHB-SQ` templates — and is ranked at that one's place
+//! (`sheet_display_ranks`).
+//!
 //! The paper is what the record states behind its entries
 //! (`SheetChildTable::paper`): the eleven reference plots are printed on
 //! exactly that paper, the A2 sheet included, whose border template is
@@ -30,10 +36,10 @@
 //! Run (PowerShell):
 //!
 //! ```powershell
-//! cargo run --example probe_what_order_a_sheet_lists_its_children_in -- <drawing.pid | directory> [...]
+//! cargo run --example probe_what_order_a_sheet_lists_its_children_in -- <drawing.pid | template.igr | directory> [...]
 //! ```
 //!
-//! A directory is walked for `.pid` files. Read-only. Exits non-zero when a
+//! A directory is walked for `.pid` and `.igr` files. Read-only. Exits non-zero when a
 //! sheet that owns records has no table, or a table that does not name
 //! exactly the sheet's records.
 
@@ -62,10 +68,9 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) {
         for entry in entries {
             collect(&entry, out);
         }
-    } else if path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pid"))
-    {
+    } else if path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("pid") || extension.eq_ignore_ascii_case("igr")
+    }) {
         out.push(path.to_path_buf());
     }
 }

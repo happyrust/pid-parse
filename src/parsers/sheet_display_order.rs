@@ -40,11 +40,13 @@
 //! # The order
 //!
 //! A child is a graphic record that draws itself — a symbol placement, the
-//! border frame, a point — or a `0x00FA DependencyObject`, which draws
-//! nothing and owns the records that depend on another: a label's text
-//! boxes, a connector's line string, an arrow head's lines. Those are drawn
-//! where their owner stands in the list, in the order the owner's payload
-//! names them.
+//! border frame, a point — or a record that draws nothing and owns the
+//! records that do: a `0x00FA DependencyObject` owns the records that
+//! depend on another — a label's text boxes, a connector's line string, an
+//! arrow head's lines — and a `0x0021 ComplexString` or a `0x007B` Group
+//! owns its members. Those are drawn where their owner stands in the list,
+//! in the order the owner names them, and what one of them owns in turn is
+//! drawn behind it ([`sheet_display_ranks`]).
 //!
 //! A new object goes to the end of the list and an object sent behind the
 //! others to its front, so the list is neither the order of the oids nor
@@ -62,10 +64,11 @@
 //! appear in the list's order, 1 989 in the order of their oids and 1 990
 //! in the order of the stream. `I井场`'s plot draws that valve first.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::sheet_records::{
-    parse_live_psm_header, sheet_record_starts, PSM_TYPE_CODE_DEPENDENCY_OBJECT,
+    decode_igcomplexstring_at, decode_iggroup_at, parse_live_psm_header, SheetChain,
+    PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_IGCOMPLEXSTRING2D, PSM_TYPE_CODE_IGGROUP,
     PSM_TYPE_CODE_JSHEET,
 };
 
@@ -291,42 +294,45 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayRank {
     /// Index, in the sheet's child list, of the record itself when the sheet
-    /// owns it directly, and of its owner otherwise.
+    /// owns it directly, and of the listed object it hangs under otherwise.
     pub place: u32,
-    /// `0` for a record the sheet owns directly; for a record a
-    /// `DependencyObject` owns, one more than its index among the records
-    /// that owner's payload names. A record the payload does not name comes
-    /// after those it names, in stream order.
+    /// `0` for a record the sheet owns directly. For a record another
+    /// record owns, where a walk of that listed object's records reaches
+    /// it, counted from one: each owner's records in the order the owner
+    /// names them — the ones it does not name behind those, in stream
+    /// order — and each followed by what it owns itself. A label's two
+    /// text boxes under their `DependencyObject` are `1` and `2`; under a
+    /// Group, a rectangle and its four lines are `1` to `5` and the group's
+    /// next member `6`.
     pub inner: u32,
 }
 
-/// The display rank of every live record of a sheet stream, by the offset
-/// its envelope starts at.
+/// One record the native reader reads, as the chain walk found it.
+struct Live<'a> {
+    /// Offset of its envelope.
+    at: usize,
+    type_code: u16,
+    oid: u32,
+    /// The oid of the record that owns it, or of the sheet.
+    parent: u32,
+    payload: &'a [u8],
+}
+
+/// The records of a sheet stream the native reader reads, in stream order,
+/// as far as the stream's chain walks ([`SheetChain::walk`]).
 ///
-/// A record whose parent is the sheet takes the place the table lists it at.
-/// A record whose parent is a `0x00FA DependencyObject` the table lists
-/// takes that object's place, and is ordered within it the way the object's
-/// payload names its dependents. A record the table does not reach — its
-/// owner is not listed — has no rank and is left out. So is a record the
-/// native reader skips: it is an earlier copy of a live one.
-///
-/// Empty when the stream is not a record chain
-/// ([`sheet_record_starts`]).
-#[must_use]
-pub fn sheet_display_ranks(sheet: &[u8], table: &SheetChildTable) -> BTreeMap<usize, DisplayRank> {
-    struct Live<'a> {
-        at: usize,
-        type_code: u16,
-        oid: u32,
-        parent: u32,
-        payload: &'a [u8],
-    }
+/// A chain that stops gives the records before the stop: each one's length
+/// came from the record before it, back to the header, so they are records
+/// whatever follows them. A record the native reader skips is an earlier
+/// copy of a live one and is left out, as is one too short to state an oid
+/// and an owner.
+fn live_records(sheet: &[u8]) -> Vec<Live<'_>> {
     let word = |payload: &[u8], at: usize| -> Option<u32> {
         let bytes = payload.get(at..at.checked_add(4)?)?;
         Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     };
-    let mut records: Vec<Live<'_>> = Vec::new();
-    for at in sheet_record_starts(sheet) {
+    let mut records = Vec::new();
+    for at in SheetChain::walk(sheet).starts {
         let Some(header) = parse_live_psm_header(sheet, at) else {
             continue;
         };
@@ -350,61 +356,170 @@ pub fn sheet_display_ranks(sheet: &[u8], table: &SheetChildTable) -> BTreeMap<us
             payload,
         });
     }
+    records
+}
+
+/// The display rank of every live record of a sheet stream, by the offset
+/// its envelope starts at.
+///
+/// A record whose parent is the sheet takes the place the table lists it at.
+/// A record another record owns is drawn with its owner: it takes the place
+/// of the listed object it hangs under, and among everything that object
+/// owns it stands where a walk of the owners reaches it — each owner's
+/// records behind the owner, in the order the owner names them, each
+/// followed by its own. Three kinds of owner name what they own:
+///
+/// * a `0x00FA DependencyObject`, among the other words of its payload;
+/// * a `0x0021 ComplexString` and a `0x007B` Group, in the member list that
+///   is their payload — the same 14-byte entries the sheet's own list is
+///   made of.
+///
+/// A record its owner does not name, and every record of an owner of
+/// another kind, comes after the ones the owner names, in stream order. The
+/// A2 reference plot is the witness for a `ComplexString`:
+/// `CPECCHB-SQ-A2.igr` lists its sheet outline first and its inner frame —
+/// a string of four lines — second, and the plot strokes the outline, then
+/// the four lines as one path, then the title block.
+///
+/// The stream is read as far as its chain walks ([`SheetChain::walk`]). A
+/// record before a stop is ranked as on a whole stream; one whose owner
+/// lies past the stop keeps the owner's place when the list names the
+/// owner, in stream order among the owner's records that were read.
+///
+/// A record the table does not reach — nothing it hangs under is listed —
+/// has no rank and is left out. So is a record the native reader skips: it
+/// is an earlier copy of a live one.
+#[must_use]
+pub fn sheet_display_ranks(sheet: &[u8], table: &SheetChildTable) -> BTreeMap<usize, DisplayRank> {
+    let records = live_records(sheet);
     let place: HashMap<u32, u32> = table
         .children
         .iter()
         .enumerate()
         .filter_map(|(index, child)| Some((child.oid, u32::try_from(index).ok()?)))
         .collect();
-    // The records each owner owns, in stream order.
-    let mut owned: HashMap<u32, Vec<u32>> = HashMap::new();
-    for record in &records {
-        owned.entry(record.parent).or_default().push(record.oid);
+    // The records each owner owns, by index, in stream order. The sheet's
+    // own are placed by its list and are nobody's dependents, whatever oid
+    // a record carries.
+    let mut owned: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (index, record) in records.iter().enumerate() {
+        if record.parent != table.sheet_oid {
+            owned.entry(record.parent).or_default().push(index);
+        }
     }
-    // For each record a dependency object owns: its index among the records
-    // the owner's payload names, then the ones it does not name.
-    let mut inner: HashMap<u32, u32> = HashMap::new();
-    for owner in records
-        .iter()
-        .filter(|record| record.type_code == PSM_TYPE_CODE_DEPENDENCY_OBJECT)
-    {
-        let Some(dependents) = owned.get(&owner.oid) else {
+    // The first record that carries each oid: the one an owner's oid names.
+    let mut by_oid: HashMap<u32, usize> = HashMap::new();
+    for (index, record) in records.iter().enumerate() {
+        by_oid.entry(record.oid).or_insert(index);
+    }
+    // What `owner` owns, in the order it draws them.
+    let drawn_by = |owner: u32| -> Vec<usize> {
+        let Some(dependents) = owned.get(&owner) else {
+            return Vec::new();
+        };
+        let named = by_oid
+            .get(&owner)
+            .map(|index| named_dependents(sheet, &records[*index], dependents, &records))
+            .unwrap_or_default();
+        in_named_order(dependents, &named, &records)
+    };
+    let mut ranks = BTreeMap::new();
+    let mut ranked = vec![false; records.len()];
+    // The sheet's own records, each where the list has it.
+    for (index, record) in records.iter().enumerate() {
+        if record.parent == table.sheet_oid {
+            if let Some(place) = place.get(&record.oid) {
+                ranked[index] = true;
+                ranks.insert(
+                    record.at,
+                    DisplayRank {
+                        place: *place,
+                        inner: 0,
+                    },
+                );
+            }
+        }
+    }
+    // Then what hangs under each object the list names, depth first: each
+    // record, and behind it what it owns. The walk starts from the list and
+    // not from the records read, so that a child whose own record lies past
+    // a stop still places the records it owns that were read.
+    for child in &table.children {
+        let Some(place) = place.get(&child.oid).copied() else {
             continue;
         };
         let mut next = 1u32;
-        for oid in named_in_order(owner.payload, dependents) {
-            inner.insert(oid, next);
-            next += 1;
-        }
-        for oid in dependents {
-            inner.entry(*oid).or_insert_with(|| {
-                let rank = next;
-                next += 1;
-                rank
-            });
-        }
-    }
-    let mut ranks = BTreeMap::new();
-    for record in &records {
-        let rank = if record.parent == table.sheet_oid {
-            place.get(&record.oid).map(|place| DisplayRank {
-                place: *place,
-                inner: 0,
-            })
-        } else {
-            match (place.get(&record.parent), inner.get(&record.oid)) {
-                (Some(place), Some(inner)) => Some(DisplayRank {
-                    place: *place,
-                    inner: *inner,
-                }),
-                _ => None,
+        let mut pending: Vec<usize> = drawn_by(child.oid).into_iter().rev().collect();
+        while let Some(index) = pending.pop() {
+            if std::mem::replace(&mut ranked[index], true) {
+                continue;
             }
-        };
-        if let Some(rank) = rank {
-            ranks.insert(record.at, rank);
+            ranks.insert(records[index].at, DisplayRank { place, inner: next });
+            next = next.saturating_add(1);
+            pending.extend(drawn_by(records[index].oid).into_iter().rev());
         }
     }
     ranks
+}
+
+/// The oids `owner` names as the records it owns, in the order it names
+/// them; empty for an owner that names none.
+fn named_dependents(
+    sheet: &[u8],
+    owner: &Live<'_>,
+    dependents: &[usize],
+    records: &[Live<'_>],
+) -> Vec<u32> {
+    match owner.type_code {
+        PSM_TYPE_CODE_DEPENDENCY_OBJECT => {
+            let oids: Vec<u32> = dependents.iter().map(|index| records[*index].oid).collect();
+            named_in_order(owner.payload, &oids)
+        }
+        PSM_TYPE_CODE_IGCOMPLEXSTRING2D => decode_igcomplexstring_at(sheet, owner.at)
+            .map(|string| string.members.iter().map(|member| member.oid).collect())
+            .unwrap_or_default(),
+        PSM_TYPE_CODE_IGGROUP => decode_iggroup_at(sheet, owner.at)
+            .map(|group| group.members.iter().map(|member| member.oid).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// `dependents` — indices into `records`, in stream order — with the ones
+/// `named` names first, in the order it names them, and the rest behind
+/// them as the stream holds them.
+fn in_named_order(dependents: &[usize], named: &[u32], records: &[Live<'_>]) -> Vec<usize> {
+    if named.is_empty() {
+        return dependents.to_vec();
+    }
+    // Where each oid stands among the dependents; an oid two of them carry
+    // is taken in stream order.
+    let mut slots: HashMap<u32, std::collections::VecDeque<usize>> = HashMap::new();
+    for (slot, index) in dependents.iter().enumerate() {
+        slots
+            .entry(records[*index].oid)
+            .or_default()
+            .push_back(slot);
+    }
+    let mut taken = vec![false; dependents.len()];
+    let mut order = Vec::with_capacity(dependents.len());
+    for oid in named {
+        if let Some(slot) = slots
+            .get_mut(oid)
+            .and_then(std::collections::VecDeque::pop_front)
+        {
+            taken[slot] = true;
+            order.push(dependents[slot]);
+        }
+    }
+    order.extend(
+        dependents
+            .iter()
+            .zip(&taken)
+            .filter(|(_, taken)| !**taken)
+            .map(|(index, _)| *index),
+    );
+    order
 }
 
 /// The display order of one sheet stream: what [`sheet_display_order`] reads
@@ -425,44 +540,48 @@ pub struct SheetDisplayOrder {
 /// Read a sheet's display order: its `JSheet` record out of the storage's
 /// `PSMcluster0`, held to the sheet's own stream, and every record's rank.
 ///
-/// The table has to be the sheet's: it is taken only when it lists at least
-/// one child and every child it lists is a live record of the stream whose
-/// parent is the sheet. A cluster that holds no such record gives `None`,
-/// and the caller keeps whatever order it had.
+/// The table has to be the sheet's. On every stream of the corpora it
+/// names exactly the live records of the stream whose parent is the sheet,
+/// and a table every one of whose children is such a record is taken
+/// first, wherever in the cluster it stands. A stream read short of its
+/// list — its chain stops ([`SheetChain::walk`]), or it was cut off at a
+/// record — holds fewer records than the list names; the list is then the
+/// sheet's when it names every record of the sheet's the walk did read,
+/// and it ranks those ([`sheet_display_ranks`]).
+///
+/// A stream the walk reads no record of the sheet's from, and a cluster
+/// that holds no such table, give `None`, and the caller keeps whatever
+/// order it had.
 #[must_use]
 pub fn sheet_display_order(
     cluster: &[u8],
     sheet: &[u8],
     sheet_oid: u32,
 ) -> Option<SheetDisplayOrder> {
-    let mut owned_by_sheet: Vec<u32> = Vec::new();
-    for at in sheet_record_starts(sheet) {
-        let Some(header) = parse_live_psm_header(sheet, at) else {
-            continue;
-        };
-        let Some(sub_header) = sheet.get(header.body_start..header.body_start.checked_add(8)?)
-        else {
-            continue;
-        };
-        let word = |at: usize| {
-            u32::from_le_bytes([
-                sub_header[at],
-                sub_header[at + 1],
-                sub_header[at + 2],
-                sub_header[at + 3],
-            ])
-        };
-        if word(4) == sheet_oid {
-            owned_by_sheet.push(word(0));
-        }
+    let mut owned_by_sheet: Vec<u32> = live_records(sheet)
+        .iter()
+        .filter(|record| record.parent == sheet_oid)
+        .map(|record| record.oid)
+        .collect();
+    if owned_by_sheet.is_empty() {
+        return None;
     }
     owned_by_sheet.sort_unstable();
-    let table = find_sheet_child_table(cluster, sheet_oid, |table| {
+    let whole = find_sheet_child_table(cluster, sheet_oid, |table| {
         !table.children.is_empty()
             && table
                 .children
                 .iter()
                 .all(|child| owned_by_sheet.binary_search(&child.oid).is_ok())
+    });
+    let table = whole.or_else(|| {
+        find_sheet_child_table(cluster, sheet_oid, |table| {
+            let mut listed: Vec<u32> = table.children.iter().map(|child| child.oid).collect();
+            listed.sort_unstable();
+            owned_by_sheet
+                .iter()
+                .all(|oid| listed.binary_search(oid).is_ok())
+        })
     })?;
     Some(SheetDisplayOrder {
         sheet_oid,
@@ -480,11 +599,13 @@ pub fn sheet_display_order(
 /// wherever a whole `u32` equals one the object owns, which a `u16` field
 /// cannot counterfeit unless its neighbour is zero.
 fn named_in_order(payload: &[u8], dependents: &[u32]) -> Vec<u32> {
+    let owned: HashSet<u32> = dependents.iter().copied().collect();
+    let mut named: HashSet<u32> = HashSet::with_capacity(dependents.len());
     let mut order: Vec<u32> = Vec::with_capacity(dependents.len());
     let mut at = 12usize;
     while let Some(bytes) = payload.get(at..at + 4) {
         let value = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        if dependents.contains(&value) && !order.contains(&value) {
+        if owned.contains(&value) && named.insert(value) {
             order.push(value);
             at += 4;
         } else {
@@ -884,6 +1005,8 @@ mod tests {
 
         // A child that is not a record of the stream, one the sheet does not
         // own directly, and no child at all: none is this sheet's list.
+        // (Each also leaves out a record the stream holds, so none is the
+        // list of a stream read short of it either.)
         for refused in [
             vec![(865, [0, 0, 1, 1], 6), (9999, [0, 0, 1, 1], 0)],
             vec![(865, [0, 0, 1, 1], 6), (726, [0, 0, 1, 1], 0)],
@@ -928,17 +1051,285 @@ mod tests {
         assert_eq!(ranks, vec![2, 3, 1, 0]);
     }
 
-    #[test]
-    fn a_stream_that_is_no_chain_ranks_nothing() {
-        let table = SheetChildTable {
-            sheet_oid: 6,
-            range_scale: 2.0,
-            children: Vec::new(),
+    /// A `ComplexString` payload: the curve sub-header, three bytes, the
+    /// member count, the range scale, then one 14-byte entry per member —
+    /// the layout of oid 32 of `CPECCHB-SQ-A2.igr`, the template's inner
+    /// frame.
+    fn complex_string(oid: u32, sheet: u32, members: &[u32]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&sheet.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&[0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x06, 0x00]);
+        payload.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&1f64.to_le_bytes());
+        for member in members {
+            payload.extend_from_slice(&member.to_le_bytes());
+            payload.extend_from_slice(&[0x6f, 0x04, 0xd0, 0x00, 0xd3, 0x4a, 0xff, 0x00, 0, 0]);
+        }
+        payload.extend_from_slice(&[0x00, 0x02, 0x00, 0x00]);
+        payload
+    }
+
+    /// A Group payload: oid, parent, layer, a word, the member count, the
+    /// range scale, then one 14-byte entry per member.
+    fn group(oid: u32, sheet: u32, members: &[u32]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&sheet.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&1f64.to_le_bytes());
+        for member in members {
+            payload.extend_from_slice(&member.to_le_bytes());
+            payload.extend_from_slice(&[0, 0, 0, 0, 0x18, 0x4c, 0xd3, 0x35, 0x06, 0x00]);
+        }
+        payload.extend_from_slice(&[0x00, 0x02, 0x00, 0x00]);
+        payload
+    }
+
+    fn listing(sheet: u32, oids: &[u32]) -> SheetChildTable {
+        SheetChildTable {
+            sheet_oid: sheet,
+            range_scale: 1.0,
+            children: oids
+                .iter()
+                .map(|oid| SheetChild {
+                    oid: *oid,
+                    range: [0, 0, 1, 1],
+                    flags: 0,
+                })
+                .collect(),
             paper: None,
+        }
+    }
+
+    /// `CPECCHB-SQ-A2.igr` in small. Its sheet lists the outline, then the
+    /// inner frame — a `ComplexString` of four lines — then the title
+    /// block, and the A2 reference plot strokes them in that order: the
+    /// outline, the frame's four lines as one path, the first labels.
+    #[test]
+    fn a_curve_ranks_where_its_complex_string_stands_in_the_order_it_is_listed() {
+        let sheet = 6;
+        let stream = sheet_stream(&[
+            record(0x0084, &graphic(31, sheet)), // the outline
+            record(0x0021, &complex_string(32, sheet, &[36, 33, 34, 35, 37])),
+            record(0x0018, &graphic(33, 32)),
+            record(0x0018, &graphic(34, 32)),
+            record(0x0018, &graphic(35, 32)),
+            record(0x0018, &graphic(36, 32)),
+            record(0x0019, &graphic(37, 32)), // a constraint between two of them
+            record(0x004d, &graphic(41, sheet)),
+        ]);
+        let ranks: Vec<(u32, u32)> = sheet_display_ranks(&stream, &listing(sheet, &[31, 32, 41]))
+            .values()
+            .map(|rank| (rank.place, rank.inner))
+            .collect();
+        // In stream order. The string lists its last line first, so that
+        // line is drawn first of the four; the constraint draws nothing and
+        // is ranked like any member.
+        assert_eq!(
+            ranks,
+            vec![
+                (0, 0), // the outline
+                (1, 0), // the string
+                (1, 2),
+                (1, 3),
+                (1, 4),
+                (1, 1), // oid 36, listed first
+                (1, 5),
+                (2, 0), // the label
+            ]
+        );
+    }
+
+    /// A border of the `-W` templates: a Group of two rectangles, each of
+    /// which owns its four lines. What an owner owns is drawn behind it and
+    /// ahead of the next thing its own owner lists.
+    #[test]
+    fn what_a_group_member_owns_is_drawn_with_the_member() {
+        let sheet = 6;
+        let stream = sheet_stream(&[
+            record(0x0018, &graphic(10, sheet)),
+            record(0x007b, &group(20, sheet, &[22, 21])),
+            record(0x0020, &graphic(21, 20)),
+            record(0x0020, &graphic(22, 20)),
+            record(0x0018, &graphic(23, 21)),
+            record(0x0018, &graphic(24, 21)),
+            record(0x0018, &graphic(25, 22)),
+            record(0x0018, &graphic(26, 22)),
+            record(0x0018, &graphic(30, sheet)),
+        ]);
+        let ranks: Vec<(u32, u32)> = sheet_display_ranks(&stream, &listing(sheet, &[20, 10, 30]))
+            .values()
+            .map(|rank| (rank.place, rank.inner))
+            .collect();
+        assert_eq!(
+            ranks,
+            vec![
+                (1, 0), // oid 10
+                (0, 0), // the group
+                (0, 4), // rectangle 21, listed second
+                (0, 1), // rectangle 22, listed first
+                (0, 5), // 21's lines, behind it
+                (0, 6),
+                (0, 2), // 22's lines, behind it
+                (0, 3),
+                (2, 0), // oid 30
+            ]
+        );
+    }
+
+    /// A record that names itself, or the sheet, as its owner is drawn
+    /// once, and a ring of owners with no way in from the sheet not at all.
+    #[test]
+    fn a_ring_of_owners_is_walked_once() {
+        let sheet = 6;
+        let stream = sheet_stream(&[
+            record(0x0018, &graphic(sheet, sheet)), // carries the sheet's own oid
+            record(0x0018, &graphic(11, sheet)),
+            record(0x00fa, &dependency(12, 12, 0, &[12])), // owns itself
+            record(0x00fa, &dependency(13, 14, 0, &[14])),
+            record(0x00fa, &dependency(14, 13, 0, &[13])),
+        ]);
+        let table = listing(sheet, &[sheet, 11, 12, 13]);
+        let ranks: Vec<(u32, u32)> = sheet_display_ranks(&stream, &table)
+            .values()
+            .map(|rank| (rank.place, rank.inner))
+            .collect();
+        // The first two are the sheet's and stand where the list has them;
+        // oid 12 is listed and never read as the sheet's, so what it owns —
+        // itself — is drawn at its place; 13 is listed likewise and owns 14,
+        // which owns 13.
+        assert_eq!(ranks, vec![(0, 0), (1, 0), (2, 1), (3, 2), (3, 1)]);
+    }
+
+    /// A stream whose chain stops is ranked as far as it was read: the
+    /// records before the stop stand where the list has them, and a record
+    /// whose owner lies past the stop is drawn at the owner's place — the
+    /// list still names it — as the stream holds it.
+    #[test]
+    fn a_chain_that_stops_ranks_the_records_before_the_stop() {
+        use super::sheet_display_order;
+        let sheet = 6;
+        let records = [
+            record(0x003d, &graphic(22, sheet)),
+            record(0x004d, &graphic(351, 2864)), // owned by a record past the stop
+            record(0x00ce, &graphic(726, 1276)), // owned by one before it
+            record(0x00fa, &dependency(1276, sheet, 865, &[726])),
+            record(0x00ce, &graphic(865, sheet)), // the walk stops on this one
+            record(0x004d, &graphic(2694, 2864)),
+            record(0x00fa, &dependency(2864, sheet, 921, &[2694, 351])),
+        ];
+        let whole = sheet_stream(&records);
+        let mut broken = whole.clone();
+        let stop = 8 + records[..4].iter().map(Vec::len).sum::<usize>();
+        broken[stop + 2..stop + 6].copy_from_slice(&0u32.to_le_bytes());
+        let children = [
+            (22, [0, 0, 1, 1], 0),
+            (865, [0, 0, 1, 1], 6),
+            (1276, [0, 0, 1, 1], 0x21),
+            (2864, [0, 0, 1, 1], 0),
+        ];
+        let mut cluster = vec![0u8; 11];
+        cluster.extend_from_slice(&record(0x0114, &sheet_payload(sheet, 2.0, &children)));
+
+        let intact = sheet_display_order(&cluster, &whole, sheet).expect("the order");
+        let ranks = |order: &super::SheetDisplayOrder| -> Vec<(usize, u32, u32)> {
+            order
+                .ranks
+                .iter()
+                .map(|(at, rank)| (*at, rank.place, rank.inner))
+                .collect()
         };
+        let at = |index: usize| 8 + records[..index].iter().map(Vec::len).sum::<usize>();
+        assert_eq!(
+            ranks(&intact),
+            vec![
+                (at(0), 0, 0),
+                (at(1), 3, 2), // "351", named second by its owner
+                (at(2), 2, 1),
+                (at(3), 2, 0),
+                (at(4), 1, 0),
+                (at(5), 3, 1),
+                (at(6), 3, 0),
+            ]
+        );
+        // The same list, held to the four records the walk read. The label
+        // box keeps its owner's place and is the only one of the owner's
+        // that was read.
+        let short =
+            sheet_display_order(&cluster, &broken, sheet).expect("the order, as far as read");
+        assert_eq!(
+            (short.children, short.paper),
+            (intact.children, intact.paper)
+        );
+        assert_eq!(
+            ranks(&short),
+            vec![(at(0), 0, 0), (at(1), 3, 1), (at(2), 2, 1), (at(3), 2, 0)]
+        );
+        // The stream cut off where the walk stopped reads the same.
+        let cut = &whole[..stop];
+        let cut_order =
+            sheet_display_order(&cluster, cut, sheet).expect("the order of a cut stream");
+        assert_eq!(ranks(&cut_order), ranks(&short));
+        // A stream the walk reads nothing of has no order.
+        let mut dead = whole.clone();
+        dead[10..14].copy_from_slice(&0u32.to_le_bytes());
+        assert!(sheet_display_order(&cluster, &dead, sheet).is_none());
+    }
+
+    /// A list that names records the stream does not hold is the sheet's
+    /// only when it names every record the stream does hold; and a list
+    /// that names exactly the stream's records is taken ahead of it.
+    #[test]
+    fn a_list_longer_than_the_stream_is_the_sheets_when_it_names_all_the_stream_holds() {
+        use super::sheet_display_order;
+        let sheet = 6;
+        let stream = sheet_stream(&[
+            record(0x003d, &graphic(22, sheet)),
+            record(0x00ce, &graphic(865, sheet)),
+        ]);
+        let cluster_of = |tables: &[&[u32]]| {
+            let mut cluster = vec![0u8; 5];
+            for oids in tables {
+                let children: Vec<(u32, [i16; 4], u16)> =
+                    oids.iter().map(|oid| (*oid, [0, 0, 1, 1], 0)).collect();
+                cluster.extend_from_slice(&record(0x0114, &sheet_payload(sheet, 2.0, &children)));
+                cluster.extend_from_slice(&[0u8; 3]);
+            }
+            cluster
+        };
+        let places = |cluster: &[u8]| -> Option<Vec<u32>> {
+            sheet_display_order(cluster, &stream, sheet)
+                .map(|order| order.ranks.values().map(|rank| rank.place).collect())
+        };
+        // Longer than the stream, and naming both of its records.
+        assert_eq!(
+            places(&cluster_of(&[&[900, 865, 22, 901]])),
+            Some(vec![2, 1])
+        );
+        // Longer than the stream and missing one of its records: not this
+        // sheet's list.
+        assert_eq!(places(&cluster_of(&[&[900, 865, 901]])), None);
+        // The list of exactly the stream's records wins, wherever it stands.
+        assert_eq!(
+            places(&cluster_of(&[&[900, 865, 22, 901], &[865, 22]])),
+            Some(vec![1, 0])
+        );
+        assert_eq!(
+            places(&cluster_of(&[&[865, 22], &[900, 22, 865, 901]])),
+            Some(vec![1, 0])
+        );
+    }
+
+    #[test]
+    fn a_stream_the_walk_reads_nothing_of_ranks_nothing() {
+        let table = listing(6, &[22]);
         assert!(sheet_display_ranks(&[], &table).is_empty());
         assert!(sheet_display_ranks(&[0u8; 7], &table).is_empty());
-        // A record whose length runs past the stream.
+        // A first record whose length runs past the stream.
         let mut stream = vec![0u8; 8];
         stream.extend_from_slice(&[0xce, 0x00, 0xff, 0xff, 0x00, 0x00, 0x01]);
         assert!(sheet_display_ranks(&stream, &table).is_empty());

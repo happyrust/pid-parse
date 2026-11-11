@@ -888,6 +888,22 @@ fn export_a_broken_chain(case: &str, how: Break) {
             "{how:?}: primitive {index} is not the sound prefix's"
         );
     }
+    // And it is painted in the sheet's own order as far as the sheet was
+    // read. The list of what the sheet draws is in the document storage,
+    // which the break does not touch, so it still places every record
+    // before the stop; a page that fell back to strokes first and labels
+    // after them would paint the same records another way than the drawing
+    // as committed does.
+    let painted = model.paint_sequence();
+    assert!(
+        painted.is_some(),
+        "{how:?}: the records before the stop are not painted in the sheet's order"
+    );
+    assert_eq!(
+        painted,
+        sound.paint_sequence(),
+        "{how:?}: the order the page is painted in, against the page of the sound prefix"
+    );
 
     // Every record the break leaves alone puts on the page what it puts
     // there on the intact drawing: the same primitives, from the same bytes,

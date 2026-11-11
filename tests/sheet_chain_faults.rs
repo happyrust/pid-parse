@@ -38,6 +38,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use pid_parse::parsers::sheet_display_order::DisplayRank;
 use pid_parse::parsers::sheet_records::{
     decode_smartframes, parse_psm_header, sheet_record_starts, SheetChain, SHEET_STREAM_MAGIC,
 };
@@ -460,6 +461,158 @@ fn the_records_before_a_break_decode_as_on_the_intact_stream() {
             (expected.records_read, expected.stop.unwrap_or(broken.len())),
             "{damage:?}: records read and where the walk ends"
         );
+    }
+}
+
+/// The records a damaged stream is read as stand where the sheet's own list
+/// has them.
+///
+/// The list is the `JSheet` record of the document storage's `PSMcluster0`,
+/// which no damage here touches, so it is still the sheet's list when the
+/// stream holds fewer records than it names. Every record the damage leaves
+/// alone keeps its place in it, and the records drawn at one place keep
+/// their order among themselves, so a page of the damaged copy paints what
+/// it has in the order the whole drawing paints it. A record whose owner
+/// lies past the damage still hangs at the owner's place; only its order
+/// among the owner's other records is the stream's rather than the owner's.
+#[test]
+fn the_records_before_a_break_keep_their_place_in_the_display_order() {
+    let intact_doc = PidParser::new()
+        .parse_file(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let intact_order = intact_doc
+        .sheet_display_order
+        .get(SHEET)
+        .unwrap_or_else(|| panic!("{FIXTURE}'s {SHEET} states the order it draws in"));
+    assert!(
+        intact_order.ranks.len() > 100,
+        "the fixture ranks {} records",
+        intact_order.ranks.len()
+    );
+
+    for damage in ALL {
+        let (intact, broken, doc, expected) = damaged(damage);
+        let order = doc
+            .sheet_display_order
+            .get(SHEET)
+            .unwrap_or_else(|| panic!("{damage:?}: the sheet's list is still the sheet's"));
+        assert_eq!(
+            (order.sheet_oid, order.children, order.paper),
+            (
+                intact_order.sheet_oid,
+                intact_order.children,
+                intact_order.paper
+            ),
+            "{damage:?}: the same list, and the paper it states"
+        );
+        // Nothing is ranked that the walk did not read.
+        let read_to = expected.stop.unwrap_or(broken.len());
+        for at in order.ranks.keys() {
+            assert!(
+                *at < read_to,
+                "{damage:?}: +{at} is ranked, past where the walk ends at +{read_to}"
+            );
+        }
+
+        // Each record of the intact stream: where it ends, and its owner.
+        let mut ends = std::collections::HashMap::new();
+        let mut owners = std::collections::HashMap::new();
+        let mut by_oid = std::collections::HashMap::new();
+        for at in sheet_record_starts(&intact) {
+            let header = parse_psm_header(&intact, at).expect("a record of the chain");
+            let end = header.body_start + header.bytes_to_follow as usize;
+            ends.insert(at, end);
+            if header.bytes_to_follow >= 8 && !header.native_reader_skips() {
+                owners.insert(at, u32_at(&intact, header.body_start + 4));
+                by_oid
+                    .entry(u32_at(&intact, header.body_start))
+                    .or_insert(at);
+            }
+        }
+        let untouched = |at: usize| ends[&at] <= expected.first_touched;
+        // Whether the record that owns the one at `at` was read whole: the
+        // sheet owns it, or its owner is a record the damage leaves alone.
+        let owner_read = |at: usize| {
+            owners[&at] == intact_order.sheet_oid
+                || by_oid
+                    .get(&owners[&at])
+                    .is_some_and(|owner| untouched(*owner))
+        };
+
+        type Ranked = (usize, DisplayRank);
+        let before: Vec<Ranked> = intact_order
+            .ranks
+            .iter()
+            .map(|(at, rank)| (*at, *rank))
+            .filter(|(at, _)| untouched(*at))
+            .collect();
+        let after: Vec<Ranked> = order
+            .ranks
+            .iter()
+            .map(|(at, rank)| (*at, *rank))
+            .filter(|(at, _)| *at < expected.first_touched)
+            .collect();
+        assert!(!before.is_empty(), "{damage:?}: no ranked record to hold");
+        assert_eq!(
+            after.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+            before.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+            "{damage:?}: the records before +{} that have a rank",
+            expected.first_touched
+        );
+        let mut orphans = 0usize;
+        for ((at, rank), (_, whole)) in after.iter().zip(&before) {
+            assert_eq!(
+                rank.place, whole.place,
+                "{damage:?}: the record at +{at} stands at the place the list gives it"
+            );
+            if !owner_read(*at) {
+                orphans += 1;
+                assert!(
+                    rank.inner >= 1,
+                    "{damage:?}: the record at +{at} hangs under an owner that was not read"
+                );
+            }
+        }
+        // The order the page paints them in, for every record whose owner
+        // was read: the same sequence by either ranking.
+        let drawn = |ranks: &[Ranked]| {
+            let mut sequence: Vec<(DisplayRank, usize)> = ranks
+                .iter()
+                .filter(|(at, _)| owner_read(*at))
+                .map(|(at, rank)| (*rank, *at))
+                .collect();
+            sequence.sort_unstable();
+            sequence.into_iter().map(|(_, at)| at).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            drawn(&after),
+            drawn(&before),
+            "{damage:?}: the records before the break, in the order they are drawn"
+        );
+        eprintln!(
+            "{damage:?}: {} of the {} records the whole stream ranks are before the damage, \
+             {orphans} of them under an owner past it; {} ranked in all",
+            before.len(),
+            intact_order.ranks.len(),
+            order.ranks.len()
+        );
+        match damage {
+            // The chain is whole and so is the order.
+            Damage::HeaderCountPlusOne | Damage::WrongMagic => {
+                assert_eq!(order.ranks, intact_order.ranks, "{damage:?}");
+            }
+            // Half the stream is gone, and with it the owners of records
+            // that were read.
+            Damage::MiddleLengthZero => {
+                assert!(
+                    orphans > 0,
+                    "{damage:?}: no record is left without its owner"
+                );
+            }
+            Damage::LastLengthPlusOne
+            | Damage::LastLengthMinusFour
+            | Damage::CutAtTheLastRecord => {}
+        }
     }
 }
 

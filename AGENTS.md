@@ -70,8 +70,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
-| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. The third test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 655 files, 1 338 sheet streams, 58 symbol caches, 32 514 records), both `pid-test-data` and the share where a machine has them | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
-| `pid-plot/tests/cli_pid_plot.rs`：断链的 4 条（这个文件连同下面那一行的 10 条共 14 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
+| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. Each such record also keeps the place the sheet's own list gives it in the display order (`sheet_display_order`), the records drawn at one place keep their order, and nothing past the stop is ranked. The fourth test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 655 files, 1 338 sheet streams, 58 symbol caches, 32 514 records), both `pid-test-data` and the share where a machine has them | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
+| `pid-plot/tests/cli_pid_plot.rs`：断链的 4 条（这个文件连同下面那一行的 10 条共 14 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；页面按图纸自己的显示次序画读到的那些记录（`paint_sequence` 有值，且与截到停点的那一份相同）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
 | `tests/boundary_loops.rs` | A boundary of two loops fills the area between them. `XA-A1.igr`'s oids 5074 and 5076 — outer loops of 104 and 162 lines, counters of 77 and 54 — decode with their loops, anchor and member references, and each reaches the sheet as one fill ring whose area is the outer loop's less the counter's, with the record's anchor inside it and a point of the counter outside | `test-file/Ref/Template Files/XA-A1.igr` (committed; runs in CI) |
 | `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default | `test-file/export-test/publish-data/A01/A01.pid`, `test-file/Ref/Template Files/XA-A1.igr` (committed; soft-skips when absent) |
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
@@ -454,9 +454,16 @@ record of the stream (`PidDocument::sheet_display_order`, keyed by
 `/Sheet<N>`; not serialized, so no JSON or schema output changes):
 
 - a record the sheet owns takes its place in the list;
-- a record a `0x00FA DependencyObject` owns — a label's text boxes, a
-  connector's line string, an arrow head — takes its owner's place,
-  ordered among its siblings the way the owner's payload names them;
+- a record another record owns is drawn with its owner: it takes the
+  place of the listed object it hangs under, and each owner's records
+  come behind the owner in the order the owner names them, each followed
+  by what it owns itself. A `0x00FA DependencyObject` names its
+  dependents among the words of its payload (a label's text boxes, a
+  connector's line string, an arrow head); a `0x0021 ComplexString` and
+  a `0x007B` Group name their members in the list that is their payload.
+  `CPECCHB-SQ-A2.igr` lists its sheet outline first and its inner frame,
+  a string of four lines, second, and the A2 reference plot strokes the
+  outline, then those four lines as one path, then the title block;
 - the border template is drawn where the list has the frame (`0x003D`):
   first in 58 of the 71 files on hand, second on `I井场` (behind one
   valve), 91 to 2 708 places down in seven.
@@ -472,10 +479,20 @@ paints by it: `LayoutLedger::paint_order` beside the model,
 - Never take oid order or stream order for drawing order: over the
   10 928 records the nine plots paint, 10 429 first appear in the
   list's order, 1 989 in oid order and 1 990 in stream order.
-- The list is taken only when it is the sheet's: non-empty, and every
-  child a live record of the stream whose parent is the sheet. A sheet
-  with no such record keeps the old order (strokes, then labels, each in
-  model order).
+- The list is taken only when it is the sheet's. A list every child of
+  which is a live record of the stream whose parent is the sheet is
+  taken first; on every stream of the corpora that is the whole list, no
+  more and no fewer. A stream read short of its list — its chain stops
+  (`SheetChain::walk`), or it was cut off at a record — holds fewer
+  records than the list names: the list is then the sheet's when it
+  names every record of the sheet's the walk did read, and it ranks
+  those. A record before the stop stands where it stands on the whole
+  stream; one whose owner lies past the stop keeps the owner's place,
+  in stream order among the owner's records that were read
+  (`tests/sheet_chain_faults.rs`: 179 of `DWG-0201GP06-01`'s 354 ranked
+  records survive a break in the middle, 14 of them under an owner past
+  it). A sheet with no such list keeps the old order (strokes, then
+  labels, each in model order).
 - The `DependencyObject` grammar is not decoded. Its dependents' order
   is read by scanning the payload for their oids at two-byte steps; 176
   of 1 201 groups on the reference plots come out in another order.
