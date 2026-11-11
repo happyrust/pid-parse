@@ -40,7 +40,7 @@ use super::catalog::{catalog_row, PidClassRule, PublishItemRow};
 use crate::parsers::attribute_rows::{decode_attribute_row, AttributeRow};
 use crate::parsers::jproperties::parse_jproperties;
 use crate::parsers::sheet_records::{
-    decode_igsymbol_at, parse_live_psm_header, sheet_record_starts,
+    decode_igsymbol_at, parse_live_psm_header, sheet_record_starts, SheetChain,
 };
 use crate::streams::jsite::extract_unc_or_path;
 
@@ -426,7 +426,7 @@ struct Records {
     library_paths: HashMap<u32, String>,
     /// The chain streams read whose own framing does not hold. One whose
     /// walk stops short gave [`Self::add_chain`] nothing at all.
-    chain_faults: Vec<crate::model::StreamChainFault>,
+    chain_faults: Vec<PublishChainFault>,
 }
 
 impl Records {
@@ -453,10 +453,23 @@ impl Records {
                 records.add_chain(&data);
                 // `add_chain` takes a stream's records all or nothing, so
                 // one whose chain stops short has just given it none. That
-                // is kept, to be said ([`chain_faults_from_reader`]).
+                // is kept, to be said ([`PidPublishRead::chain_faults`]).
                 let path = stream_path.to_string_lossy().replace('\\', "/");
-                if let Some(fault) = crate::model::StreamChainFault::of_stream(&path, &data) {
-                    records.chain_faults.push(fault);
+                let chain = SheetChain::walk(&data);
+                if let Some(fault) = crate::model::StreamChainFault::of(&path, &chain) {
+                    let publishable_records_read = chain
+                        .starts
+                        .iter()
+                        .filter_map(|&at| parse_live_psm_header(&data, at))
+                        .filter(|header| {
+                            [FREE_FORM_ATTR_SET, TEXT_BOX, DEPENDENCY, SYMBOL]
+                                .contains(&header.type_code)
+                        })
+                        .count();
+                    records.chain_faults.push(PublishChainFault {
+                        fault,
+                        publishable_records_read,
+                    });
                 }
             }
         }
@@ -753,15 +766,18 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
 /// `drawing_name` is written on `PIDDrawing`. A backup package replaces
 /// it with `T_DRAWING.NAME` when that row exists. `cfb` accepts a
 /// [`std::io::Cursor`] of the bytes taken out of a zip entry.
+///
+/// This is [`read_publish_from_reader`] less the chain faults it met: a
+/// caller that delivers the XML reads through that one and says them.
 pub fn load_publish_from_reader<R: Read + Seek>(
     reader: R,
     drawing_name: &str,
 ) -> Result<PidPublishDrawing, PidLoadError> {
-    load_from_records(Records::read_from(reader)?, drawing_name)
+    read_publish_from_reader(reader, drawing_name)?.drawing
 }
 
-/// The chain streams of a `.pid`'s root storage whose record chain does
-/// not hold, as the publish reader meets them.
+/// A chain stream of a `.pid`'s root storage whose record chain does not
+/// hold, as the publish reader met it, and what it made of the stream.
 ///
 /// The reader takes a stream's records all or nothing: one whose walk
 /// stops before the stream's end gives it no record, and what the drawing
@@ -770,19 +786,91 @@ pub fn load_publish_from_reader<R: Read + Seek>(
 /// copy of `DWG-0201GP06-01.pid` with one length field of `/Sheet6` set to
 /// zero. A stream whose chain reaches the end with a header count that
 /// differs is read as far as the chain reaches, and listed all the same.
-/// [`load_publish_from_reader`] does not carry these; a caller that
-/// delivers the XML asks here and says them, as `pid_publish_xml` does.
-pub fn chain_faults_from_reader<R: Read + Seek>(
-    reader: R,
-) -> Result<Vec<crate::model::StreamChainFault>, PidLoadError> {
-    Ok(Records::read_from(reader)?.chain_faults)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishChainFault {
+    /// The stream, and what is wrong with its framing.
+    pub fault: crate::model::StreamChainFault,
+    /// How many of the records the chain read are of a kind the publish
+    /// reader keeps: attribute rows, text boxes, dependency objects and
+    /// symbol placements, the ones the native reader reads. When the chain
+    /// stops short these are records the delivery is missing; a style
+    /// table holds none, so a `StyleCluster` whose chain stops costs the
+    /// XML nothing the chain read.
+    pub publishable_records_read: usize,
 }
 
-/// [`chain_faults_from_reader`] for a `.pid` on disk.
-pub fn chain_faults_from_pid(
-    path: &Path,
-) -> Result<Vec<crate::model::StreamChainFault>, PidLoadError> {
-    chain_faults_from_reader(std::fs::File::open(path)?)
+impl PublishChainFault {
+    /// The fault in one sentence ([`crate::model::StreamChainFault::describe`]),
+    /// and what the publish reader made of the stream.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let made = match (&self.fault.stop, self.publishable_records_read) {
+            (None, _) => "the publish reader read the records the chain reached".to_string(),
+            (Some(_), 0) => "the publish reader takes nothing from a stream whose chain stops \
+                             short; the chain read no attribute row, text box, dependency object \
+                             or symbol placement before the stop, so nothing it read is missing \
+                             from the XML, and what lies past the stop is not read"
+                .to_string(),
+            (Some(_), lost) => format!(
+                "the publish reader takes nothing from a stream whose chain stops short, so the \
+                 {lost} attribute row(s), text box(es), dependency object(s) and symbol \
+                 placement(s) the chain read before the stop are not in the XML, and what lies \
+                 past the stop is not read"
+            ),
+        };
+        format!("{}; {made}", self.fault.describe())
+    }
+}
+
+/// What one read of a `.pid` gives a publisher.
+#[derive(Debug)]
+pub struct PidPublishRead {
+    /// The drawing, or why the file states none. A stream whose chain
+    /// stops short can be why: the reader then has none of its rows, and a
+    /// file whose `DrawingNo` row was in it reads as
+    /// [`PidLoadError::NoDrawing`].
+    pub drawing: Result<PidPublishDrawing, PidLoadError>,
+    /// The chain streams of the root storage whose record chain does not
+    /// hold, in the order the storage lists them. [`Self::drawing`] does
+    /// not carry these; a caller that delivers the XML says them, as
+    /// `pid_publish_xml` does for a `.pid` and for each drawing of a
+    /// backup package.
+    pub chain_faults: Vec<PublishChainFault>,
+}
+
+/// Read a `.pid` compound file once: the drawing's publish data, and the
+/// chain faults the reader met on the way.
+///
+/// # Errors
+///
+/// Returns the I/O error when the compound file itself cannot be read. A
+/// file that reads and states no drawing is `Ok`, with the reason in
+/// [`PidPublishRead::drawing`] and the faults that may explain it beside
+/// it.
+pub fn read_publish_from_reader<R: Read + Seek>(
+    reader: R,
+    drawing_name: &str,
+) -> Result<PidPublishRead, PidLoadError> {
+    let mut records = Records::read_from(reader)?;
+    let chain_faults = std::mem::take(&mut records.chain_faults);
+    Ok(PidPublishRead {
+        drawing: load_from_records(records, drawing_name),
+        chain_faults,
+    })
+}
+
+/// [`read_publish_from_reader`] for a `.pid` on disk. The drawing name is
+/// the file name without `.pid`.
+///
+/// # Errors
+///
+/// As [`read_publish_from_reader`], and when the file cannot be opened.
+pub fn read_publish_from_pid(path: &Path) -> Result<PidPublishRead, PidLoadError> {
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    read_publish_from_reader(std::fs::File::open(path)?, &name)
 }
 
 fn load_from_records(
