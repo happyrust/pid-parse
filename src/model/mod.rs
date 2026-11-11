@@ -110,6 +110,21 @@ pub struct PidDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sheet_layers: BTreeMap<String, Vec<SheetLayer>>,
 
+    /// The order each top-level sheet displays its records in, keyed by the
+    /// sheet stream's path (`/Sheet6`): the sheet's `0x0114 JSheet` record
+    /// lists the objects it owns in the order it draws them, and every live
+    /// record of the stream takes its rank from that list
+    /// ([`crate::parsers::sheet_display_order`]). A sheet whose record was
+    /// not found, or lists something that is not the sheet's own, has no
+    /// entry.
+    ///
+    /// Not part of the document's serialized form or its schema yet: the
+    /// plot writer is its one reader.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub sheet_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::SheetDisplayOrder>,
+
     /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
     /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
     /// one `JSheet` and states, for the layers that sheet's manager
@@ -253,6 +268,7 @@ impl Default for PidDocument {
             psm_segment_table: None,
             psm_space_maps: BTreeMap::new(),
             sheet_layers: BTreeMap::new(),
+            sheet_display_order: BTreeMap::new(),
             view_filter_sets: BTreeMap::new(),
             style_tables: BTreeMap::new(),
             version_history: None,

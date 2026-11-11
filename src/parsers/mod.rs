@@ -26,6 +26,7 @@ pub mod jsites_list;
 pub mod magic;
 pub mod psm_tables;
 pub mod relationship_probe;
+pub mod sheet_display_order;
 pub mod sheet_endpoint_records;
 pub mod sheet_layers;
 pub mod sheet_probe;

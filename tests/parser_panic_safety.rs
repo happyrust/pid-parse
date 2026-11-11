@@ -237,6 +237,23 @@ fn exercise_all_parsers(input: &[u8]) {
     // bounds-checked against adversarial lengths.
     let _ = pid_parse::parsers::sheet_layers::decode_sheet_layers(input);
     let _ = pid_parse::parsers::view_filter_sets::decode_view_filter_sets(input);
+    // The display order reads a `JSheet` child table by the count the file
+    // states, looks for it in a cluster by the sheet's oid, and walks a sheet
+    // stream against it. Oid 0 is the one every run of zeros matches.
+    {
+        use pid_parse::parsers::sheet_display_order::{
+            decode_sheet_child_table, find_sheet_child_table, sheet_display_order,
+            sheet_display_ranks,
+        };
+        if let Some(table) = decode_sheet_child_table(input) {
+            let _ = sheet_display_ranks(input, &table);
+        }
+        for sheet_oid in [0, 6, u32::MAX] {
+            let _ = find_sheet_child_table(input, sheet_oid, |_| false);
+            let _ = find_sheet_child_table(input, sheet_oid, |_| true);
+            let _ = sheet_display_order(input, input, sheet_oid);
+        }
+    }
     let _ = decode_cluster_body_records(input, 0);
     let _ = decode_cluster_body_record_at(input, 0);
     if !input.is_empty() {

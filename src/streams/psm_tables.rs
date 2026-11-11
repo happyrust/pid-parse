@@ -65,7 +65,47 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
     parse_space_maps(cfb, doc);
     parse_sheet_layers(cfb, doc);
     link_embedded_definitions(doc);
+    parse_sheet_display_order(cfb, doc);
     Ok(())
+}
+
+/// Read the display order of every top-level sheet: the document storage's
+/// `PSMcluster0` holds one `JSheet` record per `Sheet<N>` stream, and that
+/// record lists the sheet's objects in the order it draws them
+/// ([`crate::parsers::sheet_display_order`]).
+///
+/// Only the document's own sheets are read. A definition cache's sheets are
+/// symbol bodies, whose records the placement draws in the order the body
+/// decodes them; nothing yet reads their lists.
+fn parse_sheet_display_order<R: Read + std::io::Seek>(
+    cfb: &mut ::cfb::CompoundFile<R>,
+    doc: &mut PidDocument,
+) {
+    let sheets: Vec<(String, u32)> = cfb
+        .walk()
+        .filter(::cfb::Entry::is_stream)
+        .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+        .filter_map(|path| {
+            let oid = path.strip_prefix("/Sheet")?.parse::<u32>().ok()?;
+            Some((path, oid))
+        })
+        .collect();
+    if sheets.is_empty() {
+        return;
+    }
+    let Ok(Some(cluster)) = open_optional(cfb, "/PSMcluster0") else {
+        return;
+    };
+    for (path, oid) in sheets {
+        let Ok(Some(sheet)) = open_optional(cfb, &path) else {
+            continue;
+        };
+        if let Some(order) =
+            crate::parsers::sheet_display_order::sheet_display_order(&cluster, &sheet, oid)
+        {
+            doc.sheet_display_order.insert(path, order);
+        }
+    }
 }
 
 /// Group each definition cache's records into symbol bodies.
