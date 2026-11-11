@@ -34,10 +34,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_records::{
-    parse_psm_header, AttributeFragmentDecoder, IgSmartFrame2dDecoder, JStyleOverrideDecoder,
-    PsmRecordDecoder, SheetChain, SubRecord0x0010Decoder,
+    parse_psm_header, IgSmartFrame2dDecoder, PsmRecordDecoder, SheetChain,
 };
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::{byte_audit_report, PidParser};
+use retired_matchers::{AttributeFragmentDecoder, JStyleOverrideDecoder, SubRecord0x0010Decoder};
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     if dir.is_file() {

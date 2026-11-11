@@ -25,7 +25,9 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{
     decode_primitive_line_at, SheetPrimitiveLineDecoded, GLINE2D_PAYLOAD_LEN, PSM_RECORD_HEADER_LEN,
 };
 
@@ -223,9 +225,7 @@ fn report_frame_mechanism(fixtures: &[PathBuf]) {
                 if spells {
                     ratio_spells_the_type_code += 1;
                 }
-                let decodes =
-                    pid_parse::parsers::sheet_records::decode_primitive_line_at(&sheet, phantom_at)
-                        .is_some();
+                let decodes = decode_primitive_line_at(&sheet, phantom_at).is_some();
                 if decodes {
                     decodes_as_a_line += 1;
                 }

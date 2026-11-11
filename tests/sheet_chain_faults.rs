@@ -39,14 +39,23 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use pid_parse::parsers::sheet_records::{
-    decode_primitive_line_at, decode_smartframes, parse_psm_header, sheet_record_starts,
-    AttributeFragmentDecoder, JStyleOverrideDecoder, PsmRecordDecoder, SheetChain,
-    SubRecord0x0010Decoder, SHEET_STREAM_MAGIC,
+    decode_smartframes, parse_psm_header, sheet_record_starts, PsmRecordDecoder, SheetChain,
+    SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
     build_normalized_geometry, ParseOptions, PidDocument, PidPackage, PidParser, StreamChainFault,
     StreamChainStop, StreamChainStopReason, SHEET_RECORD_FAMILIES,
+};
+
+/// The matchers of the four retired families: what a length sweep asks
+/// "would the old families have decoded this?" with, and what the corpus
+/// walk tries at every offset.
+#[path = "support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{
+    decode_primitive_line_at, AttributeFragmentDecoder, JStyleOverrideDecoder,
+    SubRecord0x0010Decoder,
 };
 
 const FIXTURE: &str = "test-file/DWG-0201GP06-01.pid";

@@ -12,19 +12,27 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragment_at, decode_dependency_objects, decode_igboundaries,
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-        decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at,
-        decode_primitive_line_at, decode_sub_record_0x0010_at, parse_psm_header,
-        primitive_line_investigation_report, sheet_record_shape_inventory, sheet_record_starts,
-        symbol_placement_investigation_report, text_placement_investigation_report,
-        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN,
-        PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D,
-        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D,
-        PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
+        decode_dependency_objects, decode_igboundaries, decode_iglines, decode_iglinestrings,
+        decode_igpoints, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
+        parse_psm_header, primitive_line_investigation_report, sheet_record_shape_inventory,
+        sheet_record_starts, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
+        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
+        DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN, PSM_TYPE_CODE_DEPENDENCY_OBJECT,
+        PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
+        PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
+        PSM_TYPE_CODE_JSTYLE_OVERRIDE,
     },
     PidParser,
+};
+
+/// The matchers of the four retired families: what the evidence tests below
+/// re-find the old byte-sliding hits with.
+#[path = "support/retired_matchers.rs"]
+mod retired_matchers;
+use retired_matchers::{
+    decode_attribute_fragment_at, decode_jstyle_override_at, decode_primitive_line_at,
+    decode_sub_record_0x0010_at, PSM_TYPE_CODE_SUB_RECORD_0X0010,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};

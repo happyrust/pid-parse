@@ -42,11 +42,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{
-    decode_attribute_fragment_at, decode_igtextbox_at, decode_jstyle_override_at,
-    decode_sub_record_0x0010_at, sheet_record_starts,
-};
+use pid_parse::parsers::sheet_records::{decode_igtextbox_at, sheet_record_starts};
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::PidParser;
+use retired_matchers::{
+    decode_attribute_fragment_at, decode_jstyle_override_at, decode_sub_record_0x0010_at,
+};
 
 /// The word every cluster-family stream opens with.
 const CLUSTER_MAGIC: u32 = 0x6C90_F544;

@@ -2137,19 +2137,16 @@ fn primitive_line_numeric_samples(
 /// family: `u16` LE type word (14-bit type code + 2 flag bits) followed
 /// by a `u32` LE `bytes_to_follow`.
 ///
-/// Not to be confused with [`PSM_RECORD_HEADER_LEN`] (18), which is the
-/// `GLine2d`-specific header that additionally carries `oid` + an 8-byte
-/// aux prefix after the shared envelope.
+/// The `oid` and the eight-byte `aux` pair that follow are the first
+/// twelve bytes of the payload this length is counted from.
 pub const PSM_ENVELOPE_LEN: usize = 6;
 
 /// The decoded 6-byte PSM record envelope shared by every PSM record
 /// family (see [`parse_psm_header`]).
 ///
 /// Deliberately minimal: `oid` is **not** part of the shared envelope —
-/// `igLine2d` and friends carry it in their payload sub-header, while
-/// `GLine2d` (PSM `0x3FE6`) carries it inside its 18-byte
-/// [`PSM_RECORD_HEADER_LEN`] header. Each family reads its own fields
-/// after [`Self::body_start`].
+/// every family carries it in its payload sub-header and reads its own
+/// fields after [`Self::body_start`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PsmHeader {
     /// 14-bit PSM type code (`type_word & 0x3FFF`).
@@ -2633,29 +2630,14 @@ pub trait PsmRecordDecoder {
 // Phase 14 Slices D/F: PSM-encoded geometry decoder family
 // ---------------------------------------------------------------------------
 
-/// Byte length of the record header the two retired matchers read
-/// ([`decode_primitive_line_at`], [`decode_jstyle_override_at`]).
-///
-/// Layout reverse-engineered from `radsrvitem.dll`
-/// `PSMSerializeOut` (0x56491E80) / `PSMSerializeIn` (0x564915E0)
-/// in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`:
-///
-/// ```text
-/// 0..2    uint16_le  type_code         // 14-bit, top 2 bits flags
-/// 2..6    uint32_le  bytes_to_follow   // payload length excl. these 6
-/// 6..10   uint32_le  oid               // object identifier
-/// 10..18  8 bytes    aux               // type-specific aux payload prefix
-/// ```
-pub const PSM_RECORD_HEADER_LEN: usize = 18;
-
-/// Byte length of one in-memory `GLine2d` payload:
-/// 6 × `f64` LE = 48 bytes.
-///
-/// Layout reverse-engineered from `radsrvitem.dll`
-/// `GLine2d::Validate` (`sub_56524C50` @ 0x56524C50). Documented in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
-pub const GLINE2D_PAYLOAD_LEN: usize = 48;
+// The matchers of four retired families stood in this file until 2026-11-11:
+// `GLine2d` (`0x3FE6`) below this banner, `JStyleOverride` as a sheet family
+// (`0x0030`), `SubRecord0x0010` and `AttributeFragment` (`0x0010`) after the
+// dependency object. No chain of any stream holds a record any of them reads,
+// nothing in the library called them, and an entry point that reads untrusted
+// bytes and matches nothing a file holds is not one to export. They live on
+// the test side now, `tests/support/retired_matchers.rs`, for the tests and
+// probes that say what their hits were.
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igLine2d` record on disk.
@@ -2667,7 +2649,9 @@ pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 /// `igLine2d` is the Sigma 2D line record, and the only line record a
 /// sheet holds. (Phase 14 set a "`GLine2d`, PSM `0x3FE6`" family beside
 /// it as `SmartPlant`'s parametric wrapper of the same line; no such type
-/// code exists, see [`PSM_TYPE_CODE_GLINE2D`].)
+/// code exists — it is past [`PSM_TYPE_CODE_LAST`] — and what that family
+/// matched was the top two bytes of a page frame's aspect ratio,
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.)
 pub const PSM_TYPE_CODE_IGLINE2D: u16 = 0x0018;
 
 /// Byte length of one PSM `igLine2d` payload (after the 6-byte
@@ -2953,265 +2937,28 @@ const DEPENDENCY_OBJECT_BYTES_PER_MEMBER: usize = 8;
 /// variant growth while rejecting obvious wide-scan false positives.
 const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 
-/// PSM type code the `GLine2d` `PrimitiveLine` decoder accepts.
-///
-/// **Retracted as a corpus identification, 2026-08-10.** The original
-/// claim was that every record whose 18-byte PSM header is followed by 48
-/// bytes matching the `GLine2d` validation rules carries
-/// `type_code == 0x3FE6`. That is a tautology: the candidate set was
-/// *defined* by those rules. Two independent tests both say no —
-/// `radsrvitem.dll`'s authoritative type→class enumeration
-/// (`sub_56448F70`) covers `0x06`..`0x117` and has no `0x3FE6`, and none
-/// of the corpus's three former "records" sits on a record boundary. Each
-/// sits 160 bytes inside an `igSmartFrame2d`, on the top two bytes of its
-/// `1/√2` page-ratio `f64`. See
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
-///
-/// The class is real — `radsrvitem.dll` has a `GLine2d::Validate`
-/// (`sub_56524C50`) and the six-double parametric layout is its — but it
-/// is a class of the geometry library, not one the reader serializes
-/// records of, and `0x3FE6` is not its type code or anyone's: it is past
-/// [`PSM_TYPE_CODE_LAST`], and a chain walk stops on a word no record
-/// opens with ([`psm_type_word_opens_a_record`]).
-///
-/// **Retired as a sheet family, 2026-11-11.** Gated on chain membership
-/// from 2026-08-10, the family decoded nothing on any corpus; with the
-/// class-table tripwire it could decode nothing on any stream. The
-/// registry row, the `SheetGeometry` field, the model DTO, the emitter
-/// and the stream entry point are gone. The layout is still read at an
-/// offset by [`decode_primitive_line_at`].
-pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
+/// Sentinel beyond which a coordinate, a length or a parameter is treated
+/// as garbage (uninitialized memory, a value read from where none is
+/// stored): every family that reads doubles holds them to it.
+const COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
 
-/// Unit-vector tolerance used when accepting a candidate `GLine2d`
-/// record. The IDA-decoded `GLine2d::Validate` uses a strict
-/// tolerance (`sub_56472D30()` returns ~1e-9 for normalized 2D),
-/// but real `SmartPlant` writes can have direction vectors rounded
-/// through coordinate transforms; 1e-3 catches every fixture record
-/// we have without bringing in obvious false positives.
-const GLINE2D_UNIT_VECTOR_TOLERANCE: f64 = 1e-3;
-
-/// Sentinel beyond which an origin / parameter / direction value
-/// is treated as garbage (uninitialized memory, out-of-domain).
-const GLINE2D_COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
-
-/// PSM type code that identifies a RAD `JStyleOverride` record.
+/// PSM type code of a RAD `JStyleOverride` record.
 ///
-/// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation
-/// of `0x0030` was a historical misidentification. The authoritative
-/// implementation is RAD `style.dll` `JStyleOverride` (CLSID
-/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`), documented in
-/// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+/// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation of
+/// `0x0030` was a historical misidentification: the type-code table of
+/// `radsrvitem.dll` resolves the code to CLSID
+/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`, which the RAD registry in
+/// `JUTIL.dll` names "JSL Override Style" and `style.dll` implements as
+/// `JStyleOverride` (`docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`).
+///
+/// The class's records are in `StyleCluster`, where
+/// [`crate::style_link`] reads them by their own layout. No `Sheet*` chain
+/// holds one: the sheet family this crate had for the code until
+/// 2026-11-11 matched the length word of the block a `DependencyObject`
+/// ends with (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.2, §12), and its matcher is kept on the test side
+/// (`tests/support/retired_matchers.rs`).
 pub const PSM_TYPE_CODE_JSTYLE_OVERRIDE: u16 = 0x0030;
-
-/// One decoded PSM `GLine2d` `PrimitiveLine` record.
-///
-/// Phase 14 anti-promotion guarantee: this DTO carries the **raw
-/// parametric** geometry (`origin + t * direction` for
-/// `t ∈ [param_start, param_end]`), not Cartesian `start`/`end`
-/// endpoints, and exposes a [`Self::byte_range`] covering the full
-/// PSM record. Producing
-/// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
-/// responsibility of `geometry.rs`; this module only decodes
-/// bytes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetPrimitiveLineDecoded {
-    /// Byte range covering the **entire** PSM record (header +
-    /// inner payload + any trailing attribute bytes the writer
-    /// included in `bytes_to_follow`).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code from the record header. Always
-    /// [`PSM_TYPE_CODE_GLINE2D`] for records this decoder emits.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    /// Documented as the `0x8000` / `0x4000` bits in
-    /// `PSMSerializeIn`'s skip-record branch.
-    pub type_flags: u16,
-    /// `bytes_to_follow` field from the PSM header. The decoder
-    /// uses this as the trailing edge of [`Self::byte_range`].
-    pub bytes_to_follow: u32,
-    /// `oid` field from the PSM header (the object identifier
-    /// `SmartPlant` assigns to this geometry).
-    pub oid: u32,
-    /// Local-space origin: `point(t) = origin + t * direction`.
-    pub origin: (f64, f64),
-    /// Unit direction vector. `sqrt(direction_x^2 + direction_y^2)`
-    /// is guaranteed within 1e-3 of 1.0 at decode time (a private
-    /// `GLINE2D_UNIT_VECTOR_TOLERANCE` constant in this module).
-    pub direction: (f64, f64),
-    /// Parameter range start. `param_start < param_end` is
-    /// guaranteed at decode time.
-    pub param_start: f64,
-    /// Parameter range end.
-    pub param_end: f64,
-}
-
-impl SheetPrimitiveLineDecoded {
-    /// Cartesian endpoint A computed from the parametric form
-    /// (`origin + param_start * direction`).
-    pub fn endpoint_a(&self) -> (f64, f64) {
-        (
-            self.origin.0 + self.param_start * self.direction.0,
-            self.origin.1 + self.param_start * self.direction.1,
-        )
-    }
-
-    /// Cartesian endpoint B computed from the parametric form
-    /// (`origin + param_end * direction`).
-    pub fn endpoint_b(&self) -> (f64, f64) {
-        (
-            self.origin.0 + self.param_end * self.direction.0,
-            self.origin.1 + self.param_end * self.direction.1,
-        )
-    }
-}
-
-/// Try to read the `GLine2d` layout at `offset` in `data`: the matcher of
-/// a family retired on 2026-11-11, kept for the test that says what its
-/// hits were.
-///
-/// The bytes at `offset` are accepted when all of these hold:
-///
-/// 1. the type code (header bytes 0..2 LE, masked to 14 bits) is
-///    [`PSM_TYPE_CODE_GLINE2D`];
-/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 48 and fits within
-///    the remaining stream;
-/// 3. all six payload `f64`s are finite and within `|x| <= 1e9`;
-/// 4. `(direction.x, direction.y)` has unit length within `1e-3` and is
-///    not the zero vector;
-/// 5. `param_start < param_end` strictly.
-///
-/// The five are satisfiable by accident: a `[1 0; 0 1]` placement matrix
-/// reads as a unit direction plus an ordered parameter pair, and `1/√2` —
-/// the ISO A-series page ratio every `igSmartFrame2d` carries — is an
-/// `f64` whose top two bytes are literally `E6 3F`. That is all this
-/// matcher ever matched: tried at every offset of the corpora's sheets it
-/// accepts seven runs of bytes, each 160 bytes into a page frame
-/// (`docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
-/// No stream entry point walks it: `0x3FE6` is past
-/// [`PSM_TYPE_CODE_LAST`], a chain walk stops on such a word
-/// ([`psm_type_word_opens_a_record`]), and so no chain can hand it a
-/// record. Bounds-checked: `offset >= data.len()` or a truncated tail
-/// returns `None`.
-///
-/// Thin wrapper over [`GLine2dDecoder::decode_at`].
-pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-    GLine2dDecoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for the `SmartPlant` extended
-/// `GLine2d` family (PSM type `0x3FE6`).
-///
-/// The family deviation from the standard IGDS record shape lives
-/// here, not in the shared seam: `GLine2d` uses the extended
-/// [`PSM_RECORD_HEADER_LEN`] (18-byte) header carrying `oid` at
-/// header bytes 6..10 (standard families carry `oid` in their payload
-/// sub-header), and its `bytes_to_follow` may exceed the 48-byte
-/// geometry payload — the trailing attribute bytes are included in
-/// the decoded [`SheetPrimitiveLineDecoded::byte_range`] so
-/// [`PsmRecordDecoder::scan`] jumps the whole record.
-pub struct GLine2dDecoder;
-
-impl PsmRecordDecoder for GLine2dDecoder {
-    type Record = SheetPrimitiveLineDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_GLINE2D
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-        let envelope = parse_live_psm_header(data, offset)?;
-        if envelope.type_code != PSM_TYPE_CODE_GLINE2D {
-            return None;
-        }
-        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-        let payload_end = header_end.checked_add(GLINE2D_PAYLOAD_LEN)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        let bytes_to_follow_usize = envelope.bytes_to_follow as usize;
-        // bytes_to_follow must cover at least the 48-byte payload.
-        if bytes_to_follow_usize < GLINE2D_PAYLOAD_LEN {
-            return None;
-        }
-        // The full record (envelope + bytes_to_follow trailer) must fit.
-        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + bytes_to_follow_usize)?;
-        if record_end > data.len() {
-            return None;
-        }
-        decode_primitive_line_payload(data, offset, &envelope, header_end, payload_end, record_end)
-    }
-
-    fn advance_of(&self, record: &SheetPrimitiveLineDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Family-specific payload validation for `GLine2d` (the 18-byte
-/// extended header's `oid` plus the six-double parametric payload).
-fn decode_primitive_line_payload(
-    data: &[u8],
-    offset: usize,
-    envelope: &PsmHeader,
-    header_end: usize,
-    payload_end: usize,
-    record_end: usize,
-) -> Option<SheetPrimitiveLineDecoded> {
-    let type_code = envelope.type_code;
-    let type_flags = envelope.type_flags;
-    let bytes_to_follow = envelope.bytes_to_follow;
-
-    let header = data.get(offset..header_end)?;
-    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
-
-    // 6-double GLine2d payload at offset + 18.
-    let payload = data.get(header_end..payload_end)?;
-    let mut d = [0f64; 6];
-    for (i, slot) in d.iter_mut().enumerate() {
-        let chunk = payload.get(i * 8..i * 8 + 8)?;
-        *slot = f64::from_le_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
-    }
-    if !d.iter().all(|x| x.is_finite()) {
-        return None;
-    }
-    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
-        return None;
-    }
-    let dir_x = d[2];
-    let dir_y = d[3];
-    if dir_x.abs() < 1e-12 && dir_y.abs() < 1e-12 {
-        return None;
-    }
-    let unit_err = ((dir_x * dir_x + dir_y * dir_y).sqrt() - 1.0).abs();
-    if unit_err > GLINE2D_UNIT_VECTOR_TOLERANCE {
-        return None;
-    }
-    let param_start = d[4];
-    let param_end = d[5];
-    if param_start >= param_end {
-        return None;
-    }
-
-    Some(SheetPrimitiveLineDecoded {
-        byte_range: offset..record_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        oid,
-        origin: (d[0], d[1]),
-        direction: (dir_x, dir_y),
-        param_start,
-        param_end,
-    })
-}
 
 // ---------------------------------------------------------------------------
 // Phase 14 Slice J: PSM-encoded igLine2d decoder
@@ -3418,7 +3165,7 @@ fn decode_igline_payload(
     if !d.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+    if d.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -3665,7 +3412,7 @@ fn decode_iglinestring_payload(
         if !x.is_finite() || !y.is_finite() {
             return None;
         }
-        if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if x.abs() > COORDINATE_DOMAIN_LIMIT || y.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
         vertices.push((x, y));
@@ -3846,7 +3593,7 @@ fn decode_igpoint_payload(
     if !x.is_finite() || !y.is_finite() {
         return None;
     }
-    if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+    if x.abs() > COORDINATE_DOMAIN_LIMIT || y.abs() > COORDINATE_DOMAIN_LIMIT {
         return None;
     }
 
@@ -4265,10 +4012,7 @@ fn decode_igtextbox_payload(
     if !trailing.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if trailing
-        .iter()
-        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
-    {
+    if trailing.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -4343,8 +4087,7 @@ fn igtextbox_box(payload: &[u8], tail_start: usize) -> (f64, f64) {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     };
-    let usable =
-        |value: f64| value.is_finite() && value > 0.0 && value <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let usable = |value: f64| value.is_finite() && value > 0.0 && value <= COORDINATE_DOMAIN_LIMIT;
     let (Some(width), Some(height)) = (
         read(tail_start + IGTEXTBOX_BOX_WIDTH_AT),
         read(tail_start + IGTEXTBOX_BOX_HEIGHT_AT),
@@ -4624,10 +4367,7 @@ fn decode_igsymbol_payload(
     if !doubles.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if doubles
-        .iter()
-        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
-    {
+    if doubles.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -4873,741 +4613,6 @@ fn decode_dependency_object_payload(
         sub_type_word,
         raw_reference_payload,
     })
-}
-
-// ---------------------------------------------------------------------------
-// Phase 16 Slice D: PSM-encoded `JStyleOverride` decoder (PSM type `0x0030`)
-//
-// **Re-identification of Phase 14 §6.1 future-slice.**
-//
-// The PSM type code `0x0030` does **not** map to IGDS `GArc2d`. IDA
-// reverse engineering (see `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`)
-// proves that:
-//
-// 1. The PSM lookup table at `radsrvitem.dll!dword_5667B068[48]` resolves
-//    `type_code == 0x0030` to CLSID
-//    `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`.
-// 2. The RAD framework CLSID registry in `JUTIL.dll` (file offset
-//    `0x35680`) maps that CLSID to `style.dll` class **"JSL Override
-//    Style"** (RAD friendly name).
-// 3. The implementing C++ class name is **`JStyleOverride`** (from
-//    `style.dll` RTTI), with inheritance chain `JStyleOverride →
-//    JStyleR2d → JStyleBase`.
-// 4. The on-disk serialization for the SmartPlant fixture set is the
-//    **Version 3** path (`style.dll!sub_1000F030`), which writes exactly
-//    13 `IOContext::DoIO` calls totalling **64 bytes**, matching the
-//    fixture PSM payload exactly.
-//
-// Authoritative Version-3 byte layout:
-//
-// ```text
-// disk +0..3   u32 (host this+22)
-// disk +4..7   u32 (host this+24)
-// disk +8..11  u32 (host this+25)
-// disk +12..15 u32 (host this+38)
-// disk +16..23 f64 (host this+26)
-// disk +24..31 f64 (host this+28) — `rotation_angle` candidate
-// disk +32..39 f64 (host this+30)
-// disk +40..47 f64 (host this+34)
-// disk +48..51 u32 (host this+32)
-// disk +52..55 u32 (host this+47)
-// disk +56..59 u32 (host this+48)
-// disk +60..61 u16 (host this+36)
-// disk +62..63 u16 (host byte+146)
-// ```
-//
-// Phase 17 removed the historical Phase 14 `PrimitiveArc` compatibility
-// decoder. PSM type `0x0030` is now represented solely by this
-// `JStyleOverride` decoder on the parser surface.
-
-/// Inner PSM payload length emitted by `JStyleOverride`
-/// `IJPersistImp::Save` Version-3 path (`style.dll!sub_1000F030`).
-/// Fixture PSM records always have `bytes_to_follow >= 64`; any
-/// surplus belongs to the optional attribute / linkage tail
-/// (`bytes_to_follow - 64`), which is *not* part of the `JStyleOverride`
-/// payload itself.
-pub const JSTYLE_OVERRIDE_PAYLOAD_LEN: usize = 64;
-/// Minimum `bytes_to_follow` a `JStyleOverride` record can ship with
-/// (= the 64-byte Version-3 payload alone). Larger values are valid
-/// (fixture commonly ships 128 / 145 / 224 / 384 etc.) — the surplus
-/// is the optional attribute tail.
-pub const JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW: u32 = 64;
-/// Upper bound on `bytes_to_follow` — guards against header-noise
-/// hits. Fixture maximum observed is 384.
-pub const JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW: u32 = 4096;
-/// Coordinate-style f64 fields (`+16..23`, `+24..31`, `+32..39`,
-/// `+40..47`) must satisfy `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`
-/// to discard adversarial / out-of-range noise. The fixture-observed
-/// maximum across all 4 doubles is ~10 (rotation angle `2π`), but the
-/// limit is set generously to avoid rejecting future records that
-/// might encode larger magnitudes (e.g. world-space coordinates).
-pub const JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT: f64 = 1.0e6;
-
-/// One decoded PSM `0x0030` `JStyleOverride` record (RAD `style.dll`
-/// CLSID `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`,
-/// IDA-confirmed Version-3 IO path
-/// `style.dll!sub_1000F030`).
-///
-/// All 13 fields written by the Save / Load Version-3 path are
-/// exposed verbatim (4×u32 prefix + 4×f64 mid + 3×u32 + 2×u16). The
-/// surplus attribute tail (`bytes_to_follow > 64`) is retained as
-/// `raw_attribute_tail` for audit; its internal layout (plant tag,
-/// linkage references, `1.0` markers, etc.) is documented as
-/// hypothesis in
-/// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11 but is
-/// not part of the stable contract.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetJStyleOverrideDecoded {
-    /// Byte range covering the full PSM record (header + payload +
-    /// any attribute tail captured by `bytes_to_follow`).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always `0x0030`.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header. `>= 64`. Values above
-    /// 64 indicate an optional attribute tail.
-    pub bytes_to_follow: u32,
-    /// `oid` from the PSM header.
-    pub oid: u32,
-    /// Version-3 disk field at payload `+0..3` (host `this+22`).
-    pub field_a_u32: u32,
-    /// Version-3 disk field at payload `+4..7` (host `this+24`).
-    pub field_b_u32: u32,
-    /// Version-3 disk field at payload `+8..11` (host `this+25`).
-    pub field_c_u32: u32,
-    /// Version-3 disk field at payload `+12..15` (host `this+38`).
-    pub field_d_u32: u32,
-    /// Version-3 disk field at payload `+16..23` (host `this+26`),
-    /// f64.
-    pub field_1_f64: f64,
-    /// Version-3 disk field at payload `+24..31` (host `this+28`),
-    /// f64. **Rotation-angle candidate** — cross-fixture probe
-    /// shows values cluster around `{0, π/2, 3π/2, 2π}`.
-    pub field_2_f64: f64,
-    /// Version-3 disk field at payload `+32..39` (host `this+30`),
-    /// f64.
-    pub field_3_f64: f64,
-    /// Version-3 disk field at payload `+40..47` (host `this+34`),
-    /// f64.
-    pub field_4_f64: f64,
-    /// Version-3 disk field at payload `+48..51` (host `this+32`).
-    pub field_e_u32: u32,
-    /// Version-3 disk field at payload `+52..55` (host `this+47`).
-    pub field_f_u32: u32,
-    /// Version-3 disk field at payload `+56..59` (host `this+48`).
-    pub field_g_u32: u32,
-    /// Version-3 disk field at payload `+60..61` (host `this+36`).
-    pub field_h_u16: u16,
-    /// Version-3 disk field at payload `+62..63` (host byte 146).
-    pub field_i_u16: u16,
-    /// Raw attribute tail bytes (`bytes_to_follow - 64`). Retained
-    /// for audit only; internal layout is hypothesis pending more
-    /// fixture coverage.
-    pub raw_attribute_tail: Vec<u8>,
-}
-
-/// [`PsmRecordDecoder`] adapter for the RAD `JStyleOverride` family
-/// (PSM type `0x0030`, `style.dll` Version-3 IO — **not** an arc; see
-/// the Phase 16 reclassification note on
-/// [`PSM_TYPE_CODE_JSTYLE_OVERRIDE`]).
-///
-/// Like `GLine2d`, this family uses the extended 18-byte
-/// [`PSM_RECORD_HEADER_LEN`] header (`oid` at header bytes 6..10) and
-/// carries a variable attribute tail inside `bytes_to_follow`; both
-/// deviations live on this adapter.
-///
-/// **Retired as a sheet family, 2026-11-11.** No sheet chain of any corpus
-/// carries this type code, so the family had no record to decode. The
-/// 13 671 "records" it used to report — and emit as position-less
-/// `ProbeOnly` entities — were what a byte-sliding walk made of the block
-/// every `0x00FA` `DependencyObject` ends with, `<type u16> <selector u16>
-/// <len u16>` followed by `len` bytes: a 48-byte block states its length
-/// as `30 00`, which reads as this type word, and the block's first four
-/// bytes then read as `bytes_to_follow`. All of them ran past the end of
-/// the record they sat in
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §3.2, §12). The class is real and so is its type code; its records live
-/// in a `StyleCluster`, where `style_link` reads them by their own
-/// 90-byte layout.
-///
-/// The registry row, the `SheetGeometry` field, the model DTO, the emitter
-/// and the stream entry point are gone. This matcher and
-/// [`decode_jstyle_override_at`] stay, for one reason: the tests and
-/// probes that re-find what the old scan matched hold each hit to the
-/// record it sat in, and need the rule that made the hit.
-pub struct JStyleOverrideDecoder;
-
-impl PsmRecordDecoder for JStyleOverrideDecoder {
-    type Record = SheetJStyleOverrideDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_JSTYLE_OVERRIDE
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-        let envelope = parse_live_psm_header(data, offset)?;
-        if envelope.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
-            return None;
-        }
-        if envelope.type_flags != 0 {
-            return None;
-        }
-        if !(JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW..=JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW)
-            .contains(&envelope.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf_usize = envelope.bytes_to_follow as usize;
-        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + btf_usize)?;
-        if record_end > data.len() {
-            return None;
-        }
-        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-        let payload_end = header_end.checked_add(JSTYLE_OVERRIDE_PAYLOAD_LEN)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        decode_jstyle_override_payload(data, offset, &envelope, header_end, payload_end, record_end)
-    }
-
-    fn advance_of(&self, record: &SheetJStyleOverrideDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Try to decode one PSM `0x0030` `JStyleOverride` record at `offset`.
-///
-/// Validation (only fields with IDA + cross-fixture probe evidence):
-///
-/// 1. PSM 14-bit type code == `0x0030` and type flags are zero.
-/// 2. `bytes_to_follow` ∈ `[JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
-///    JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW]`.
-/// 3. The record body fits in `data`.
-/// 4. All four payload f64 fields are finite and within
-///    `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`.
-///
-/// This authoritative decoder does **not** apply the historical
-/// `axis_a.y ≈ 0` constraint from the removed Phase 14 `PrimitiveArc`
-/// compatibility path, which rejected ~51% of real `JStyleOverride`
-/// records.
-///
-/// Thin wrapper over [`JStyleOverrideDecoder::decode_at`].
-pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-    JStyleOverrideDecoder.decode_at(data, offset)
-}
-
-/// Family-specific payload extraction for `JStyleOverride` (the
-/// 18-byte extended header's `oid`, the 64-byte Version-3 field
-/// block, and the raw attribute tail).
-fn decode_jstyle_override_payload(
-    data: &[u8],
-    offset: usize,
-    envelope: &PsmHeader,
-    header_end: usize,
-    payload_end: usize,
-    record_end: usize,
-) -> Option<SheetJStyleOverrideDecoded> {
-    let type_code = envelope.type_code;
-    let type_flags = envelope.type_flags;
-    let bytes_to_follow = envelope.bytes_to_follow;
-
-    let header = data.get(offset..header_end)?;
-    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
-
-    let payload = data.get(header_end..payload_end)?;
-
-    let field_a_u32 = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-    let field_b_u32 = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let field_c_u32 = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
-    let field_d_u32 = u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]);
-
-    let field_1_f64 = f64::from_le_bytes([
-        payload[16],
-        payload[17],
-        payload[18],
-        payload[19],
-        payload[20],
-        payload[21],
-        payload[22],
-        payload[23],
-    ]);
-    let field_2_f64 = f64::from_le_bytes([
-        payload[24],
-        payload[25],
-        payload[26],
-        payload[27],
-        payload[28],
-        payload[29],
-        payload[30],
-        payload[31],
-    ]);
-    let field_3_f64 = f64::from_le_bytes([
-        payload[32],
-        payload[33],
-        payload[34],
-        payload[35],
-        payload[36],
-        payload[37],
-        payload[38],
-        payload[39],
-    ]);
-    let field_4_f64 = f64::from_le_bytes([
-        payload[40],
-        payload[41],
-        payload[42],
-        payload[43],
-        payload[44],
-        payload[45],
-        payload[46],
-        payload[47],
-    ]);
-
-    if !field_1_f64.is_finite()
-        || !field_2_f64.is_finite()
-        || !field_3_f64.is_finite()
-        || !field_4_f64.is_finite()
-    {
-        return None;
-    }
-    if field_1_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_2_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_3_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_4_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-    {
-        return None;
-    }
-
-    let field_e_u32 = u32::from_le_bytes([payload[48], payload[49], payload[50], payload[51]]);
-    let field_f_u32 = u32::from_le_bytes([payload[52], payload[53], payload[54], payload[55]]);
-    let field_g_u32 = u32::from_le_bytes([payload[56], payload[57], payload[58], payload[59]]);
-    let field_h_u16 = u16::from_le_bytes([payload[60], payload[61]]);
-    let field_i_u16 = u16::from_le_bytes([payload[62], payload[63]]);
-
-    let raw_attribute_tail = data.get(payload_end..record_end)?.to_vec();
-
-    Some(SheetJStyleOverrideDecoded {
-        byte_range: offset..record_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        oid,
-        field_a_u32,
-        field_b_u32,
-        field_c_u32,
-        field_d_u32,
-        field_1_f64,
-        field_2_f64,
-        field_3_f64,
-        field_4_f64,
-        field_e_u32,
-        field_f_u32,
-        field_g_u32,
-        field_h_u16,
-        field_i_u16,
-        raw_attribute_tail,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Phase 18: PSM 0x0010 sub-record family — audit-only decoder
-//
-// PSM type code 0x0010 is the most prevalent (638 cross-fixture hits)
-// yet-unexplained record type after the Phase 14-17 typed decoders. probe
-// evidence (`examples/probe_psm_0x0010_shape.rs`) shows highly polymorphic
-// payload shapes — sizes range from ~13 bytes to ≥99 bytes, with multiple
-// sub-kinds inside (some carry IEEE 754 doubles, others carry leading
-// discriminators such as `02 00 01 00`). They are referenced from
-// JStyleOverride `+38..41` (`referenced_oid_a`) and `+56..59`
-// (`referenced_oid_c`); see
-// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11.
-//
-// Until IDA reverse engineering confirms the class identity and the
-// sub-kind discriminator, this decoder follows the Phase 15 DependencyObject
-// audit-only template: stable 6-byte PSM header (`type_word + bytes_to_follow`,
-// **not** the 18-byte IGDS header used by Phase 14 typed primitives) +
-// raw payload + full provenance. NO sub-kind field naming, NO
-// `PidGraphicKind` emission. Sub-kind decoders will land in a future phase.
-//
-// 2026-11-10: the paragraphs above describe hits of a byte-sliding walk,
-// and what they describe is not a record family. Held against each
-// stream's record chain, none of the 66 190 hits across the corpora starts
-// a record: 99% sit on the `+12` of a graphic record, where the `u16`
-// sub-type word is `0x0010` and the `u32` after it — read above as
-// `bytes_to_follow` — is that record's style id. The "polymorphic payload
-// shapes" are the tails of whichever record hosted the hit; the "leading
-// discriminator `02 00 01 00`" is what an `igTextBox` stores at `+18`. No
-// sheet chain carries a `0x0010` record, so the decoder below, which now
-// reads the chain like every other family, returns nothing on every
-// drawing measured. See
-// `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-// §3.1.
-
-/// PSM type code the `0x0010` "sub-record" decoder accepts.
-///
-/// First categorized in
-/// `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md` §6.3 as
-/// "embedded sub-records / attribute fragments inside other record types"
-/// on the strength of 638 hits of a byte-sliding walk over four fixtures.
-/// Embedded they were — each one was a field of the record it sat in — and
-/// no `Sheet*` chain holds a record of this type code.
-pub const PSM_TYPE_CODE_SUB_RECORD_0X0010: u16 = 0x0010;
-
-/// Minimum `bytes_to_follow` accepted by the conservative 0x0010 audit
-/// decoder. Cross-fixture probe baseline shows the smallest observed
-/// payload is 13 bytes; the threshold is set to 8 to leave headroom
-/// while still rejecting trivially-small noise hits.
-pub const SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW: u32 = 8;
-
-/// Upper bound on `bytes_to_follow` for 0x0010 records. Probe maximum
-/// observed across the four-fixture set is ~99 bytes; the cap leaves
-/// room for variant growth while rejecting wide-scan false positives
-/// whose `bytes_to_follow` accidentally reads as a giant value.
-pub const SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW: u32 = 100_000;
-
-/// One decoded PSM `0x0010` sub-record (audit-only).
-///
-/// This DTO exposes only the stable 6-byte PSM header and the variable
-/// payload as raw bytes. The payload structure is **highly polymorphic**
-/// (size 13..99+, multiple sub-kinds with different discriminators), so
-/// per-field naming is deferred until IDA reverse engineering confirms
-/// the class identity and sub-kind layout. The decoder is intentionally
-/// permissive: it admits every byte sequence whose header satisfies
-/// `type_code == 0x0010` and `bytes_to_follow` fits within the stream.
-/// Some hits may be embedded fragments inside larger parent records
-/// rather than standalone 0x0010 records — the audit collection
-/// preserves both, leaving sub-kind disambiguation to a future phase.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetSubRecord0x0010Decoded {
-    /// Byte range covering the full PSM record (6-byte header + payload).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always
-    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header. Equals `raw_payload.len()`
-    /// by construction.
-    pub bytes_to_follow: u32,
-    /// Raw payload bytes (length = `bytes_to_follow`). Sub-kind
-    /// discrimination and per-field decoding are deferred to a
-    /// future phase.
-    pub raw_payload: Vec<u8>,
-    /// Audit-only Phase 19 field: `payload[0..2]` as little-endian
-    /// `u16`. `None` when `raw_payload.len() < 2`.
-    ///
-    /// This is **not** a named sub-kind discriminator — Phase 19 probe
-    /// (`examples/probe_psm_0x0010_sub_kind.rs`) showed that while
-    /// `leading_word == 0x0002` accounts for ~28% of records and many
-    /// size buckets are mono-valued at this position, several large
-    /// buckets (size 31, 70, 13, 16, 43) are heterogeneous at +0 and
-    /// likely encode coordinates or OIDs in the leading bytes rather
-    /// than a sub-kind tag. The field name therefore describes only
-    /// the byte position, not any semantic role; promotion to a typed
-    /// `sub_kind` field is deferred pending IDA confirmation.
-    pub leading_word: Option<u16>,
-}
-
-/// Try to decode a single PSM `0x0010` sub-record starting at `offset`
-/// in `data`. Returns `None` when any validation rule of
-/// [`SubRecord0x0010Decoder`] fails. Bounds-checked: passing
-/// `offset >= data.len()` or a truncated tail returns `None`.
-///
-/// Thin wrapper over [`SubRecord0x0010Decoder::decode_at`].
-pub fn decode_sub_record_0x0010_at(
-    data: &[u8],
-    offset: usize,
-) -> Option<SheetSubRecord0x0010Decoded> {
-    SubRecord0x0010Decoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for what was the polymorphic `0x0010`
-/// sub-record family: it accepts the 6-byte PSM header when
-/// `type_code == 0x0010` and `bytes_to_follow` satisfies the
-/// `[SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
-/// SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW]` envelope. Conservative and
-/// panic-free.
-///
-/// **Retired as a sheet family, 2026-11-11.** No chain of any stream in
-/// the corpora carries this type code. The 66 190 "sub-records" the family
-/// used to report were what a byte-sliding walk made of a graphic record's
-/// own payload: `+12` of an `igLine2d`, `igPoint2d`, `igTextBox`,
-/// `igLineString2d` … is its sub-type word, which is `0x0010` on most of
-/// them, and the `u32` after it is the record's style id, which the walk
-/// read as `bytes_to_follow`. More than half ran past the end of the
-/// record they sat in
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §3.1, §12). What each "sub-record" held is a field of its host, which
-/// the host's own family decodes.
-///
-/// The registry row, the `SheetGeometry` field, the model DTO, the emitter
-/// and the stream entry point are gone. This matcher and
-/// [`decode_sub_record_0x0010_at`] stay for the tests and probes that
-/// re-find what the old scan matched.
-pub struct SubRecord0x0010Decoder;
-
-impl PsmRecordDecoder for SubRecord0x0010Decoder {
-    type Record = SheetSubRecord0x0010Decoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_SUB_RECORD_0X0010
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetSubRecord0x0010Decoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-            return None;
-        }
-        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-            .contains(&header.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf = header.bytes_to_follow as usize;
-        let payload_end = header.body_start.checked_add(btf)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        let raw_payload = data.get(header.body_start..payload_end)?.to_vec();
-        let leading_word = raw_payload
-            .get(0..2)
-            .map(|slot| u16::from_le_bytes([slot[0], slot[1]]));
-        Some(SheetSubRecord0x0010Decoded {
-            byte_range: offset..payload_end,
-            type_code: header.type_code,
-            type_flags: header.type_flags,
-            bytes_to_follow: header.bytes_to_follow,
-            raw_payload,
-            leading_word,
-        })
-    }
-
-    fn advance_of(&self, record: &SheetSubRecord0x0010Decoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-// Phase 26: PSM 0x0010 attribute-fragment decoder (additive, audit-only)
-//
-// 2026-05-31 analysis proved 0x0010 records carry SmartPlant attribute
-// text (instrument tags / line numbers / nominal sizes / drawing refs /
-// annotation labels) as length-prefixed UTF-16LE after a fixed
-// `marker(4) + aux(8)` prefix. See
-// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`. This decoder
-// is strictly additive: the raw Phase 18 `SubRecord0x0010Decoder`
-// path is unchanged, and no `PidGraphicKind` is emitted.
-
-/// One length-prefixed UTF-16LE string extracted from a PSM `0x0010`
-/// attribute fragment (Phase 26).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedAttributeString {
-    /// Offset (within the record payload) of the `u16` length word.
-    pub len_offset: usize,
-    /// Character count from the `u16` length prefix.
-    pub char_count: u16,
-    /// Decoded UTF-16LE text. Records whose tail is not clean UTF-16LE
-    /// are rejected wholesale, so this is always valid Unicode.
-    pub text: String,
-}
-
-/// A PSM `0x0010` record decoded as a `SmartPlant` **attribute fragment**
-/// (Phase 26).
-///
-/// Carries engineering attribute text — instrument tags, line numbers,
-/// nominal sizes, drawing references, annotation labels — as one or more
-/// length-prefixed UTF-16LE strings after a fixed `marker(4) + aux(8)`
-/// prefix. This is an **additive, audit-only** view that coexists with
-/// the raw [`SheetSubRecord0x0010Decoded`] from Phase 18 (unchanged) and
-/// emits no geometry kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SheetAttributeFragmentDecoded {
-    /// Byte range covering the full PSM record (6-byte header + payload).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always
-    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
-    pub type_code: u16,
-    /// `payload[0..4]` as little-endian `u32`. A repeating **type
-    /// marker** (frequently `0x00010002`), **not** a unique object id.
-    pub marker: u32,
-    /// `payload[4..12]` raw. 8-byte header/aux whose per-field semantics
-    /// remain pending IDA confirmation; preserved verbatim for audit.
-    pub aux: [u8; 8],
-    /// Length-prefixed UTF-16LE strings parsed from `payload[12..]`.
-    /// Non-empty by construction.
-    pub strings: Vec<DecodedAttributeString>,
-}
-
-/// Payload offset where the first length-prefixed string begins
-/// (`marker(4) + aux(8)`).
-pub const ATTRIBUTE_FRAGMENT_STRING_START: usize = 12;
-
-/// Upper bound on a single string's `u16` character count, guarding
-/// against a bogus length prefix.
-pub const ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT: u16 = 4096;
-
-/// Try to decode a single PSM `0x0010` attribute fragment at `offset`.
-/// Returns `None` when the header fails validation, the payload is too
-/// short for `marker(4)+aux(8)+len`, or no clean UTF-16LE string is
-/// found. Bounds-checked and panic-free.
-///
-/// Thin wrapper over [`AttributeFragmentDecoder::decode_at`].
-pub fn decode_attribute_fragment_at(
-    data: &[u8],
-    offset: usize,
-) -> Option<SheetAttributeFragmentDecoded> {
-    AttributeFragmentDecoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for the Phase 26 attribute-fragment
-/// **view** of the `0x0010` family (audit-only, additive): same PSM
-/// envelope as [`SubRecord0x0010Decoder`], but the payload must parse
-/// as `marker(4) + aux(8) + [u16 len + UTF-16LE]*` with at least one
-/// clean non-empty string. Two adapters deliberately share one type
-/// code here — the raw Phase 18 collection and this typed view coexist
-/// by design.
-///
-/// **Retired as a sheet family, 2026-11-11**, with
-/// [`SubRecord0x0010Decoder`]: the same envelope, so the same absence.
-/// The 12 531 "fragments" this used to report were, all but 33, the
-/// inside of a text box from its `+12` on — sub-type word, style id, then
-/// the box's own length-prefixed UTF-16 text, which is what the strings
-/// were; 303 of those boxes were superseded copies the native reader
-/// skips. The text of a label is `igTextBox`'s to decode, and it does.
-/// This matcher and [`decode_attribute_fragment_at`] stay for the tests
-/// and probes that re-find what the old scan matched.
-pub struct AttributeFragmentDecoder;
-
-impl PsmRecordDecoder for AttributeFragmentDecoder {
-    type Record = SheetAttributeFragmentDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_SUB_RECORD_0X0010
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetAttributeFragmentDecoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-            return None;
-        }
-        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-            .contains(&header.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf = header.bytes_to_follow as usize;
-        let payload_end = header.body_start.checked_add(btf)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        decode_attribute_fragment_payload(data, offset, &header, payload_end)
-    }
-
-    fn advance_of(&self, record: &SheetAttributeFragmentDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Family-specific payload validation for attribute fragments (the
-/// `marker + aux + length-prefixed UTF-16LE strings` grammar).
-fn decode_attribute_fragment_payload(
-    data: &[u8],
-    offset: usize,
-    header: &PsmHeader,
-    payload_end: usize,
-) -> Option<SheetAttributeFragmentDecoded> {
-    let type_code = header.type_code;
-
-    let payload = data.get(header.body_start..payload_end)?;
-    if payload.len() < ATTRIBUTE_FRAGMENT_STRING_START + 2 {
-        return None;
-    }
-    let marker = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-    let mut aux = [0u8; 8];
-    aux.copy_from_slice(payload.get(4..12)?);
-
-    let mut strings = Vec::new();
-    let mut pos = ATTRIBUTE_FRAGMENT_STRING_START;
-    while pos + 2 <= payload.len() {
-        let char_count = u16::from_le_bytes([payload[pos], payload[pos + 1]]);
-        if char_count == 0 || char_count > ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT {
-            break;
-        }
-        let text_start = pos + 2;
-        let byte_len = (char_count as usize).checked_mul(2)?;
-        let text_end = text_start.checked_add(byte_len)?;
-        if text_end > payload.len() {
-            break;
-        }
-        let Some(raw) = payload.get(text_start..text_end) else {
-            break;
-        };
-        let Some(text) = decode_attribute_utf16le(raw) else {
-            break;
-        };
-        if text.chars().all(char::is_whitespace) {
-            break;
-        }
-        strings.push(DecodedAttributeString {
-            len_offset: pos,
-            char_count,
-            text,
-        });
-        pos = text_end;
-    }
-
-    if strings.is_empty() {
-        return None;
-    }
-    Some(SheetAttributeFragmentDecoded {
-        byte_range: offset..payload_end,
-        type_code,
-        marker,
-        aux,
-        strings,
-    })
-}
-
-/// Decode `bytes` as UTF-16LE, returning `None` on odd length, any
-/// unpaired surrogate, or any control character other than space/tab.
-fn decode_attribute_utf16le(bytes: &[u8]) -> Option<String> {
-    if !bytes.len().is_multiple_of(2) {
-        return None;
-    }
-    let units = bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]));
-    let mut out = String::new();
-    for unit in char::decode_utf16(units) {
-        let ch = unit.ok()?;
-        if ch.is_control() && ch != ' ' && ch != '\t' {
-            return None;
-        }
-        out.push(ch);
-    }
-    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -6026,7 +5031,7 @@ fn decode_igboundary_payload(
     let mut pos = 28usize;
     let mut all_same = true;
     let mut first_vertex: Option<(f64, f64)> = None;
-    let in_domain = |v: f64| v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let in_domain = |v: f64| v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT;
     for _ in 0..n {
         let mut chords: Vec<((f64, f64), (f64, f64))> = Vec::new();
         let member_len = match *payload.get(pos)? {
@@ -6086,7 +5091,7 @@ fn decode_igboundary_payload(
     let anchor_x = read_f64(pos)?;
     let anchor_y = read_f64(pos + 8)?;
     for v in [anchor_x, anchor_y] {
-        if !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if !v.is_finite() || v.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
     }
@@ -6268,7 +5273,7 @@ fn igboundary_template_members(
             .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
     };
     let check = |v: f64| -> Option<f64> {
-        (v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT).then_some(v)
+        (v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT).then_some(v)
     };
     let mut push_segment = |tag_offset: usize, start: (f64, f64), end: (f64, f64)| {
         segments.push(SheetIgBoundary2dSegment {
@@ -6445,7 +5450,7 @@ fn decode_igboundary_loops_payload(
     // Anchor, flag, reference count, references: to the payload's last byte.
     let anchor = (f64_le(payload, pos)?, f64_le(payload, pos.checked_add(8)?)?);
     for value in [anchor.0, anchor.1] {
-        if !value.is_finite() || value.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if !value.is_finite() || value.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
     }
@@ -6620,7 +5625,7 @@ pub fn decode_igsym_boundary_payload(payload: &[u8]) -> Option<DecodedIgSymBound
             read_f64(at + 25)?,
         ];
         if v.iter()
-            .any(|v| !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+            .any(|v| !v.is_finite() || v.abs() > COORDINATE_DOMAIN_LIMIT)
         {
             return None;
         }
@@ -8184,7 +7189,7 @@ fn curve_doubles<const N: usize>(payload: &[u8]) -> Option<[f64; N]> {
     let mut out = [0f64; N];
     for (slot, value) in out.iter_mut().enumerate() {
         let read = f64_le(payload, CURVE_GEOMETRY_AT + slot * 8)?;
-        if !read.is_finite() || read.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if !read.is_finite() || read.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
         *value = read;
@@ -8993,8 +7998,7 @@ pub struct BspCurveGeometry {
 /// fields do not account for the payload exactly. Validation rules are
 /// documented on [`decode_igbspcurves`].
 pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
-    let in_domain =
-        |value: f64| value.is_finite() && value.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
     let mut at = CURVE_GEOMETRY_AT;
     let pole_count = u32_le(payload, at)? as usize;
     if !(2..=IGBSPCURVE2D_MAX_POLES).contains(&pole_count) {
@@ -10678,7 +9682,7 @@ fn decode_igdimension_payload(
     }
 
     let value_m = read_f64(IGDIMENSION_VALUE_OFFSET)?;
-    if !value_m.is_finite() || value_m.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+    if !value_m.is_finite() || value_m.abs() > COORDINATE_DOMAIN_LIMIT {
         return None;
     }
 
@@ -11794,72 +10798,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Phase 14 Slice D: PSM GLine2d decoder tests
-    // -----------------------------------------------------------------
-
-    /// Bytes a `GLine2d` record declares after the 6-byte envelope when it
-    /// carries nothing but its own body: the 12 header bytes the envelope
-    /// does not cover (`oid` + aux) plus the 48-byte payload.
-    ///
-    /// Declaring 48 here instead would make the record claim to end 12 bytes
-    /// before its own payload does — harmless to a scan, but it is not a
-    /// record a chain walk can step over, so the fixture would no longer
-    /// model a real stream.
-    const SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW: usize =
-        PSM_RECORD_HEADER_LEN - PSM_ENVELOPE_LEN + GLINE2D_PAYLOAD_LEN;
-
-    /// Build a single synthetic PSM `GLine2d` record:
-    /// 18-byte header (type=0x3FE6, oid=`oid`) + 6×f64 `GLine2d` payload
-    /// (origin, direction, params).
-    fn build_synthetic_gline2d_record(
-        oid: u32,
-        origin: (f64, f64),
-        direction: (f64, f64),
-        param_start: f64,
-        param_end: f64,
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN);
-        // type_code (14-bit) at bits 0..14 of the LE u16, top 2 bits = 0 flags.
-        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
-        out.extend_from_slice(&type_word.to_le_bytes());
-        out.extend_from_slice(&(SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW as u32).to_le_bytes());
-        // oid
-        out.extend_from_slice(&oid.to_le_bytes());
-        // 8-byte aux (set to fixed pattern for inspection).
-        out.extend_from_slice(&[0u8; 8]);
-        // 6 doubles
-        for v in [
-            origin.0,
-            origin.1,
-            direction.0,
-            direction.1,
-            param_start,
-            param_end,
-        ] {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        out
-    }
-
-    /// The matchers of three retired families walked on a chain, as the
-    /// stream entry points they no longer have walked them. The unit tests
-    /// below hold the matchers' own rules, which the evidence tests rest
-    /// on; nothing outside tests walks them.
-    fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-        GLine2dDecoder.scan(data)
-    }
-
-    /// The same for the `0x0010` sub-record view.
-    fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
-        SubRecord0x0010Decoder.scan(data)
-    }
-
-    /// The same for the attribute-fragment view.
-    fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
-        AttributeFragmentDecoder.scan(data)
-    }
-
     /// Wrap synthetic records into a `Sheet*` stream: the 8-byte stream
     /// header, then the records nose to tail.
     ///
@@ -11875,200 +10813,6 @@ mod tests {
             out.extend_from_slice(record);
         }
         out
-    }
-
-    /// The `GLine2d` records of a synthetic stream, read where the test put
-    /// them: each record's own length leads to the next.
-    ///
-    /// `0x3FE6` is past the last slot of the native reader's class table,
-    /// so a chain walk stops on such a record
-    /// ([`psm_type_word_opens_a_record`]) and the matcher walked on a chain
-    /// returns nothing for any stream. The payload rules are the class's
-    /// own and are still held, through the entry point that reads at an
-    /// offset.
-    fn gline2d_records_where_they_lie(stream: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-        let mut out = Vec::new();
-        let mut at = SHEET_STREAM_HEADER_LEN;
-        while let Some(header) = parse_psm_header(stream, at) {
-            let end = header.body_start + header.bytes_to_follow as usize;
-            if header.bytes_to_follow == 0 || end > stream.len() {
-                break;
-            }
-            out.extend(decode_primitive_line_at(stream, at));
-            at = end;
-        }
-        out
-    }
-
-    #[test]
-    fn primitive_line_decodes_canonical_synthetic_record() {
-        // Canonical synthetic line: origin at (0,0), unit horizontal
-        // direction, params [0, 1.0]. Endpoints A=(0,0) B=(1,0).
-        let record = build_synthetic_gline2d_record(42, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        let stream = synthetic_sheet_stream(&[record]);
-        assert!(
-            decode_primitive_lines(&stream).is_empty(),
-            "no chain holds a record of a type code past the class table"
-        );
-        let decoded = gline2d_records_where_they_lie(&stream);
-        assert_eq!(decoded.len(), 1, "expected exactly one decoded line");
-        let line = &decoded[0];
-        assert_eq!(line.type_code, PSM_TYPE_CODE_GLINE2D);
-        assert_eq!(line.type_flags, 0);
-        assert_eq!(
-            line.bytes_to_follow as usize,
-            SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
-        );
-        assert_eq!(line.oid, 42);
-        assert_eq!(line.origin, (0.0, 0.0));
-        assert!((line.direction.0 - 1.0).abs() < 1e-12);
-        assert!(line.direction.1.abs() < 1e-12);
-        assert_eq!(line.param_start, 0.0);
-        assert_eq!(line.param_end, 1.0);
-        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
-        // byte_range covers the envelope plus everything it declares.
-        assert_eq!(
-            line.byte_range.end,
-            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
-        );
-        // Endpoint helpers.
-        assert_eq!(line.endpoint_a(), (0.0, 0.0));
-        let (bx, by) = line.endpoint_b();
-        assert!((bx - 1.0).abs() < 1e-12);
-        assert!(by.abs() < 1e-12);
-    }
-
-    #[test]
-    fn primitive_line_rejects_wrong_type_code() {
-        // Same bytes but with a non-GLine2d type code.
-        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // Overwrite type with 0x1234 (not the GLine2d type).
-        record[0] = 0x34;
-        record[1] = 0x12;
-        let decoded = gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record]));
-        assert!(decoded.is_empty(), "wrong type_code must be rejected");
-    }
-
-    #[test]
-    fn primitive_line_rejects_non_unit_direction() {
-        // direction = (2.0, 0.0): length 2, not unit.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (2.0, 0.0), 0.0, 1.0);
-        assert!(
-            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
-            "non-unit direction vector must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_zero_direction() {
-        // direction = (0.0, 0.0): zero vector.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
-        assert!(
-            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
-            "zero direction vector must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_reversed_param_range() {
-        // param_start == param_end.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.0, 1.0);
-        assert!(
-            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
-            "param_start >= param_end must be rejected"
-        );
-        // param_start > param_end.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.5, 0.5);
-        assert!(
-            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
-            "reversed param range must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_nan_coordinate() {
-        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // Overwrite origin.x with NaN bytes (any non-finite).
-        let nan_bytes = f64::NAN.to_le_bytes();
-        let origin_off = PSM_RECORD_HEADER_LEN;
-        record[origin_off..origin_off + 8].copy_from_slice(&nan_bytes);
-        assert!(
-            gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record])).is_empty(),
-            "NaN coordinate must be rejected"
-        );
-    }
-
-    /// A payload that satisfies every `GLine2d` rule is still not a record
-    /// when it sits inside another one.
-    ///
-    /// This is the corpus failure in miniature: three "records" that passed
-    /// all five payload rules while living 160 bytes inside an
-    /// `igSmartFrame2d`. Chain membership is what rejects them, so it needs
-    /// a test that fails if the gate is ever removed.
-    #[test]
-    fn primitive_line_inside_another_records_payload_is_not_a_record() {
-        let hidden = build_synthetic_gline2d_record(99, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // One record of some other family whose payload happens to contain a
-        // perfectly well-formed GLine2d.
-        let mut host = Vec::new();
-        host.extend_from_slice(&PSM_TYPE_CODE_IGLINE2D.to_le_bytes());
-        host.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
-        host.extend_from_slice(&hidden);
-
-        let stream = synthetic_sheet_stream(&[host]);
-        assert!(
-            decode_primitive_line_at(&stream, SHEET_STREAM_HEADER_LEN + 6).is_some(),
-            "the buried bytes do satisfy every payload rule; without that the \
-             test would prove nothing"
-        );
-        assert!(
-            decode_primitive_lines(&stream).is_empty(),
-            "a payload-shaped match inside another record is not a record"
-        );
-    }
-
-    #[test]
-    fn primitive_line_decoder_is_panic_safe_on_truncated_input() {
-        // Build a complete stream, then truncate at various sizes.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        let stream = synthetic_sheet_stream(&[record]);
-        for trunc_len in 0..stream.len() {
-            // Must not panic, must return empty / no decoded line.
-            let decoded = decode_primitive_lines(&stream[..trunc_len]);
-            assert!(
-                decoded.is_empty(),
-                "truncated input of length {trunc_len} must not decode anything"
-            );
-        }
-        // Empty input also fine.
-        assert!(decode_primitive_lines(&[]).is_empty());
-    }
-
-    #[test]
-    fn primitive_line_decoder_is_panic_safe_on_random_noise() {
-        // Adversarial deterministic noise: incrementing bytes.
-        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        // Just running without panic is the test; whatever it decodes
-        // is acceptable (must be `Vec`, not panic).
-        let _decoded = decode_primitive_lines(&noise);
-        // All-zeros: nothing valid.
-        assert!(decode_primitive_lines(&vec![0u8; 4096]).is_empty());
-        // All-0xFF: nothing valid (type_code = 0x3FFF != GLine2d).
-        assert!(decode_primitive_lines(&vec![0xFFu8; 4096]).is_empty());
-    }
-
-    #[test]
-    fn primitive_line_decodes_two_back_to_back_records() {
-        let data = synthetic_sheet_stream(&[
-            build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5),
-            build_synthetic_gline2d_record(8, (0.20, 0.30), (0.0, 1.0), 0.0, 0.8),
-        ]);
-        let decoded = gline2d_records_where_they_lie(&data);
-        assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].oid, 7);
-        assert_eq!(decoded[1].oid, 8);
-        // The two records must have non-overlapping byte ranges.
-        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
     }
 
     // -----------------------------------------------------------------
@@ -13667,325 +12411,18 @@ mod tests {
     }
 
     #[test]
-    fn primitive_line_byte_range_covers_full_record_when_attribute_tail_present() {
-        // Build a record whose bytes_to_follow covers its 12 uncovered
-        // header bytes, the 48-byte payload, and a 200-byte attribute tail.
-        const TAIL_LEN: usize = 200;
-        const BYTES_TO_FOLLOW: usize = SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW + TAIL_LEN;
-        let mut record = Vec::new();
-        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
-        record.extend_from_slice(&type_word.to_le_bytes());
-        record.extend_from_slice(&(BYTES_TO_FOLLOW as u32).to_le_bytes());
-        // oid
-        record.extend_from_slice(&123u32.to_le_bytes());
-        // 8-byte aux
-        record.extend_from_slice(&[0u8; 8]);
-        // GLine2d payload
-        for v in [0.0f64, 0.0, 1.0, 0.0, 0.0, 1.0] {
-            record.extend_from_slice(&v.to_le_bytes());
-        }
-        record.extend_from_slice(&[0xAB; TAIL_LEN]);
-
-        let decoded = gline2d_records_where_they_lie(&synthetic_sheet_stream(&[record]));
-        assert_eq!(decoded.len(), 1);
-        let line = &decoded[0];
-        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
-        // byte_range covers the envelope plus everything it declares, tail
-        // included — not just the geometry payload.
-        assert_eq!(
-            line.byte_range.end,
-            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + BYTES_TO_FOLLOW
-        );
-        assert_eq!(line.bytes_to_follow as usize, BYTES_TO_FOLLOW);
-    }
-
-    // -----------------------------------------------------------------
-    // Phase 26: PSM 0x0010 attribute-fragment decoder tests
-    // -----------------------------------------------------------------
-
-    fn build_attribute_fragment(marker: u32, aux: [u8; 8], strings: &[&str]) -> Vec<u8> {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&marker.to_le_bytes());
-        payload.extend_from_slice(&aux);
-        for s in strings {
-            let units: Vec<u16> = s.encode_utf16().collect();
-            payload.extend_from_slice(&(units.len() as u16).to_le_bytes());
-            for u in units {
-                payload.extend_from_slice(&u.to_le_bytes());
-            }
-        }
-        let mut out = Vec::new();
-        out.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(&payload);
-        out
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_single_string() {
-        let rec = build_attribute_fragment(
-            0x0001_0002,
-            [3, 0, 1, 0, 0x44, 0, 0, 0],
-            &["ODOIL020150 MM"],
-        );
-        let decoded = decode_attribute_fragments(&chain_stream(&rec));
-        assert_eq!(decoded.len(), 1);
-        let f = &decoded[0];
-        assert_eq!(f.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-        assert_eq!(f.marker, 0x0001_0002);
-        assert_eq!(f.aux, [3, 0, 1, 0, 0x44, 0, 0, 0]);
-        assert_eq!(f.strings.len(), 1);
-        assert_eq!(f.strings[0].char_count, 14);
-        assert_eq!(f.strings[0].text, "ODOIL020150 MM");
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_cjk_string() {
-        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["设计温度"]);
-        let decoded = decode_attribute_fragments(&chain_stream(&rec));
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].strings[0].text, "设计温度");
-        assert_eq!(decoded[0].strings[0].char_count, 4);
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_multiple_strings() {
-        let rec = build_attribute_fragment(1, [0; 8], &["A3", "DN80"]);
-        let decoded = decode_attribute_fragments(&chain_stream(&rec));
-        assert_eq!(decoded.len(), 1);
-        let texts: Vec<&str> = decoded[0].strings.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(texts, vec!["A3", "DN80"]);
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_control_char_string() {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&1u32.to_le_bytes());
-        payload.extend_from_slice(&[0u8; 8]);
-        payload.extend_from_slice(&2u16.to_le_bytes());
-        // U+0001 U+0002 — control chars, must reject the whole record.
-        payload.extend_from_slice(&[0x01, 0x00, 0x02, 0x00]);
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragment_at(&rec, 0).is_none());
-    }
-
-    #[test]
-    fn attribute_fragment_skips_truncated_length_prefix() {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&1u32.to_le_bytes());
-        payload.extend_from_slice(&[0u8; 8]);
-        payload.extend_from_slice(&100u16.to_le_bytes());
-        payload.extend_from_slice(&[0x41, 0x00]); // only 1 char available, len says 100
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragment_at(&rec, 0).is_none());
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_wrong_type_code() {
-        let mut rec = build_attribute_fragment(1, [0; 8], &["A3"]);
-        rec[0] = 0x18; // igLine2d type code
-        assert!(decode_attribute_fragment_at(&rec, 0).is_none());
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_too_short_payload() {
-        // payload < marker(4)+aux(8)+len(2) = 14
-        let payload = vec![0u8; 10];
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragment_at(&rec, 0).is_none());
-    }
-
-    #[test]
-    fn attribute_fragment_at_returns_some_for_valid_offset() {
-        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["DN80"]);
-        let f = decode_attribute_fragment_at(&rec, 0).expect("valid offset must decode");
-        assert_eq!(f.strings[0].text, "DN80");
-        assert_eq!(f.byte_range, 0..rec.len());
-    }
-
-    #[test]
-    fn attribute_fragment_decoder_is_panic_safe() {
-        let rec = build_attribute_fragment(
-            0x0001_0002,
-            [1, 2, 3, 4, 5, 6, 7, 8],
-            &["ODOIL020150 MM", "DN80"],
-        );
-        for trunc in 0..rec.len() {
-            assert!(decode_attribute_fragment_at(&rec[..trunc], 0).is_none());
-            let _ = decode_attribute_fragments(&rec[..trunc]);
-        }
-        let noise: Vec<u8> = (0..4096u32).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_attribute_fragments(&noise);
-        let _ = decode_attribute_fragments(&vec![0xFFu8; 2048]);
-    }
-
-    // Phase 18: PSM 0x0010 sub-record family audit-only decoder tests
-    // -----------------------------------------------------------------
-
-    fn build_synthetic_sub_record_0x0010(type_flags: u16, payload: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(6 + payload.len());
-        let type_word = PSM_TYPE_CODE_SUB_RECORD_0X0010 | ((type_flags & 0x3) << 14);
-        out.extend_from_slice(&type_word.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(payload);
-        out
-    }
-
-    #[test]
-    fn sub_record_0x0010_decodes_canonical_payload() {
-        let payload: Vec<u8> = (0..16u8).collect();
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&chain_stream(&record));
-        assert_eq!(decoded.len(), 1);
-        let rec = &decoded[0];
-        assert_eq!(
-            rec.byte_range,
-            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + 6 + payload.len()
-        );
-        assert_eq!(rec.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-        assert_eq!(rec.type_flags, 0);
-        assert_eq!(rec.bytes_to_follow as usize, payload.len());
-        assert_eq!(rec.raw_payload, payload);
-        // Phase 19: leading_word = u16::from_le_bytes([payload[0],
-        // payload[1]]) = LE(0x00, 0x01) = 0x0100.
-        assert_eq!(rec.leading_word, Some(0x0100));
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoded_at_returns_some_for_valid_offset() {
-        let payload = vec![0xAAu8; 32];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let rec = decode_sub_record_0x0010_at(&record, 0).expect("valid offset must decode");
-        assert_eq!(rec.bytes_to_follow, 32);
-        assert_eq!(rec.raw_payload.len(), 32);
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_wrong_type_code() {
-        let payload = vec![0u8; 16];
-        let mut record = build_synthetic_sub_record_0x0010(0, &payload);
-        // Flip type_code to 0x0018 (igLine2d).
-        record[0] = 0x18;
-        record[1] = 0x00;
-        assert!(decode_sub_record_0x0010_at(&record, 0).is_none());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_zero_bytes_to_follow() {
-        let payload = vec![];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        // bytes_to_follow = 0 < SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW (8).
-        assert!(decode_sub_record_0x0010_at(&record, 0).is_none());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_below_minimum_bytes_to_follow() {
-        // bytes_to_follow = 7 < min (8). Must build a 13-byte buffer
-        // so the header fits but payload is too small to be accepted.
-        let mut record = Vec::with_capacity(6 + 7);
-        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        record.extend_from_slice(&7u32.to_le_bytes());
-        record.extend_from_slice(&[0u8; 7]);
-        assert!(decode_sub_record_0x0010_at(&record, 0).is_none());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_oversized_bytes_to_follow() {
-        // Encode a fake bytes_to_follow well above the cap; we only
-        // need the header (6 bytes) — payload bounds will reject the
-        // record anyway because data.len() is small.
-        let mut record = Vec::with_capacity(6);
-        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        record.extend_from_slice(&(SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW + 1).to_le_bytes());
-        let mut padded = record.clone();
-        padded.extend(std::iter::repeat_n(0u8, 16));
-        assert!(decode_sub_record_0x0010_at(&padded, 0).is_none());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_truncated_payload() {
-        let payload = vec![0u8; 16];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        // Drop the last 4 payload bytes; bytes_to_follow header still
-        // says 16 but only 12 are available.
-        let truncated = &record[..record.len() - 4];
-        assert!(decode_sub_record_0x0010_at(truncated, 0).is_none());
-        assert!(decode_sub_records_0x0010(&chain_stream(truncated)).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_returns_empty_for_short_or_empty_input() {
-        assert!(decode_sub_records_0x0010(&[]).is_empty());
-        // 13 bytes = exactly header (6) + min payload (8) - 1.
-        assert!(decode_sub_records_0x0010(&[0u8; 13]).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoder_is_panic_safe_on_short_input() {
-        let payload = vec![0xCCu8; 16];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        for trunc_len in 0..record.len() {
-            assert!(decode_sub_record_0x0010_at(&record[..trunc_len], 0).is_none());
-            // Should not panic; truncated inputs return an empty vec.
-            let _ = decode_sub_records_0x0010(&record[..trunc_len]);
-        }
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoder_is_panic_safe_on_random_noise() {
-        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_sub_records_0x0010(&noise);
-        assert!(decode_sub_records_0x0010(&vec![0u8; 4096]).is_empty());
-        // All-0xFF stream never matches type_code 0x0010 (low 14 bits
-        // would be 0x3FFF, not 0x0010).
-        assert!(decode_sub_records_0x0010(&vec![0xFFu8; 4096]).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_decodes_two_back_to_back_records() {
-        let payload_a = vec![0xAAu8; 16];
-        let payload_b = vec![0xBBu8; 24];
-        let mut data = build_synthetic_sub_record_0x0010(0, &payload_a);
-        data.extend_from_slice(&build_synthetic_sub_record_0x0010(0, &payload_b));
-        let decoded = decode_sub_records_0x0010(&chain_stream(&data));
-        assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].raw_payload, payload_a);
-        assert_eq!(decoded[1].raw_payload, payload_b);
-        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
-    }
-
-    #[test]
-    fn sub_record_0x0010_preserves_type_flags() {
-        // The lower flag bit (type word 0x4000) rides through the envelope
-        // as stored. No chain walk reads a record that carries it, so it is
-        // read here where it lies.
-        let payload = vec![0u8; 16];
-        let record = build_synthetic_sub_record_0x0010(0b01, &payload);
-        assert!(decode_sub_records_0x0010(&chain_stream(&record)).is_empty());
-        let decoded = decode_sub_record_0x0010_at(&record, 0).expect("reads at an offset");
-        assert_eq!(decoded.type_flags, 0b01);
-        assert_eq!(decoded.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-    }
-
-    #[test]
     fn a_record_the_native_reader_skips_is_not_decoded_by_any_family() {
         // The upper flag bit (type word 0x8000) is the one PSMSerializeIn
         // seeks past before reading the oid; `parse_live_psm_header` turns
         // every family away from it, with or without the lower bit beside.
-        let payload = vec![0u8; 16];
-        for flags in [0b10, 0b11] {
-            let record = build_synthetic_sub_record_0x0010(flags, &payload);
+        let live = build_synthetic_igline2d_record(7, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        assert!(decode_igline_at(&live, 0).is_some());
+        for flags in [0b10u16, 0b11] {
+            let mut record = live.clone();
+            let type_word = PSM_TYPE_CODE_IGLINE2D | (flags << 14);
+            record[..2].copy_from_slice(&type_word.to_le_bytes());
             assert!(
-                decode_sub_record_0x0010_at(&record, 0).is_none(),
+                decode_igline_at(&record, 0).is_none(),
                 "flags {flags:#b} must be skipped"
             );
             let header = parse_psm_header(&record, 0).expect("envelope reads");
@@ -14048,65 +12485,6 @@ mod tests {
             }
         }
         assert_eq!(streams, 30, "every length 1-4 under every skip-bit choice");
-    }
-
-    // -----------------------------------------------------------------
-    // Phase 19: PSM 0x0010 leading_word audit field
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn sub_record_0x0010_leading_word_matches_first_two_payload_bytes_le() {
-        // Payload starts with the Phase-19-probe-confirmed dominant
-        // leading word 0x0002 (28% of cross-fixture records).
-        let mut payload = vec![0x02u8, 0x00];
-        payload.extend(std::iter::repeat_n(0xAAu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&chain_stream(&record));
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x0002));
-
-        // Same exercise with 0x0003 (the second-most-common leading
-        // word per Phase 19 probe, 3.6% of records).
-        let mut payload = vec![0x03u8, 0x00];
-        payload.extend(std::iter::repeat_n(0xBBu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&chain_stream(&record));
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x0003));
-
-        // Non-trivial byte-order check: payload starts with 0x1C 0x4E
-        // → LE u16 = 0x4E1C (one of the size-16 bucket dominant words).
-        let mut payload = vec![0x1Cu8, 0x4E];
-        payload.extend(std::iter::repeat_n(0xCCu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&chain_stream(&record));
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x4E1C));
-    }
-
-    #[test]
-    fn sub_record_0x0010_leading_word_is_none_for_sub_two_byte_payload() {
-        // The decoder enforces bytes_to_follow >= 8, so the only way
-        // to observe `leading_word == None` is to construct the DTO
-        // manually with a < 2 byte raw_payload. This tests that the
-        // schema honors that contract (and protects against a future
-        // refactor that drops the Option<>).
-        let dto = SheetSubRecord0x0010Decoded {
-            byte_range: 0..6,
-            type_code: PSM_TYPE_CODE_SUB_RECORD_0X0010,
-            type_flags: 0,
-            bytes_to_follow: 0,
-            raw_payload: Vec::new(),
-            leading_word: None,
-        };
-        assert_eq!(dto.leading_word, None);
-        let dto_one = SheetSubRecord0x0010Decoded {
-            leading_word: None,
-            raw_payload: vec![0x42],
-            bytes_to_follow: 1,
-            ..dto.clone()
-        };
-        assert_eq!(dto_one.leading_word, None);
     }
 
     // Phase 25-A spatial-distribution analysis tests.
