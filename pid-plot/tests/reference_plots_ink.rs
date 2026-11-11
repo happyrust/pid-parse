@@ -1126,15 +1126,16 @@ fn every_known_defect_is_one_reading_with_a_cause() {
 /// One rule letters all 127 lettered boxed records of the eleven sheets
 /// where their references do: the line hangs from the top of its box,
 /// `baseline = insertion + box height / 2 − ascent`. On a 3.689 mm box that
-/// is where the page letters it today; on a 4.034 mm box it is 0.173 mm
-/// higher. Our page does not read the box's height at all.
+/// is the middle line the page always lettered it from; on a 4.034 mm box
+/// it is 0.173 mm higher, and until the layout read the box's height these
+/// four sat 0.122 and 0.198 mm under their reference.
 ///
-/// Not landed, which is why this is ignored: the box has to reach the
-/// writer through the page model, and what the rule does to the taller
-/// boxes no reference shows has to be settled first
+/// The rule is applied to the class these 127 are — anchor code `0x48`, one
+/// line, FangSong, a box no taller than 4.034 mm — and to no other: what it
+/// would do to the taller boxes and the other codes of the plant backup no
+/// reference shows
 /// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
 #[test]
-#[ignore = "a boxed label is still lettered about its insertion whatever its box's height"]
 fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them() {
     let corpus = corpus_dir();
     let name = "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图";
@@ -1175,6 +1176,7 @@ fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them
         })
         .collect();
     assert_eq!(down.len(), 4, "the four boxed labels: {down:?}");
+    eprintln!("the four boxed labels, millimetres below the reference: {down:?}");
     let half_a_unit = 25.4 / 150.0 / 2.0;
     let low: Vec<String> = down
         .iter()

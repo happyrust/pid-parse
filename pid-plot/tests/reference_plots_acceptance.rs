@@ -101,8 +101,8 @@
 //! thresholds, with no exception. A class mean cannot see a single label, so
 //! the labels whose anchor point lands more than 0.15 mm from the
 //! reference's or whose run is more than 0.05 mm wider or narrower are
-//! counted on the whole page and pinned: 2 over the eleven pages, the A2
-//! sheet's two boxed `仪表风管线`. It was 50 until the three air-cooler
+//! counted on the whole page and pinned: none over the eleven pages. It was
+//! 50 until the three air-cooler
 //! sheets' `SP:` started its colon on its own whole pixel, as the reference
 //! does. Forty-four title-block labels came inside when a condensed label's
 //! `Tm` took the scales the driver writes, and `J K井场`'s `1-1/2"` beside
@@ -258,7 +258,9 @@ const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
 /// two labels on one baseline that the reader joined into one run while our
 /// page painted them one after the other; painted in the order the sheet
 /// lists its objects in, the page reads back in the reference's runs. The
-/// eleven pages come to 2: the A2 sheet's two boxed `仪表风管线`.
+/// last two were the A2 sheet's boxed `仪表风管线`, 0.212 and 0.201 mm low
+/// until a line was hung from the top of the box its record states. The
+/// eleven pages come to none.
 const LABEL_POSITION_MM: f64 = 0.15;
 
 /// How much wider or narrower than the reference's a paired label's run may
@@ -636,10 +638,11 @@ const PINS: [Pin; 11] = [
             min_text_matched: 250,
             text_reference: 261,
             // Two of the four were the company name's two lines, stated in
-            // the driver's 256ths now. The two left are the boxed
-            // `仪表风管线`, whose line hangs from the top of its box on the
-            // reference page: 0.212 and 0.201 mm off.
-            text_off: 2,
+            // the driver's 256ths now. The other two were the boxed
+            // `仪表风管线`, 0.212 and 0.201 mm low: their box is 4.034 mm tall
+            // and the line hangs from its top, 0.173 mm above where a box
+            // of the line's own 3.689 mm puts it.
+            text_off: 0,
             borrowed: 3,
             borrowed_in_family: 3,
         },

@@ -2568,7 +2568,7 @@ const ARIAL_NARROW_72PX: [u16; 95] = [
 
 /// The GDI reference pixel the plotter measures `basis` against for `key`,
 /// where [`REFERENCE_CAP_PX`] carries one.
-fn reference_cap_px(key: &str, basis: TextHeightBasis) -> Option<f64> {
+pub(crate) fn reference_cap_px(key: &str, basis: TextHeightBasis) -> Option<f64> {
     REFERENCE_CAP_PX
         .iter()
         .find(|(face, ..)| *face == key)

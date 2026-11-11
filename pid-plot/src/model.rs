@@ -1326,6 +1326,7 @@ pub fn lay_out_with_symbol_roots(
     let line_styles = pid_parse::style_link::line_styles_for_document(&doc);
     let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
     let as_drawn = as_drawn_style_ids(&doc);
+    let box_heights = text_box_heights(&doc);
     let geometry = build_normalized_geometry(&doc);
     recorder.parse(
         LedgerDomain::Drawing,
@@ -1545,16 +1546,20 @@ pub fn lay_out_with_symbol_roots(
                 &mut placements,
             )
             .into(),
-            _ => push_entity(
-                &mut primitives,
-                entity,
-                frame_mm,
-                &styles,
-                &line_styles,
-                &fill_styles,
-                &mut seen_sheet_fills,
-            )
-            .into(),
+            _ => {
+                let before = primitives.len();
+                let layout = push_entity(
+                    &mut primitives,
+                    entity,
+                    frame_mm,
+                    &styles,
+                    &line_styles,
+                    &fill_styles,
+                    &mut seen_sheet_fills,
+                );
+                hang_in_the_box(&mut primitives[before..], entity, &box_heights);
+                layout.into()
+            }
         };
         recorder.finish(index, outcome, primitives.len());
     }
@@ -1645,6 +1650,124 @@ fn stated_paper_mm(doc: &PidDocument) -> Option<[f64; 2]> {
         .map(|paper| [millimetres(paper.width_m), millimetres(paper.height_m)]);
     let first = papers.next()?;
     papers.all(|paper| paper == first).then_some(first)
+}
+
+/// The height of the box each `igTextBox` record of a document states, in
+/// millimetres, by its stream and oid; a record that states none is left
+/// out.
+type TextBoxHeights = std::collections::HashMap<(String, u32), f64>;
+
+fn text_box_heights(doc: &PidDocument) -> TextBoxHeights {
+    let mut heights = TextBoxHeights::new();
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+        for record in &geometry.decoded_igtextboxes {
+            if record.text_box_height_m > 0.0 && record.text_box_height_m.is_finite() {
+                heights.insert(
+                    (sheet.path.clone(), record.oid),
+                    record.text_box_height_m * MM_PER_METRE,
+                );
+            }
+        }
+    }
+    heights
+}
+
+/// The anchor code of the one class of boxed label the reference plots
+/// letter: every one of their 141 boxed records carries it.
+const BOXED_LINE_ANCHOR: u8 = 0x48;
+
+/// The tallest box a reference plot letters a line in, millimetres, and a
+/// micrometre: the A2 sheet's four are 4.034 276 mm.
+const TALLEST_WITNESSED_BOX_MM: f64 = 4.035_3;
+
+/// How much taller than its line's cell a box may be and still be that cell,
+/// millimetres of lift: half a micrometre.
+const BOX_IS_THE_CELL_MM: f64 = 0.000_5;
+
+/// Letter a boxed line where its box puts it: hung from the top of the box.
+///
+/// An `igTextBox` may state a box. Its insertion point is the box's centre,
+/// and the line is set from the box's top edge down — its baseline the
+/// face's ascent below that edge:
+///
+/// ```text
+/// baseline = insertion + box height / 2 − ascent
+/// ```
+///
+/// A box as tall as the face's cell, which is what 123 of the 127 lettered
+/// boxes of the eleven reference plots are (3.689 mm for their FangSong),
+/// puts the cell's middle on the insertion point: that is the middle line
+/// the label already letters from, and nothing moves. A taller box lifts
+/// the line by half of what it is taller by. The A2 sheet's `低压放空总管` and
+/// `仪表风管线`, two of each, sit in boxes of 4.034 mm and were lettered
+/// 0.122 and 0.198 mm under the reference for want of that 0.173 mm.
+///
+/// Only the class the reference plots letter is moved: the record's anchor
+/// code is `0x48`, it letters one line, in FangSong, from the middle line,
+/// and its box is no taller than the tallest of those. The plant backup
+/// holds 37 boxes taller than that (5.966 and 8.309 mm) and 30 records with
+/// another code, and no plot shows where their lines sit
+/// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
+fn hang_in_the_box(
+    lettered: &mut [PaperPrimitive],
+    entity: &PidGraphicEntity,
+    box_heights: &TextBoxHeights,
+) {
+    let PidGraphicKind::Text {
+        anchor_code,
+        text_box_width,
+        ..
+    } = &entity.kind
+    else {
+        return;
+    };
+    if *anchor_code != BOXED_LINE_ANCHOR || !text_box_width.is_some_and(|width| width > 0.0) {
+        return;
+    }
+    let box_mm = entity.source.stream_path.as_ref().and_then(|stream| {
+        entity
+            .graphic_oid
+            .and_then(|oid| box_heights.get(&(stream.clone(), oid)))
+    });
+    let (Some(box_mm), [line]) = (box_mm.copied(), lettered) else {
+        return;
+    };
+    let PaperShape::Text {
+        origin_mm,
+        height_mm: Some(height_mm),
+        rotation,
+        value,
+        font,
+        line: TextLine::Middle,
+        height_basis: TextHeightBasis::Cap,
+        ..
+    } = &mut line.shape
+    else {
+        return;
+    };
+    let face = crate::fonts::typeface_key(font.as_deref(), value);
+    let Some(cap72) = crate::write::reference_cap_px(face, TextHeightBasis::Cap) else {
+        return;
+    };
+    if face != "FangSong" || box_mm > TALLEST_WITNESSED_BOX_MM {
+        return;
+    }
+    // The cell the line is set in: the face's 72 reference units, of which
+    // the style height measures the cap's share.
+    let cell_mm = *height_mm * 72.0 / cap72;
+    let lift_mm = (box_mm - cell_mm) / 2.0;
+    // A box that is the cell to the micrometre is the cell: the 3.688 799 mm
+    // boxes stand beside a cell of 3.688 796 mm, and their lines stay where
+    // the middle line puts them.
+    if lift_mm.is_nan() || lift_mm <= BOX_IS_THE_CELL_MM {
+        return;
+    }
+    // Up across the run: the same normal a label's line pitch steps down.
+    origin_mm[0] -= rotation.sin() * lift_mm;
+    origin_mm[1] += rotation.cos() * lift_mm;
 }
 
 /// The display order of each sheet stream of a document, by the stream's
@@ -4702,6 +4825,120 @@ mod tests {
             "box left edge, got {origin_mm:?}"
         );
         assert!((origin_mm[1] - 200.0).abs() < 1e-6);
+    }
+
+    /// One boxed label of the sheet, laid out and then hung in its box: the
+    /// 7 pt FangSong line of an off-page connector, centred on (100, 200) mm.
+    fn boxed_line(
+        value: &str,
+        anchor_code: u8,
+        rotation: f64,
+        box_height_mm: Option<f64>,
+    ) -> Vec<PaperPrimitive> {
+        let mut record = entity(PidGraphicKind::Text {
+            insertion: PidPoint { x: 0.1, y: 0.2 },
+            value: value.to_string(),
+            height: 0.002_469_444,
+            rotation,
+            anchor_code,
+            text_box_width: Some(0.042_009),
+        });
+        record.source.stream_path = Some("/Sheet6".to_string());
+        record.graphic_oid = Some(77);
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &record,
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let boxes: super::TextBoxHeights = box_height_mm
+            .map(|height| (("/Sheet6".to_string(), 77), height))
+            .into_iter()
+            .collect();
+        super::hang_in_the_box(&mut out, &record, &boxes);
+        out
+    }
+
+    fn origin_of(primitive: &PaperPrimitive) -> [f64; 2] {
+        match &primitive.shape {
+            PaperShape::Text { origin_mm, .. } => *origin_mm,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The A2 sheet's `仪表风管线`: a box 4.034 276 mm tall round a line whose
+    /// cell is 3.688 796 mm. The line hangs from the top of the box, so it is
+    /// lettered half the difference above where a box of its own cell puts
+    /// it — 0.172 74 mm, which is what the reference plot shows — and up
+    /// means across the run, whichever way the run points.
+    #[test]
+    fn a_line_in_a_box_taller_than_its_cell_hangs_from_the_top_of_the_box() {
+        let unboxed = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, None)[0]);
+        let lift: f64 = (4.034_276 - 0.002_469_444 * 1000.0 * 72.0 / 48.2) / 2.0;
+        assert!((lift - 0.172_74).abs() < 1e-5, "{lift}");
+
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, Some(4.034_276))[0]);
+        assert!((hung[0] - unboxed[0]).abs() < 1e-12, "{hung:?}");
+        assert!((hung[1] - unboxed[1] - lift).abs() < 1e-9, "{hung:?}");
+
+        // Up the side of a pipe run the line reads upward, and its top is
+        // to the left.
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let upright = origin_of(&boxed_line("仪表风管线", 0x48, quarter, None)[0]);
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, quarter, Some(4.034_276))[0]);
+        assert!((hung[0] - upright[0] + lift).abs() < 1e-9, "{hung:?}");
+        assert!((hung[1] - upright[1]).abs() < 1e-9, "{hung:?}");
+    }
+
+    /// A box that is the line's own cell leaves the line on its middle line,
+    /// to the last bit: 542 of the lettered boxes on hand are 3.688 799 mm
+    /// round a cell of 3.688 796 mm.
+    #[test]
+    fn a_line_in_a_box_of_its_own_cell_does_not_move() {
+        let unboxed = boxed_line("DWG-0100集05-42", 0x48, 0.0, None);
+        let boxed = boxed_line("DWG-0100集05-42", 0x48, 0.0, Some(3.688_799));
+        assert_eq!(boxed, unboxed);
+        // Nor does a box shorter than the cell push the line down.
+        let short = boxed_line("DWG-0100集05-42", 0x48, 0.0, Some(3.2));
+        assert_eq!(short, unboxed);
+    }
+
+    /// The rule is held to the class the reference plots letter. A taller
+    /// box, another anchor code, a face that is not FangSong and a record of
+    /// two lines are lettered as they were: no plot shows where they sit.
+    #[test]
+    fn a_boxed_record_no_reference_letters_is_left_where_it_was() {
+        // 5.966 and 8.309 mm: the plant backup's taller boxes.
+        for height in [5.966, 8.309] {
+            assert_eq!(
+                boxed_line("仪表风管线", 0x48, 0.0, Some(height)),
+                boxed_line("仪表风管线", 0x48, 0.0, None),
+                "{height} mm"
+            );
+        }
+        // The codes the backup's other boxed records carry.
+        for code in [
+            0x32, 0x36, 0x37, 0x39, 0x40, 0x42, 0x50, 0x51, 0x01, 0x15, 0x31,
+        ] {
+            assert_eq!(
+                boxed_line("仪表风管线", code, 0.0, Some(4.034_276)),
+                boxed_line("仪表风管线", code, 0.0, None),
+                "{code:#04x}"
+            );
+        }
+        // Latin lettering is set in Arial Narrow.
+        assert_eq!(
+            boxed_line("PT-0114301", 0x48, 0.0, Some(4.034_276)),
+            boxed_line("PT-0114301", 0x48, 0.0, None)
+        );
+        // Two lines.
+        let two = boxed_line("仪表风\r管线", 0x48, 0.0, Some(4.034_276));
+        assert_eq!(two.len(), 2);
+        assert_eq!(two, boxed_line("仪表风\r管线", 0x48, 0.0, None));
     }
 
     /// A sheet label's run partition reaches the paper, cut against the lines
