@@ -349,10 +349,20 @@ impl Sheet {
     }
 }
 
-/// Why every page's ends are apart: the writer strokes butt-ended and mitred.
-const ENDS: &str = "the writer states `0 J 0 j` for the whole page; the reference states \
-                    `1 j 1 J` with the first pen wider than one device unit and strokes \
-                    everything from there on round-ended and round-joined";
+/// The one-unit rules of `I井场`'s border template.
+const VALVE_FIRST: &str = "the border template's one-unit rules, butt-ended on our page and \
+                           round-ended on the reference: the reference draws one valve of the \
+                           drawing (`Ball Valve Type 4`, oid 38159) before its template, so \
+                           `1 j 1 J` is already stated when the template is stroked. Neither the \
+                           record's place in the stream, its oid nor its layer puts that valve \
+                           first";
+
+/// The one-unit rules the A2 template strokes before its frame on our page.
+const TEMPLATE_ORDER: &str = "one-unit rules of the `CPECCHB-SQ-A2` template that our page strokes \
+                              before the template's 1.4141 mm frame and the reference after it: \
+                              the reference strokes the frame second, straight after the sheet \
+                              outline, and the order it draws a template's records in is not \
+                              decoded";
 
 /// The border two reference plots do not print.
 const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing links and the \
@@ -379,9 +389,9 @@ const SHEETS: [Sheet; 11] = [
         sheet_edges: 8,
         defects: &[Defect {
             field: Field::EndsOther,
-            reads: 41948.990,
-            cause: Cause::NotFixed,
-            what: ENDS,
+            reads: 11350.393,
+            cause: Cause::Undetermined,
+            what: VALVE_FIRST,
         }],
     },
     Sheet {
@@ -390,12 +400,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 14661,
         same_colour: [14709, 813, 4922],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 48725.690,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "L M井场 注采阀组工艺及自控流程图",
@@ -403,12 +408,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 17812,
         same_colour: [17866, 959, 5846],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 55647.126,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
@@ -441,12 +441,6 @@ const SHEETS: [Sheet; 11] = [
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
-            Defect {
-                field: Field::EndsOther,
-                reads: 9507.448,
-                cause: Cause::NotFixed,
-                what: ENDS,
-            },
         ],
     },
     Sheet {
@@ -455,12 +449,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1419,
         same_colour: [1425, 161, 1136],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 8171.970,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
@@ -493,12 +482,6 @@ const SHEETS: [Sheet; 11] = [
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
-            Defect {
-                field: Field::EndsOther,
-                reads: 9968.437,
-                cause: Cause::NotFixed,
-                what: ENDS,
-            },
         ],
     },
     Sheet {
@@ -507,12 +490,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3192,
         same_colour: [3196, 253, 1672],
         sheet_edges: 0,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 14197.951,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
@@ -520,12 +498,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3394,
         same_colour: [3404, 326, 2144],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 16748.540,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
@@ -533,12 +506,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3401,
         same_colour: [3411, 328, 2172],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 16899.841,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
@@ -546,12 +514,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3268,
         same_colour: [3278, 321, 2127],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 16590.121,
-            cause: Cause::NotFixed,
-            what: ENDS,
-        }],
+        defects: &[],
     },
     Sheet {
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
@@ -642,18 +605,16 @@ const SHEETS: [Sheet; 11] = [
             },
             Defect {
                 field: Field::SheetEdgesApart,
-                reads: 7.0,
+                reads: 3.0,
                 cause: Cause::NotFixed,
-                what: "the inner frame's four lines print 1.017 mm where the reference prints \
-                       1.355 mm (`3.84 w`: the template declares 1.4141 mm and the pen table \
-                       stops at the wide pen); and the top sheet edge and the right one, which \
-                       we stroke twice, lie off the reference's 594 × 420 mm paper",
+                what: "the top sheet edge and the right one, which we stroke twice, lie off the \
+                       reference's 594 × 420 mm paper",
             },
             Defect {
                 field: Field::EndsOther,
-                reads: 19107.863,
-                cause: Cause::NotFixed,
-                what: ENDS,
+                reads: 2156.858,
+                cause: Cause::Undetermined,
+                what: TEMPLATE_ORDER,
             },
         ],
     },
