@@ -1130,6 +1130,78 @@ fn every_known_defect_is_one_reading_with_a_cause() {
     );
 }
 
+/// The four labels of the A2 sheet whose record states a box taller than
+/// the line it holds: two `低压放空总管` and two `仪表风管线`, boxes 4.034 mm
+/// tall where every other lettered boxed record of the eleven sheets states
+/// 3.689 mm. The reference letters each of them one device unit higher than
+/// our page does.
+///
+/// One rule letters all 127 lettered boxed records of the eleven sheets
+/// where their references do: the line hangs from the top of its box,
+/// `baseline = insertion + box height / 2 − ascent`. On a 3.689 mm box that
+/// is where the page letters it today; on a 4.034 mm box it is 0.173 mm
+/// higher. Our page does not read the box's height at all.
+///
+/// Not landed, which is why this is ignored: the box has to reach the
+/// writer through the page model, and what the rule does to the taller
+/// boxes no reference shows has to be settled first
+/// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
+#[test]
+#[ignore = "a boxed label is still lettered about its insertion whatever its box's height"]
+fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them() {
+    let corpus = corpus_dir();
+    let name = "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图";
+    let reference_path = corpus.join(format!("{name}.pdf"));
+    if !reference_path.is_file() {
+        eprintln!(
+            "skipping the boxed labels; {} is absent",
+            reference_path.display()
+        );
+        return;
+    }
+    let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus)
+        .unwrap_or_else(|error| panic!("{name}: layout: {error}"));
+    let prepared = prepare_fonts(&[&model], &font_search_dirs(&corpus)).expect("fonts");
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
+    let reference = PageInk::read(&std::fs::read(&reference_path).expect("the reference"))
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+    let ours = PageInk::read(&write_plot(&model, &fonts).expect("write"))
+        .unwrap_or_else(|error| panic!("{name}: ours: {error}"));
+    let whole = compare_plots_with_model(&reference.ink, &ours.ink, &[], &[], &model);
+    // How far below the reference's each of the four is lettered.
+    let down: Vec<(&str, f64)> = whole
+        .text_pairs
+        .iter()
+        .filter_map(|pair| {
+            let text = pair.source.as_ref()?.text.trim();
+            ["低压放空总管", "仪表风管线"]
+                .into_iter()
+                .find(|label| *label == text)
+                .map(|label| (label, pair.down_mm))
+        })
+        .collect();
+    assert_eq!(down.len(), 4, "the four boxed labels: {down:?}");
+    let half_a_unit = 25.4 / 150.0 / 2.0;
+    let low: Vec<String> = down
+        .iter()
+        .filter(|(_, down)| down.abs() >= half_a_unit)
+        .map(|(label, down)| format!("{label} {down:+.4} mm"))
+        .collect();
+    assert!(
+        low.is_empty(),
+        "lettered more than half a device unit ({half_a_unit:.4} mm) below the reference: {}; \
+         all four read {down:?}",
+        low.join(", ")
+    );
+}
+
 #[test]
 fn eleven_reference_plots_print_the_ink_their_pins_say() {
     let corpus = corpus_dir();
