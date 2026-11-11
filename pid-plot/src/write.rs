@@ -1325,6 +1325,10 @@ struct TextSegment<'a> {
     text: String,
     typeface: &'a str,
     size_pt: f64,
+    /// The style height the stretch states — the label's own, or the one its
+    /// run of the record carries — which `size_pt` was sized from and which
+    /// the stretch is measured and spaced at.
+    height_mm: f64,
 }
 
 /// Split a label into the stretches it letters differently.
@@ -1369,6 +1373,7 @@ fn text_segments<'a>(
             text: inked.to_string(),
             typeface: text.typeface,
             size_pt: base_size,
+            height_mm,
         }]
     };
     if text.spans.is_empty() {
@@ -1382,7 +1387,9 @@ fn text_segments<'a>(
     if end <= lead {
         return plain();
     }
-    let mut per_char: Vec<(&'a str, f64)> = vec![(text.typeface, base_size); end - lead];
+    // Each character's face, its size and the style height that size is of.
+    let mut per_char: Vec<(&'a str, f64, f64)> =
+        vec![(text.typeface, base_size, height_mm); end - lead];
     for span in text.spans {
         let start = usize::from(span.start);
         let stop = start.saturating_add(usize::from(span.len)).min(chars.len());
@@ -1395,16 +1402,19 @@ fn text_segments<'a>(
             Some(named) => typeface_key(Some(named), text.value),
             None => text.typeface,
         };
-        let size_pt = size_in(typeface, span.height_mm.unwrap_or(height_mm));
+        let stated_mm = span.height_mm.unwrap_or(height_mm);
+        let size_pt = size_in(typeface, stated_mm);
         for index in start..stop {
             if index < lead || index >= end {
                 continue;
             }
-            per_char[index - lead] = (typeface, size_pt);
+            per_char[index - lead] = (typeface, size_pt, stated_mm);
         }
     }
+    // A stretch is what letters in one face at one size; two heights that
+    // come to the same size are one stretch, measured at the first's.
     let mut segments: Vec<TextSegment<'a>> = Vec::new();
-    for (offset, (typeface, size_pt)) in per_char.iter().enumerate() {
+    for (offset, (typeface, size_pt, stated_mm)) in per_char.iter().enumerate() {
         let ch = inked.chars().nth(offset).unwrap_or_default();
         match segments.last_mut() {
             Some(last) if last.typeface == *typeface && last.size_pt == *size_pt => {
@@ -1414,6 +1424,7 @@ fn text_segments<'a>(
                 text: ch.to_string(),
                 typeface,
                 size_pt: *size_pt,
+                height_mm: *stated_mm,
             }),
         }
     }
@@ -1426,9 +1437,10 @@ fn text_segments<'a>(
 /// Where the runs of a label's record start, other than its first: character
 /// offsets into `inked`, ascending.
 ///
-/// The record's partition is kept whatever the runs' styles are. `SP:` is the
-/// one label of the eleven reference sheets that states one — `SP` and `:`,
-/// both in the same face at the same height.
+/// Every start of the record's partition is listed, whatever the runs'
+/// styles are; `show_text` cuts at them only for a record in one style.
+/// `SP:` is the one label of the eleven reference sheets that states a
+/// partition — `SP` and `:`, both in the same face at the same height.
 fn record_run_starts(text: &ShownText<'_>, inked: &str) -> Vec<usize> {
     let leading = |value: &str| value.chars().take_while(|c| c.is_whitespace()).count();
     let lead = leading(text.value).saturating_sub(leading(inked));
@@ -1507,9 +1519,11 @@ fn cut_at_record_runs<'a>(
 /// What the plotter measures a run at, in its own pixels, before any glyph is
 /// put on a whole one: the sum [`run_advance`] rounds glyph by glyph.
 ///
-/// `sx` is the horizontal scale of the label's text matrix and `device` the
-/// scale of the plotter's own sheet, as [`run_advance`] takes them. A run the
-/// reference font has no cell for is measured at its own glyphs' widths.
+/// `height_mm` is the style height the run itself states, the one `size_pt`
+/// is sized from. `sx` is the horizontal scale of the label's text matrix and
+/// `device` the scale of the plotter's own sheet, as [`run_advance`] takes
+/// them. A run the reference font has no cell for is measured at its own
+/// glyphs' widths.
 #[allow(clippy::too_many_arguments)]
 fn measured_width_px(
     face: &ReadyFace<'_>,
@@ -1549,11 +1563,16 @@ fn measured_width_px(
 /// unrounded ([`measured_width_px`]); the label starts on `round(start_px)`
 /// and this run on `round(start_px + before_px)`.
 ///
-/// `SP:` is the case. Its `S` and `P` each measure 10.9756 pixels, so the
-/// colon starts 22 pixels after the label on six reference sheets and 21 on
-/// the three air-cooler sheets, whose label starts at 2281.523: the start
-/// rounds up and the colon's 2303.474 rounds down. Stepping `S` and `P` by
-/// their own whole pixels, 11 and 11, put it at 22 on every sheet.
+/// `SP:` is the case, and the only one: nine labels on the eleven reference
+/// sheets, two runs each in one face at one height. Its `S` and `P` each
+/// measure 10.9756 pixels. On six sheets the colon starts 22 pixels after
+/// the label, which is also where stepping `S` and `P` by their own whole
+/// pixels, 11 and 11, puts it — those six do not tell the two rules apart.
+/// The three air-cooler sheets do: their label starts at 2281.523, the start
+/// rounds up and the colon's 2303.474 rounds down, 21 pixels on. They are
+/// three sheets of one layout with the label at the same place, so the rule
+/// rests on one start read three times, and on no record whose runs differ
+/// in face or height: `show_text` applies it to a record in one style only.
 fn record_run_start_px(start_px: f64, before_px: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)]
     let pixels = ((start_px + before_px).round() - start_px.round()) as i64;
@@ -1707,9 +1726,13 @@ fn show_text(
     // lends it.
     let segments = text_segments(faces, &text, inked, height_mm);
     let mut runs: Vec<(f64, FaceRun<'_>)> = Vec::new();
+    // The style height each of `runs` states: what it is measured and spaced
+    // at, as it is what it is sized from.
+    let mut stated_mm: Vec<f64> = Vec::new();
     for segment in &segments {
         for run in encode_runs(faces, &text, segment.typeface, &segment.text)? {
             runs.push((segment.size_pt, run));
+            stated_mm.push(segment.height_mm);
         }
     }
     // The direction the label is lettered along. The plotter states an angle
@@ -1734,11 +1757,22 @@ fn show_text(
     // whole-pixel steps end. The plotter gives each run of the record its own
     // start ([`record_run_start_px`]), so the stretch is cut back where the
     // record cuts it. A label the borrowing samples letter is left as it is.
-    let (runs, starts_record_run) = if upright && as_the_reference.is_none() {
-        cut_at_record_runs(runs, &record_run_starts(&text, inked))
-    } else {
-        let whole = vec![false; runs.len()];
-        (runs, whole)
+    //
+    // That is the rule for a record in one style, which is all the reference
+    // plots show: `SP:`, two runs in one face at one height. A record whose
+    // runs differ in face or height — a pipeline number of the fixtures,
+    // with its hyphens in Arial among Arial Narrow — is not cut: each stretch
+    // carries on where the one before it ended, unrounded.
+    let (runs, starts_record_run, stated_mm) = match segments.as_slice() {
+        [style] if upright && as_the_reference.is_none() => {
+            let (cut, opens) = cut_at_record_runs(runs, &record_run_starts(&text, inked));
+            let stated_mm = vec![style.height_mm; cut.len()];
+            (cut, opens, stated_mm)
+        }
+        _ => {
+            let whole = vec![false; runs.len()];
+            (runs, whole, stated_mm)
+        }
     };
     // The reference plot letters a border template's text one glyph narrower
     // than the em it sets it in, and letters the sheet's own text at the full
@@ -1814,13 +1848,17 @@ fn show_text(
             text: run_text,
             ..
         } = run;
+        // A run is measured and stepped at the height it states and is sized
+        // from, which is the label's unless its run of the record says
+        // otherwise.
+        let run_mm = stated_mm[index];
         let opens = starts_record_run[index].then_some(measured_px);
         measured_px += measured_width_px(
             face,
             &bytes,
             &run_text,
             text.height_basis,
-            height_mm,
+            run_mm,
             size_pt,
             text.width_permille,
             plate,
@@ -1852,7 +1890,7 @@ fn show_text(
                 &run_text,
                 face.heights,
                 text.height_basis,
-                height_mm,
+                run_mm,
                 size_pt,
                 text.width_permille,
                 plate,
@@ -3029,6 +3067,24 @@ mod tests {
             .collect()
     }
 
+    /// Every string `ops` show with `Tj`, in order, each with the `Tf` size
+    /// and the `Tc` in force when it is shown.
+    fn strings_as_set(ops: &[super::Op]) -> Vec<(f64, f64, Vec<u8>)> {
+        let (mut size, mut spacing) = (0.0, 0.0);
+        let mut shown = Vec::new();
+        for op in ops {
+            match (op.op.as_slice(), op.operands.as_slice()) {
+                (b"Tf", [_, super::Object::Real(value)]) => size = *value,
+                (b"Tc", [super::Object::Real(value)]) => spacing = *value,
+                (b"Tj", [super::Object::String(string)]) => {
+                    shown.push((size, spacing, string.bytes.clone()));
+                }
+                _ => {}
+            }
+        }
+        shown
+    }
+
     /// One label lettered on an A1 sheet in `face`, the operators it writes.
     fn label_ops(
         face: &super::ReadyFace<'_>,
@@ -3036,6 +3092,29 @@ mod tests {
         height_mm: f64,
         rotation: f64,
         width_permille: Option<u16>,
+    ) -> Vec<super::Op> {
+        record_ops(face, value, height_mm, rotation, width_permille, &[])
+    }
+
+    /// One run of a record: `len` characters from `start`, at a height of
+    /// its own when it states one.
+    fn run_of(start: u16, len: u16, height_mm: Option<f64>) -> PaperTextSpan {
+        PaperTextSpan {
+            start,
+            len,
+            height_mm,
+            font: None,
+        }
+    }
+
+    /// [`label_ops`] for a label whose record is partitioned into `spans`.
+    fn record_ops(
+        face: &super::ReadyFace<'_>,
+        value: &str,
+        height_mm: f64,
+        rotation: f64,
+        width_permille: Option<u16>,
+        spans: &[PaperTextSpan],
     ) -> Vec<super::Op> {
         let text = ShownText {
             typeface: face.key,
@@ -3048,7 +3127,7 @@ mod tests {
             height_basis: crate::model::TextHeightBasis::Cap,
             width_permille,
             paragraph: None,
-            spans: &[],
+            spans,
             furniture: false,
         };
         let mut ops = Vec::new();
@@ -3419,6 +3498,117 @@ mod tests {
                 "a label at {degrees}° is shown glyph by glyph"
             );
         }
+    }
+
+    /// Inter under no name: a face with no row in the reference tables, on
+    /// its own heights.
+    fn inter_unnamed(value: &str) -> super::ReadyFace<'static> {
+        let (metrics, _) = metrics_and_bytes(pdfcraft_fonts::INTER_REGULAR, value);
+        super::ReadyFace {
+            key: "",
+            resource: "F1".to_string(),
+            metrics,
+            heights: super::FaceHeights::of(pdfcraft_fonts::INTER_REGULAR),
+        }
+    }
+
+    /// A run of a record is measured at the size it is drawn at. `CDE` of
+    /// `ABCDEFG` states a height of its own, 3.5 mm in a 2.54 mm label, and
+    /// is spaced exactly as the label `CDE` at 3.5 mm is — not by steps
+    /// figured on the label's cell and shown at the run's own size, which is
+    /// how the hyphens of the fixtures' pipeline numbers were measured 6%
+    /// narrow.
+    #[test]
+    fn a_run_at_a_height_of_its_own_is_spaced_as_a_label_of_that_height() {
+        let value = "ABCDEFG";
+        let face = inter_unnamed(value);
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (label_mm, run_mm) = (2.54, 3.5);
+        let run_size = super::plotted_size_pt(face.heights, basis, run_mm);
+        assert!(
+            run_size > super::plotted_size_pt(face.heights, basis, label_mm) + 1.0,
+            "the run is set larger than the label: {run_size}"
+        );
+        let spans = [
+            run_of(0, 2, None),
+            run_of(2, 3, Some(run_mm)),
+            run_of(5, 2, None),
+        ];
+        let record = record_ops(&face, value, label_mm, 0.0, None, &spans);
+        let alone = label_ops(&face, "CDE", run_mm, 0.0, None);
+        let at_the_runs_size = |ops: &[super::Op]| -> Vec<(f64, Vec<u8>)> {
+            strings_as_set(ops)
+                .into_iter()
+                .filter(|(size, _, _)| (size - run_size).abs() < 1e-9)
+                .map(|(_, spacing, bytes)| (spacing, bytes))
+                .collect()
+        };
+        let (in_the_record, by_itself) = (at_the_runs_size(&record), at_the_runs_size(&alone));
+        assert_eq!(
+            by_itself.len(),
+            2,
+            "`CD` under its spacing and `E` under none: {by_itself:?}"
+        );
+        assert!(
+            by_itself[0].0 != 0.0,
+            "the run must need spacing for this label to show what it is measured at"
+        );
+        assert_eq!(
+            in_the_record.len(),
+            by_itself.len(),
+            "the run of the record: {in_the_record:?}"
+        );
+        for (got, want) in in_the_record.iter().zip(&by_itself) {
+            assert_eq!(got.1, want.1, "the same glyphs");
+            assert!(
+                (got.0 - want.0).abs() < 1e-12,
+                "Tc {} in the record, {} as a label of its own",
+                got.0,
+                want.0
+            );
+        }
+    }
+
+    /// The rule that starts each run of a record on a whole pixel of its own
+    /// is what `SP:` shows, and `SP:` is two runs in one style. A record
+    /// whose runs differ in style — the fixtures' pipeline numbers, whose
+    /// hyphens are in another face at another height — has no reference
+    /// plot: it is lettered as it was before that rule, each run carrying on
+    /// where the one before it ended.
+    #[test]
+    fn only_a_record_in_one_style_starts_each_run_on_a_pixel_of_its_own() {
+        let value = "ABCDEFG";
+        let face = inter_unnamed(value);
+        let label_mm = 2.54;
+        let moves = |spans: &[PaperTextSpan]| {
+            let ops = record_ops(&face, value, label_mm, 0.0, None, spans);
+            assert_eq!(numbers(&ops, "Tm").len(), 1, "one text matrix");
+            numbers(&ops, "Td").len()
+        };
+        assert_eq!(
+            moves(&[run_of(0, 2, None), run_of(2, 3, None), run_of(5, 2, None)]),
+            2,
+            "each later run of a record in one style takes a start of its own"
+        );
+        // A run that states the label's own height is in the label's style.
+        assert_eq!(
+            moves(&[
+                run_of(0, 2, None),
+                run_of(2, 3, Some(label_mm)),
+                run_of(5, 2, None)
+            ]),
+            2,
+            "a run stating the label's own height is in its style"
+        );
+        assert_eq!(
+            moves(&[
+                run_of(0, 2, None),
+                run_of(2, 3, Some(3.5)),
+                run_of(5, 2, None)
+            ]),
+            0,
+            "a record in two styles carries on from run to run"
+        );
     }
 
     /// A stretched string of two scripts, the shape of the A2 sheet's
