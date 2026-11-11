@@ -551,20 +551,81 @@ pub struct SheetDisplayOrder {
 ///
 /// A stream the walk reads no record of the sheet's from, and a cluster
 /// that holds no such table, give `None`, and the caller keeps whatever
-/// order it had.
+/// order it had. [`sheet_display_order_or_why`] is the same reading and
+/// says which of those it was.
 #[must_use]
 pub fn sheet_display_order(
     cluster: &[u8],
     sheet: &[u8],
     sheet_oid: u32,
 ) -> Option<SheetDisplayOrder> {
+    sheet_display_order_or_why(cluster, sheet, sheet_oid).ok()
+}
+
+/// Why a sheet stream has no display order
+/// ([`sheet_display_order_or_why`]).
+///
+/// An order is the sheet's `JSheet` record held to the records of the
+/// sheet's own stream, and these are the ways that comes to nothing. They
+/// are kept apart because they say different things of a drawing: a stream
+/// that holds no record of the sheet's own may be one whose chain stopped
+/// ahead of them, beside a table that is sound, while a table that is not
+/// of the stream's records is wrong however far the stream was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NoDisplayOrder {
+    /// The storage the stream is in holds no `PSMcluster0`, the stream a
+    /// sheet's `JSheet` record is kept in, or it could not be opened. Not
+    /// a reading of [`sheet_display_order_or_why`], which is handed a
+    /// cluster: the document's reader says it of a sheet it has none for.
+    NoCluster,
+    /// The cluster holds no `JSheet` record of the sheet: no live `0x0114`
+    /// record whose payload opens with the sheet's oid decodes as a table.
+    NoTable,
+    /// The cluster holds a `JSheet` record of the sheet, and the stream
+    /// holds no live record whose parent is the sheet as far as its chain
+    /// reads, so there is nothing to hold a table to.
+    ///
+    /// On a stream whose chain stops ahead of the sheet's first own record
+    /// this is what the stop costs: the table may be sound, and the records
+    /// the walk did read hang under objects it did not reach.
+    NoRecordOfTheSheet,
+    /// The cluster holds a `JSheet` record of the sheet and none can be
+    /// held to the stream: each leaves out a record of the sheet's the
+    /// stream holds, and lists nothing at all or an object that is no such
+    /// record.
+    TableNotTheSheets,
+}
+
+/// [`sheet_display_order`], with the reason where there is no order.
+///
+/// # Errors
+///
+/// [`NoDisplayOrder::NoTable`], [`NoDisplayOrder::NoRecordOfTheSheet`] or
+/// [`NoDisplayOrder::TableNotTheSheets`]: the first when the cluster holds
+/// no table of the sheet whatever the stream holds, the second when it
+/// holds one and the stream no record to hold it to, the third when the
+/// stream holds such records and no table of the sheet fits them.
+pub fn sheet_display_order_or_why(
+    cluster: &[u8],
+    sheet: &[u8],
+    sheet_oid: u32,
+) -> Result<SheetDisplayOrder, NoDisplayOrder> {
+    // Asked only where there is no order to return: whether the cluster
+    // holds a table of the sheet at all.
+    let without = |held: NoDisplayOrder| {
+        if find_sheet_child_table(cluster, sheet_oid, |_| true).is_some() {
+            held
+        } else {
+            NoDisplayOrder::NoTable
+        }
+    };
     let mut owned_by_sheet: Vec<u32> = live_records(sheet)
         .iter()
         .filter(|record| record.parent == sheet_oid)
         .map(|record| record.oid)
         .collect();
     if owned_by_sheet.is_empty() {
-        return None;
+        return Err(without(NoDisplayOrder::NoRecordOfTheSheet));
     }
     owned_by_sheet.sort_unstable();
     let whole = find_sheet_child_table(cluster, sheet_oid, |table| {
@@ -582,8 +643,11 @@ pub fn sheet_display_order(
                 .iter()
                 .all(|oid| listed.binary_search(oid).is_ok())
         })
-    })?;
-    Some(SheetDisplayOrder {
+    });
+    let Some(table) = table else {
+        return Err(without(NoDisplayOrder::TableNotTheSheets));
+    };
+    Ok(SheetDisplayOrder {
         sheet_oid,
         children: table.children.len(),
         paper: table.paper,
@@ -1185,6 +1249,69 @@ mod tests {
         let mut both = listing(&[(9999, [0, 0, 1, 1], 0)]);
         both.extend_from_slice(&listing(&own));
         assert!(sheet_display_order(&both, &stream, sheet).is_some());
+    }
+
+    /// A stream with no order says which way it has none, and the reading
+    /// that drops the reason is the same reading.
+    #[test]
+    fn a_stream_with_no_order_says_which_way_it_has_none() {
+        use super::{sheet_display_order, sheet_display_order_or_why, NoDisplayOrder};
+        let sheet = 6;
+        let listing = |of: u32, children: &[(u32, [i16; 4], u16)]| {
+            let mut cluster = vec![0u8; 11];
+            cluster.extend_from_slice(&record(0x0114, &sheet_payload(of, 2.0, children)));
+            cluster
+        };
+        let own = [(865, [0, 0, 1, 1], 6), (1276, [0, 0, 1, 1], 0x21)];
+        let whole = sheet_stream(&[
+            record(0x00ce, &graphic(726, 1276)),
+            record(0x00ce, &graphic(865, sheet)),
+            record(0x00fa, &dependency(1276, sheet, 865, &[726])),
+        ]);
+        // The stream as a chain that stopped behind its first record reads
+        // it: one record, which hangs under an object of the sheet's that
+        // was not reached.
+        let short = sheet_stream(&[record(0x00ce, &graphic(726, 1276))]);
+        let sound = listing(sheet, &own);
+        let foreign = listing(sheet, &[(865, [0, 0, 1, 1], 6), (9999, [0, 0, 1, 1], 0)]);
+        let another_sheets = listing(7, &own);
+
+        let order = sheet_display_order_or_why(&sound, &whole, sheet).expect("the order");
+        assert_eq!((order.children, order.ranks.len()), (2, 3));
+        // The table is there and sound; nothing read is the sheet's own.
+        assert_eq!(
+            sheet_display_order_or_why(&sound, &short, sheet),
+            Err(NoDisplayOrder::NoRecordOfTheSheet)
+        );
+        // The stream holds the sheet's records and the table is not of them.
+        assert_eq!(
+            sheet_display_order_or_why(&foreign, &whole, sheet),
+            Err(NoDisplayOrder::TableNotTheSheets)
+        );
+        // No table of this sheet, whatever the stream holds and however
+        // far it was read.
+        for stream in [&whole, &short] {
+            for cluster in [another_sheets.as_slice(), &[]] {
+                assert_eq!(
+                    sheet_display_order_or_why(cluster, stream, sheet),
+                    Err(NoDisplayOrder::NoTable)
+                );
+            }
+        }
+        // A table that fits nothing beside a stream that holds nothing of
+        // the sheet's: what is said is the stream's side of it.
+        assert_eq!(
+            sheet_display_order_or_why(&foreign, &short, sheet),
+            Err(NoDisplayOrder::NoRecordOfTheSheet)
+        );
+        for cluster in [&sound, &foreign, &another_sheets] {
+            for stream in [&whole, &short] {
+                assert_eq!(
+                    sheet_display_order(cluster, stream, sheet),
+                    sheet_display_order_or_why(cluster, stream, sheet).ok()
+                );
+            }
+        }
     }
 
     #[test]

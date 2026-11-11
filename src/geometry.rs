@@ -980,6 +980,20 @@ fn decoded_page_frame(doc: &PidDocument) -> Option<PageFrame> {
     Some(PageFrame { width_m, height_m })
 }
 
+/// The page the drawing's own border frames state, in millimetres, when
+/// they state one between them: the half of
+/// [`NormalizedPidGeometry::page_dimensions_mm`] that is a reading.
+///
+/// `None` for a drawing no frame of which gives a page — it carries none,
+/// its frames disagree, or its stream was not read as far as one. The page
+/// dimensions such a drawing has, if it has any, are the size the name of
+/// its template stands for, which is a name and not a measurement; a caller
+/// that says where a page came from tells the two apart here.
+#[must_use]
+pub fn framed_page_dimensions_mm(doc: &PidDocument) -> Option<(f64, f64)> {
+    decoded_page_frame(doc).map(PageFrame::dimensions_mm)
+}
+
 /// Whether two framed extents are the same page, to the bit.
 fn same_extent(a: (f64, f64), b: (f64, f64)) -> bool {
     a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits()

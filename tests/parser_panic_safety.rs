@@ -264,7 +264,8 @@ fn exercise_all_parsers(input: &[u8]) {
     {
         use pid_parse::parsers::sheet_display_order::{
             decode_sheet_child_table, decode_sheet_paper, find_sheet_child_table,
-            sheet_display_order, sheet_display_ranks, smart_frame_sites,
+            sheet_display_order, sheet_display_order_or_why, sheet_display_ranks,
+            smart_frame_sites,
         };
         let _ = decode_sheet_paper(input);
         for skipped in [1usize, 9, 61, 102] {
@@ -278,6 +279,7 @@ fn exercise_all_parsers(input: &[u8]) {
             let _ = find_sheet_child_table(input, sheet_oid, |_| false);
             let _ = find_sheet_child_table(input, sheet_oid, |_| true);
             let _ = sheet_display_order(input, input, sheet_oid);
+            let _ = sheet_display_order_or_why(input, input, sheet_oid);
         }
     }
     let _ = decode_cluster_body_records(input, 0);

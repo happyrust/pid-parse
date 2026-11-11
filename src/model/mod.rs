@@ -141,6 +141,23 @@ pub struct PidDocument {
     pub embedded_sheet_display_order:
         BTreeMap<String, crate::parsers::sheet_display_order::EmbeddedSheetOrder>,
 
+    /// Why each sheet stream that has no entry in
+    /// [`Self::sheet_display_order`] or [`Self::embedded_sheet_display_order`]
+    /// has none, keyed by the stream's path
+    /// ([`crate::parsers::sheet_display_order::NoDisplayOrder`]): its storage
+    /// holds no cluster, the cluster no `JSheet` record of the sheet, the
+    /// stream no record of the sheet's own as far as it was read, or the
+    /// record is not of the stream's records. A reader that has to say why a
+    /// drawing states no order reads it here; a stream whose chain stopped
+    /// ahead of the sheet's own records is the third, beside a table that
+    /// may be sound.
+    ///
+    /// Not serialized, like the two maps above.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub sheet_without_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::NoDisplayOrder>,
+
     /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
     /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
     /// one `JSheet` and states, for the layers that sheet's manager
@@ -296,6 +313,7 @@ impl Default for PidDocument {
             sheet_layers: BTreeMap::new(),
             sheet_display_order: BTreeMap::new(),
             embedded_sheet_display_order: BTreeMap::new(),
+            sheet_without_display_order: BTreeMap::new(),
             view_filter_sets: BTreeMap::new(),
             style_tables: BTreeMap::new(),
             version_history: None,

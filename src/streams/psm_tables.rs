@@ -81,6 +81,9 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
 /// drawing lists the frame at
 /// ([`crate::parsers::sheet_display_order::smart_frame_sites`]).
 ///
+/// A sheet of either kind that comes out with no order is entered in
+/// [`PidDocument::sheet_without_display_order`] with the reason.
+///
 /// A definition cache's `PSMcluster0` is a symbol body, whose records the
 /// placement draws in the order the body decodes them; nothing yet reads a
 /// list for those.
@@ -89,7 +92,8 @@ fn parse_sheet_display_order<R: Read + std::io::Seek>(
     doc: &mut PidDocument,
 ) {
     use crate::parsers::sheet_display_order::{
-        sheet_display_order, smart_frame_sites, EmbeddedSheetOrder, EmbeddingFrame,
+        sheet_display_order_or_why, smart_frame_sites, EmbeddedSheetOrder, EmbeddingFrame,
+        NoDisplayOrder,
     };
 
     let paths: Vec<String> = cfb
@@ -108,6 +112,10 @@ fn parse_sheet_display_order<R: Read + std::io::Seek>(
         return;
     }
     let Ok(Some(cluster)) = open_optional(cfb, "/PSMcluster0") else {
+        for (path, _) in sheets {
+            doc.sheet_without_display_order
+                .insert(path, NoDisplayOrder::NoCluster);
+        }
         return;
     };
     // The frame that names each site, as the stream it is in and the offset
@@ -120,8 +128,13 @@ fn parse_sheet_display_order<R: Read + std::io::Seek>(
         for (at, site) in smart_frame_sites(&sheet) {
             frames.entry(site).or_insert_with(|| (path.clone(), at));
         }
-        if let Some(order) = sheet_display_order(&cluster, &sheet, oid) {
-            doc.sheet_display_order.insert(path, order);
+        match sheet_display_order_or_why(&cluster, &sheet, oid) {
+            Ok(order) => {
+                doc.sheet_display_order.insert(path, order);
+            }
+            Err(why) => {
+                doc.sheet_without_display_order.insert(path, why);
+            }
         }
     }
     // The sheets nested one storage down, `/JSite<N>/Sheet<M>`: what the
@@ -143,13 +156,19 @@ fn parse_sheet_display_order<R: Read + std::io::Seek>(
                 .flatten()
         });
         let Some(cluster) = cluster.as_deref() else {
+            doc.sheet_without_display_order
+                .insert(path, NoDisplayOrder::NoCluster);
             continue;
         };
         let Ok(Some(sheet)) = open_optional(cfb, &path) else {
             continue;
         };
-        let Some(order) = sheet_display_order(cluster, &sheet, oid) else {
-            continue;
+        let order = match sheet_display_order_or_why(cluster, &sheet, oid) {
+            Ok(order) => order,
+            Err(why) => {
+                doc.sheet_without_display_order.insert(path, why);
+                continue;
+            }
         };
         let frame = frames.get(&site).and_then(|(stream_path, at)| {
             let rank = *doc.sheet_display_order.get(stream_path)?.ranks.get(at)?;
