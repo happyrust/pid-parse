@@ -2973,61 +2973,6 @@
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:jstyle-override:0",
-    "graphic_oid": 65538,
-    "kind": {
-      "kind": "unknown",
-      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [1785584612, 1070447025, 2980237826, 1070715862]"
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/Sheet6",
-      "byte_range": {
-        "start": 1414,
-        "end": 1548
-      },
-      "record_id": "jstyle-override:0",
-      "record_kind": "j_style_override",
-      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.255432 field_2=0.000000"
-    },
-    "confidence": "probe_only"
-  },
-  {
     "id": "/JSite204/Sheet6:text-probe:0",
     "kind": {
       "kind": "unknown",

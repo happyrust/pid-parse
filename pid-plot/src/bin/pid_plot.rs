@@ -5,11 +5,14 @@
 //! be written. `2` is a command line that cannot be run as given: too few
 //! arguments, or a `[corpus]` that is not a directory.
 //!
-//! A page can be written and still lack something the drawing asked for. Two
-//! such gaps are a `warning:` line on stderr and leave the exit code and the
-//! file alone: no corpus was named and the fallback is not a directory, and
-//! the drawing names a border template that no file in reach of the corpus
-//! answers, so the page carries no frame and no title block.
+//! A page can be written and still lack something the drawing asked for.
+//! Three such gaps are a `warning:` line on stderr and leave the exit code
+//! and the file alone: no corpus was named and the fallback is not a
+//! directory; the drawing names a border template that no file in reach of
+//! the corpus answers, so the page carries no frame and no title block; and a
+//! stream of the drawing, or of its template, has a record chain that does
+//! not hold, so the page carries what the records before the break draw and
+//! nothing of what follows it.
 
 use std::env;
 use std::fs;
@@ -83,6 +86,16 @@ fn main() -> ExitCode {
     if !model.missing_templates.is_empty() {
         let places = border_template_places(Path::new(&pid), &corpus);
         eprintln!("{}", missing_template_warning(&pid, &model, &places));
+    }
+    // A stream whose record chain does not hold was read as far as the chain
+    // reads: the page carries what the records before the stop draw and
+    // nothing of what follows, and it looks like a finished export of a
+    // sparser drawing. It is written all the same — those records are the
+    // drawing's — and each such stream is named here with the offset it
+    // stopped at and the bytes left unread. The account counts it as a
+    // suspect item, which is what a gate reads.
+    for fault in model.ledger.chain_fault_warnings() {
+        eprintln!("warning: {pid}: {fault}");
     }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,

@@ -115,12 +115,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_refused",
-              "stream": "/Sheet6",
-              "type_code": "0x00FA",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/Sheet6",
               "type_code": "0x003D",
@@ -181,32 +175,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 228
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
-              "count": 1809
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 1947
+              "count": 1810
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 3279,
+          "total": 3004,
           "on_page": 1707,
           "partial": 2,
           "dropped": {
@@ -214,7 +196,7 @@
             "layer_consistency_checks": 809,
             "fill_duplicate": 8,
             "point_no_marker": 165,
-            "kind_unknown": 291
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -266,7 +248,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 291
+                "kind_unknown": 16
               }
             }
           },
@@ -304,15 +286,7 @@
             "segment_too_short": 4
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_refused",
-            "stream": "/Sheet6",
-            "type_code": "0x00FA",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
@@ -476,32 +450,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 464
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2466
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2215
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 4329,
+          "total": 3884,
           "on_page": 2135,
           "partial": 3,
           "dropped": {
@@ -509,7 +471,7 @@
             "layer_consistency_checks": 1121,
             "fill_duplicate": 12,
             "point_no_marker": 207,
-            "kind_unknown": 461,
+            "kind_unknown": 16,
             "text_empty": 3,
             "text_whitespace_only": 3
           },
@@ -565,7 +527,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 461
+                "kind_unknown": 16
               }
             }
           },
@@ -777,20 +739,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 557
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2225
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 1826
             },
             {
               "reason": "record_audit_only_family",
@@ -802,7 +752,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 3985,
+          "total": 3530,
           "on_page": 1941,
           "partial": 3,
           "dropped": {
@@ -810,7 +760,7 @@
             "layer_consistency_checks": 1004,
             "fill_duplicate": 12,
             "point_no_marker": 190,
-            "kind_unknown": 471,
+            "kind_unknown": 16,
             "text_empty": 2,
             "text_whitespace_only": 2
           },
@@ -866,7 +816,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 471
+                "kind_unknown": 16
               }
             }
           },
@@ -1049,26 +999,14 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 260
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 1881
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2044
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 3475,
+          "total": 3055,
           "on_page": 1704,
           "partial": 4,
           "dropped": {
@@ -1076,7 +1014,7 @@
             "layer_consistency_checks": 848,
             "fill_duplicate": 10,
             "point_no_marker": 169,
-            "kind_unknown": 436,
+            "kind_unknown": 16,
             "text_whitespace_only": 2
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -1130,7 +1068,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 436
+                "kind_unknown": 16
               }
             }
           },
@@ -1257,20 +1195,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 432
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 3846
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 3558
             },
             {
               "reason": "record_audit_only_family",
@@ -1282,7 +1208,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 6625,
+          "total": 5992,
           "on_page": 3327,
           "partial": 6,
           "dropped": {
@@ -1290,7 +1216,7 @@
             "layer_consistency_checks": 1763,
             "fill_duplicate": 20,
             "point_no_marker": 288,
-            "kind_unknown": 649,
+            "kind_unknown": 16,
             "text_empty": 2,
             "text_whitespace_only": 5
           },
@@ -1346,7 +1272,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 649
+                "kind_unknown": 16
               }
             }
           },
@@ -1522,32 +1448,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 689
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 3667
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 3479
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 3
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 6111,
+          "total": 5585,
           "on_page": 3033,
           "partial": 9,
           "dropped": {
@@ -1555,7 +1469,7 @@
             "layer_consistency_checks": 1677,
             "fill_duplicate": 16,
             "point_no_marker": 287,
-            "kind_unknown": 542,
+            "kind_unknown": 16,
             "text_empty": 2,
             "text_whitespace_only": 2
           },
@@ -1611,7 +1525,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 542
+                "kind_unknown": 16
               }
             }
           },
@@ -1793,32 +1707,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 248
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2098
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 1711
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 3
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 3685,
+          "total": 3271,
           "on_page": 1784,
           "partial": 3,
           "dropped": {
@@ -1826,7 +1728,7 @@
             "layer_consistency_checks": 945,
             "fill_duplicate": 10,
             "point_no_marker": 185,
-            "kind_unknown": 430
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -1878,7 +1780,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 430
+                "kind_unknown": 16
               }
             }
           },
@@ -2068,32 +1970,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 579
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 3087
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2752
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 5302,
+          "total": 4825,
           "on_page": 2665,
           "partial": 12,
           "dropped": {
@@ -2101,7 +1991,7 @@
             "layer_consistency_checks": 1413,
             "fill_duplicate": 26,
             "point_no_marker": 251,
-            "kind_unknown": 493,
+            "kind_unknown": 16,
             "text_empty": 1,
             "text_whitespace_only": 3
           },
@@ -2157,7 +2047,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 493
+                "kind_unknown": 16
               }
             }
           },
@@ -2381,20 +2271,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 680
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 3635
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 3916
             },
             {
               "reason": "record_audit_only_family",
@@ -2406,7 +2284,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 6320,
+          "total": 5662,
           "on_page": 3147,
           "partial": 9,
           "dropped": {
@@ -2414,7 +2292,7 @@
             "layer_consistency_checks": 1661,
             "fill_duplicate": 28,
             "point_no_marker": 281,
-            "kind_unknown": 674,
+            "kind_unknown": 16,
             "text_empty": 1,
             "text_whitespace_only": 2
           },
@@ -2470,7 +2348,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 674
+                "kind_unknown": 16
               }
             }
           },
@@ -2664,18 +2542,6 @@
               "count": 14
             },
             {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet41276",
-              "count": 1,
-              "bytes": 8
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet43032",
-              "count": 1,
-              "bytes": 8
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite221",
               "count": 522
@@ -2700,20 +2566,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 213
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2495
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 1918
             },
             {
               "reason": "record_audit_only_family",
@@ -2725,7 +2579,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 3939,
+          "total": 3604,
           "on_page": 1851,
           "partial": 6,
           "dropped": {
@@ -2733,7 +2587,7 @@
             "layer_consistency_checks": 1118,
             "fill_duplicate": 14,
             "point_no_marker": 212,
-            "kind_unknown": 351,
+            "kind_unknown": 16,
             "text_whitespace_only": 4
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -2787,7 +2641,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 351
+                "kind_unknown": 16
               }
             }
           },
@@ -2828,27 +2682,15 @@
             "segment_too_short": 8
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet41276",
-            "count": 1
-          },
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet43032",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -2912,15 +2754,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/O井场 注采阀组工艺及自控流程图.pid": {
@@ -2997,20 +2831,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 246
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2715
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2785
             },
             {
               "reason": "record_audit_only_family",
@@ -3022,7 +2844,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 4418,
+          "total": 3917,
           "on_page": 2019,
           "partial": 5,
           "dropped": {
@@ -3030,7 +2852,7 @@
             "layer_consistency_checks": 1221,
             "fill_duplicate": 18,
             "point_no_marker": 222,
-            "kind_unknown": 517,
+            "kind_unknown": 16,
             "text_whitespace_only": 6
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -3084,7 +2906,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 517
+                "kind_unknown": 16
               }
             }
           },
@@ -3131,9 +2953,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3197,15 +3019,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/P井场 注采阀组工艺及自控流程图.pid": {
@@ -3276,20 +3090,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 271
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2398
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2413
             },
             {
               "reason": "record_audit_only_family",
@@ -3301,7 +3103,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 3953,
+          "total": 3469,
           "on_page": 1781,
           "partial": 4,
           "dropped": {
@@ -3309,7 +3111,7 @@
             "layer_consistency_checks": 1078,
             "fill_duplicate": 14,
             "point_no_marker": 204,
-            "kind_unknown": 500,
+            "kind_unknown": 16,
             "text_whitespace_only": 6
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -3363,7 +3165,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 500
+                "kind_unknown": 16
               }
             }
           },
@@ -3410,9 +3212,9 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3476,15 +3278,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/Q井场 注采阀组工艺及自控流程图.pid": {
@@ -3505,12 +3299,6 @@
               "stream": "/Sheet6",
               "type_code": "0x00CE",
               "count": 6
-            },
-            {
-              "reason": "sheet_stream_without_geometry",
-              "stream": "/Sheet67868",
-              "count": 1,
-              "bytes": 8
             },
             {
               "reason": "record_symbol_body_cache",
@@ -3543,20 +3331,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 278
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 2432
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 2355
             },
             {
               "reason": "record_audit_only_family",
@@ -3568,7 +3344,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 3974,
+          "total": 3506,
           "on_page": 1772,
           "partial": 4,
           "dropped": {
@@ -3576,7 +3352,7 @@
             "layer_consistency_checks": 1095,
             "fill_duplicate": 8,
             "point_no_marker": 234,
-            "kind_unknown": 490,
+            "kind_unknown": 22,
             "segment_on_sheet_edge": 1,
             "text_whitespace_only": 5
           },
@@ -3632,7 +3408,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 490
+                "kind_unknown": 22
               }
             }
           },
@@ -3675,22 +3451,15 @@
             "segment_on_sheet_edge": 1
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "sheet_stream_without_geometry",
-            "stream": "/Sheet67868",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
+              "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "type_code": "0x0021",
+              "family": "igComplexString2d",
               "count": 4
             }
           ],
@@ -3754,15 +3523,7 @@
           "total": 55,
           "written": 55,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 4
-          }
-        ]
+        }
       }
     },
     "00/00/集注站 低压气及轻烃处理单元 轻烃分离器一工艺及自控流程图.pid": {
@@ -3815,20 +3576,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 145
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 671
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 507
             },
             {
               "reason": "record_audit_only_family",
@@ -3840,14 +3589,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1198,
+          "total": 1045,
           "on_page": 527,
           "partial": 0,
           "dropped": {
             "layer_hidden": 115,
             "layer_consistency_checks": 287,
             "point_no_marker": 100,
-            "kind_unknown": 169
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -3898,7 +3647,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 169
+                "kind_unknown": 16
               }
             }
           },
@@ -4070,20 +3819,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 123
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 647
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 493
             },
             {
               "reason": "record_audit_only_family",
@@ -4095,14 +3832,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1141,
+          "total": 1009,
           "on_page": 487,
           "partial": 0,
           "dropped": {
             "layer_hidden": 109,
             "layer_consistency_checks": 292,
             "point_no_marker": 105,
-            "kind_unknown": 148
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -4153,7 +3890,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 148
+                "kind_unknown": 16
               }
             }
           },
@@ -4332,20 +4069,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 106
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 396
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 314
             },
             {
               "reason": "record_audit_only_family",
@@ -4357,7 +4082,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 768,
+          "total": 685,
           "on_page": 336,
           "partial": 0,
           "dropped": {
@@ -4365,7 +4090,7 @@
             "layer_consistency_checks": 171,
             "fill_duplicate": 4,
             "point_no_marker": 89,
-            "kind_unknown": 99
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -4408,7 +4133,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 99
+                "kind_unknown": 16
               }
             }
           },
@@ -4574,20 +4299,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 83
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 898
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 868
             },
             {
               "reason": "record_audit_only_family",
@@ -4599,7 +4312,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1507,
+          "total": 1324,
           "on_page": 657,
           "partial": 0,
           "dropped": {
@@ -4607,7 +4320,7 @@
             "layer_consistency_checks": 408,
             "fill_duplicate": 3,
             "point_no_marker": 120,
-            "kind_unknown": 199
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -4659,7 +4372,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 199
+                "kind_unknown": 16
               }
             }
           },
@@ -4825,20 +4538,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 77
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 875
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 853
             },
             {
               "reason": "record_audit_only_family",
@@ -4850,7 +4551,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1460,
+          "total": 1287,
           "on_page": 637,
           "partial": 0,
           "dropped": {
@@ -4858,7 +4559,7 @@
             "layer_consistency_checks": 402,
             "fill_duplicate": 3,
             "point_no_marker": 119,
-            "kind_unknown": 189
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -4910,7 +4611,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 189
+                "kind_unknown": 16
               }
             }
           },
@@ -5082,20 +4783,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 115
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 468
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 446
             },
             {
               "reason": "record_audit_only_family",
@@ -5107,7 +4796,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 920,
+          "total": 810,
           "on_page": 410,
           "partial": 0,
           "dropped": {
@@ -5115,7 +4804,7 @@
             "layer_consistency_checks": 191,
             "fill_duplicate": 4,
             "point_no_marker": 90,
-            "kind_unknown": 126
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -5167,7 +4856,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 126
+                "kind_unknown": 16
               }
             }
           },
@@ -5339,20 +5028,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 101
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 377
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 392
             },
             {
               "reason": "record_audit_only_family",
@@ -5364,7 +5041,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 770,
+          "total": 675,
           "on_page": 340,
           "partial": 0,
           "dropped": {
@@ -5372,7 +5049,7 @@
             "layer_consistency_checks": 153,
             "fill_duplicate": 4,
             "point_no_marker": 82,
-            "kind_unknown": 111
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -5424,7 +5101,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 111
+                "kind_unknown": 16
               }
             }
           },
@@ -5590,20 +5267,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 188
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 895
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 792
             },
             {
               "reason": "record_audit_only_family",
@@ -5615,14 +5280,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1568,
+          "total": 1371,
           "on_page": 681,
           "partial": 0,
           "dropped": {
             "layer_hidden": 156,
             "layer_consistency_checks": 393,
             "point_no_marker": 125,
-            "kind_unknown": 213
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -5673,7 +5338,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 213
+                "kind_unknown": 16
               }
             }
           },
@@ -5839,39 +5504,27 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 195
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 782
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 457
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 1383,
+          "total": 1213,
           "on_page": 601,
           "partial": 0,
           "dropped": {
             "layer_hidden": 138,
             "layer_consistency_checks": 343,
             "point_no_marker": 115,
-            "kind_unknown": 186
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -5922,7 +5575,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 186
+                "kind_unknown": 16
               }
             }
           },
@@ -6112,20 +5765,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 140
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 550
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 574
             },
             {
               "reason": "record_audit_only_family",
@@ -6137,14 +5778,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 963,
+          "total": 849,
           "on_page": 388,
           "partial": 0,
           "dropped": {
             "layer_hidden": 103,
             "layer_consistency_checks": 246,
             "point_no_marker": 96,
-            "kind_unknown": 130
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -6189,7 +5830,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 130
+                "kind_unknown": 16
               }
             }
           },
@@ -6367,20 +6008,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 133
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 491
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 485
             },
             {
               "reason": "record_audit_only_family",
@@ -6392,7 +6021,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 952,
+          "total": 836,
           "on_page": 425,
           "partial": 0,
           "dropped": {
@@ -6400,7 +6029,7 @@
             "layer_consistency_checks": 200,
             "fill_duplicate": 10,
             "point_no_marker": 84,
-            "kind_unknown": 132
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -6446,7 +6075,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 132
+                "kind_unknown": 16
               }
             }
           },
@@ -6630,20 +6259,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 202
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 898
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 887
             },
             {
               "reason": "record_audit_only_family",
@@ -6655,7 +6272,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1484,
+          "total": 1328,
           "on_page": 663,
           "partial": 4,
           "dropped": {
@@ -6663,7 +6280,7 @@
             "layer_consistency_checks": 417,
             "fill_duplicate": 2,
             "point_no_marker": 110,
-            "kind_unknown": 172
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -6709,7 +6326,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 172
+                "kind_unknown": 16
               }
             }
           },
@@ -6893,20 +6510,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 236
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 883
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 875
             },
             {
               "reason": "record_audit_only_family",
@@ -6918,7 +6523,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1648,
+          "total": 1450,
           "on_page": 773,
           "partial": 0,
           "dropped": {
@@ -6926,7 +6531,7 @@
             "layer_consistency_checks": 371,
             "fill_duplicate": 12,
             "point_no_marker": 113,
-            "kind_unknown": 214
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -6978,7 +6583,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 214
+                "kind_unknown": 16
               }
             }
           },
@@ -7186,32 +6791,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 111
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 491
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 579
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 956,
+          "total": 836,
           "on_page": 425,
           "partial": 0,
           "dropped": {
@@ -7219,7 +6812,7 @@
             "layer_consistency_checks": 200,
             "fill_duplicate": 10,
             "point_no_marker": 84,
-            "kind_unknown": 136
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -7266,7 +6859,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 136
+                "kind_unknown": 16
               }
             }
           },
@@ -7462,32 +7055,20 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 111
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 885
             },
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 582
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "igSmartFrame2d",
-              "count": 2
+              "count": 1
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 1482,
+          "total": 1312,
           "on_page": 654,
           "partial": 4,
           "dropped": {
@@ -7495,7 +7076,7 @@
             "layer_consistency_checks": 411,
             "fill_duplicate": 2,
             "point_no_marker": 109,
-            "kind_unknown": 186
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -7541,7 +7122,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 186
+                "kind_unknown": 16
               }
             }
           },
@@ -7713,20 +7294,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 153
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 875
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 542
             },
             {
               "reason": "record_audit_only_family",
@@ -7738,7 +7307,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1600,
+          "total": 1401,
           "on_page": 729,
           "partial": 0,
           "dropped": {
@@ -7746,7 +7315,7 @@
             "layer_consistency_checks": 369,
             "fill_duplicate": 12,
             "point_no_marker": 113,
-            "kind_unknown": 215
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -7798,7 +7367,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 215
+                "kind_unknown": 16
               }
             }
           },
@@ -7976,20 +7545,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 148
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 491
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 537
             },
             {
               "reason": "record_audit_only_family",
@@ -8001,7 +7558,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 956,
+          "total": 836,
           "on_page": 425,
           "partial": 0,
           "dropped": {
@@ -8009,7 +7566,7 @@
             "layer_consistency_checks": 200,
             "fill_duplicate": 10,
             "point_no_marker": 84,
-            "kind_unknown": 136
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -8055,7 +7612,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 136
+                "kind_unknown": 16
               }
             }
           },
@@ -8240,26 +7797,14 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 87
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 888
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 901
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 1501,
+          "total": 1315,
           "on_page": 658,
           "partial": 2,
           "dropped": {
@@ -8267,7 +7812,7 @@
             "layer_consistency_checks": 411,
             "fill_duplicate": 2,
             "point_no_marker": 107,
-            "kind_unknown": 202
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -8314,7 +7859,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 202
+                "kind_unknown": 16
               }
             }
           },
@@ -8426,20 +7971,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 177
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 888
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 543
             },
             {
               "reason": "record_audit_only_family",
@@ -8451,7 +7984,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1657,
+          "total": 1456,
           "on_page": 777,
           "partial": 0,
           "dropped": {
@@ -8459,7 +7992,7 @@
             "layer_consistency_checks": 373,
             "fill_duplicate": 12,
             "point_no_marker": 113,
-            "kind_unknown": 217
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -8511,7 +8044,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 217
+                "kind_unknown": 16
               }
             }
           },
@@ -8677,20 +8210,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 96
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 360
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 241
             },
             {
               "reason": "record_audit_only_family",
@@ -8702,7 +8223,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 697,
+          "total": 612,
           "on_page": 281,
           "partial": 0,
           "dropped": {
@@ -8710,7 +8231,7 @@
             "layer_consistency_checks": 156,
             "fill_duplicate": 4,
             "point_no_marker": 84,
-            "kind_unknown": 101
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -8756,7 +8277,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 101
+                "kind_unknown": 16
               }
             }
           },
@@ -8934,20 +8455,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 105
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 363
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 321
             },
             {
               "reason": "record_audit_only_family",
@@ -8959,7 +8468,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 750,
+          "total": 659,
           "on_page": 331,
           "partial": 0,
           "dropped": {
@@ -8967,7 +8476,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 107
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -9013,7 +8522,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 107
+                "kind_unknown": 16
               }
             }
           },
@@ -9179,20 +8688,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 104
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 363
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 397
             },
             {
               "reason": "record_audit_only_family",
@@ -9204,7 +8701,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 749,
+          "total": 659,
           "on_page": 331,
           "partial": 0,
           "dropped": {
@@ -9212,7 +8709,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 106
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -9258,7 +8755,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 106
+                "kind_unknown": 16
               }
             }
           },
@@ -9424,20 +8921,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 107
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 362
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 412
             },
             {
               "reason": "record_audit_only_family",
@@ -9449,7 +8934,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 743,
+          "total": 654,
           "on_page": 327,
           "partial": 0,
           "dropped": {
@@ -9457,7 +8942,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 105
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -9503,7 +8988,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 105
+                "kind_unknown": 16
               }
             }
           },
@@ -9675,20 +9160,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 93
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 362
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 346
             },
             {
               "reason": "record_audit_only_family",
@@ -9700,7 +9173,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 737,
+          "total": 654,
           "on_page": 327,
           "partial": 0,
           "dropped": {
@@ -9708,7 +9181,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 99
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -9754,7 +9227,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 99
+                "kind_unknown": 16
               }
             }
           },
@@ -9932,20 +9405,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 98
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 362
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 399
             },
             {
               "reason": "record_audit_only_family",
@@ -9957,7 +9418,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 738,
+          "total": 654,
           "on_page": 327,
           "partial": 0,
           "dropped": {
@@ -9965,7 +9426,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 100
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -10011,7 +9472,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 100
+                "kind_unknown": 16
               }
             }
           },
@@ -10177,20 +9638,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 96
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 362
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 380
             },
             {
               "reason": "record_audit_only_family",
@@ -10202,7 +9651,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 744,
+          "total": 654,
           "on_page": 327,
           "partial": 0,
           "dropped": {
@@ -10210,7 +9659,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 106
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -10256,7 +9705,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 106
+                "kind_unknown": 16
               }
             }
           },
@@ -10434,20 +9883,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 101
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 362
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 412
             },
             {
               "reason": "record_audit_only_family",
@@ -10459,7 +9896,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 741,
+          "total": 654,
           "on_page": 327,
           "partial": 0,
           "dropped": {
@@ -10467,7 +9904,7 @@
             "layer_consistency_checks": 150,
             "fill_duplicate": 8,
             "point_no_marker": 79,
-            "kind_unknown": 103
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -10513,7 +9950,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 103
+                "kind_unknown": 16
               }
             }
           },
@@ -10703,20 +10140,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 155
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 639
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 572
             },
             {
               "reason": "record_audit_only_family",
@@ -10728,7 +10153,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1241,
+          "total": 1085,
           "on_page": 556,
           "partial": 0,
           "dropped": {
@@ -10736,7 +10161,7 @@
             "layer_consistency_checks": 265,
             "fill_duplicate": 10,
             "point_no_marker": 98,
-            "kind_unknown": 172
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -10788,7 +10213,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 172
+                "kind_unknown": 16
               }
             }
           },
@@ -10990,20 +10415,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 155
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 639
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 685
             },
             {
               "reason": "record_audit_only_family",
@@ -11015,7 +10428,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1248,
+          "total": 1085,
           "on_page": 556,
           "partial": 0,
           "dropped": {
@@ -11023,7 +10436,7 @@
             "layer_consistency_checks": 265,
             "fill_duplicate": 10,
             "point_no_marker": 98,
-            "kind_unknown": 179
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -11075,7 +10488,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 179
+                "kind_unknown": 16
               }
             }
           },
@@ -11277,20 +10690,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 189
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 629
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 672
             },
             {
               "reason": "record_audit_only_family",
@@ -11302,7 +10703,7 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1225,
+          "total": 1069,
           "on_page": 547,
           "partial": 0,
           "dropped": {
@@ -11310,7 +10711,7 @@
             "layer_consistency_checks": 261,
             "fill_duplicate": 10,
             "point_no_marker": 98,
-            "kind_unknown": 172
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -11362,7 +10763,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 172
+                "kind_unknown": 16
               }
             }
           },
@@ -11552,20 +10953,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 81
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 333
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 296
             },
             {
               "reason": "record_audit_only_family",
@@ -11577,14 +10966,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 598,
+          "total": 529,
           "on_page": 241,
           "partial": 1,
           "dropped": {
             "layer_hidden": 49,
             "layer_consistency_checks": 143,
             "point_no_marker": 74,
-            "kind_unknown": 85,
+            "kind_unknown": 16,
             "text_whitespace_only": 6
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -11630,7 +11019,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 85
+                "kind_unknown": 16
               }
             }
           },
@@ -11677,12 +11066,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -11692,6 +11075,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -11765,15 +11154,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid": {
@@ -11820,20 +11201,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 140
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 517
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 391
             },
             {
               "reason": "record_audit_only_family",
@@ -11845,14 +11214,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 949,
+          "total": 829,
           "on_page": 410,
           "partial": 1,
           "dropped": {
             "layer_hidden": 98,
             "layer_consistency_checks": 215,
             "point_no_marker": 90,
-            "kind_unknown": 136
+            "kind_unknown": 16
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -11896,7 +11265,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 136
+                "kind_unknown": 16
               }
             }
           },
@@ -11940,12 +11309,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -11955,6 +11318,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12028,15 +11397,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "00/02/集注站 凝析油一级闪蒸分离器B气相出口改造工艺及自控流程图.pid": {
@@ -12072,33 +11433,21 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 76
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
-              "count": 431
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
               "count": 431
             }
           ],
           "unattributed": 0
         },
         "entities": {
-          "total": 826,
+          "total": 710,
           "on_page": 352,
           "partial": 0,
           "dropped": {
             "layer_hidden": 84,
             "layer_consistency_checks": 175,
             "point_no_marker": 81,
-            "kind_unknown": 132,
+            "kind_unknown": 16,
             "text_whitespace_only": 2
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -12145,7 +11494,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 132
+                "kind_unknown": 16
               }
             }
           },
@@ -12260,20 +11609,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 182
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 831
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 812
             },
             {
               "reason": "record_audit_only_family",
@@ -12285,14 +11622,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 1356,
+          "total": 1214,
           "on_page": 562,
           "partial": 1,
           "dropped": {
             "layer_hidden": 112,
             "layer_consistency_checks": 395,
             "point_no_marker": 113,
-            "kind_unknown": 158,
+            "kind_unknown": 16,
             "text_empty": 2,
             "text_whitespace_only": 14
           },
@@ -12341,7 +11678,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 158
+                "kind_unknown": 16
               }
             }
           },
@@ -12389,12 +11726,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12404,6 +11735,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12477,15 +11814,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D01.pid": {
@@ -12532,20 +11861,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 14
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 179
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 167
             },
             {
               "reason": "record_audit_only_family",
@@ -12557,14 +11874,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 306,
+          "total": 286,
           "on_page": 83,
           "partial": 0,
           "dropped": {
             "layer_hidden": 2,
             "layer_consistency_checks": 84,
             "point_no_marker": 73,
-            "kind_unknown": 34,
+            "kind_unknown": 14,
             "text_whitespace_only": 30
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -12600,7 +11917,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 34
+                "kind_unknown": 14
               }
             }
           },
@@ -12641,12 +11958,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12656,6 +11967,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12729,15 +12046,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D03.pid": {
@@ -12811,12 +12120,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -12826,6 +12129,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -12899,15 +12208,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D04.pid": {
@@ -12924,12 +12225,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 1
-            },
-            {
               "reason": "record_native_skip",
               "stream": "/Sheet6",
               "type_code": "0x00CE",
@@ -12945,6 +12240,12 @@
               "stream": "/JSite489",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 1
             },
             {
               "reason": "record_audit_only_family",
@@ -13040,25 +12341,11 @@
             "segment_too_short": 3
           },
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 1
-          }
-        ]
+        }
       },
       "furniture": {
         "parse": {
           "items": [
-            {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
             {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
@@ -13069,6 +12356,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -13142,15 +12435,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D06.pid": {
@@ -13197,20 +12482,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 11
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 28
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 31
             },
             {
               "reason": "record_audit_only_family",
@@ -13222,14 +12495,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 118,
+          "total": 112,
           "on_page": 25,
           "partial": 0,
           "dropped": {
             "layer_hidden": 3,
             "layer_consistency_checks": 12,
             "point_no_marker": 64,
-            "kind_unknown": 14
+            "kind_unknown": 8
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
@@ -13259,7 +12532,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 14
+                "kind_unknown": 8
               }
             }
           },
@@ -13297,12 +12570,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -13312,6 +12579,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -13385,15 +12658,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/D07.pid": {
@@ -13452,20 +12717,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 14
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 26
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 42
             },
             {
               "reason": "record_audit_only_family",
@@ -13477,14 +12730,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 151,
+          "total": 135,
           "on_page": 39,
           "partial": 0,
           "dropped": {
             "layer_hidden": 3,
             "layer_consistency_checks": 6,
             "point_no_marker": 64,
-            "kind_unknown": 24,
+            "kind_unknown": 8,
             "text_whitespace_only": 15
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -13521,7 +12774,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 24
+                "kind_unknown": 8
               }
             }
           },
@@ -13562,12 +12815,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -13577,6 +12824,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -13650,15 +12903,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     },
     "test/U01/TESTDWG-0002TP03-01.pid": {
@@ -13705,20 +12950,8 @@
             {
               "reason": "record_audit_only_family",
               "stream": "/Sheet6",
-              "family": "AttributeFragment",
-              "count": 33
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
               "family": "DependencyObject",
               "count": 162
-            },
-            {
-              "reason": "record_audit_only_family",
-              "stream": "/Sheet6",
-              "family": "SubRecord0x0010",
-              "count": 139
             },
             {
               "reason": "record_audit_only_family",
@@ -13730,14 +12963,14 @@
           "unattributed": 0
         },
         "entities": {
-          "total": 304,
+          "total": 285,
           "on_page": 103,
           "partial": 0,
           "dropped": {
             "layer_hidden": 13,
             "layer_consistency_checks": 80,
             "point_no_marker": 73,
-            "kind_unknown": 29,
+            "kind_unknown": 10,
             "text_whitespace_only": 6
           },
           "fill_duplicate_first_taken_by_furniture": 0,
@@ -13778,7 +13011,7 @@
             },
             "unknown": {
               "probe_only": {
-                "kind_unknown": 29
+                "kind_unknown": 10
               }
             }
           },
@@ -13819,12 +13052,6 @@
         "parse": {
           "items": [
             {
-              "reason": "record_no_decoder",
-              "stream": "/Sheet6",
-              "type_code": "0x0021",
-              "count": 3
-            },
-            {
               "reason": "record_symbol_body_cache",
               "stream": "/JSite16",
               "count": 31
@@ -13834,6 +13061,12 @@
               "stream": "/JSite16",
               "count": 1,
               "body_primitives": 0
+            },
+            {
+              "reason": "record_audit_only_family",
+              "stream": "/Sheet6",
+              "family": "igComplexString2d",
+              "count": 3
             }
           ],
           "unattributed": 0
@@ -13907,15 +13140,7 @@
           "total": 76,
           "written": 76,
           "unattributed": 0
-        },
-        "suspect_sites": [
-          {
-            "reason": "record_no_decoder",
-            "stream": "/Sheet6",
-            "type_code": "0x0021",
-            "count": 3
-          }
-        ]
+        }
       }
     }
   }

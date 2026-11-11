@@ -142,6 +142,13 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                     sheet_probe::probe_sheet_stream(&name, &path, &data, &Default::default())
                 });
                 let geometry = sheet_geometry_from_probe(sheet_probe.as_ref(), &data);
+                // The families above decoded what the stream's chain reads
+                // before it stops, if it stops; a stream that is not the
+                // chain its header says is named here so that nothing built
+                // on it passes for the whole sheet.
+                if let Some(fault) = crate::model::StreamChainFault::of_stream(&path, &data) {
+                    doc.chain_faults.push(fault);
+                }
 
                 (m, tag, hdr, records, Some(summary), geometry)
             } else {

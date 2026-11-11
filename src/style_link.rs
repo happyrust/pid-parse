@@ -336,7 +336,7 @@ pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
 /// (W drawing, style id 26), a 234-byte payload naming a `JStyleTextPara`
 /// at `+32` and a `JStylePointSymbol` at [`COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET`],
 /// reached from the dash's trailing word — see
-/// [`read_complex_dash_pattern`].
+/// `read_complex_dash_pattern`.
 pub const PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT: u16 = 0x0034;
 
 /// Offset at which a complex-dash component names the `JStylePointSymbol`
@@ -930,7 +930,7 @@ impl DashPattern {
 /// with a shape embedded. The one corpus instance is the W drawing's
 /// `Hydraulic Line` dash (`[-7.62 mm, sentinel]` then component 26), whose
 /// line draws solid with the symbol stamped once per cell; see
-/// [`DocumentStyleTable::complex_dash_named`] for the resolved glyph.
+/// `DocumentStyleTable::complex_dash_named` for the resolved glyph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComplexDashPattern {
     /// The declared segments in order, metres. The symbol slot reads
@@ -3072,10 +3072,10 @@ pub fn text_styles_for_file(path: &Path) -> Result<TextStyleIndex, PidError> {
 
 /// Resolve the line style of every drawable record in one parsed `.pid`.
 ///
-/// Walks each `Sheet*`, takes the five families that carry an `index` —
-/// `igLine2d`, `igPoint2d`, `igLineString2d`, `igArc2d`, `igCircle2d` —
-/// plus the symbol placements, and resolves each against the `StyleCluster`
-/// of that sheet's own storage.
+/// Walks each `Sheet*`, takes the seven families that carry an `index` —
+/// `igLine2d`, `igPoint2d`, `igLineString2d`, `igArc2d`, `igCircle2d`,
+/// `igEllipticalArc2d`, `igBspCurve2d` — plus the symbol placements, and
+/// resolves each against the `StyleCluster` of that sheet's own storage.
 ///
 /// Records whose index resolves to something with no line symbology are left
 /// out rather than defaulted, so a caller can tell "this record asks for a
@@ -3109,6 +3109,18 @@ pub fn line_styles_for_document(doc: &PidDocument) -> LineStyleIndex {
             .chain(
                 sheet
                     .decoded_igcircles
+                    .iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                sheet
+                    .decoded_igellipticalarcs
+                    .iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                sheet
+                    .decoded_igbspcurves
                     .iter()
                     .map(|record| (record.oid, record.index)),
             )

@@ -17,6 +17,14 @@
 //! the template and the places it was looked for, and a drawing that names no
 //! template draws no such warning.
 //!
+//! A drawing one of whose streams has a record chain that does not hold is
+//! the third: the page carries what the records before the break draw, and
+//! exits 0. Three damaged copies of `DWG-0201GP06-01.pid` hold the program to
+//! one warning that names the stream, the offset the chain stops at and the
+//! bytes left unread, the page to the records before the break, and the
+//! page's account to filing the stream as a suspect drop; a fourth copy,
+//! rewritten with nothing changed, holds it to saying nothing.
+//!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
 //! wherever a font directory is present and says why it did not where none is;
@@ -39,8 +47,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pid_plot::fonts::font_dirs;
-use pid_plot::model::{PaperModel, border_template_places, lay_out_drawing};
+use pid_plot::ledger::{DropReason, ExportLedger};
+use pid_plot::model::{PaperModel, PaperPrimitive, border_template_places, lay_out_drawing};
 use pid_plot::read::read_plot;
+use pid_plot::write::write_ledger;
 
 /// The line every argument error puts on stderr.
 const USAGE: &str = "usage: pid_plot <drawing.pid> <out.pdf> [corpus]";
@@ -594,4 +604,475 @@ fn d06_exports_the_page_the_library_lays_out() {
         Some("0"),
         "the page's account does not balance: {ledger}"
     );
+}
+
+/// `test-file/DWG-0201GP06-01.pid`, the drawing an independent review of the
+/// chain-gated decoders broke three ways.
+fn dwg_0201() -> PathBuf {
+    fixtures().join("DWG-0201GP06-01.pid")
+}
+
+/// The stream that drawing keeps its own ink in.
+const DWG_0201_SHEET: &str = "/Sheet6";
+
+/// One way of damaging the record chain of `DWG-0201GP06-01.pid`'s
+/// `/Sheet6`, each a single length field.
+#[derive(Clone, Copy, Debug)]
+enum Break {
+    /// Nothing is changed: the drawing rewritten as it is.
+    None,
+    /// The record in the middle of the chain states a length of zero.
+    MiddleLengthZero,
+    /// The last record states one byte more than the stream has.
+    LastLengthPlusOne,
+    /// The last record states four bytes fewer than it has, which leaves
+    /// four stray bytes at the stream's end.
+    LastLengthMinusFour,
+}
+
+/// A copy of `DWG-0201GP06-01.pid` with one [`Break`] in its `/Sheet6`.
+struct Broken {
+    /// The copy, in `case`'s own scratch directory.
+    path: PathBuf,
+    /// The same drawing with a `/Sheet6` that is the records before the
+    /// stop and nothing else, behind a header that counts them: a stream
+    /// with nothing wrong with it, holding exactly what the broken one is
+    /// read as.
+    sound_prefix: PathBuf,
+    /// Where the chain walk has to stop, and how many bytes follow it;
+    /// `None` for [`Break::None`].
+    stop: Option<(usize, usize)>,
+    /// Offset of the record the break touches: every record ending at or
+    /// before it is untouched. The stream's length for [`Break::None`].
+    first_touched: usize,
+}
+
+/// Write `how`'s copy of the drawing under `case`'s scratch directory.
+///
+/// The copy is the drawing's own compound file rebuilt with one stream
+/// replaced (`pid_parse::writer`), so every other stream — the symbol
+/// caches, the style tables, the layers — is byte for byte the original's.
+fn broken_copy(case: &str, how: Break) -> Broken {
+    use pid_parse::parsers::sheet_records::{SheetChain, sheet_record_starts};
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    let source = dwg_0201();
+    let package = pid_parse::PidParser::new()
+        .parse_package(&source)
+        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+    let mut data = package
+        .get_stream(DWG_0201_SHEET)
+        .unwrap_or_else(|| panic!("{} has no {DWG_0201_SHEET}", source.display()))
+        .data
+        .clone();
+    let starts = sheet_record_starts(&data);
+    assert!(
+        starts.len() > 10,
+        "{}'s {DWG_0201_SHEET} walks {} records",
+        source.display(),
+        starts.len()
+    );
+    let len = data.len();
+    let last = starts[starts.len() - 1];
+    let stated = |data: &[u8], at: usize| {
+        u32::from_le_bytes([data[at + 2], data[at + 3], data[at + 4], data[at + 5]])
+    };
+    let state = |data: &mut [u8], at: usize, value: u32| {
+        data[at + 2..at + 6].copy_from_slice(&value.to_le_bytes());
+    };
+    let (stop, first_touched) = match how {
+        Break::None => (None, len),
+        Break::MiddleLengthZero => {
+            let middle = starts[starts.len() / 2];
+            state(&mut data, middle, 0);
+            (Some((middle, len - middle)), middle)
+        }
+        Break::LastLengthPlusOne => {
+            let length = stated(&data, last);
+            state(&mut data, last, length + 1);
+            (Some((last, len - last)), last)
+        }
+        Break::LastLengthMinusFour => {
+            let length = stated(&data, last);
+            state(&mut data, last, length - 4);
+            (Some((len - 4, 4)), last)
+        }
+    };
+    // What the walk reads of the broken stream, as a stream of its own.
+    let chain = SheetChain::walk(&data);
+    assert_eq!(
+        chain.stop.is_some().then_some(chain.end),
+        stop.map(|(at, _)| at),
+        "{how:?}: where the walk stops"
+    );
+    let mut prefix = data[..chain.end].to_vec();
+    let live = u32::try_from(chain.live_records).expect("a record count");
+    prefix[4..8].copy_from_slice(&live.to_le_bytes());
+    assert!(
+        SheetChain::walk(&prefix).is_sound(),
+        "{how:?}: the records before the stop are a stream with nothing wrong with it"
+    );
+
+    let write = |name: &str, new_data: Vec<u8>| {
+        let plan = WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: DWG_0201_SHEET.to_string(),
+                new_data,
+            }],
+            ..WritePlan::default()
+        };
+        let dir = scratch(case).join(name);
+        std::fs::create_dir_all(&dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+        let path = dir.join("DWG-0201GP06-01.pid");
+        PidWriter::write_to(&package, &plan, &path)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        path
+    };
+    Broken {
+        path: write("broken", data),
+        sound_prefix: write("sound-prefix", prefix),
+        stop,
+        first_touched,
+    }
+}
+
+/// What one page frame says about the page. The layout places the
+/// drawing's ink by these.
+#[derive(Debug, PartialEq)]
+struct PageFrame {
+    /// The page's extent, metres.
+    extent_m: Option<(f64, f64)>,
+    /// The frame's own corner, metres.
+    corner_m: Option<[f64; 2]>,
+    /// Where the frame puts its content: the translation in metres, and
+    /// the scale.
+    content: Option<[f64; 3]>,
+}
+
+/// The page frames a drawing's sheets hold, in stream order.
+fn page_frames(path: &Path) -> Vec<PageFrame> {
+    let doc = pid_parse::PidParser::new()
+        .parse_file(path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    doc.sheet_streams
+        .iter()
+        .filter_map(|sheet| sheet.geometry.as_ref())
+        .flat_map(|geometry| &geometry.decoded_igsmartframes)
+        .map(|frame| PageFrame {
+            extent_m: frame.page_extent_m(),
+            corner_m: frame.range_origin_m,
+            content: frame.content_transform.as_ref().map(|placed| {
+                [
+                    placed.translation_m[0],
+                    placed.translation_m[1],
+                    placed.scale,
+                ]
+            }),
+        })
+        .collect()
+}
+
+/// What a primitive is, apart from where the page puts it.
+fn identity(primitive: &PaperPrimitive) -> impl PartialEq + std::fmt::Debug + '_ {
+    (
+        primitive.confidence,
+        primitive.stream_path.as_deref(),
+        primitive.byte_range,
+        primitive.symbol.as_deref(),
+        primitive.stroke.as_ref(),
+        std::mem::discriminant(&primitive.shape),
+    )
+}
+
+/// The drawing's own decoded primitives that come from records of `/Sheet6`
+/// ending at or before `before`.
+fn drawn_from_the_sheet_before(model: &PaperModel, before: usize) -> Vec<&PaperPrimitive> {
+    model
+        .primitives
+        .iter()
+        .filter(|primitive| {
+            !primitive.furniture
+                && primitive.confidence == "decoded"
+                && primitive.stream_path.as_deref() == Some(DWG_0201_SHEET)
+                && primitive.byte_range.is_some_and(|range| range[1] <= before)
+        })
+        .collect()
+}
+
+/// The count after `word` on the ledger line `pid_plot` prints.
+fn ledger_count(outcome: &Outcome, word: &str) -> u64 {
+    let ledger = outcome
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("ledger "))
+        .unwrap_or_else(|| panic!("stdout carries no ledger summary\n{outcome}"));
+    let mut words = ledger.split_whitespace();
+    assert!(
+        words.any(|found| found == word),
+        "the ledger summary states no {word}: {ledger}"
+    );
+    words
+        .next()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("the ledger summary's {word} is not a count: {ledger}"))
+}
+
+/// Export `how`'s copy of `DWG-0201GP06-01.pid` against the repository's
+/// fixtures, as far as this machine lets any export go, and hold what the
+/// program said and what the library laid out to the break.
+///
+/// A sheet whose record chain stops short still exports — the records
+/// before the stop are the drawing's, and a page with most of the drawing on
+/// it is worth more than none — so the exit code is the one the intact
+/// drawing gets. What it must not do is look like a finished export: the
+/// page is short of ink nobody listed. So the program says, in one warning,
+/// which stream stopped, at which offset and how many bytes were left
+/// unread, and the page's ledger files the stream as a suspect drop with
+/// those bytes, where the gates that read ledgers see it.
+///
+/// What the page carries is held twice. It is, primitive for primitive, the
+/// page of the same drawing with a sound `/Sheet6` that ends where the walk
+/// stopped: nothing past the stop reaches the page by any route. And every
+/// record before the stop draws what it draws on the drawing as committed —
+/// the same primitives from the same bytes with the same pens — at the same
+/// place wherever the page frame is among the records read. This drawing
+/// keeps its one live frame as the last record of the stream, after five
+/// superseded copies, so a chain that stops anywhere short of it is laid out
+/// as a sheet with no frame is: on the page its template's name states, and
+/// without the 1.105 mm by 1.841 mm the frame moves the drawing's ink by.
+fn export_a_broken_chain(case: &str, how: Break) {
+    let broken = broken_copy(case, how);
+    let corpus = fixtures();
+    let out = unwritten(&scratch(case), "page.pdf");
+    let fonts = fonts_for_a_child();
+    let mut command = pid_plot();
+    if let Ok(fonts) = &fonts {
+        command.env("PID_PLOT_FONTS", fonts);
+    }
+    // The child's layout is held against ones made here; see the D06 export.
+    if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+        command.env("PID_SYMBOL_LIBRARY", library);
+    }
+    let outcome = run(command.arg(&broken.path).arg(&out).arg(&corpus));
+
+    // What the library lays out: the copy, and the drawing as committed.
+    let model = lay_out_drawing(&broken.path, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", broken.path.display()));
+    let intact = lay_out_drawing(&dwg_0201(), &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", dwg_0201().display()));
+
+    // The page is the page of the records before the stop: the same
+    // drawing with a sound stream that ends there lays out to the same
+    // primitives on the same sheet, so nothing past the stop is drawn.
+    let sound = lay_out_drawing(&broken.sound_prefix, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", broken.sound_prefix.display()));
+    assert_eq!(
+        model.resolved_page_mm(),
+        sound.resolved_page_mm(),
+        "{how:?}: the sheet"
+    );
+    assert_eq!(
+        model.template.as_ref().map(|template| &template.path),
+        sound.template.as_ref().map(|template| &template.path),
+        "{how:?}: the border template"
+    );
+    assert_eq!(
+        model.primitives.len(),
+        sound.primitives.len(),
+        "{how:?}: primitives on the page, against the page of the sound prefix"
+    );
+    for (index, (drawn, expected)) in model.primitives.iter().zip(&sound.primitives).enumerate() {
+        assert_eq!(
+            drawn, expected,
+            "{how:?}: primitive {index} is not the sound prefix's"
+        );
+    }
+
+    // Every record the break leaves alone puts on the page what it puts
+    // there on the intact drawing: the same primitives, from the same bytes,
+    // with the same pens, in the same order.
+    let before = drawn_from_the_sheet_before(&intact, broken.first_touched);
+    let after = drawn_from_the_sheet_before(&model, broken.first_touched);
+    assert!(
+        !before.is_empty(),
+        "{how:?}: the intact drawing draws nothing from the records before +{}",
+        broken.first_touched
+    );
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "{how:?}: primitives drawn from the records before +{}",
+        broken.first_touched
+    );
+    for (drawn, expected) in after.iter().zip(&before) {
+        assert_eq!(
+            identity(drawn),
+            identity(expected),
+            "{how:?}: the same primitives, in the same order"
+        );
+    }
+    // And at the same place exactly when the frames read say the same of
+    // the page as the intact drawing's do; see the note above.
+    let same_frames = page_frames(&broken.path) == page_frames(&dwg_0201());
+    assert_eq!(
+        after == before,
+        same_frames,
+        "{how:?}: the records before the stop are placed as on the intact drawing exactly \
+         when the page frame is among them (frames read: {:?})",
+        page_frames(&broken.path)
+    );
+
+    // The page's ledger: the stream, once, as a suspect drop of the bytes
+    // the walk left unread — or not at all when nothing is broken.
+    let filed: Vec<_> = model
+        .ledger
+        .parse
+        .drawing
+        .items
+        .iter()
+        .filter(|item| item.reason == DropReason::SheetStreamWithoutGeometry)
+        .map(|item| (item.stream.as_str(), item.count, item.bytes))
+        .collect();
+    let warned = warnings(&outcome.stderr);
+    match broken.stop {
+        None => {
+            assert_eq!(model.primitives.len(), intact.primitives.len());
+            assert!(filed.is_empty(), "{how:?}: filed {filed:?}");
+            assert!(
+                warned.is_empty(),
+                "{how:?}: a drawing rewritten as it is drew a warning\n{outcome}"
+            );
+        }
+        Some((stop, unread)) => {
+            assert_eq!(
+                filed,
+                [(DWG_0201_SHEET, 1, Some(unread as u64))],
+                "{how:?}: the stream is filed once with the bytes left unread"
+            );
+            assert_eq!(
+                warned.len(),
+                1,
+                "{how:?}: a chain that stops short is exactly one warning\n{outcome}"
+            );
+            let line = warned[0];
+            for needle in [
+                broken.path.display().to_string(),
+                DWG_0201_SHEET.to_string(),
+                format!("stops at +{stop} "),
+                format!("{unread} byte(s) from it on are not"),
+            ] {
+                assert!(
+                    line.contains(&needle),
+                    "{how:?}: the warning does not say `{needle}`\n{outcome}"
+                );
+            }
+        }
+    }
+
+    // The account a gate reads, assembled the way the ledger gates assemble
+    // it, which takes no typeface: it balances, it agrees with the counts
+    // the parser keeps, and the stream is one of its suspect sites.
+    let write = write_ledger(&model).unwrap_or_else(|error| panic!("{how:?}: {error}"));
+    let account = ExportLedger::assemble(&model, &write);
+    assert!(
+        account.conservation_breaches().is_empty(),
+        "{how:?}: {:?}",
+        account.conservation_breaches()
+    );
+    let reparsed = pid_parse::PidParser::new()
+        .parse_file(&broken.path)
+        .unwrap_or_else(|error| panic!("{}: {error}", broken.path.display()));
+    let geometry = pid_parse::build_normalized_geometry(&reparsed);
+    let mismatches = account.cross_check(&model, None, Some(&geometry));
+    assert!(
+        mismatches.is_empty(),
+        "{how:?}: the account disagrees with the counts the code keeps: {mismatches:#?}"
+    );
+    let summary = account.summary();
+    assert_eq!(summary.unattributed, 0, "{how:?}: {summary}");
+    let sites: Vec<_> = account
+        .drawing
+        .suspect_sites
+        .iter()
+        .filter(|site| site.reason == DropReason::SheetStreamWithoutGeometry)
+        .map(|site| (site.stream.as_deref(), site.count))
+        .collect();
+    // The drawing as committed, for what the break alone changed. Its own
+    // suspect count is the fixture ledger gate's to hold, against the
+    // symbol sources that gate declares; this layout searches for them.
+    let intact_summary = {
+        let write = write_ledger(&intact).unwrap_or_else(|error| panic!("intact: {error}"));
+        ExportLedger::assemble(&intact, &write).summary()
+    };
+    match broken.stop {
+        None => {
+            assert!(sites.is_empty(), "{how:?}: {sites:?}");
+            assert_eq!(summary, intact_summary, "{how:?}");
+        }
+        Some(_) => {
+            assert_eq!(
+                sites,
+                [(Some(DWG_0201_SHEET), 1)],
+                "{how:?}: the stream is a suspect site of the account"
+            );
+            assert!(
+                summary.suspect >= 1,
+                "{how:?}: the account counts no suspect drop: {summary}"
+            );
+        }
+    }
+
+    match fonts {
+        Ok(_) => {
+            assert_eq!(outcome.code, Some(0), "{how:?}\n{outcome}");
+            let pdf = std::fs::read(&out)
+                .unwrap_or_else(|error| panic!("{}: {error}\n{outcome}", out.display()));
+            assert_eq!(
+                outcome.stdout.lines().next(),
+                Some(page_line(&model, pdf.len()).as_str()),
+                "{how:?}: the command line did not report the page the library lays out\n{outcome}"
+            );
+            assert_eq!(
+                ledger_count(&outcome, "unattributed"),
+                0,
+                "{how:?}: the page's account does not balance\n{outcome}"
+            );
+            // The summary the program prints is the account's own.
+            assert_eq!(
+                ledger_count(&outcome, "suspect"),
+                summary.suspect,
+                "{how:?}: the program's summary is not the account's\n{outcome}"
+            );
+        }
+        Err(searched) => {
+            eprintln!(
+                "{case}: no font directory is present (searched {searched}), so the run \
+                 can only get as far as the first missing face"
+            );
+            assert_eq!(outcome.code, Some(1), "{how:?}\n{outcome}");
+        }
+    }
+}
+
+/// The harness itself: the drawing rewritten with nothing changed is the
+/// drawing — same page, no warning, nothing filed.
+#[test]
+fn a_drawing_rewritten_as_it_is_exports_without_a_word() {
+    export_a_broken_chain("chain-intact", Break::None);
+}
+
+#[test]
+fn a_chain_that_stops_in_the_middle_exports_the_records_before_it_and_says_so() {
+    export_a_broken_chain("chain-middle-zero", Break::MiddleLengthZero);
+}
+
+#[test]
+fn a_chain_whose_last_record_runs_past_the_stream_exports_the_rest_and_says_so() {
+    export_a_broken_chain("chain-last-plus-one", Break::LastLengthPlusOne);
+}
+
+#[test]
+fn a_chain_with_stray_bytes_at_its_end_exports_the_records_and_says_so() {
+    export_a_broken_chain("chain-last-minus-four", Break::LastLengthMinusFour);
 }

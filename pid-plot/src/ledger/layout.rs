@@ -47,6 +47,13 @@ pub struct LayoutLedger {
     pub template_unreadable: Vec<SourceName>,
     /// The parse layer's counts, one per domain (A.1).
     pub parse: DomainPair<ParseCounts>,
+    /// The chain streams read only as far as their record chain holds, in
+    /// the order the parse passes met them. Each is also one
+    /// [`DropReason::SheetStreamWithoutGeometry`] item of [`Self::parse`];
+    /// this is the whole of what the parser said about it, kept so that a
+    /// caller can say it too ([`Self::chain_fault_warnings`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_faults: Vec<ChainFaultRecord>,
     /// How many entities the geometry projection produced, per domain.
     ///
     /// This is the input side of the entity conservation equation, taken
@@ -66,6 +73,43 @@ pub struct LayoutLedger {
     /// order the `retain` visited them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub off_sheet: Vec<u32>,
+}
+
+/// One chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
+/// whose own framing does not hold, and the domain it was read for.
+///
+/// The parser reads such a stream as far as its record chain reads and no
+/// further (`pid_parse::StreamChainFault`), so the page carries what the
+/// records before the stop draw and nothing of what follows it. A page like
+/// that is not a finished export of the drawing, and nothing on it says so:
+/// the account does, as a suspect item, and `pid_plot` does, on stderr.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainFaultRecord {
+    /// The drawing's own stream, or the border template's.
+    pub domain: LedgerDomain,
+    /// What the parser found wrong with the stream.
+    pub fault: pid_parse::StreamChainFault,
+}
+
+impl LayoutLedger {
+    /// One sentence per chain stream that was not read whole, naming the
+    /// stream, the offset its record walk stopped at and the bytes left
+    /// unread, in the order the streams were met. A fault in the border
+    /// template's file says that it is the template's. Empty for a page all
+    /// of whose streams are sound, which is every page of every corpus this
+    /// crate is tested on.
+    #[must_use]
+    pub fn chain_fault_warnings(&self) -> Vec<String> {
+        self.chain_faults
+            .iter()
+            .map(|record| match record.domain {
+                LedgerDomain::Drawing => record.fault.describe(),
+                LedgerDomain::Furniture => {
+                    format!("in the border template, {}", record.fault.describe())
+                }
+            })
+            .collect()
+    }
 }
 
 /// One domain's parse-layer counts (A.1).
@@ -110,7 +154,10 @@ pub struct ParseRecord {
     pub family: Option<String>,
     /// How many records.
     pub count: u64,
-    /// The stream's byte size, for [`DropReason::SheetStreamWithoutGeometry`].
+    /// For [`DropReason::SheetStreamWithoutGeometry`]: the stream's byte
+    /// size when the stream yielded nothing, and the bytes its record chain
+    /// left unread when it was read up to a stop
+    /// ([`LayoutLedger::chain_faults`] holds which, and where).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// How many body primitives an unplaced cache definition carries, for
@@ -545,6 +592,12 @@ impl LedgerRecorder {
     ) {
         *self.ledger.entity_totals.get_mut(domain) =
             u64::try_from(geometry.entities.len()).unwrap_or(u64::MAX);
+        for fault in &geometry.chain_faults {
+            self.ledger.chain_faults.push(ChainFaultRecord {
+                domain,
+                fault: fault.clone(),
+            });
+        }
         let counts = self.ledger.parse.get_mut(domain);
 
         for row in &geometry.dropped_graphic_records {
@@ -581,6 +634,16 @@ impl LedgerRecorder {
             if stream.geometry.is_some() {
                 continue;
             }
+            // A sheet stream is an 8-byte header — magic and record count —
+            // and then its records. One no longer than the header holds no
+            // record, so there is none it failed to turn into an entity and
+            // no census it lost: it is an empty sheet, not a drop. The code
+            // is for a stream that has records and yielded nothing.
+            let header = u64::try_from(pid_parse::parsers::sheet_records::SHEET_STREAM_HEADER_LEN)
+                .unwrap_or(u64::MAX);
+            if stream.size <= header {
+                continue;
+            }
             counts.push_record(
                 ParseRecord::new(
                     DropReason::SheetStreamWithoutGeometry,
@@ -588,6 +651,33 @@ impl LedgerRecorder {
                     1,
                 )
                 .of_bytes(stream.size),
+            );
+        }
+        // A chain stream whose framing does not hold was read as far as its
+        // record chain reads: the records before the stop are entities like
+        // any other, and whatever the bytes after it draw is not on the
+        // page. Nothing above counts that — a census cannot count records
+        // the walk never reached — so the stream itself is the item, once,
+        // with the bytes left unread where a stream that yielded nothing
+        // states its size. A stream already filed as yielding nothing has
+        // said all of it. A header that disagrees with a chain read to the
+        // end leaves no byte unread and is filed all the same: the count it
+        // states is the only thing that says records are missing.
+        for fault in &geometry.chain_faults {
+            let filed = counts.items.iter().any(|item| {
+                item.reason == DropReason::SheetStreamWithoutGeometry
+                    && item.stream == fault.stream_path
+            });
+            if filed {
+                continue;
+            }
+            counts.push_record(
+                ParseRecord::new(
+                    DropReason::SheetStreamWithoutGeometry,
+                    fault.stream_path.clone(),
+                    1,
+                )
+                .of_bytes(u64::try_from(fault.unread_bytes).unwrap_or(u64::MAX)),
             );
         }
         for site in jsites {
@@ -1217,6 +1307,197 @@ mod tests {
             Some(DropReason::SheetStreamWithoutGeometry)
         );
         assert_eq!(counts.items.first().and_then(|item| item.bytes), Some(4096));
+    }
+
+    /// A sheet stream that is its 8-byte header alone holds no record, so it
+    /// has dropped none: there is nothing for the three censuses to have
+    /// lost. `N井场` has two such streams and `Q井场` one, each `magic +
+    /// record count 0`, and `A01`'s embedded frame has four; they were seven
+    /// of the sixty suspect items the two baselines carried. A stream one
+    /// byte longer than its header can hold a record's first byte and is
+    /// counted as before.
+    #[test]
+    fn a1_a_stream_that_is_its_header_alone_has_dropped_nothing() {
+        let streams = vec![
+            a_stream("/Sheet41276", 8, false),
+            a_stream("/Sheet43032", 0, false),
+            a_stream("/Sheet7", 9, false),
+        ];
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(
+            LedgerDomain::Drawing,
+            &streams,
+            &[],
+            &NormalizedPidGeometry::default(),
+        );
+        let counts = recorder.ledger.parse.get(LedgerDomain::Drawing);
+        assert_eq!(
+            counts
+                .items
+                .iter()
+                .map(|item| (item.reason, item.stream.as_str(), item.bytes))
+                .collect::<Vec<_>>(),
+            vec![(DropReason::SheetStreamWithoutGeometry, "/Sheet7", Some(9))]
+        );
+    }
+
+    /// The fault the parser raises for a stream of `len` bytes whose record
+    /// walk stops at `stop` on a record stating a length of zero.
+    fn a_fault(path: &str, len: usize, stop: usize) -> pid_parse::StreamChainFault {
+        pid_parse::StreamChainFault {
+            stream_path: path.to_string(),
+            stream_len: len,
+            wrong_magic: None,
+            stop: Some(pid_parse::StreamChainStop {
+                offset: stop,
+                reason: pid_parse::StreamChainStopReason::ZeroLength,
+                record_len: Some(0),
+            }),
+            unread_bytes: len - stop,
+            records_read: 3,
+            live_records_read: 3,
+            stated_records: Some(7),
+        }
+    }
+
+    /// A chain stream read only as far as its chain holds is a suspect item
+    /// of its own: the records before the stop are on the page, so nothing
+    /// else in the account would say the page is short. The item is the
+    /// stream, once, with the bytes left unread; the fault rides along whole
+    /// for whoever has to say it.
+    #[test]
+    fn a1_a_stream_whose_chain_stops_short_is_counted_with_its_unread_bytes() {
+        // `/Sheet6` decoded its prefix, so it has geometry; `/Sheet7`
+        // stopped on its first record and has none.
+        let streams = vec![
+            a_stream("/Sheet6", 30_000, true),
+            a_stream("/Sheet7", 400, false),
+        ];
+        let mut geometry = NormalizedPidGeometry::default();
+        geometry.chain_faults = vec![
+            a_fault("/Sheet6", 30_000, 17_000),
+            a_fault("/Sheet7", 400, 8),
+            a_fault("/JSite12/PSMcluster0", 900, 500),
+        ];
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(LedgerDomain::Drawing, &streams, &[], &geometry);
+        let ledger = recorder.into_ledger();
+
+        let counts = ledger.parse.get(LedgerDomain::Drawing);
+        let mut items: Vec<_> = counts
+            .items
+            .iter()
+            .map(|item| (item.reason, item.stream.as_str(), item.count, item.bytes))
+            .collect();
+        items.sort_by_key(|item| item.1);
+        assert_eq!(
+            items,
+            vec![
+                (
+                    DropReason::SheetStreamWithoutGeometry,
+                    "/JSite12/PSMcluster0",
+                    1,
+                    Some(400)
+                ),
+                (
+                    DropReason::SheetStreamWithoutGeometry,
+                    "/Sheet6",
+                    1,
+                    Some(13_000)
+                ),
+                // Filed as the stream that yielded nothing, with its size:
+                // the fault adds no second item.
+                (
+                    DropReason::SheetStreamWithoutGeometry,
+                    "/Sheet7",
+                    1,
+                    Some(400)
+                ),
+            ],
+            "each stream filed once"
+        );
+        assert_eq!(
+            DropReason::SheetStreamWithoutGeometry.tier(),
+            super::super::reason::Tier::Suspect,
+            "a stream not read whole has to reach the gate as a suspect"
+        );
+        assert!(ledger.parse.get(LedgerDomain::Furniture).items.is_empty());
+
+        assert_eq!(
+            ledger
+                .chain_faults
+                .iter()
+                .map(|record| (record.domain, record.fault.stream_path.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (LedgerDomain::Drawing, "/Sheet6"),
+                (LedgerDomain::Drawing, "/Sheet7"),
+                (LedgerDomain::Drawing, "/JSite12/PSMcluster0"),
+            ],
+            "each fault kept, in the order it was met"
+        );
+        let warnings = ledger.chain_fault_warnings();
+        assert_eq!(warnings.len(), 3);
+        assert!(
+            warnings[0].contains("/Sheet6")
+                && warnings[0].contains("stops at +17000 of 30000 bytes")
+                && warnings[0].contains("13000 byte(s) from it on are not"),
+            "{}",
+            warnings[0]
+        );
+    }
+
+    /// A fault in the border template is the template's, and says so; a
+    /// header that disagrees with a chain read to the end leaves no byte
+    /// unread and is filed all the same.
+    #[test]
+    fn a1_a_template_stream_cut_off_at_a_record_is_counted_in_the_furniture_domain() {
+        let mut geometry = NormalizedPidGeometry::default();
+        geometry.chain_faults = vec![pid_parse::StreamChainFault {
+            stream_path: "/Sheet6".to_string(),
+            stream_len: 4096,
+            wrong_magic: None,
+            stop: None,
+            unread_bytes: 0,
+            records_read: 40,
+            live_records_read: 40,
+            stated_records: Some(41),
+        }];
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(
+            LedgerDomain::Furniture,
+            &[a_stream("/Sheet6", 4096, true)],
+            &[],
+            &geometry,
+        );
+        let ledger = recorder.into_ledger();
+        assert!(ledger.parse.get(LedgerDomain::Drawing).items.is_empty());
+        assert_eq!(
+            ledger
+                .parse
+                .get(LedgerDomain::Furniture)
+                .items
+                .iter()
+                .map(|item| (item.reason, item.stream.as_str(), item.count, item.bytes))
+                .collect::<Vec<_>>(),
+            vec![(
+                DropReason::SheetStreamWithoutGeometry,
+                "/Sheet6",
+                1,
+                Some(0)
+            )]
+        );
+        let warnings = ledger.chain_fault_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].starts_with("in the border template, the record chain of /Sheet6")
+                && warnings[0].contains("40 live record(s) where the header states 41"),
+            "{}",
+            warnings[0]
+        );
+
+        // A page whose streams are all sound has nothing to say.
+        assert!(LayoutLedger::default().chain_fault_warnings().is_empty());
     }
 
     #[test]

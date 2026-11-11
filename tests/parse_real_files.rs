@@ -12,19 +12,18 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_iglines,
-        decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
-        decode_jstyle_overrides, decode_primitive_lines, decode_sub_records_0x0010,
-        primitive_line_investigation_report, sheet_record_shape_inventory,
-        symbol_placement_investigation_report, text_placement_investigation_report,
-        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN,
-        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN,
-        PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGBOUNDARY2D,
-        PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D,
-        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
-        PSM_TYPE_CODE_SUB_RECORD_0X0010, SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW,
-        SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+        decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_objects,
+        decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints,
+        decode_igsymbols, decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at,
+        decode_jstyle_overrides, decode_primitive_lines, decode_sub_record_0x0010_at,
+        decode_sub_records_0x0010, parse_psm_header, primitive_line_investigation_report,
+        sheet_record_shape_inventory, sheet_record_starts, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
+        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
+        DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN, PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_GLINE2D,
+        PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
+        PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
+        PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
     },
     PidParser,
 };
@@ -1139,21 +1138,27 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         21,
         "D06 DependencyObject audit count drifted"
     );
+    // Both were counts of things that are not records: 3 "JStyleOverride"
+    // and 20 "0x0010 sub-records" a byte-sliding walk read out of other
+    // records' payloads. `/Sheet6`'s chain holds neither type code, and a
+    // family decodes only what the chain starts. See
+    // `every_decoded_record_starts_where_its_streams_chain_starts_one` and
+    // `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md` §3.
     assert_eq!(
         geometry.decoded_jstyle_overrides.len(),
-        3,
-        "D06 JStyleOverride count drifted"
+        0,
+        "D06's sheet chain carries no 0x0030 record"
     );
     assert_eq!(
         geometry.decoded_sub_records_0x0010.len(),
-        20,
-        "D06 0x0010 audit count drifted"
+        0,
+        "D06's sheet chain carries no 0x0010 record"
     );
 
     let normalized = normalized_geometry_inventory(&doc);
     assert_eq!(
         normalized.total(),
-        101,
+        98,
         "D06 normalized geometry total drifted"
     );
     assert_eq!(normalized.decoded_lines, 0);
@@ -1161,18 +1166,20 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
     assert_eq!(normalized.decoded_points, 10);
     assert_eq!(normalized.decoded_texts, 4);
     assert_eq!(normalized.decoded_symbols, 6);
-    // D06's 3 JStyleOverride records used to surface here as inferred
-    // annotations. style.dll's own reader shows the bytes that anchor was
-    // built from are four u32, not two f64, so they now surface as probe-only
-    // unknowns instead -- hence 0 annotations and 8 + 3 = 11 unknowns. See
-    // `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
+    // D06's 3 "JStyleOverride records" surfaced here first as inferred
+    // annotations, then -- once style.dll's own reader showed the bytes
+    // their anchor was built from are four u32, not two f64 -- as probe-only
+    // unknowns (`docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`).
+    // They were never records: each was the length word of the block a
+    // `DependencyObject` ends with. Off the chain, they are gone, which
+    // leaves the 8 probe-only unknowns the sheet probe reports.
     assert_eq!(
         normalized.other_entities, 0,
         "D06 decoded annotations count drifted"
     );
     assert_eq!(normalized.inferred_points, 64);
     assert_eq!(normalized.inferred_lines, 0);
-    assert_eq!(normalized.probe_only_unknowns, 11);
+    assert_eq!(normalized.probe_only_unknowns, 8);
 }
 
 /// `D04` (`test/U01/D04.pid` inside `PlantData~2~711.zip`, the plant
@@ -12120,119 +12127,155 @@ fn dependency_object_decoder_ratchets_fixture_counts_and_header_fields() {
     );
 }
 
-/// Phase 16 Slice D: cross-fixture sanity test for the additive
-/// `decode_jstyle_overrides` parser (PSM type `0x0030`, RAD
-/// `JStyleOverride` Version-3 IO, `style.dll` CLSID
-/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`).
-///
-/// The IDA-confirmed schema accepts the full PSM `0x0030`
-/// `JStyleOverride` family. probe v5 reports 98 raw 0x0030 hits
-/// across the four-fixture set; this conservative typed decoder is
-/// expected to stay near that count.
-#[test]
-fn jstyle_override_decoder_emits_audit_records_with_provenance() {
-    let fixtures = [
-        "DWG-0201GP06-01.pid",
-        "DWG-0202GP06-01.pid",
-        "工艺管道及仪表流程-1.pid",
-        "export-test/publish-data/A01/A01.pid",
-    ];
-    let mut total_decoded = 0usize;
-    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
-    let mut sample_records: Vec<String> = Vec::new();
+/// What a walk that slides a byte at a time accepts in `data`: `decode` at
+/// every offset, stepping over each record it takes and one byte past each
+/// offset it refuses. This is the walk `PsmRecordDecoder::scan` used to
+/// make, kept here to say what its hits were.
+fn sliding_hits<T>(
+    data: &[u8],
+    decode: impl Fn(&[u8], usize) -> Option<T>,
+    len: impl Fn(&T) -> usize,
+) -> Vec<(usize, T)> {
+    let mut hits = Vec::new();
+    let mut at = 0usize;
+    while at < data.len() {
+        match decode(data, at) {
+            Some(record) => {
+                let step = len(&record).max(1);
+                hits.push((at, record));
+                at += step;
+            }
+            None => at += 1,
+        }
+    }
+    hits
+}
 
-    for fixture in fixtures {
+/// `start -> end` of every record on a sheet stream's chain.
+fn sheet_chain(data: &[u8]) -> BTreeMap<usize, usize> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| {
+            let header = parse_psm_header(data, at)?;
+            Some((at, header.body_start + header.bytes_to_follow as usize))
+        })
+        .collect()
+}
+
+fn le_u16(data: &[u8], at: usize) -> u16 {
+    data.get(at..at + 2)
+        .map_or(0, |bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn le_u32(data: &[u8], at: usize) -> u32 {
+    data.get(at..at + 4).map_or(0, |bytes| {
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    })
+}
+
+/// No sheet chain carries a `0x0030` record, and the 98 "`JStyleOverride`
+/// records" these four fixtures used to count were each the length word of
+/// the block a `DependencyObject` ends with.
+///
+/// Phase 16 named PSM type `0x0030` from the native reader — it is
+/// `style.dll`'s `JStyleOverride`, and that stands. What did not hold was
+/// that a `Sheet*` stream has any: the 98 hits (20 / 30 / 47 / 1, the count
+/// the Phase 14 probe reported and this test used to accept as "1..=200
+/// records") came from trying every byte offset. Every `0x00FA` record
+/// closes with `<type u16> <selector u16> <len u16>` and `len` bytes
+/// (`docs/analysis/2026-08-04-graphicgroup-tail-property-block.md` §7); a
+/// 48-byte block spells its length `30 00`, the walk read that as a type
+/// word and the block's first four bytes as `bytes_to_follow`, and the
+/// "record" ran on past the end of the dependency object into whatever
+/// came next. `2026-08-04-jstyleoverride-native-reader-settles-it.md` §4
+/// had already found the lengths matched neither native layout.
+///
+/// So this pins three things per fixture: the chain holds no record of the
+/// type, the family decodes none, and each hit of the old walk sits on the
+/// closing block's length word of a dependency object and overruns it.
+#[test]
+fn a_sheet_chain_holds_no_jstyle_override_and_the_old_hits_were_block_length_words() {
+    let fixtures = [
+        ("DWG-0201GP06-01.pid", 20usize),
+        ("DWG-0202GP06-01.pid", 30),
+        ("工艺管道及仪表流程-1.pid", 47),
+        ("export-test/publish-data/A01/A01.pid", 1),
+    ];
+    let mut checked = 0usize;
+    for (fixture, slid) in fixtures {
         let Some(pkg) = parse_test_package(fixture) else {
             continue;
         };
-        let mut per_fixture_count = 0usize;
+        checked += 1;
+        let mut hits = 0usize;
         for sheet in &pkg.parsed.sheet_streams {
             let Some(raw) = pkg.streams.get(&sheet.path) else {
                 continue;
             };
             let bytes = raw.data.as_slice();
-            let decoded = decode_jstyle_overrides(bytes);
-            let model_decoded_count = sheet
-                .geometry
-                .as_ref()
-                .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len());
+            let chain = sheet_chain(bytes);
+            let on_chain = chain
+                .keys()
+                .filter(|&&at| le_u16(bytes, at) & 0x3FFF == PSM_TYPE_CODE_JSTYLE_OVERRIDE)
+                .count();
             assert_eq!(
-                model_decoded_count,
-                decoded.len(),
-                "SheetGeometry::decoded_jstyle_overrides must mirror parser-level count for {} {}",
-                fixture,
+                on_chain, 0,
+                "{fixture} {}: a 0x0030 record on the chain",
                 sheet.path
             );
-            for rec in &decoded {
-                assert!(rec.byte_range.end <= bytes.len(), "byte_range overflow");
-                assert!(rec.byte_range.start < rec.byte_range.end);
-                assert_eq!(rec.type_code, PSM_TYPE_CODE_JSTYLE_OVERRIDE);
-                assert_eq!(rec.type_flags, 0);
-                assert!(
-                    rec.bytes_to_follow >= JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
-                    "bytes_to_follow below floor: {:?}",
-                    rec
-                );
-                assert!(rec.field_1_f64.is_finite() && rec.field_2_f64.is_finite());
-                assert!(rec.field_3_f64.is_finite() && rec.field_4_f64.is_finite());
-                // `bytes_to_follow` covers `oid(4) + aux(8) + payload(64) +
-                // attribute_tail`, so tail length = btf - 76.
-                let expected_tail_len =
-                    rec.bytes_to_follow as usize - (JSTYLE_OVERRIDE_PAYLOAD_LEN + 12);
+            assert!(
+                decode_jstyle_overrides(bytes).is_empty(),
+                "{fixture} {}: the family decodes off the chain",
+                sheet.path
+            );
+            assert_eq!(
+                sheet
+                    .geometry
+                    .as_ref()
+                    .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len()),
+                0,
+                "{fixture} {}: the parsed sheet carries a JStyleOverride",
+                sheet.path
+            );
+
+            for (at, record) in
+                sliding_hits(bytes, decode_jstyle_override_at, |r| r.byte_range.len())
+            {
+                hits += 1;
+                let (&host, &host_end) = chain
+                    .range(..=at)
+                    .next_back()
+                    .unwrap_or_else(|| panic!("{fixture} {} +{at}: no host record", sheet.path));
                 assert_eq!(
-                    rec.raw_attribute_tail.len(),
-                    expected_tail_len,
-                    "raw_attribute_tail length must equal bytes_to_follow - 76 \
-                     (oid + aux + payload subtracted)"
+                    le_u16(bytes, host) & 0x3FFF,
+                    PSM_TYPE_CODE_DEPENDENCY_OBJECT,
+                    "{fixture} {} +{at}: the hit sits in a record at +{host} that is not a DependencyObject",
+                    sheet.path
                 );
-
-                if sample_records.len() < 6 {
-                    sample_records.push(format!(
-                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} btf={} f64#2={:.4} (rotation candidate)",
-                        sheet.path,
-                        rec.byte_range.start,
-                        rec.byte_range.end,
-                        rec.oid,
-                        rec.bytes_to_follow,
-                        rec.field_2_f64
-                    ));
-                }
+                assert_eq!(
+                    at + 2 + usize::from(le_u16(bytes, at)),
+                    host_end,
+                    "{fixture} {} +{at}: the hit's first word is the length of the block that closes the record at +{host}..+{host_end}",
+                    sheet.path
+                );
+                assert!(
+                    record.byte_range.end > host_end,
+                    "{fixture} {} +{at}: the hit stays inside its host",
+                    sheet.path
+                );
             }
-            per_fixture_count += decoded.len();
         }
-        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
-        total_decoded += per_fixture_count;
+        assert_eq!(
+            hits, slid,
+            "{fixture}: what a byte-sliding walk reads as JStyleOverride"
+        );
     }
-
-    eprintln!(
-        "--- Phase 16 Slice D: JStyleOverride decoder cross-fixture (RAD style.dll CLSID 47FCC338) ---"
-    );
-    for (name, actual) in &per_fixture_summary {
-        eprintln!("  {name}: {actual} decoded JStyleOverride records");
-    }
-    for sample in &sample_records {
-        eprintln!("  sample: {sample}");
-    }
-    eprintln!("  total decoded JStyleOverride records: {total_decoded}");
-
-    if per_fixture_summary.is_empty() {
+    if checked == 0 {
         eprintln!(
             "skipping: no Sheet-bearing fixture present (CI / contributors \
             without SmartPlant samples)"
         );
-        return;
     }
-
-    // Sanity: at least one fixture must produce a record. The probe
-    // v5 evidence shows ~98 hits cross-fixture; the typed decoder is
-    // expected to be conservatively close. We assert a generous
-    // range to avoid premature ratchet drift.
-    assert!(
-        (1..=200).contains(&total_decoded),
-        "JStyleOverride decoder produced an unexpected aggregate count {total_decoded}; \
-         Per-fixture summary: {per_fixture_summary:?}. \
-         Cross-check with `cargo run --release --example probe_garc2d_packed_bytes`."
-    );
 }
 
 /// Phase 14 Slice N: cross-fixture validation that
@@ -13143,347 +13186,222 @@ fn igboundaries_decoder_emits_typed_audit_records_with_provenance() {
     );
 }
 
-/// Phase 18: cross-fixture ratchet for the conservative PSM `0x0010`
-/// sub-record audit-only decoder.
+/// No sheet chain carries a `0x0010` record, and the 582 "sub-records"
+/// these four fixtures used to count were each a graphic record's own
+/// sub-type word.
 ///
-/// The probe (`examples/probe_psm_0x0010_shape.rs`) finds 638 matches
-/// under a non-advancing scan that counts overlapping hits. This
-/// conservative audit-only decoder advances past each matched record
-/// (Phase 15 DependencyObject template), yielding 582 cross-fixture
-/// records: `DWG-0201=161, DWG-0202=104, 工艺管道-1=306, A01=11`.
-/// The decoder admits more records in A01 than the probe because the
-/// probe's `max_offset` reserves a 16-byte dump buffer at the end of
-/// the stream and skips records there; the decoder only needs the
-/// 6-byte header + 8-byte minimum payload.
+/// Phase 18 took `0x0010` for a polymorphic sub-record family and Phase 19
+/// ratcheted the distribution of its "leading word"; neither had a chain to
+/// hold the hits against. With one: every graphic record's payload opens
+/// `oid, owner, layer` and then, at `+12`, a `u16` sub-type word that is
+/// `0x0010` on most of them, followed at `+14` by the record's style id. A
+/// walk that tries every byte offset reads the pair as a record header —
+/// type `0x0010`, `bytes_to_follow` = the style id — and what it called the
+/// payload is the rest of the host and, on 204 of the 582, the start of the
+/// record after it. The "leading word" was the low half of whatever the
+/// host stores at `+18`.
 ///
-/// Each emitted record must carry stable provenance: byte range fits
-/// within the stream, `type_code == 0x0010`, and `raw_payload.len()`
-/// matches the declared `bytes_to_follow`.
+/// Pinned per fixture: the chain holds no record of the type, neither view
+/// of the family decodes anything, and every hit of the old walk (161 / 104
+/// / 306 / 11, the counts the Phase 18 ratchet held) sits in another
+/// record — all but one of them exactly on its `+12`, where the word is
+/// `0x0010` and the length the hit claims is the host's own style id.
 #[test]
-fn sub_records_0x0010_decoder_emits_audit_records_with_provenance() {
+fn a_sheet_chain_holds_no_0x0010_record_and_the_old_hits_were_sub_type_words() {
     let fixtures = [
-        ("DWG-0201GP06-01.pid", 161usize),
-        ("DWG-0202GP06-01.pid", 104usize),
-        ("工艺管道及仪表流程-1.pid", 306usize),
-        ("export-test/publish-data/A01/A01.pid", 11usize),
+        ("DWG-0201GP06-01.pid", 161usize, 0usize),
+        // One of DWG-0202's hits starts five bytes into a text box rather
+        // than on a sub-type word: the `10 00` there is the middle of the
+        // box's owner reference (`+4..+8`).
+        ("DWG-0202GP06-01.pid", 104, 1),
+        ("工艺管道及仪表流程-1.pid", 306, 0),
+        ("export-test/publish-data/A01/A01.pid", 11, 0),
     ];
-    let mut total_decoded = 0usize;
-    let mut total_expected = 0usize;
-    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new();
-    let mut sample_records: Vec<String> = Vec::new();
-
-    for (fixture, expected_count) in fixtures {
+    let mut checked = 0usize;
+    let mut overran = 0usize;
+    for (fixture, slid, elsewhere) in fixtures {
         let Some(pkg) = parse_test_package(fixture) else {
             continue;
         };
-        let mut per_fixture_count = 0usize;
+        checked += 1;
+        let mut hits = 0usize;
+        let mut off_the_sub_type_word = 0usize;
         for sheet in &pkg.parsed.sheet_streams {
             let Some(raw) = pkg.streams.get(&sheet.path) else {
                 continue;
             };
             let bytes = raw.data.as_slice();
-            let decoded = decode_sub_records_0x0010(bytes);
-            let model_decoded_count = sheet
-                .geometry
-                .as_ref()
-                .map_or(0, |geometry| geometry.decoded_sub_records_0x0010.len());
+            let chain = sheet_chain(bytes);
+            let on_chain = chain
+                .keys()
+                .filter(|&&at| le_u16(bytes, at) & 0x3FFF == PSM_TYPE_CODE_SUB_RECORD_0X0010)
+                .count();
             assert_eq!(
-                model_decoded_count,
-                decoded.len(),
-                "SheetGeometry audit collection must mirror parser-level 0x0010 count for {} {}",
-                fixture,
+                on_chain, 0,
+                "{fixture} {}: a 0x0010 record on the chain",
                 sheet.path
             );
-            for rec in &decoded {
-                assert!(
-                    rec.byte_range.end <= bytes.len(),
-                    "0x0010 byte_range {:?} exceeds stream {} bytes ({})",
-                    rec.byte_range,
-                    sheet.path,
-                    bytes.len()
-                );
-                assert!(
-                    rec.byte_range.start < rec.byte_range.end,
-                    "0x0010 byte_range must be non-empty: {:?}",
-                    rec.byte_range
-                );
-                assert_eq!(rec.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-                assert!(
-                    (SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-                        .contains(&rec.bytes_to_follow),
-                    "0x0010 bytes_to_follow outside audit envelope: {}",
-                    rec.bytes_to_follow
-                );
-                assert_eq!(
-                    rec.raw_payload.len(),
-                    rec.bytes_to_follow as usize,
-                    "0x0010 raw_payload length must equal bytes_to_follow"
-                );
-                assert_eq!(
-                    rec.byte_range.end - rec.byte_range.start,
-                    6 + rec.raw_payload.len(),
-                    "0x0010 byte_range must cover 6-byte header + payload"
-                );
+            assert!(
+                decode_sub_records_0x0010(bytes).is_empty()
+                    && decode_attribute_fragments(bytes).is_empty(),
+                "{fixture} {}: the family decodes off the chain",
+                sheet.path
+            );
+            let (wired_raw, wired_fragments) = sheet.geometry.as_ref().map_or((0, 0), |geometry| {
+                (
+                    geometry.decoded_sub_records_0x0010.len(),
+                    geometry.decoded_attribute_fragments.len(),
+                )
+            });
+            assert_eq!(
+                (wired_raw, wired_fragments),
+                (0, 0),
+                "{fixture} {}: the parsed sheet carries 0x0010 records",
+                sheet.path
+            );
 
-                if sample_records.len() < 6 {
-                    sample_records.push(format!(
-                        "{fixture} {} @ 0x{:06x}..0x{:06x} type_flags={} bytes_to_follow={} payload_len={}",
-                        sheet.path,
-                        rec.byte_range.start,
-                        rec.byte_range.end,
-                        rec.type_flags,
-                        rec.bytes_to_follow,
-                        rec.raw_payload.len(),
-                    ));
+            for (at, record) in
+                sliding_hits(bytes, decode_sub_record_0x0010_at, |r| r.byte_range.len())
+            {
+                hits += 1;
+                let (&host, &host_end) = chain
+                    .range(..=at)
+                    .next_back()
+                    .unwrap_or_else(|| panic!("{fixture} {} +{at}: no host record", sheet.path));
+                assert!(
+                    at > host,
+                    "{fixture} {} +{at}: the hit starts a chain record",
+                    sheet.path
+                );
+                if record.byte_range.end > host_end {
+                    overran += 1;
                 }
+                let payload = host + 6;
+                if at != payload + 12 {
+                    off_the_sub_type_word += 1;
+                    continue;
+                }
+                assert_eq!(
+                    record.bytes_to_follow,
+                    le_u32(bytes, payload + 14),
+                    "{fixture} {} +{at}: the length the hit claims is the style id of the record at +{host}",
+                    sheet.path
+                );
             }
-            per_fixture_count += decoded.len();
         }
-
-        per_fixture_summary.push((fixture.to_string(), per_fixture_count, expected_count));
-        total_decoded += per_fixture_count;
-        total_expected += expected_count;
-    }
-
-    eprintln!("--- Phase 18: PSM 0x0010 sub-record decoder fixture ratchet ---");
-    for (name, actual, expected) in &per_fixture_summary {
-        eprintln!("  {name}: {actual} decoded 0x0010 sub-records (expected {expected})");
-    }
-    for sample in &sample_records {
-        eprintln!("  sample: {sample}");
-    }
-    eprintln!("  total decoded 0x0010 sub-records: {total_decoded}");
-
-    if per_fixture_summary.is_empty() {
-        eprintln!(
-            "skipping: no Sheet-bearing fixture present (CI / contributors \
-            without SmartPlant samples)"
-        );
-        return;
-    }
-
-    for (fixture, actual, expected) in &per_fixture_summary {
         assert_eq!(
-            actual, expected,
-            "0x0010 sub-record count drift for {fixture}: expected {expected}, got {actual}. \
-            Re-run `cargo run --release --example probe_psm_0x0010_shape` before updating this ratchet."
+            hits, slid,
+            "{fixture}: what a byte-sliding walk reads as 0x0010"
+        );
+        assert_eq!(
+            off_the_sub_type_word, elsewhere,
+            "{fixture}: hits that do not sit on a host's +12"
         );
     }
-    assert_eq!(
-        total_decoded, total_expected,
-        "0x0010 aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
-    );
-}
-
-/// Phase 19: cross-fixture ratchet for the `leading_word` audit field
-/// (`payload[0..2]` as little-endian `u16`) on the Phase 18 PSM
-/// `0x0010` sub-record audit collection.
-///
-/// Probe baseline from `examples/probe_psm_0x0010_sub_kind.rs` over
-/// 578 records: `0x0002 = 164 (28%)`, `0x0003 = 21 (3.6%)`,
-/// `0x0001 = 18 (3.1%)`. The Phase 18 decoder may admit a few extra
-/// records vs the probe (582 vs 578) because the probe carries a small
-/// off-by-N at the stream tail; this ratchet uses the decoder count
-/// as ground truth and reconciles per-word numbers accordingly.
-///
-/// Invariants asserted:
-/// - `leading_word == None` count = 0 (decoder min payload = 8 ≥ 2).
-/// - The three Phase-19-probe-confirmed top words remain the top 3
-///   when ranked by count.
-/// - Top word `0x0002` covers ≥ 25% of all records.
-/// - Total record count matches the Phase 18 ratchet (= 582).
-///
-/// This ratchet does **not** assert sub-kind semantics; `leading_word`
-/// is byte-position-named only (see
-/// `goals/phase19-psm-0x0010-leading-word-audit/`).
-#[test]
-fn sub_records_0x0010_leading_word_distribution_matches_phase19_probe() {
-    let fixtures = [
-        "DWG-0201GP06-01.pid",
-        "DWG-0202GP06-01.pid",
-        "工艺管道及仪表流程-1.pid",
-        "export-test/publish-data/A01/A01.pid",
-    ];
-    let mut total_records = 0usize;
-    let mut none_count = 0usize;
-    let mut leading_word_hist: std::collections::BTreeMap<u16, usize> =
-        std::collections::BTreeMap::new();
-    let mut per_fixture_totals: Vec<(String, usize)> = Vec::new();
-
-    for fixture in fixtures {
-        let Some(pkg) = parse_test_package(fixture) else {
-            continue;
-        };
-        let mut per_fixture = 0usize;
-        for sheet in &pkg.parsed.sheet_streams {
-            let Some(raw) = pkg.streams.get(&sheet.path) else {
-                continue;
-            };
-            let decoded = decode_sub_records_0x0010(raw.data.as_slice());
-            for rec in &decoded {
-                total_records += 1;
-                per_fixture += 1;
-                match rec.leading_word {
-                    None => none_count += 1,
-                    Some(w) => *leading_word_hist.entry(w).or_insert(0) += 1,
-                }
-            }
-        }
-        per_fixture_totals.push((fixture.to_string(), per_fixture));
-    }
-
-    if per_fixture_totals.is_empty() {
+    if checked == 0 {
         eprintln!(
             "skipping: no Sheet-bearing fixture present (CI / contributors \
             without SmartPlant samples)"
         );
         return;
     }
-
-    let mut top_words: Vec<(u16, usize)> =
-        leading_word_hist.iter().map(|(w, c)| (*w, *c)).collect();
-    top_words.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-
-    eprintln!("--- Phase 19: PSM 0x0010 leading_word distribution ---");
-    for (name, count) in &per_fixture_totals {
-        eprintln!("  {name}: {count} records");
-    }
-    eprintln!("  total records: {total_records}");
-    eprintln!("  None (payload.len() < 2): {none_count}");
-    eprintln!("  top 6 leading_word values:");
-    for (word, count) in top_words.iter().take(6) {
-        let pct = (*count as f64) * 100.0 / (total_records.max(1) as f64);
-        eprintln!("    0x{word:04X} : {count:>4}  ({pct:.1}%)");
-    }
-
-    // Hard invariants:
-    // 1. Decoder admits min 8-byte payload, so leading_word is never None.
-    assert_eq!(
-        none_count, 0,
-        "Phase 18 decoder min bytes_to_follow = 8 ≥ 2, so leading_word must never be None"
-    );
-    // 2. Total must match Phase 18 ratchet count.
-    assert_eq!(
-        total_records, 582,
-        "Phase 19 leading_word ratchet must observe exactly Phase 18's 582 records"
-    );
-    // 3. The three Phase-19-probe-confirmed dominant words are present
-    //    and rank in the top 3 by count.
-    let top3: Vec<u16> = top_words.iter().take(3).map(|(w, _)| *w).collect();
-    assert_eq!(
-        top3,
-        vec![0x0002, 0x0003, 0x0001],
-        "Phase 19 top-3 leading_word ranking changed: got {top3:?}, expected [0x0002, 0x0003, 0x0001]. \
-        Re-run `cargo run --release --example probe_psm_0x0010_sub_kind` to diagnose."
-    );
-    // 4. Top word coverage ≥ 25% (probe measured 28%).
-    let top_count = top_words[0].1;
-    let top_pct = (top_count as f64) * 100.0 / (total_records as f64);
-    assert!(
-        top_pct >= 25.0,
-        "Phase 19 leading_word == 0x0002 coverage must be ≥ 25%, got {top_pct:.1}% \
-        ({top_count}/{total_records})"
-    );
-    // 5. Per-fixture sanity: each non-empty fixture must contribute
-    //    ≥ 1 record (Phase 18 already enforces specific per-fixture
-    //    counts; we don't re-assert them here to avoid double-locking).
-    for (fixture, count) in &per_fixture_totals {
-        assert!(
-            *count >= 1,
-            "fixture {fixture} contributed 0 records to leading_word histogram \
-            but Phase 18 ratchet expected non-zero"
+    if checked == fixtures.len() {
+        assert_eq!(
+            overran, 204,
+            "hits that claim bytes past the end of the record they sit in"
         );
     }
 }
 
-/// Phase 26: PSM 0x0010 attribute-fragment decoder cross-fixture ratchet.
+/// The 84 "attribute fragments" of the four fixtures were the inside of a
+/// text box, or of a symbol placement.
 ///
-/// Asserts the additive attribute decoder extracts engineering text
-/// (instrument tags / line numbers / sizes / drawing refs) from the
-/// Sheet-bearing fixtures, AND that the raw Phase 18
-/// `decoded_sub_records_0x0010` baseline (582) is unchanged — the new
-/// decoder is strictly additive. See
-/// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
+/// Phase 26 read engineering text — tags, line numbers, sizes — out of
+/// `0x0010` records "as length-prefixed UTF-16LE after a `marker(4) +
+/// aux(8)` prefix". There is no such record on a sheet chain
+/// (`a_sheet_chain_holds_no_0x0010_record_and_the_old_hits_were_sub_type_words`).
+/// What the fragment grammar matched is an `igTextBox` from its `+12` on:
+/// the sub-type word and style id it took for a header, six bytes it took
+/// for a marker and aux, and then the box's own length-prefixed text. So
+/// the text a fragment "extracted" is, 77 times out of 84, exactly the text
+/// `igTextBox` decodes from that same record; the other seven sit on the
+/// `+12` of an `igSymbol2d`, whose bytes from there on satisfy the same
+/// grammar.
+///
+/// Nothing is lost with them: the 77 strings are a field of a record its
+/// own family already decodes, and the seven are not text.
 #[test]
-fn attribute_fragments_extract_engineering_text_cross_fixture() {
+fn the_old_attribute_fragments_were_the_inside_of_text_boxes_and_placements() {
     let fixtures = [
-        "DWG-0201GP06-01.pid",
-        "DWG-0202GP06-01.pid",
-        "工艺管道及仪表流程-1.pid",
-        "export-test/publish-data/A01/A01.pid",
+        ("DWG-0201GP06-01.pid", 27usize, 7usize),
+        ("DWG-0202GP06-01.pid", 26, 0),
+        ("工艺管道及仪表流程-1.pid", 24, 0),
+        ("export-test/publish-data/A01/A01.pid", 0, 0),
     ];
-    let mut total_fragments = 0usize;
-    let mut total_strings = 0usize;
-    let mut raw_0x0010 = 0usize;
-    let mut per_fixture: Vec<(String, usize, usize)> = Vec::new();
-    let mut samples: Vec<String> = Vec::new();
-
-    for fixture in fixtures {
+    let mut checked = 0usize;
+    for (fixture, in_text_boxes, in_placements) in fixtures {
         let Some(pkg) = parse_test_package(fixture) else {
             continue;
         };
-        let mut frags = 0usize;
-        let mut strs = 0usize;
+        checked += 1;
+        let (mut boxes, mut placements) = (0usize, 0usize);
         for sheet in &pkg.parsed.sheet_streams {
             let Some(raw) = pkg.streams.get(&sheet.path) else {
                 continue;
             };
-            raw_0x0010 += decode_sub_records_0x0010(raw.data.as_slice()).len();
-            for f in &decode_attribute_fragments(raw.data.as_slice()) {
-                frags += 1;
-                strs += f.strings.len();
-                for s in &f.strings {
-                    if samples.len() < 24 && s.text.trim().chars().count() >= 2 {
-                        samples.push(s.text.clone());
+            let bytes = raw.data.as_slice();
+            let chain = sheet_chain(bytes);
+            for (at, fragment) in
+                sliding_hits(bytes, decode_attribute_fragment_at, |r| r.byte_range.len())
+            {
+                let (&host, _) = chain
+                    .range(..=at)
+                    .next_back()
+                    .unwrap_or_else(|| panic!("{fixture} {} +{at}: no host record", sheet.path));
+                assert_eq!(
+                    at,
+                    host + 6 + 12,
+                    "{fixture} {} +{at}: the hit sits on the +12 of the record at +{host}",
+                    sheet.path
+                );
+                match le_u16(bytes, host) & 0x3FFF {
+                    PSM_TYPE_CODE_IGTEXTBOX => {
+                        boxes += 1;
+                        // A box the native reader skips is still a box to
+                        // the old walk; read it with the skip bit cleared.
+                        let mut live = bytes.to_vec();
+                        live[host + 1] &= 0x3F;
+                        let text = decode_igtextbox_at(&live, host)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{fixture} {} +{host}: the host text box decodes",
+                                    sheet.path
+                                )
+                            })
+                            .text;
+                        assert!(
+                            fragment.strings.iter().any(|string| string.text == text),
+                            "{fixture} {} +{at}: the fragment's text {:?} is the text box's own {text:?}",
+                            sheet.path,
+                            fragment.strings
+                        );
                     }
+                    PSM_TYPE_CODE_IGSYMBOL2D => placements += 1,
+                    other => panic!(
+                        "{fixture} {} +{at}: a fragment hit inside a 0x{other:04X} record",
+                        sheet.path
+                    ),
                 }
             }
         }
-        total_fragments += frags;
-        total_strings += strs;
-        per_fixture.push((fixture.to_string(), frags, strs));
+        assert_eq!(
+            (boxes, placements),
+            (in_text_boxes, in_placements),
+            "{fixture}: fragment hits inside text boxes and inside placements"
+        );
     }
-
-    if per_fixture.is_empty() {
+    if checked == 0 {
         eprintln!("skipping: no Sheet-bearing fixture present");
-        return;
-    }
-
-    eprintln!("--- Phase 26: PSM 0x0010 attribute fragments ---");
-    for (name, frags, strs) in &per_fixture {
-        eprintln!("  {name}: {frags} fragments, {strs} strings");
-    }
-    eprintln!("  total fragments: {total_fragments}, total strings: {total_strings}");
-    eprintln!("  raw 0x0010 (Phase 18 path): {raw_0x0010}");
-    eprintln!("  samples: {samples:?}");
-
-    if per_fixture.len() == fixtures.len() {
-        // All fixtures present: lock the Phase 18 raw baseline (the
-        // additive decoder must not change it) plus Phase 26 counts.
-        assert_eq!(
-            raw_0x0010, 582,
-            "Phase 26 attribute decoder must not change the Phase 18 raw 0x0010 baseline (582)"
-        );
-        assert_eq!(
-            total_fragments, 84,
-            "Phase 26 attribute fragment baseline drifted (got {total_fragments})"
-        );
-        assert_eq!(
-            total_strings, 84,
-            "Phase 26 attribute string baseline drifted (got {total_strings})"
-        );
-        let counts: Vec<usize> = per_fixture.iter().map(|(_, f, _)| *f).collect();
-        assert_eq!(
-            counts,
-            vec![34, 26, 24, 0],
-            "Phase 26 per-fixture attribute baseline drifted: {per_fixture:?}"
-        );
-    } else {
-        // Partial fixture set (some samples absent): soft floor only.
-        assert!(
-            total_strings >= 1,
-            "expected extractable attribute strings, got {total_strings}"
-        );
     }
 }
 

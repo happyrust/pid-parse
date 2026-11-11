@@ -39,39 +39,46 @@ const CACHED_SITE_PATH: &str = "/JSite37311";
 /// Member name inside `RefData~4~681.zip`.
 const SYM_MEMBER: &str = "Instrumentation/Actuators/Diaphragm Actuator.sym";
 
-/// Where the shelled-out plant backup sits, if this machine has one —
-/// same search order `pid-plot/tests/export_plant_backup.rs` uses.
-fn backup_data_dir() -> Option<PathBuf> {
+/// The roots a shelled-out plant backup is looked for under:
+/// `PID_TEST_DATA_DIR`, then the two local copies of `pid-test-data` — the
+/// list `tests/plant_backup_census.rs` and
+/// `pid-plot/tests/export_plant_backup.rs` walk.
+fn backup_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
         roots.push(PathBuf::from(dir));
     }
     roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
     roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
-    roots.into_iter().find(|root| root.is_dir())
+    roots
 }
 
-/// The drawing file and its sibling `RefData~4~681.zip`, if both exist
-/// under the same backup data root.
+/// The drawing file and its sibling `RefData~4~681.zip`, from the first
+/// root that holds both.
+///
+/// A root is not taken for being a directory. One local copy of
+/// `pid-test-data` is a backup package with every archive and no
+/// `backup-plant-data` shelled out beside them; stopping at it skipped this
+/// test on a machine that kept both files one root further down the list,
+/// which is the list every other backup gate reads to its end.
 fn fixtures() -> Option<(PathBuf, PathBuf)> {
-    let root = backup_data_dir()?;
-    let drawing = root
-        .join("backup-plant-data")
-        .join("00")
-        .join("00")
-        .join(DRAWING);
-    let archive = root.join("RefData~4~681.zip");
-    if drawing.is_file() && archive.is_file() {
-        Some((drawing, archive))
-    } else {
+    let roots = backup_roots();
+    let found = roots.iter().find_map(|root| {
+        let drawing = root
+            .join("backup-plant-data")
+            .join("00")
+            .join("00")
+            .join(DRAWING);
+        let archive = root.join("RefData~4~681.zip");
+        (drawing.is_file() && archive.is_file()).then_some((drawing, archive))
+    });
+    if found.is_none() {
         eprintln!(
-            "skipping: {} / {} not found under {}",
-            drawing.display(),
-            archive.display(),
-            root.display()
+            "skipping: no root holds both backup-plant-data/00/00/{DRAWING} and \
+             RefData~4~681.zip; searched {roots:?}"
         );
-        None
     }
+    found
 }
 
 #[test]
@@ -79,6 +86,11 @@ fn sym_dome_matches_the_drawings_own_cached_dome() {
     let Some((drawing_path, archive_path)) = fixtures() else {
         return;
     };
+    eprintln!(
+        "{SYM_MEMBER} of {} against {CACHED_SITE_PATH} of {}",
+        archive_path.display(),
+        drawing_path.display()
+    );
 
     // --- the `.sym` path -----------------------------------------------
     let sym_bytes = pid_parse::refdata_archive::read_archive_member(&archive_path, SYM_MEMBER)

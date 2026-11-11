@@ -35,10 +35,10 @@
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
     decode_attribute_fragments, decode_dependency_objects, decode_igarcs, decode_igboundaries,
-    decode_igbspcurves, decode_igcircles, decode_igdimensions, decode_iglines,
-    decode_iglinestrings, decode_igpoints, decode_igrectangles, decode_igsymbols,
-    decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines, decode_smartframes,
-    decode_sub_records_0x0010,
+    decode_igbspcurves, decode_igcircles, decode_igcomplexstrings, decode_igdimensions,
+    decode_igellipticalarcs, decode_iggroups, decode_iglines, decode_iglinestrings,
+    decode_igpoints, decode_igrectangles, decode_igsymbols, decode_igtextboxes,
+    decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -328,6 +328,16 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // The next three rows decode nothing on any sheet stream measured: no
+    // sheet chain carries a `0x0030` or a `0x0010` record, and a family
+    // decodes only what the chain starts. What they used to report — 13 671
+    // overrides, 66 190 sub-records, 12 531 fragments — were fields of other
+    // records read as record headers by a byte-sliding walk
+    // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    // §3). The rows are still here because retiring them takes three public
+    // `SheetGeometry` fields and their DTOs with them, which is a change of
+    // its own; until then they are rows whose decoders have never been handed
+    // a record.
     SheetRecordFamily {
         name: "JStyleOverride",
         type_code: 0x0030,
@@ -469,6 +479,81 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // A run of curves joined end to end. It states no coordinate: its
+    // curves are `igLine2d` / `igArc2d` records of the same stream that
+    // name it as their owner and carry its layer and style, so they draw
+    // what it draws. Decoded so that it stops being a graphic record
+    // nothing reads; emits nothing, or its members would draw twice.
+    SheetRecordFamily {
+        name: "igComplexString2d",
+        type_code: 0x0021,
+        emits_geometry: false,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igcomplexstrings",
+        model_dto: "DecodedIgComplexString2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igcomplexstrings = decode_igcomplexstrings(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igcomplexstrings.len(),
+        decoded_ranges: |data| {
+            decode_igcomplexstrings(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    // Graphic objects that select and move as one. The corpora's groups
+    // list the two `igRectangle2d` of a border, which draw through their
+    // own `igLine2d` edges, or the lines, arcs, B-splines, elliptical arcs,
+    // boundaries and point of a logo, which draw through their own
+    // families; the group emits nothing for the reason a rectangle emits
+    // nothing.
+    SheetRecordFamily {
+        name: "igGroup",
+        type_code: 0x007B,
+        emits_geometry: false,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_iggroups",
+        model_dto: "DecodedIgGroupRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_iggroups = decode_iggroups(data).into_iter().map(Into::into).collect();
+        },
+        record_count: |geometry| geometry.decoded_iggroups.len(),
+        decoded_ranges: |data| {
+            decode_iggroups(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    // An elliptical arc is a leaf curve, like a B-spline: nothing lists it
+    // and nothing else draws it. It emits as the polyline `bspline::sample`
+    // makes of the rational B-spline a cached symbol body draws for the
+    // same record.
+    SheetRecordFamily {
+        name: "igEllipticalArc2d",
+        type_code: 0x007E,
+        emits_geometry: true,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igellipticalarcs",
+        model_dto: "DecodedIgEllipticalArc2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igellipticalarcs = decode_igellipticalarcs(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igellipticalarcs.len(),
+        decoded_ranges: |data| {
+            decode_igellipticalarcs(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
 ];
 
 /// True when no family has any decoded records on `geometry`
@@ -512,8 +597,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_seventeen_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 17);
+    fn registry_has_twenty_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 20);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -522,7 +607,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            17,
+            20,
             "every registry row must own a distinct SheetGeometry field"
         );
     }

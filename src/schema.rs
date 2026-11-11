@@ -161,6 +161,8 @@ mod tests {
             "member_oid",
             "segment_count",
             "closed_loop",
+            // A boundary of several loops: a fill with holes.
+            "loop_segment_counts",
             // Phase 19: PSM 0x0010 leading_word audit field
             // (= payload[0..2] as little-endian u16).
             "leading_word",
