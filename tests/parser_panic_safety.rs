@@ -259,11 +259,20 @@ fn exercise_all_parsers(input: &[u8]) {
     // The display order reads a `JSheet` child table by the count the file
     // states, looks for it in a cluster by the sheet's oid, and walks a sheet
     // stream against it. Oid 0 is the one every run of zeros matches.
+    // The paper is read from the tail of that record, behind two names whose
+    // lengths the file states; it is called on the input itself and not only
+    // behind a table that decoded, which few of these inputs hold. A frame's
+    // site is a word at a fixed offset of a record the chain walk reads.
     {
         use pid_parse::parsers::sheet_display_order::{
-            decode_sheet_child_table, find_sheet_child_table, sheet_display_order,
-            sheet_display_ranks,
+            decode_sheet_child_table, decode_sheet_paper, find_sheet_child_table,
+            sheet_display_order, sheet_display_ranks, smart_frame_sites,
         };
+        let _ = decode_sheet_paper(input);
+        for skipped in [1usize, 9, 61, 102] {
+            let _ = decode_sheet_paper(input.get(skipped..).unwrap_or(&[]));
+        }
+        let _ = smart_frame_sites(input);
         if let Some(table) = decode_sheet_child_table(input) {
             let _ = sheet_display_ranks(input, &table);
         }

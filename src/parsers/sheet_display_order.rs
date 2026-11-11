@@ -69,7 +69,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::sheet_records::{
     decode_igcomplexstring_at, decode_iggroup_at, parse_live_psm_header, SheetChain,
     PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_IGCOMPLEXSTRING2D, PSM_TYPE_CODE_IGGROUP,
-    PSM_TYPE_CODE_JSHEET,
+    PSM_TYPE_CODE_IGSMARTFRAME, PSM_TYPE_CODE_JSHEET,
 };
 
 /// Bytes of a `JSheet` payload before its child entries.
@@ -591,6 +591,74 @@ pub fn sheet_display_order(
     })
 }
 
+/// Where the payload of a `0x003D igSmartFrame2d` record names the frame's
+/// site.
+pub const SMART_FRAME_SITE_AT: usize = 156;
+
+/// The site each live `0x003D igSmartFrame2d` record of a sheet stream
+/// names, with the offset the record's envelope starts at.
+///
+/// A frame is an OLE container, and what it contains is kept in a storage
+/// of the document named for the frame's site: the `u32` at payload `+156`
+/// is the site's oid `N`, and the storage is `JSite<N>`. On the 71 drawings
+/// on hand every frame record on a top-level sheet names a storage of its
+/// own file there, 68 of 68. The storage of a linked frame — a border, which
+/// draws an `.igr` template — holds the link and no sheet. The storage of an
+/// embedded frame holds the sheet the frame draws, as a stream `Sheet<M>`
+/// with a `PSMcluster0` whose `JSheet` record lists that sheet's objects:
+/// `A01.pid`'s frame 64 embeds `/JSite204/Sheet6`, the 97 objects of its
+/// border and title block, and `Q井场`'s frame 67755 embeds
+/// `/JSite68432/Sheet6`, eight lines.
+///
+/// A record too short to hold the word is left out, as is one the native
+/// reader skips. Bounds-checked and panic-free on arbitrary bytes.
+#[must_use]
+pub fn smart_frame_sites(sheet: &[u8]) -> Vec<(usize, u32)> {
+    live_records(sheet)
+        .iter()
+        .filter(|record| record.type_code == PSM_TYPE_CODE_IGSMARTFRAME)
+        .filter_map(|record| {
+            let bytes = record
+                .payload
+                .get(SMART_FRAME_SITE_AT..SMART_FRAME_SITE_AT.checked_add(4)?)?;
+            Some((
+                record.at,
+                u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            ))
+        })
+        .collect()
+}
+
+/// Where the drawing lists the frame that embeds a sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingFrame {
+    /// Path of the sheet stream that holds the frame's record (`/Sheet6`).
+    pub stream_path: String,
+    /// The rank of the frame's record in that sheet's display order.
+    pub rank: DisplayRank,
+}
+
+/// The display order of a sheet a frame of the drawing embeds: a stream
+/// `Sheet<M>` in the storage `JSite<N>` of the frame's site
+/// ([`smart_frame_sites`]).
+///
+/// The embedded sheet is a sheet like any other: its storage's own
+/// `PSMcluster0` holds its `JSheet` record, which lists its objects in the
+/// order it draws them ([`sheet_display_order`]). It is what its frame
+/// draws, so it is drawn where the drawing lists the frame — the rule the
+/// reference plots show for a linked frame, whose template is painted at
+/// the frame's place. No sheet with a vendor plot embeds one, so for an
+/// embedded sheet the place is that rule carried over, not a reading.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EmbeddedSheetOrder {
+    /// The embedded sheet's own display order.
+    pub order: SheetDisplayOrder,
+    /// The frame that embeds the sheet, when a frame of a top-level sheet
+    /// names the storage the sheet is in and that sheet's list places the
+    /// frame.
+    pub frame: Option<EmbeddingFrame>,
+}
+
 /// The oids of `dependents` in the order `payload` first names each.
 ///
 /// A `DependencyObject` names the records it owns as `u32` oids among its
@@ -619,7 +687,8 @@ fn named_in_order(payload: &[u8], dependents: &[u32]) -> Vec<u32> {
 mod tests {
     use super::{
         decode_sheet_child_table, decode_sheet_paper, find_sheet_child_table, sheet_display_ranks,
-        DisplayRank, SheetChild, SheetChildTable, SheetPaper, SHEET_TABLE_CANDIDATES,
+        smart_frame_sites, DisplayRank, SheetChild, SheetChildTable, SheetPaper,
+        SHEET_TABLE_CANDIDATES,
     };
 
     /// A `JSheet` payload: the fixed part, `children` entries, and a tail.
@@ -766,6 +835,101 @@ mod tests {
             stream.extend_from_slice(record);
         }
         stream
+    }
+
+    /// A dependency object that owns half a megabyte of records and names
+    /// every one of them is ranked in time that grows with the stream, not
+    /// with its square.
+    ///
+    /// The stream is the one the fourth review built: a megabyte each way,
+    /// half of it one `DependencyObject`'s payload and half the 14-byte
+    /// records that say it owns them. Looking each named oid up in a list
+    /// of the dependents, and again in the list of those already named,
+    /// took 40.7 s on a megabyte and 154 s on two in a debug build; with
+    /// both lookups in a set two megabytes take a fraction of a second. The
+    /// bound is two orders of magnitude above that and a fifth of what the
+    /// lists took.
+    #[test]
+    fn an_owner_of_a_megabyte_of_records_is_ranked_in_linear_time() {
+        const SHEET: u32 = 6;
+        const OWNER: u32 = 7;
+        const DEPENDENTS: u32 = 74_898;
+        // The owner's payload: the sub-header, then its dependents' oids
+        // last first, each followed by a word that is none of them.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&OWNER.to_le_bytes());
+        payload.extend_from_slice(&SHEET.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        for dependent in (0..DEPENDENTS).rev() {
+            payload.extend_from_slice(&(1000 + dependent).to_le_bytes());
+            payload
+                .extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        }
+        let mut records = vec![record(0x00FA, &payload)];
+        for dependent in 0..DEPENDENTS {
+            let mut owned = Vec::new();
+            owned.extend_from_slice(&(1000 + dependent).to_le_bytes());
+            owned.extend_from_slice(&OWNER.to_le_bytes());
+            records.push(record(0x0018, &owned));
+        }
+        let stream = sheet_stream(&records);
+        assert!(stream.len() > 2 * 1024 * 1024, "{} bytes", stream.len());
+        let table = listing(SHEET, &[OWNER]);
+
+        let started = std::time::Instant::now();
+        let ranks = sheet_display_ranks(&stream, &table);
+        let took = started.elapsed();
+
+        assert_eq!(ranks.len(), DEPENDENTS as usize + 1);
+        // The owner at its place, and its dependents in the order it names
+        // them: the last record of the stream first.
+        let owner_end = 8 + 6 + payload.len();
+        assert_eq!(ranks[&8], DisplayRank { place: 0, inner: 0 });
+        assert_eq!(
+            ranks[&owner_end],
+            DisplayRank {
+                place: 0,
+                inner: DEPENDENTS
+            }
+        );
+        assert_eq!(
+            ranks[&(owner_end + 14 * (DEPENDENTS as usize - 1))],
+            DisplayRank { place: 0, inner: 1 }
+        );
+        assert!(
+            took < std::time::Duration::from_secs(30),
+            "ranking {} bytes took {took:?}",
+            stream.len()
+        );
+    }
+
+    #[test]
+    fn a_frame_names_the_site_its_content_is_stored_in() {
+        // A payload of `len` bytes that opens like a graphic record's and
+        // spells `site` where a frame names its site.
+        let payload = |oid: u32, site: u32, len: usize| {
+            let mut payload = graphic(oid, 6);
+            payload.resize(len, 0);
+            if let Some(word) = payload.get_mut(156..160) {
+                word.copy_from_slice(&site.to_le_bytes());
+            }
+            payload
+        };
+        let stream = sheet_stream(&[
+            // `A01.pid`'s frame: 238 bytes, site 204.
+            record(0x003D, &payload(64, 204, 238)),
+            // The same bytes under another type code are not a frame.
+            record(0x0018, &payload(65, 205, 238)),
+            // A frame one byte short of the word names nothing.
+            record(0x003D, &payload(66, 206, 159)),
+            // An earlier copy of a frame, which the native reader skips.
+            record(0x803D, &payload(67, 207, 238)),
+            // A frame that ends with the word.
+            record(0x003D, &payload(68, 208, 160)),
+        ]);
+        assert_eq!(smart_frame_sites(&stream), [(8, 204), (905, 208)]);
+        assert!(smart_frame_sites(&[]).is_empty());
+        assert!(smart_frame_sites(&stream[..40]).is_empty());
     }
 
     #[test]

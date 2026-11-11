@@ -125,6 +125,22 @@ pub struct PidDocument {
     pub sheet_display_order:
         BTreeMap<String, crate::parsers::sheet_display_order::SheetDisplayOrder>,
 
+    /// The display order of each sheet a frame of the drawing embeds, keyed
+    /// by the nested stream's path (`/JSite204/Sheet6`): the order the
+    /// embedded sheet's own `JSheet` record states, read from the
+    /// `PSMcluster0` of the storage it is in, and where the drawing lists
+    /// the frame whose site that storage is
+    /// ([`crate::parsers::sheet_display_order::EmbeddedSheetOrder`]). Kept
+    /// apart from [`Self::sheet_display_order`], which holds the drawing's
+    /// own sheets and nothing else: an embedded sheet states a paper of its
+    /// own, which is not the drawing's.
+    ///
+    /// Not serialized, like the map beside it.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub embedded_sheet_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::EmbeddedSheetOrder>,
+
     /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
     /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
     /// one `JSheet` and states, for the layers that sheet's manager
@@ -278,6 +294,7 @@ impl Default for PidDocument {
             psm_space_maps: BTreeMap::new(),
             sheet_layers: BTreeMap::new(),
             sheet_display_order: BTreeMap::new(),
+            embedded_sheet_display_order: BTreeMap::new(),
             view_filter_sets: BTreeMap::new(),
             style_tables: BTreeMap::new(),
             version_history: None,
