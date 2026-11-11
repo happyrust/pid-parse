@@ -1875,7 +1875,7 @@ fn show_text(
         };
         let plate = font.plate;
         let opens = starts_record_run[index].then_some(measured_px);
-        measured_px += measured_width_px(
+        let run_px = measured_width_px(
             face,
             &bytes,
             &run_text,
@@ -1886,6 +1886,7 @@ fn show_text(
             plate,
             device,
         );
+        measured_px += run_px;
         let advance = match named_face {
             // The run the reference shows steps by the face the label names.
             Some(named) if as_the_reference == Some(index) => borrowed::advance(
@@ -1930,6 +1931,29 @@ fn show_text(
             }
         }
         let start = opens.map_or(PieceStart::Continues, PieceStart::RecordRun);
+        // The run before a lone borrowed glyph the reference shows is set
+        // glyph by glyph, every glyph on its step and the pen left on the
+        // last one's, which is where the reference starts the borrowed glyph
+        // ([`borrowed::steps_before_lone`]).
+        let before_borrowed = (as_the_reference == Some(index + 1))
+            .then(|| {
+                let glyphs = face.metrics.codes(&bytes).len();
+                borrowed::steps_before_lone(&advance.glyphs, glyphs, run_px)
+            })
+            .flatten();
+        if let Some(steps_px) = before_borrowed {
+            emitted.push(LetteredPiece {
+                size_pt,
+                face,
+                bytes,
+                tc_pt: 0.0,
+                steps_px,
+                start,
+                begins_string: true,
+                matrix: font.matrix,
+            });
+            continue;
+        }
         // The string is one call to GDI, which hands the driver a text
         // object for each script run of it ([`script_runs`]): `DWG-0100` and
         // `集05-37` are two on the reference page, each on the whole pixel
@@ -2987,8 +3011,9 @@ struct LetteredPiece<'f, 'a> {
     bytes: Vec<u8>,
     /// Its `Tc`, in points of text space.
     tc_pt: f64,
-    /// The whole-pixel steps a rotated run is set at ([`glyph_by_glyph`]);
-    /// empty for a piece shown as one string.
+    /// The whole-pixel steps a piece set glyph by glyph takes
+    /// ([`glyph_by_glyph`]) — a rotated run, or the run before a borrowed
+    /// last glyph; empty for a piece shown as one string.
     steps_px: Vec<i64>,
     start: PieceStart,
     /// Whether it opens a string — one call to GDI — rather than carrying
@@ -3034,7 +3059,7 @@ fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'
 /// How far showing `piece` moves the text position along the baseline, in
 /// the plotter's pixels under a text matrix scaled by `sx`: every glyph's
 /// own width and the piece's `Tc`, or for a piece set glyph by glyph its
-/// steps and its last glyph's own width.
+/// steps and, where its last glyph has none, that glyph's own width.
 fn shown_px(piece: &LetteredPiece<'_, '_>, sx: f64) -> f64 {
     let metrics = &piece.face.metrics;
     let px_per_pt = PLOT_DPI / 72.0;
@@ -3046,21 +3071,30 @@ fn shown_px(piece: &LetteredPiece<'_, '_>, sx: f64) -> f64 {
             .sum();
     }
     let stepped: i64 = piece.steps_px.iter().sum();
-    let last = codes.last().map_or(0.0, |(code, _)| {
-        metrics.width(*code) * piece.size_pt * sx * px_per_pt
-    });
+    // A step for every glyph leaves the pen on the last one's
+    // ([`glyph_by_glyph`]); one short, the last glyph advances by itself.
+    let last = codes
+        .last()
+        .filter(|_| piece.steps_px.len() < codes.len())
+        .map_or(0.0, |(code, _)| {
+            metrics.width(*code) * piece.size_pt * sx * px_per_pt
+        });
     #[allow(clippy::cast_precision_loss)]
     let stepped = stepped as f64;
     stepped + last
 }
 
-/// A rotated run's `TJ` array: each glyph but the last followed by the
-/// adjustment that moves the next one onto its own whole-pixel step
-/// ([`RunAdvance::steps_px`]), the way the reference sets every glyph of a
-/// rotated run under its own `Tm`. A `TJ` number is thousandths of the `Tf`
-/// em taken off the glyph's own advance, so each step lands on its pixel
-/// whatever the 1/2400 in grid did to `size_pt`; `sx` is the horizontal
-/// scale of the label's `Tm` the steps were figured at.
+/// The `TJ` array of a run set glyph by glyph: each glyph that has a step
+/// followed by the adjustment that moves the next one onto its own
+/// whole-pixel step, the way the reference sets every glyph of such a run
+/// under its own `Tm`. A rotated run has a step for every glyph but its last
+/// ([`RunAdvance::steps_px`]); the run before a borrowed last glyph has one
+/// for every glyph, and the adjustment after its last leaves the pen where
+/// the borrowed glyph starts ([`borrowed::steps_before_lone`]). A `TJ`
+/// number is thousandths of the `Tf` em taken off the glyph's own advance,
+/// so each step lands on its pixel whatever the 1/2400 in grid did to
+/// `size_pt`; `sx` is the horizontal scale of the label's `Tm` the steps
+/// were figured at.
 fn glyph_by_glyph(
     metrics: &Metrics,
     bytes: &[u8],
@@ -7243,6 +7277,145 @@ mod tests {
         assert_eq!(lone[0].face, "NSimSun");
         assert!((lone[0].size_pt - 9.6).abs() < 1e-9, "{lone:?}");
         assert!(lone[0].tc_pt.abs() < 1e-12, "{lone:?}");
+    }
+
+    /// A label that ends in a borrowed glyph is set glyph by glyph. The
+    /// reference writes every glyph of `L=35℃` as a text object of its own
+    /// on a whole device unit — 0, 9, 19, 28 and 37 units from the label's
+    /// start — so the `℃` stands on the step of the digit before it, 9
+    /// units on, not after the 9.65 units that digit is wide in the device
+    /// font. Here the glyphs the label's own face draws go under one `TJ`,
+    /// each moved onto its step, the last one included, and the `℃` carries
+    /// on from there. The same label without the `℃` is one string under a
+    /// `Tc`, which is how the reference writes such a label.
+    #[test]
+    fn the_glyphs_before_a_borrowed_last_glyph_each_stand_on_their_step() {
+        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+
+        let latin = ascii_only();
+        let han = drawing("℃");
+        let dirs = scratch_dir(
+            "write-steps-before-a-borrowed-glyph",
+            &[("ARIALN.TTF", &latin), ("nsimsun.ttf", &han)],
+        );
+        let heights = super::FaceHeights::of(&latin);
+        let cap = crate::model::TextHeightBasis::Cap;
+        let height_mm = height_on_cell(heights, 24.0);
+        let sheet = at_height(
+            lettered_sheet(&[
+                ("L=35℃", "Arial Narrow"),
+                ("L=35", "Arial Narrow"),
+                ("5℃", "Arial Narrow"),
+            ]),
+            height_mm,
+        );
+        let prepared = crate::fonts::prepare_fonts(&[&sheet], &dirs).expect("fonts");
+        let fonts = plot_fonts(&prepared);
+        let mut doc = Document::new_empty();
+        let mut font_resources = Dict::new();
+        let faces = super::embed_faces(&mut doc, &mut font_resources, &fonts).expect("embed");
+        let labels = shown_labels(&sheet, &faces);
+        let texts: Vec<&str> = labels.iter().map(|(value, ..)| value.as_str()).collect();
+        assert_eq!(texts, ["L=35℃", "L=35", "5℃"]);
+        let named = faces
+            .iter()
+            .find(|face| face.key == "Arial Narrow")
+            .expect("the named face");
+        let size_pt = super::plotted_size_pt(heights, cap, height_mm);
+        // The whole units the plotter steps each glyph of `L=35` by.
+        let bytes = named.metrics.encode("L=35").expect("encodes");
+        let stepped = super::run_advance(
+            "Arial Narrow",
+            &named.metrics,
+            &bytes,
+            "L=35",
+            heights,
+            cap,
+            height_mm,
+            size_pt,
+            None,
+            1.0,
+            true,
+            1.0,
+        );
+        let steps: Vec<i64> = stepped.glyphs.iter().map(|glyph| glyph.step_px).collect();
+        assert_eq!(steps.len(), 4, "a step for each glyph: {steps:?}");
+        let widths: Vec<f64> = named
+            .metrics
+            .codes(&bytes)
+            .iter()
+            .map(|(code, _)| named.metrics.width(*code))
+            .collect();
+        let natural_px = widths[3] * size_pt * super::PLOT_DPI / 72.0;
+        #[allow(clippy::cast_precision_loss)]
+        let last_step_px = steps[3] as f64;
+        assert!(
+            (natural_px - last_step_px).abs() > 0.05,
+            "the last digit's own width, {natural_px} units, must differ from its step for the \
+             label to show which of the two the borrowed glyph follows"
+        );
+
+        // Every glyph of the label's own face lands on its step, and the pen
+        // is left on the last one's: where the borrowed glyph is shown.
+        let landed = |ops: &[super::Op], widths: &[f64]| -> Vec<f64> {
+            let shown = ops
+                .iter()
+                .find(|op| op.op == b"TJ")
+                .expect("the label's own glyphs are shown glyph by glyph");
+            let super::Object::Array(array) = &shown.operands[0] else {
+                panic!("TJ takes an array");
+            };
+            assert_eq!(
+                array.len(),
+                2 * widths.len(),
+                "each glyph is followed by its adjustment, the last one too"
+            );
+            widths
+                .iter()
+                .enumerate()
+                .map(|(index, width)| {
+                    let super::Object::Real(adjust) = &array[2 * index + 1] else {
+                        panic!("glyph {index} is followed by its adjustment");
+                    };
+                    (width - adjust / 1000.0) * size_pt * super::PLOT_DPI / 72.0
+                })
+                .collect()
+        };
+        let (_, _, ops) = &labels[0];
+        for (landed_px, step) in landed(ops, &widths).iter().zip(&steps) {
+            #[allow(clippy::cast_precision_loss)]
+            let step_px = *step as f64;
+            assert!(
+                (landed_px - step_px).abs() < 1e-9,
+                "a glyph of `L=35℃` advances {landed_px} units, not its step of {step}"
+            );
+        }
+        assert_eq!(numbers(ops, "Tm").len(), 1, "one text matrix");
+        assert!(numbers(ops, "Td").is_empty(), "nothing else moves the pen");
+        let borrowed = strings_as_set(ops);
+        assert_eq!(borrowed.len(), 1, "the borrowed glyph is the one `Tj`");
+        assert!(
+            (borrowed[0].0 - 9.6).abs() < 1e-9 && borrowed[0].1 == 0.0,
+            "the borrowed glyph is set at Tf 9.6 under no spacing: {borrowed:?}"
+        );
+
+        // The same label with nothing borrowed is strings under a `Tc`.
+        let (_, _, plain) = &labels[1];
+        assert!(
+            plain.iter().all(|op| op.op != b"TJ"),
+            "a label with nothing borrowed is not set glyph by glyph"
+        );
+
+        // One glyph of the label's own face before the borrowed one steps
+        // the same way: by its whole unit, not by its own width.
+        let (_, _, short) = &labels[2];
+        let one = named.metrics.encode("5").expect("encodes");
+        let one_width = [named.metrics.width(named.metrics.codes(&one)[0].0)];
+        let landed_px = landed(short, &one_width)[0];
+        assert!(
+            (landed_px - landed_px.round()).abs() < 1e-9 && (landed_px - natural_px).abs() > 0.05,
+            "the `5` of `5℃` advances {landed_px} units: a whole unit, not its own {natural_px}"
+        );
     }
 
     /// The reference's lettering of a borrowed run is applied where a

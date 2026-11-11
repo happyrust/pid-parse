@@ -24,6 +24,15 @@
 //! horizontal scale. Each glyph of `动火点` is placed 9 units after the one
 //! before it, so its three full-width glyphs overlap on the reference page.
 //!
+//! A label that ends in a borrowed glyph is written glyph by glyph: every
+//! glyph of `L=35℃` is a text object of its own on the reference page, each
+//! on a whole device unit — 0, 9, 19, 28 and 37 units from the label's
+//! start. The `℃` therefore stands on the step of the digit before it, 9
+//! units on, and not after that digit's own width in the device font, 9.65
+//! units, which is where a string shown whole leaves the pen
+//! ([`steps_before_lone`]). A label with nothing borrowed is one string
+//! under a letter-spacing on the same pages.
+//!
 //! # Where the 20 and the 9 come from
 //!
 //! The plotter hands GDI the label in the font it names. Nine units is that
@@ -61,6 +70,7 @@
 
 use pdfcraft_fonts::pdf::Metrics;
 
+use super::script_runs::Stepped;
 use super::{
     FaceRun, PLOT_DPI, ReadyFace, RunAdvance, ShownText, TextSegment, pixel_steps, plotted_size_pt,
     reference_advance_px, reference_scale, run_width_mm, stepped_advance, whole_pixel_cell,
@@ -126,6 +136,32 @@ pub(super) fn witnessed_run(
     let whole = before.is_empty();
     let lone = last.face.metrics.codes(&last.bytes).len() == 1;
     (whole || lone).then_some(runs.len() - 1)
+}
+
+/// The whole device units each glyph of the run before a lone borrowed glyph
+/// steps by, the last one included; `None` where the plotter's steps for the
+/// run are not known.
+///
+/// The reference writes a label that ends in a borrowed glyph glyph by
+/// glyph, each on its step, so the run of the label's own face before that
+/// glyph is set the same way and leaves the pen on its last glyph's step,
+/// where the borrowed glyph is shown — not on that glyph's own width, where
+/// a run shown as strings would leave it.
+///
+/// `stepped` is what [`super::run_advance`] steps the run's glyphs by, which
+/// it states for a run of two glyphs or more; a run of one glyph steps by
+/// what the plotter measures it at, `measured_px`
+/// ([`super::measured_width_px`]), to the whole unit like any other step.
+pub(super) fn steps_before_lone(
+    stepped: &[Stepped],
+    glyphs: usize,
+    measured_px: f64,
+) -> Option<Vec<i64>> {
+    if glyphs >= 2 && stepped.len() == glyphs {
+        return Some(stepped.iter().map(|glyph| glyph.step_px).collect());
+    }
+    (glyphs == 1 && measured_px.is_finite() && measured_px > 0.0)
+        .then(|| pixel_steps([measured_px]))
 }
 
 /// How the run [`witnessed_run`] names advances, set at [`size_pt`].
