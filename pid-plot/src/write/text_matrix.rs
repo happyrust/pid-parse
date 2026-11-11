@@ -102,10 +102,18 @@
 //! # What the witnesses do not show
 //!
 //! - a face on another design grid than 256 or 2048 units per em;
-//! - a label at an angle that is not a quarter turn. The driver takes the
-//!   length of the vector across from its two components and cuts each of the
-//!   four entries on its own; here such a label takes the two scales above
-//!   times the sine and cosine of its angle;
+//! - a label lettered at an angle that is no quarter turn. The driver takes
+//!   the length of the vector across from its two components and cuts each
+//!   of the four entries on its own; here such a label takes the two scales
+//!   above times the sine and cosine of its angle. No label of any corpus is
+//!   lettered so: an angle within a twentieth of a degree of a quarter turn
+//!   is lettered on it ([`super::escapement`]), and the farthest any label
+//!   lies from one is 0.012°;
+//! - a turned or stretched label of more than one font. Each font of a label
+//!   is written under its own matrix (`SetFont` in the writer), which is
+//!   this rule taken to a font the driver is known to be handed; the
+//!   borrowed glyphs the reference plots show are level and state no width,
+//!   so every font of theirs is written plain;
 //! - an entry that is a whole number of 256ths before it is cut, which the
 //!   driver's single-precision arithmetic decides;
 //! - `n / 256` halfway between two third decimals (`n` = 16, 48, 80, …),
