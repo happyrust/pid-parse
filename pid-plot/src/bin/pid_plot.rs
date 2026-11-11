@@ -104,6 +104,13 @@ fn main() -> ExitCode {
     for unplaced in model.ledger.display_order_warnings() {
         eprintln!("warning: {pid}: {unplaced}");
     }
+    // A paper that is not the border frame's is not taken for the page: the
+    // page is the frame's rectangle and the drawing is whole, but it is not
+    // on the paper its sheet states. One line, with both rectangles; the
+    // account counts it as a suspect item.
+    for page in model.ledger.page_warnings() {
+        eprintln!("warning: {pid}: {page}");
+    }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {

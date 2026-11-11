@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 44]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 23 个，有意 22 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`）。
+- `DropReason::ALL: [DropReason; 47]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 25 个，有意 22 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -543,6 +543,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `segment_too_short` | 同上，段长 `>= 1e-4` 一项 |
 | `segment_on_sheet_edge` | 同上，`read::sheet_edge_mm` 一项（家具段豁免） |
 | `segment_beyond_the_paper` | 同上，整支笔落在纸张一条边之外（家具段不豁免；2026-11-11 加） |
+| `drawing_segment_beyond_the_paper` | 写出器不产生这个码：它对两个域都报 `segment_beyond_the_paper`。`ledger::assemble` 的 `PaperEdge::of(domain)` 在三处把图纸域的这个事实改记到本码——段层的计数、图元的 `Dropped` 原因、实体取第一原因时（2026-11-12 加） |
 | `text_empty` | `text_fate`（`show_text` 约 962 行） |
 | `text_placement_non_finite` | 同一行的旋转与原点两项 |
 | `text_height_invalid` | 约 966 行 |
@@ -560,6 +561,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `furniture_endpoint_pair_drawn` | 家具循环里 `record_kind` 为 `EndpointPair` 的实体，经 `furniture_observations` |
 | `template_candidate_unreadable` | `load_border_template`（约 1862 行）的三处 `continue`（约 1873、1879、1882 行），经 `load_border_template_traced` 记候选名 |
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
+| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`（2026-11-12 加） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models

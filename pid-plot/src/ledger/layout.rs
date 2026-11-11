@@ -99,6 +99,74 @@ pub struct LayoutLedger {
     /// every corpus this crate is tested on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unplaced: Vec<UnplacedRecords>,
+    /// The paper the drawing's sheet states, when it was read and not taken
+    /// for the page because it is not the border frame's
+    /// (`model::paper_is_the_frames`). The page is then the frame's
+    /// rectangle; the page account files one suspect
+    /// [`DropReason::PaperUnlikeTheFrame`] and `pid_plot` says it
+    /// ([`Self::page_warnings`]). `None` on every page of every corpus this
+    /// crate is tested on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_refused: Option<PaperRefused>,
+    /// The border frame's rectangle, in micrometres, when it is the page
+    /// because no paper was read: the sheet's `JSheet` record, which states
+    /// the paper behind its list of objects, was not found or is not the
+    /// sheet's. A sheet whose list is not read says so already
+    /// ([`Self::display_order_warnings`]), and that sentence says this too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_for_want_of_a_paper: Option<[u64; 2]>,
+}
+
+/// A paper that was read and refused: the paper and the border frame's
+/// rectangle, each `[width, height]` in micrometres.
+///
+/// Whole micrometres rather than millimetres so that the ledger stays
+/// comparable for equality; a side that is not a positive finite length is
+/// kept as zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaperRefused {
+    /// The paper the sheet's record states.
+    pub paper_um: [u64; 2],
+    /// The rectangle the border frame states.
+    pub frame_um: [u64; 2],
+}
+
+/// A length in millimetres as whole micrometres; zero for one that is not
+/// a positive finite length.
+#[must_use]
+pub fn micrometres(millimetres: f64) -> u64 {
+    if millimetres.is_finite() && millimetres > 0.0 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        {
+            (millimetres * 1000.0).round() as u64
+        }
+    } else {
+        0
+    }
+}
+
+/// `[width, height]` in micrometres, written `W x H mm` to the micrometre.
+fn sides_mm(sides_um: [u64; 2]) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let millimetres = |side: u64| side as f64 / 1000.0;
+    format!(
+        "{:.3} x {:.3} mm",
+        millimetres(sides_um[0]),
+        millimetres(sides_um[1])
+    )
+}
+
+impl PaperRefused {
+    /// The two rectangles, for the page account's suspect site and the
+    /// warning: `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`.
+    #[must_use]
+    pub fn sides(&self) -> String {
+        format!(
+            "paper {}, frame {}",
+            sides_mm(self.paper_um),
+            sides_mm(self.frame_um)
+        )
+    }
 }
 
 /// Why a record that draws on a page takes no place in the order its sheet
@@ -175,12 +243,39 @@ impl LayoutLedger {
         self.unplaced = unplaced;
     }
 
+    /// What is to be said of the page itself: one sentence when the paper
+    /// the sheet states was refused for not being the border frame's, with
+    /// the paper, the frame's rectangle and which of them the page is.
+    /// Empty for a page written on the paper its sheet states, which is
+    /// every page of every corpus this crate is tested on.
+    #[must_use]
+    pub fn page_warnings(&self) -> Vec<String> {
+        let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
+        self.paper_refused
+            .iter()
+            .map(|refused| {
+                format!(
+                    "the paper its sheet states, {}, is not its border frame's, {}: no \
+                     drawing on hand has the two more than {limit_mm} mm apart on a side, so \
+                     the paper is not taken for the page and the page is the frame's rectangle",
+                    sides_mm(refused.paper_um),
+                    sides_mm(refused.frame_um)
+                )
+            })
+            .collect()
+    }
+
     /// One sentence per stream and reason for the records that draw on the
     /// page and take no place in its display order: how many, how many
     /// primitives they draw, why, and where they are painted instead. One in
     /// the border template's file says that it is the template's. Empty for
     /// a page whose every record stands where a sheet lists it, which is
     /// every page of every corpus this crate is tested on.
+    ///
+    /// A drawing's own sheet whose list was not read has no paper either —
+    /// the record that lists the objects states the paper behind them — so
+    /// its sentence goes on to say what the page is instead
+    /// ([`Self::frame_for_want_of_a_paper`]).
     #[must_use]
     pub fn display_order_warnings(&self) -> Vec<String> {
         let painted = if self.paint_order.is_empty() {
@@ -213,9 +308,21 @@ impl LayoutLedger {
                     }
                     UnplacedWhy::NoRecord => "they name no record",
                 };
+                // The drawing's own sheet: a stream of the document's root.
+                let own_sheet = item.domain == LedgerDomain::Drawing
+                    && item.why == UnplacedWhy::NoList
+                    && item.stream.matches('/').count() == 1;
+                let page = match self.frame_for_want_of_a_paper {
+                    Some(frame) if own_sheet => format!(
+                        "; the paper is stated in the same record and was not read either, so \
+                         the page is the border frame's rectangle, {}",
+                        sides_mm(frame)
+                    ),
+                    _ => String::new(),
+                };
                 format!(
                     "{whose}{} record(s){of}, {} primitive(s) on the page, take no place in \
-                     the display order: {why}; {painted}",
+                     the display order: {why}; {painted}{page}",
                     item.records, item.primitives
                 )
             })

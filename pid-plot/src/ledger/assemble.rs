@@ -510,6 +510,22 @@ impl ExportLedger {
                 });
             }
         }
+        // A paper that was read and is not the border frame's is not the
+        // page: the page is the frame's rectangle, and the two rectangles
+        // are the site.
+        if let Some(refused) = &ledger.paper_refused {
+            page.dropped.insert(DropReason::PaperUnlikeTheFrame, 1);
+            page.suspect_sites.push(SuspectSite {
+                reason: DropReason::PaperUnlikeTheFrame,
+                stream: None,
+                oid: None,
+                bytes: None,
+                type_code: None,
+                family: None,
+                name: Some(refused.sides()),
+                count: 1,
+            });
+        }
         // A template candidate that could not be read or parsed is the other
         // page-level suspect drop; its site is the candidate's own name.
         let unreadable = u64::try_from(ledger.template_unreadable.len()).unwrap_or(u64::MAX);
@@ -762,6 +778,36 @@ impl std::fmt::Display for LedgerSummary {
     }
 }
 
+/// The code a domain files a segment under when its whole pen lies past an
+/// edge of the page.
+///
+/// The writer states that one fact one way, [`DropReason::SegmentBeyondThePaper`],
+/// and does not print the segment whoever drew it. What it says of the page
+/// depends on whose it is: a border template put past the paper's corner by
+/// its frame is ink the plots do not print, and a stroke of the drawing's
+/// own off its own page is not something any plot shows, so the drawing's
+/// is filed under the suspect [`DropReason::DrawingSegmentBeyondThePaper`].
+#[derive(Debug, Clone, Copy)]
+struct PaperEdge(DropReason);
+
+impl PaperEdge {
+    fn of(domain: LedgerDomain) -> Self {
+        match domain {
+            LedgerDomain::Drawing => Self(DropReason::DrawingSegmentBeyondThePaper),
+            LedgerDomain::Furniture => Self(DropReason::SegmentBeyondThePaper),
+        }
+    }
+
+    /// `reason` as this domain files it.
+    fn files(self, reason: DropReason) -> DropReason {
+        if reason == DropReason::SegmentBeyondThePaper {
+            self.0
+        } else {
+            reason
+        }
+    }
+}
+
 /// One domain's whole account.
 fn assemble_domain(
     domain: LedgerDomain,
@@ -770,6 +816,7 @@ fn assemble_domain(
     write: &WriteLedger,
     past_the_edge: &BTreeSet<usize>,
 ) -> DomainAccount {
+    let paper_edge = PaperEdge::of(domain);
     let mut account = DomainAccount {
         parse: parse_account(ledger.parse.get(domain)),
         ..DomainAccount::default()
@@ -815,21 +862,20 @@ fn assemble_domain(
         }
     }
 
+    let facts = PageFacts {
+        write,
+        claimed: &claimed,
+        removed: &removed,
+        past_the_edge,
+        paper_edge,
+    };
     let mut cross: BTreeMap<EntityKind, BTreeMap<Confidence, BTreeMap<String, u64>>> =
         BTreeMap::new();
     for (index, record) in ledger.entities.iter().enumerate() {
         if record.domain != domain {
             continue;
         }
-        let outcome = entity_outcome(
-            index,
-            record,
-            write,
-            &claimed,
-            &removed,
-            past_the_edge,
-            &mut account,
-        );
+        let outcome = entity_outcome(index, record, &facts, &mut account);
         let entry = cross
             .entry(record.kind.clone())
             .or_default()
@@ -908,6 +954,7 @@ fn assemble_domain(
                 }
             }
             PrimitiveOutcome::Dropped(reason) => {
+                let reason = paper_edge.files(reason);
                 let entry = account.primitives.dropped.entry(reason).or_insert(0);
                 *entry = entry.saturating_add(1);
                 if reason.tier() == Tier::Suspect {
@@ -934,10 +981,7 @@ fn assemble_domain(
             (DropReason::SegmentNonFinite, fate.segments.non_finite),
             (DropReason::SegmentTooShort, fate.segments.too_short),
             (DropReason::SegmentOnSheetEdge, fate.segments.on_sheet_edge),
-            (
-                DropReason::SegmentBeyondThePaper,
-                fate.segments.beyond_the_paper,
-            ),
+            (paper_edge.0, fate.segments.beyond_the_paper),
         ] {
             if count > 0 {
                 let entry = account.segments.dropped.entry(reason).or_insert(0);
@@ -1006,21 +1050,38 @@ fn assemble_domain(
     account
 }
 
+/// What a domain's entities are judged by: the page's own facts, the same
+/// for every entity of the domain.
+struct PageFacts<'a> {
+    /// The writer's verdict on each page primitive.
+    write: &'a WriteLedger,
+    /// The page primitives each entity claimed, in model order.
+    claimed: &'a BTreeMap<usize, Vec<usize>>,
+    /// How many primitives of each entity the layout's `retain` removed.
+    removed: &'a BTreeMap<usize, u64>,
+    /// The primitive-level A.6 mark, already resolved by
+    /// [`assemble_domain`]'s caller; the entity-level partial count reads
+    /// the same set so the two layers can never disagree about a primitive
+    /// that reaches past the sheet.
+    past_the_edge: &'a BTreeSet<usize>,
+    /// How this domain files a segment past the paper's edge.
+    paper_edge: PaperEdge,
+}
+
 /// One entity's outcome, counted into `account` (requirement 1).
-///
-/// `past_the_edge` is the primitive-level A.6 mark, already resolved by
-/// [`assemble_domain`]'s caller; the entity-level partial count reads the same
-/// set so the two layers can never disagree about a primitive that reaches
-/// past the sheet.
 fn entity_outcome(
     index: usize,
     record: &EntityRecord,
-    write: &WriteLedger,
-    claimed: &BTreeMap<usize, Vec<usize>>,
-    removed: &BTreeMap<usize, u64>,
-    past_the_edge: &BTreeSet<usize>,
+    facts: &PageFacts<'_>,
     account: &mut DomainAccount,
 ) -> EntityVerdict {
+    let PageFacts {
+        write,
+        claimed,
+        removed,
+        past_the_edge,
+        paper_edge,
+    } = *facts;
     // 1. the layout layer already answered.
     if let Some(reason) = record.dropped {
         count_entity_drop(account, reason);
@@ -1058,7 +1119,7 @@ fn entity_outcome(
             {
                 partial = true;
             }
-        } else if let Some(reason) = fate.reason() {
+        } else if let Some(reason) = fate.reason().map(|reason| paper_edge.files(reason)) {
             // Design deviation I2: an entity is partially on the page when one
             // of its page primitives carries an A.6 mark *or one of them did
             // not reach the page at all*. This is the second half of that

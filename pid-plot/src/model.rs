@@ -1340,7 +1340,22 @@ pub fn lay_out_with_symbol_roots(
     let frame_mm = geometry
         .page_dimensions_mm
         .map(|(width, height)| [width, height]);
-    let page_mm = stated_paper_mm(&doc).or(frame_mm);
+    // The paper is the page when it is the frame's paper. One that lies
+    // farther from the frame than any real drawing's is not taken — it
+    // would cut the page to whatever it says — and the page is the frame's
+    // rectangle. A sheet with no frame has nothing to hold its paper
+    // against but its own ink, and ink of the drawing's that falls off the
+    // page is filed as suspect (`DropReason::DrawingSegmentBeyondThePaper`).
+    let stated_paper = stated_paper_mm(&doc);
+    let paper_refused = match (stated_paper, frame_mm) {
+        (Some(paper), Some(frame)) if !paper_is_the_frames(paper, frame) => Some((paper, frame)),
+        _ => None,
+    };
+    let page_mm = if paper_refused.is_some() {
+        frame_mm
+    } else {
+        stated_paper.or(frame_mm)
+    };
     let mut primitives = Vec::new();
     let mut placements = SymbolPlacements::default();
     let mut seen_sheet_fills = std::collections::HashSet::new();
@@ -1619,6 +1634,15 @@ pub fn lay_out_with_symbol_roots(
         frame_place: border_frame_place(&doc),
     };
     ledger.paint_order = paint_order(&primitives, &orders);
+    // What the page is, where it is not the paper the sheet states.
+    ledger.paper_refused = paper_refused.map(|(paper, frame)| crate::ledger::PaperRefused {
+        paper_um: paper.map(crate::ledger::micrometres),
+        frame_um: frame.map(crate::ledger::micrometres),
+    });
+    if stated_paper.is_none() {
+        ledger.frame_for_want_of_a_paper =
+            frame_mm.map(|frame| frame.map(crate::ledger::micrometres));
+    }
     // What the sheets' lists place nowhere is painted all the same, and
     // said: a suspect item of the account and a line on `pid_plot`'s stderr.
     ledger.note_unplaced(unplaced_records(&primitives, &orders));
@@ -1637,6 +1661,44 @@ pub fn lay_out_with_symbol_roots(
         symbols_referenced: placements.referenced.len(),
         ledger,
     })
+}
+
+/// How far a side of a border frame's rectangle may lie from the same side
+/// of the paper its sheet states, in millimetres, for the paper to be taken
+/// for the page.
+///
+/// The paper is two doubles in the tail of the sheet's `JSheet` record and
+/// nothing in the file holds it to anything else. The frame's rectangle is
+/// read from another record altogether, and the two describe one sheet, so
+/// each is the check on the other. How near they lie on real drawings is
+/// measured, not chosen (`probe_how_far_a_frame_is_from_its_paper`): of the
+/// 65 distinct drawings on hand — the plant backup, the acceptance sheets,
+/// the fixtures, the shared five — 60 state both; 39 lie within a
+/// micrometre, and the farthest is `N井场`, whose frame is 2.456811 mm
+/// wider and 2.706782 mm taller than its paper. Then the two `凝析油稳定塔`
+/// sheets (2.085102 and 1.537317 mm), the sheets on `CPECCHB-SQ-A2`
+/// (0.565694), `O井场` and `P井场` (0.400007), `DWG-0202GP06-01`, whose
+/// frame is the smaller of the two (−0.370831), `DWG-0201GP06-01`
+/// (0.313725) and `A井场` (0.305344). The limit is that farthest reading
+/// to the micrometre above it: a paper is the frame's when no drawing on
+/// hand has the two farther apart.
+///
+/// It is not a tolerance on a drawing's geometry: a paper inside it is the
+/// page exactly, and the frame's rectangle places nothing on that page.
+pub const PAPER_FRAME_REACH_MM: f64 = 2.707;
+
+/// Whether `paper_mm` is the paper of the sheet whose border frame states
+/// the rectangle `frame_mm`: each side of the frame within
+/// [`PAPER_FRAME_REACH_MM`] of the same side of the paper.
+///
+/// A paper that is not is refused — the page is then the frame's rectangle,
+/// as every page was before papers were read, and the drawing is whole. A
+/// paper half the frame's width, one with a side of no length, one a metre
+/// too large and one turned on its side are all refused; a side that is not
+/// a number is too.
+#[must_use]
+pub fn paper_is_the_frames(paper_mm: [f64; 2], frame_mm: [f64; 2]) -> bool {
+    (0..2).all(|side| (frame_mm[side] - paper_mm[side]).abs() <= PAPER_FRAME_REACH_MM)
 }
 
 /// The paper the drawing's sheets state, `[width, height]` in millimetres:
@@ -7504,7 +7566,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 45 codes has to be reachable and has to be *recorded*
+    // Every one of the 47 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -8371,6 +8433,9 @@ mod tests {
                 page,
             )
             .expect("a stroke past the paper's edge leaves no ink on it"),
+            // The same stroke as the drawing's own: the writer states the
+            // one fact, and the account files it as suspect.
+            DropReason::DrawingSegmentBeyondThePaper => filed_past_the_paper(false),
             DropReason::TextEmpty => write_reason(&write_label([10.0, 10.0], Some(2.5), ""), page)
                 .expect("an empty string letters nothing"),
             DropReason::TextPlacementNonFinite => {
@@ -8422,7 +8487,167 @@ mod tests {
                 assert_eq!(model.missing_templates, vec!["XA-A1".to_string()]);
                 DropReason::TemplateMissing
             }
+            DropReason::PaperUnlikeTheFrame => {
+                // A page whose layout refused the paper it read: the page
+                // account files it once, with the two rectangles as its site.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [594.328, 420.566],
+                );
+                model.ledger.paper_refused = Some(crate::ledger::PaperRefused {
+                    paper_um: [297_000, 420_000],
+                    frame_um: [594_328, 420_566],
+                });
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                assert_eq!(
+                    assembled.page.suspect_sites[0].name.as_deref(),
+                    Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm")
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
         }
+    }
+
+    /// A page of one stroke, with the layout ledger a one-entity page has.
+    fn one_stroke_model(stroke: PaperPrimitive, page_mm: [f64; 2]) -> PaperModel {
+        let domain = if stroke.furniture {
+            LedgerDomain::Furniture
+        } else {
+            LedgerDomain::Drawing
+        };
+        let mut recorder = LedgerRecorder::new();
+        let index = recorder.begin(
+            domain,
+            &entity(PidGraphicKind::Unknown {
+                note: String::new(),
+            }),
+        );
+        recorder.finish(index, EntityLayout::default().into(), 0);
+        let mut ledger = recorder.into_ledger();
+        *ledger.entity_totals.get_mut(domain) = 1;
+        ledger.primitive_origin = vec![0];
+        PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some(page_mm),
+            off_sheet_primitives: 0,
+            frame_mm: None,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![stroke],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger,
+        }
+    }
+
+    /// The code the account files a stroke under when its whole pen lies
+    /// past the page's right edge: the writer's verdict on a real page of
+    /// one stroke, read back out of `assemble`.
+    fn filed_past_the_paper(furniture: bool) -> DropReason {
+        let mut stroke = write_primitive(
+            PaperShape::Line {
+                start_mm: [841.328, 0.566],
+                end_mm: [841.328, 300.0],
+            },
+            0.25,
+        );
+        stroke.furniture = furniture;
+        let model = one_stroke_model(stroke, [841.0, 594.0]);
+        let write = crate::write::write_ledger(&model).expect("the page writes");
+        // The writer states one fact, whoever drew the segment.
+        assert_eq!(
+            write.fate(0).and_then(|fate| fate.reason()),
+            Some(DropReason::SegmentBeyondThePaper)
+        );
+        let assembled = ExportLedger::assemble(&model, &write);
+        assert!(assembled.conservation_breaches().is_empty());
+        let account = if furniture {
+            &assembled.furniture
+        } else {
+            &assembled.drawing
+        };
+        let segments: Vec<DropReason> = account.segments.dropped.keys().copied().collect();
+        let primitives: Vec<DropReason> = account.primitives.dropped.keys().copied().collect();
+        let entities: Vec<DropReason> = account.entities.dropped.keys().copied().collect();
+        assert_eq!(
+            segments, primitives,
+            "the segment and its primitive, one code"
+        );
+        assert_eq!(segments, entities, "and its entity");
+        assert_eq!(segments.len(), 1);
+        segments[0]
+    }
+
+    /// A paper is the frame's when no drawing on hand has the two farther
+    /// apart, and not when it is.
+    #[test]
+    fn a_paper_is_the_frames_when_no_drawing_has_them_farther_apart() {
+        use super::{PAPER_FRAME_REACH_MM, paper_is_the_frames};
+        // The farthest any drawing on hand shows, each with its paper and
+        // its frame's rectangle: all of them are their frame's papers.
+        for (name, paper, frame) in [
+            ("N井场", [841.0, 594.0], [843.456811, 596.706782]),
+            (
+                "凝析油稳定塔 1200td",
+                [841.0, 594.0],
+                [843.085102, 596.085095],
+            ),
+            (
+                "CPECCHB-SQ-A2 sheets",
+                [594.0, 420.0],
+                [594.327890, 420.565694],
+            ),
+            ("O井场", [841.0, 594.0], [841.150036, 594.400007]),
+            // A frame smaller than its paper.
+            ("DWG-0202GP06-01", [594.0, 420.0], [593.745838, 419.629169]),
+            ("A井场", [1189.0, 841.0], [1189.305344, 841.305249]),
+            ("A01", [594.0, 420.0], [594.001041, 420.001017]),
+        ] {
+            assert!(paper_is_the_frames(paper, frame), "{name}");
+        }
+        // The papers the seventh review wrote into a copy of `D06`, against
+        // that drawing's frame: none of them is.
+        let frame = [594.327890, 420.565694];
+        for paper in [
+            [297.0, 420.0],
+            [420.0, 594.0],
+            [1000.0, 0.0],
+            [1594.0, 1420.0],
+            [594.0, f64::NAN],
+            [f64::INFINITY, 420.0],
+        ] {
+            assert!(!paper_is_the_frames(paper, frame), "{paper:?}");
+        }
+        // The limit is the farthest reading, to the micrometre above it.
+        assert!(paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0, 594.0 + PAPER_FRAME_REACH_MM]
+        ));
+        assert!(!paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0, 594.0 + PAPER_FRAME_REACH_MM + 0.001]
+        ));
+        assert!(!paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0 - PAPER_FRAME_REACH_MM - 0.001, 594.0]
+        ));
+        assert!((PAPER_FRAME_REACH_MM - 2.707).abs() < f64::EPSILON);
     }
 
     /// Read the one reason `parse` recorded for `geometry` and check it is
@@ -8490,7 +8715,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 45, "the appendix's 45 rows");
+        assert_eq!(DropReason::all().len(), 47, "the appendix's 47 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.

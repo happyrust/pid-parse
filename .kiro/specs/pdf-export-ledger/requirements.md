@@ -322,6 +322,7 @@
 | `segment_too_short` | 有意 | `stroke_runs`：段长 < 1e-4 mm；按段计 | 未计数 |
 | `segment_on_sheet_edge` | 有意 | `stroke_runs`：非家具段被 `read::sheet_edge_mm` 判为贴页边（一个方向的差 < 0.282 mm，另一个方向的差 > 0.9 倍页边；对测得的页幅同样生效）；按段计 | 未计数 |
 | `segment_beyond_the_paper` | 有意 | `stroke_runs`：整支笔都落在纸张某一条边之外的段（两端都在同一条边之外至少半个笔宽），家具段不豁免；图框把模板放到纸角之外时模板外轮廓的上边、右边属于这一类，见证是 A2 参考图（内容流里页面框之外的坐标只有外轮廓那一条路径的 4 个，上边整条没写）；按段计（2026-11-11 加，附录由 43 行变 44 行） | 未计数 |
+| `drawing_segment_beyond_the_paper` | 可疑 | 同一个事实（整支笔落在页面某一条边之外），落在图纸自己的段上。写出器只陈述事实（`segment_beyond_the_paper`），`ExportLedger::assemble` 按段属于哪个域归码（`PaperEdge`）。模板被图框放到纸角之外，是参考图不印的墨；图纸自己的笔画落在自己的页面之外，没有一张参考图见过——要么页面不是这张图画在上面的那张纸（没有页框可对照的图上纸张读错），要么图纸把墨留在了图外——照样不印，记可疑。71 页上一段都没有；按段计（2026-11-12 加，附录由 45 行变 47 行） | 新增 |
 | `text_empty` | 有意 | `show_text`：文本为空串 | 未计数 |
 | `text_placement_non_finite` | 可疑 | `show_text`：旋转角或原点非有限 | 未计数 |
 | `text_height_invalid` | 可疑 | `show_text`：高度非有限或 ≤ 0，包括排版层在记录与样式都没给高度时填的 `Some(0.0)`；`None` 回落到 `DEFAULT_TEXT_MM`，不算 | 未计数 |
@@ -353,6 +354,7 @@
 |---|---|---|---|
 | `template_candidate_unreadable` | 可疑 | `load_border_template` 中模板候选读不出（`read_archive_file`）或解析失败（`parse_file` / `parse_reader`）后 `continue` | 静默（新发现） |
 | `template_missing` | 可疑 | 页面点名的模板没有文件可答，页面不穿家具 | 已计数（`missing_templates`） |
+| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加） | 新增 |
 | `page_size_source` | — | 页幅来自声明（`page_mm`）还是测得（`resolved_page_mm`） | 门禁读数 |
 
 ### A.9 不入账的内容

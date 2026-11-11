@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 45 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 47 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -266,7 +266,23 @@ pub enum DropReason {
     /// A furniture segment is not exempt, as it is from
     /// [`Self::SegmentOnSheetEdge`]: what is off the paper is off it
     /// whichever file drew it.
+    ///
+    /// This is the border template's code. The same segment of the
+    /// drawing's own is [`Self::DrawingSegmentBeyondThePaper`]: the writer
+    /// states the one fact for both, and the account files it by whose
+    /// segment it is (`ExportLedger::assemble`).
     SegmentBeyondThePaper,
+    /// A segment of the drawing's own the whole pen of which lies past one
+    /// edge of the page: the fact of [`Self::SegmentBeyondThePaper`], on
+    /// ink no plot shows left off. A border template can be put past the
+    /// paper's corner by its frame, and the plots do not print what then
+    /// lies off the paper. A drawing's own stroke off its own page says
+    /// something else — the page is not the sheet the drawing was drawn on
+    /// (a paper read wrong where there is no frame to hold it against), or
+    /// the drawing keeps ink off its sheet — so it is not printed and it is
+    /// suspect. No page of the corpora this crate is tested on has one.
+    /// Counted per segment.
+    DrawingSegmentBeyondThePaper,
     /// `show_text`: the text is the empty string.
     TextEmpty,
     /// `show_text`: the rotation or the origin is not finite.
@@ -286,6 +302,15 @@ pub enum DropReason {
     /// The page names a template and no file answers it, so the page wears no
     /// furniture. Counted as `PaperModel::missing_templates` too.
     TemplateMissing,
+    /// The paper the sheet states is not the border frame's: a side of the
+    /// frame's rectangle lies farther from the same side of the paper than
+    /// it does on any drawing on hand (`model::PAPER_FRAME_REACH_MM`). Such
+    /// a paper is not taken for the page — a paper read wrong would cut the
+    /// page to whatever it said — and the page is the frame's rectangle, as
+    /// every page was before papers were read, so the drawing is whole.
+    /// Counted once a page (`LayoutLedger::paper_refused`); no page of the
+    /// corpora this crate is tested on has one.
+    PaperUnlikeTheFrame,
 }
 
 /// Every code, in appendix A's row order.
@@ -294,7 +319,7 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 45] = [
+pub const ALL: [DropReason; 47] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
@@ -334,12 +359,14 @@ pub const ALL: [DropReason; 45] = [
     DropReason::SegmentTooShort,
     DropReason::SegmentOnSheetEdge,
     DropReason::SegmentBeyondThePaper,
+    DropReason::DrawingSegmentBeyondThePaper,
     DropReason::TextEmpty,
     DropReason::TextPlacementNonFinite,
     DropReason::TextHeightInvalid,
     DropReason::TextWhitespaceOnly,
     DropReason::TemplateCandidateUnreadable,
     DropReason::TemplateMissing,
+    DropReason::PaperUnlikeTheFrame,
 ];
 
 impl DropReason {
@@ -393,12 +420,14 @@ impl DropReason {
             Self::SegmentTooShort => "segment_too_short",
             Self::SegmentOnSheetEdge => "segment_on_sheet_edge",
             Self::SegmentBeyondThePaper => "segment_beyond_the_paper",
+            Self::DrawingSegmentBeyondThePaper => "drawing_segment_beyond_the_paper",
             Self::TextEmpty => "text_empty",
             Self::TextPlacementNonFinite => "text_placement_non_finite",
             Self::TextHeightInvalid => "text_height_invalid",
             Self::TextWhitespaceOnly => "text_whitespace_only",
             Self::TemplateCandidateUnreadable => "template_candidate_unreadable",
             Self::TemplateMissing => "template_missing",
+            Self::PaperUnlikeTheFrame => "paper_unlike_the_frame",
         }
     }
 
@@ -425,10 +454,12 @@ impl DropReason {
             | Self::PenWidthInvalid
             | Self::ChainEmpty
             | Self::SegmentNonFinite
+            | Self::DrawingSegmentBeyondThePaper
             | Self::TextPlacementNonFinite
             | Self::TextHeightInvalid
             | Self::TemplateCandidateUnreadable
-            | Self::TemplateMissing => Tier::Suspect,
+            | Self::TemplateMissing
+            | Self::PaperUnlikeTheFrame => Tier::Suspect,
             Self::RecordNativeSkip
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
@@ -499,8 +530,11 @@ impl DropReason {
             Self::SegmentNonFinite
             | Self::SegmentTooShort
             | Self::SegmentOnSheetEdge
-            | Self::SegmentBeyondThePaper => ReasonLayer::Segment,
-            Self::TemplateCandidateUnreadable | Self::TemplateMissing => ReasonLayer::Page,
+            | Self::SegmentBeyondThePaper
+            | Self::DrawingSegmentBeyondThePaper => ReasonLayer::Segment,
+            Self::TemplateCandidateUnreadable
+            | Self::TemplateMissing
+            | Self::PaperUnlikeTheFrame => ReasonLayer::Page,
         }
     }
 }
@@ -718,7 +752,7 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 45] = [
+    const APPENDIX_A: [&str; 47] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
@@ -763,6 +797,7 @@ mod tests {
         "segment_too_short",
         "segment_on_sheet_edge",
         "segment_beyond_the_paper",
+        "drawing_segment_beyond_the_paper",
         "text_empty",
         "text_placement_non_finite",
         "text_height_invalid",
@@ -770,6 +805,7 @@ mod tests {
         // A.8 page facts
         "template_candidate_unreadable",
         "template_missing",
+        "paper_unlike_the_frame",
     ];
 
     #[test]
@@ -780,11 +816,11 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 45, "the catalog is 45 codes");
+        assert_eq!(ALL.len(), 47, "the catalog is 47 codes");
     }
 
     #[test]
-    fn tiers_split_23_suspect_22_intentional() {
+    fn tiers_split_25_suspect_22_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -793,9 +829,9 @@ mod tests {
             .iter()
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
-        assert_eq!(suspect, 23, "appendix A's suspect column");
+        assert_eq!(suspect, 25, "appendix A's suspect column");
         assert_eq!(intentional, 22, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 45);
+        assert_eq!(suspect + intentional, 47);
     }
 
     #[test]

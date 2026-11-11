@@ -1215,6 +1215,11 @@ fn d06_with_a_list_that_is_not_its_sheets(case: &str) -> PathBuf {
 /// page's ledger files the stream as a suspect item, where the gates that
 /// read ledgers see it. The drawing as committed, against the same corpus,
 /// draws no such warning and files nothing.
+///
+/// The record that lists the objects states the paper as well, so a sheet
+/// whose list is not read has no paper either and its page is the border
+/// frame's rectangle. The same warning says so, with the rectangle: a
+/// reader told only about the order would take the page for the paper.
 #[test]
 fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
     use pid_plot::ledger::{LedgerDomain, UnplacedWhy};
@@ -1252,6 +1257,17 @@ fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
         "the page lost or gained ink"
     );
     assert!(model.template.is_some(), "the copy wears no template");
+    // The record that was not read states the paper too, so the page is
+    // not the paper: it is the border frame's rectangle, where the
+    // committed drawing's is the 594 x 420 mm its sheet states.
+    let frame = sound.frame_mm.expect("D06 has a border frame");
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert_eq!(model.frame_mm, Some(frame));
+    assert_eq!(
+        model.page_mm,
+        Some(frame),
+        "the page of a sheet whose paper was not read"
+    );
 
     // What no list places: every record of `/Sheet6` that draws.
     let own: Vec<&PaperPrimitive> = model
@@ -1361,6 +1377,12 @@ fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
         "take no place in the display order".to_string(),
         "states no list of its objects that could be read".to_string(),
         "painted after everything that has a place".to_string(),
+        // Two things were not read, and the one line says both.
+        "the paper is stated in the same record and was not read either".to_string(),
+        format!(
+            "the page is the border frame's rectangle, {:.3} x {:.3} mm",
+            frame[0], frame[1]
+        ),
     ] {
         assert!(
             line.contains(&needle),
@@ -1379,4 +1401,318 @@ fn a_sheet_whose_list_is_not_its_own_exports_and_says_so() {
         warnings(&silent.stderr).is_empty(),
         "the committed drawing drew a warning\n{silent}"
     );
+}
+
+/// What to change in `D06.pid`'s `JSheet` record.
+#[derive(Clone, Copy, Debug)]
+enum SheetRecord {
+    /// The paper the record states, as `[width, height]` in metres. The
+    /// record is otherwise the committed one.
+    Paper([f64; 2]),
+    /// The record's count of children, raised by four: four entries are
+    /// then read out of the tail and the paper from 56 bytes further on.
+    FourChildrenMore,
+}
+
+/// A copy of `D06.pid` with one thing changed in its `JSheet` record and
+/// nothing else: every stream but `/PSMcluster0` is the committed one, and
+/// that one differs in the bytes [`SheetRecord`] names.
+///
+/// The record's tail is nine bytes, the names `Sheet1` and `Section1`, and
+/// a fixed part that states the paper: the height 102 bytes into the tail
+/// and the width 114 (`pid_parse::parsers::sheet_display_order`). The copy
+/// is checked against that: the two doubles read back as the 0.42 m by
+/// 0.594 m the sheet states before they are overwritten.
+fn d06_with_another_sheet_record(case: &str, change: SheetRecord) -> PathBuf {
+    use pid_parse::parsers::sheet_display_order::find_sheet_child_table;
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    const CLUSTER: &str = "/PSMcluster0";
+    let source = d06();
+    let package = pid_parse::PidParser::new()
+        .parse_package(&source)
+        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+    let mut cluster = package
+        .get_stream(CLUSTER)
+        .unwrap_or_else(|| panic!("{} has no {CLUSTER}", source.display()))
+        .data
+        .clone();
+    let table = find_sheet_child_table(&cluster, 6, |_| true)
+        .unwrap_or_else(|| panic!("{}: no JSheet record for sheet 6", source.display()));
+    let first = table.children[0];
+    let mut entry = first.oid.to_le_bytes().to_vec();
+    for word in first.range {
+        entry.extend_from_slice(&word.to_le_bytes());
+    }
+    entry.extend_from_slice(&first.flags.to_le_bytes());
+    let found: Vec<usize> = cluster
+        .windows(entry.len())
+        .enumerate()
+        .filter(|(_, window)| *window == entry.as_slice())
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(found.len(), 1, "the list's first entry, in the cluster");
+    let entries = found[0];
+    let tail = entries + 14 * table.children.len();
+    let double = |cluster: &[u8], at: usize| {
+        f64::from_le_bytes(cluster[at..at + 8].try_into().expect("eight bytes"))
+    };
+    assert_eq!(
+        [double(&cluster, tail + 114), double(&cluster, tail + 102)],
+        [0.594, 0.42],
+        "the paper D06 states, where the record keeps it"
+    );
+    match change {
+        SheetRecord::Paper([width, height]) => {
+            cluster[tail + 102..tail + 110].copy_from_slice(&height.to_le_bytes());
+            cluster[tail + 114..tail + 122].copy_from_slice(&width.to_le_bytes());
+        }
+        SheetRecord::FourChildrenMore => {
+            let count = u32::try_from(table.children.len()).expect("a count") + 4;
+            cluster[entries - 4..entries].copy_from_slice(&count.to_le_bytes());
+        }
+    }
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: CLUSTER.to_string(),
+            new_data: cluster,
+        }],
+        ..WritePlan::default()
+    };
+    let path = scratch(case).join("D06.pid");
+    PidWriter::write_to(&package, &plan, &path)
+        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    path
+}
+
+/// Start `pid_plot` on `drawing` against the fixtures, as far as this
+/// machine lets an export go: exit 0 and a page with fonts to hand, exit 1
+/// at the first missing face without. Either way every warning has been
+/// printed by then.
+fn export_against_the_fixtures(case: &str, drawing: &Path, name: &str) -> Outcome {
+    let out = unwritten(&scratch(case), name);
+    let fonts = fonts_for_a_child();
+    let mut command = pid_plot();
+    if let Ok(fonts) = &fonts {
+        command.env("PID_PLOT_FONTS", fonts);
+    }
+    if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+        command.env("PID_SYMBOL_LIBRARY", library);
+    }
+    let outcome = run(command.arg(drawing).arg(&out).arg(fixtures()));
+    match fonts {
+        Ok(_) => {
+            assert_eq!(outcome.code, Some(0), "{outcome}");
+            assert!(out.exists(), "{} was not written\n{outcome}", out.display());
+        }
+        Err(searched) => {
+            eprintln!(
+                "{case}: no font directory is present (searched {searched}), so the run \
+                 can only get as far as the first missing face"
+            );
+            assert_eq!(outcome.code, Some(1), "{outcome}");
+        }
+    }
+    outcome
+}
+
+/// A paper that is not the border frame's is not taken for the page.
+///
+/// The paper a sheet states is the page a drawing is written on, and
+/// nothing in the file holds it to anything: two doubles in the tail of one
+/// record. Read wrong — or right, from a file that is wrong there — they
+/// would cut the page to whatever they said, and everything of the drawing
+/// that fell off it would be filed as ink the paper never held. So the
+/// paper is held to the frame: farther from it than the paper of any
+/// drawing on hand, it is refused, the page is the frame's rectangle as it
+/// was before papers were read, and the drawing is whole. The program says
+/// so in one warning that names the drawing, the paper and the frame; the
+/// account files one suspect item for the page and nothing as left off the
+/// paper; the exit code is the committed drawing's.
+fn export_with_a_paper_that_is_not_the_frames(case: &str, paper_m: [f64; 2], paper_mm: &str) {
+    let corpus = fixtures();
+    let committed = d06();
+    let drawing = d06_with_another_sheet_record(case, SheetRecord::Paper(paper_m));
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+
+    // The page is the frame's rectangle, which is the committed drawing's
+    // frame; the committed drawing's page is its paper.
+    let frame = sound.frame_mm.expect("D06 has a border frame");
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert_eq!(model.frame_mm, Some(frame), "{case}: the frame");
+    assert_eq!(
+        model.page_mm,
+        Some(frame),
+        "{case}: the page is not the frame's rectangle"
+    );
+    // The drawing is whole: the same primitives as the committed one.
+    let primitives = |model: &PaperModel| -> Vec<String> {
+        model
+            .primitives
+            .iter()
+            .map(|primitive| format!("{:?} {:?}", identity(primitive), primitive.shape))
+            .collect()
+    };
+    assert_eq!(
+        primitives(&model),
+        primitives(&sound),
+        "{case}: the page lost or gained ink"
+    );
+
+    // The account: one suspect item for the page, nothing left off a paper,
+    // and no more filed as intended than on the committed page.
+    let account = |model: &PaperModel| {
+        let write = write_ledger(model).unwrap_or_else(|error| panic!("{case}: {error}"));
+        ExportLedger::assemble(model, &write)
+    };
+    let (ledger, sound_ledger) = (account(&model), account(&sound));
+    assert!(ledger.conservation_breaches().is_empty(), "{case}");
+    let page: Vec<(&str, u64)> = ledger
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(
+        page,
+        [("paper_unlike_the_frame", 1)],
+        "{case}: the page's own items"
+    );
+    assert_eq!(ledger.summary().suspect, 1, "{case}: {}", ledger.summary());
+    for domain in [&ledger.drawing, &ledger.furniture] {
+        let off_the_paper: Vec<&str> = domain
+            .segments
+            .dropped
+            .keys()
+            .chain(domain.primitives.dropped.keys())
+            .map(|reason| reason.code())
+            .filter(|code| code.contains("beyond_the_paper"))
+            .collect();
+        assert!(
+            off_the_paper.is_empty(),
+            "{case}: ink filed as off a paper that was refused: {off_the_paper:?}"
+        );
+    }
+    assert!(
+        ledger.summary().intentional <= sound_ledger.summary().intentional,
+        "{case}: {} against the committed page's {}",
+        ledger.summary(),
+        sound_ledger.summary()
+    );
+
+    // The program: one warning, with the drawing, the paper and the frame.
+    let said = export_against_the_fixtures(case, &drawing, "refused.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "{case}: a paper that is not the frame's is exactly one warning\n{said}"
+    );
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        format!("the paper its sheet states, {paper_mm} mm"),
+        format!("{:.3} x {:.3} mm", frame[0], frame[1]),
+        "the page is the frame's rectangle".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "{case}: the warning does not say {needle:?}\n{said}"
+        );
+    }
+}
+
+#[test]
+fn a_paper_half_the_frame_wide_is_refused_and_the_drawing_is_whole() {
+    export_with_a_paper_that_is_not_the_frames(
+        "paper-half-wide",
+        [0.297, 0.42],
+        "297.000 x 420.000",
+    );
+}
+
+#[test]
+fn a_paper_with_no_height_is_refused_and_the_drawing_is_whole() {
+    export_with_a_paper_that_is_not_the_frames(
+        "paper-no-height",
+        [1.0, 1e-300],
+        "1000.000 x 0.000",
+    );
+}
+
+#[test]
+fn a_paper_a_metre_too_large_is_refused_and_the_drawing_is_whole() {
+    export_with_a_paper_that_is_not_the_frames(
+        "paper-a-metre-more",
+        [1.594, 1.42],
+        "1594.000 x 1420.000",
+    );
+}
+
+#[test]
+fn a_paper_turned_on_its_side_is_refused_and_the_drawing_is_whole() {
+    export_with_a_paper_that_is_not_the_frames("paper-upright", [0.42, 0.594], "420.000 x 594.000");
+}
+
+/// A record that counts four children too many still lists the sheet's 26
+/// objects first and in order, so the order is read as on the committed
+/// drawing. The paper is not: it stands behind the entries, the count says
+/// the entries end 56 bytes later than they do, and what is read there is
+/// a paper of 0 x 1000 mm. Nothing in the record says so. The frame does:
+/// the paper is refused like any other that is not the frame's, the page is
+/// the frame's rectangle and the drawing is whole.
+#[test]
+fn a_list_four_entries_too_long_misplaces_the_paper_and_the_frame_refuses_it() {
+    let case = "list-four-more";
+    let corpus = fixtures();
+    let committed = d06();
+    let drawing = d06_with_another_sheet_record(case, SheetRecord::FourChildrenMore);
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    let frame = sound.frame_mm.expect("D06 has a border frame");
+    assert_eq!(
+        model.page_mm,
+        Some(frame),
+        "the page is not the frame's rectangle"
+    );
+    assert_eq!(model.primitives.len(), sound.primitives.len());
+    // The order is the committed drawing's: the list's own 26 entries are
+    // where they were, and no record is left without a place.
+    assert!(
+        model.ledger.unplaced.is_empty(),
+        "{:?}",
+        model.ledger.unplaced
+    );
+    assert!(model.paint_sequence().is_some());
+    assert_eq!(model.paint_sequence(), sound.paint_sequence());
+    let write = write_ledger(&model).unwrap_or_else(|error| panic!("{case}: {error}"));
+    let ledger = ExportLedger::assemble(&model, &write);
+    let page: Vec<(&str, u64)> = ledger
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(page, [("paper_unlike_the_frame", 1)]);
+    assert_eq!(ledger.summary().suspect, 1, "{}", ledger.summary());
+
+    let said = export_against_the_fixtures(case, &drawing, "four-more.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(warned.len(), 1, "one warning\n{said}");
+    for needle in [
+        drawing.display().to_string(),
+        "the paper its sheet states, 0.000 x 1000.000 mm".to_string(),
+        format!("{:.3} x {:.3} mm", frame[0], frame[1]),
+        "the page is the frame's rectangle".to_string(),
+    ] {
+        assert!(
+            warned[0].contains(&needle),
+            "the warning does not say {needle:?}\n{said}"
+        );
+    }
 }
