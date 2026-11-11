@@ -71,9 +71,9 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
 | `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
-| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. A `StyleCluster` whose chain stops is reported like a sheet's, and a symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 655 files, 1 338 sheet streams, 58 symbol caches, 32 514 records), both `pid-test-data` and the share where a machine has them | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
-| `pid-plot/tests/cli_pid_plot.rs`：断链的 5 条（这个文件连同下面那一行的 10 条共 15 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
-| `tests/publish_chain_faults.rs` | `pid_publish_xml` says when a record chain of the `.pid` does not hold. The publish reader takes a stream's records all or nothing, so a copy of `DWG-0201GP06-01.pid` with one length of `/Sheet6` set to zero publishes 0 of 102 label values where the drawing publishes 92: the copy exits 0 with exactly one `warning:` naming the file, the stream, `stops at +16994 of 29594 bytes`, the 12 600 bytes unread and what the reader made of the stream; the intact drawing prints none; a header count one too many is said and the stream is still read | `test-file/DWG-0201GP06-01.pid` (committed; runs in CI) |
+| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. (On every corpus in reach that holds as well since the page frame is held to the ratio of its own extent: ten of 49 058 such records decoded as `igSmartFrame2d` before, none now — `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`, which is too slow for a test.) A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned) | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
+| `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 10 条共 17 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，这两条失败、其余 15 条通过（第一份原先读成 359 条记录的完好流，一个字都不说） | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
+| `tests/publish_chain_faults.rs` | `pid_publish_xml` says when a record chain of a `.pid` it publishes does not hold, for a single `.pid` and for each drawing of a backup package. The publish reader takes a stream's records all or nothing, so a copy of `DWG-0201GP06-01.pid` with one length of `/Sheet6` set to zero publishes 0 of 102 label values where the drawing publishes 92: the copy exits 0 with exactly one `warning:` naming the file, the stream, `stops at +16994 of 29594 bytes`, the 12 600 bytes unread and what the stream cost — the 120 attribute rows, text boxes, dependency objects and symbol placements the chain read before the stop — and the line is the library's sentence (`PublishChainFault::describe`) from the one read that makes the drawing (`read_publish_from_pid`). A `/StyleCluster` whose chain stops is said too, as costing the XML nothing the chain read, and the data and meta XML are the intact drawing's byte for byte. A copy whose `DrawingNo` row is in the stopped stream exits 1 with the warning ahead of the error. A header count one too many is said and the stream is still read. A package of two drawings, one damaged, publishes both, exits 0 and prints one warning led by the zip and the entry (`BackupPublishReport::chain_faults`); `_Index.json` and the coverage reports keep their keys and list no fault | `test-file/DWG-0201GP06-01.pid`, `test-file/D06.pid` (committed; runs in CI) |
 | `tests/boundary_loops.rs` | A boundary of two loops fills the area between them. `XA-A1.igr`'s oids 5074 and 5076 — outer loops of 104 and 162 lines, counters of 77 and 54 — decode with their loops, anchor and member references, and each reaches the sheet as one fill ring whose area is the outer loop's less the counter's, with the record's anchor inside it and a point of the counter outside | `test-file/Ref/Template Files/XA-A1.igr` (committed; runs in CI) |
 | `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default. And the other direction byte: the four `-W` templates of the committed `RefData~4~682.zip` each keep four arcs and four B-splines in their logo; on `A1-W.igr` the arcs are the top cap, the bottom cap and two left-side pieces of one ellipse, clockwise, each on the ends of the logo's lines, the caps turning 106.26° on the far side of their chord | `test-file/export-test/publish-data/A01/A01.pid` (soft-skips when absent), `test-file/Ref/Template Files/XA-A1.igr` and `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` (committed; absent is a failure) |
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
@@ -141,7 +141,7 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 | `template_symbol_gap.rs` | **软跳过** | `skipping template symbol gap; …集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent` |
 | `export_plant_backup.rs` | **软跳过（需临时打掉 `export_plant_backup.rs:208-209` 的两个硬编码绝对根才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None`，两条用例各打印一行 `skipping the D04 refusal pin; no backup-plant-data directory is present` 与 `skipping the backup export; no backup-plant-data directory is present` 并 `ok`。本机模拟时这两个根恰好存在（语料在这台机器上），于是两条用例都真跑：`d04_igsymbol2d_refused_count_is_zero` 通过（它只解析 `D04`，不读语料），`every_backup_drawing_exports_a_readable_page` **失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1785`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，点了名的语料以它为准，模板与 `Ref` 都读不到（2026-11-10 在本机只设这一个变量重跑过，结果如此）。不设该变量时本机默认选中备份包，这道门真跑并逐页比 53 页的账本基线；默认选中包而一页都没比成（语料描述与基线不同）时它现在失败。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，行为才与 Linux runner 一致。`style_witness.rs:114-115` 有同样的两个绝对根，同样处理后软跳过 |
 | `export_ledger_fixtures.rs` | **真跑** | 无任何 `skipping` 行；7 行 `<page>: 未发现可归属缺陷` 逐页打印，末行 `export-ledger: 7 页全部通过（可疑项 0 个，未归因 0）`（量这张表时是 12 个；2026-11-10 起夹具与备份两本账的可疑项都是 0）。全部输入都在仓库内（`test-file/**`），`write_ledger` 不读字型，所以干净检出与 CI 上同样真跑。`docs/baselines/export-ledger-fixtures.json` 已入库，因此不带 `UPDATE_EXPORT_LEDGER` 时直接比对。语料描述与基线不同时这道门现在失败，不再跳过比对后照样通过 |
-| `cli_pid_plot.rs` | **混合（14 条真跑，D06 导出软跳过）** | 没有字体目录时 `d06_exports_the_page_the_library_lays_out` 打 `skipping the D06 export; no font directory is present (searched …)`；其余 14 条不需要字体（2026-11-11 加的流头记录数那一条没有在无字体的环境里重量，照同一个函数推的）。两条回退目录的用例、两条模板用例与五条断链用例在没有字体时断言退出码 1（过了 corpus 检查、停在第一个缺的字型上），各打一行 `<case>: no font directory is present (searched …), so the run can only get as far as the first missing face`；模板那条与三条断链的照样断言 stderr 上的 `warning:`，断链的四条另断言页面模型与账本（都不要字体） |
+| `cli_pid_plot.rs` | **混合（16 条真跑，D06 导出软跳过）** | 没有字体目录时 `d06_exports_the_page_the_library_lays_out` 打 `skipping the D06 export; no font directory is present (searched …)`；其余 16 条不需要字体（2026-11-11 加的三条——流头记录数、两条「长度错而未越界」——没有在无字体的环境里重量，照同一个函数推的）。两条回退目录的用例、两条模板用例与七条断链用例在没有字体时断言退出码 1（过了 corpus 检查、停在第一个缺的字型上），各打一行 `<case>: no font directory is present (searched …), so the run can only get as far as the first missing face`；模板那条与三条断链的照样断言 stderr 上的 `warning:`，断链的四条另断言页面模型与账本（都不要字体） |
 
 **结论**：**真跑 3 个 + 混合 5 个 + 软跳过 8 个 = 16 个**测试文件。
 
@@ -152,7 +152,7 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 真跑三条纯单测（落盘那条跳过）、`reference_plots_acceptance` 真跑
 `only_the_surveyed_sheets_carry_furniture_masks`（`eleven_reference_plots`
 跳过）、`export_every_fixture` 真跑走查与模板表两条断言（导出段跳过）、
-`cli_pid_plot` 真跑 14 条不需要字体的用例（D06 导出跳过）。其余 8 个文件在 CI 上
+`cli_pid_plot` 真跑 16 条不需要字体的用例（D06 导出跳过）。其余 8 个文件在 CI 上
 一条出图断言都不执行，因为它们读的语料（验收数据、备份语料、字体）都不在仓库里。
 
 **2026-11-10 改过、没有在干净检出里重测的四行**：`cli_pid_plot`、
@@ -274,7 +274,8 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   from `0x0000` to `0x0118` and nothing past it; a chain walk stops
   on a word past it. No chain of any stream of the corpora holds a
   record that states `0x3FE6`. What Phase 14 decoded — three "lines"
-  across four fixtures, seven hits across all the corpora — was found
+  across four fixtures, thirteen hits across all the corpora and
+  their archives — was found
   by sliding a decoder over the stream a byte at a time: an
   `igSmartFrame2d` states its height over its width at payload
   `+148`, on an ISO A sheet that is `1/√2` give or take the frame's
@@ -480,12 +481,21 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   then laid out as a sheet with no frame is. No stream of any corpus
   raises a fault (`tests/sheet_chain_faults.rs`). The style tables
   (`StyleCluster`, the document's and each cache's) are held the same
-  way since 2026-11-11, and a `.sym` body carries the faults of its
-  file (`SymbolGeometry::chain_faults`; `pid-plot` does not read that
-  yet). `sheet_record_starts` keeps the all-or-nothing reading for the
-  publish line's row reader and the semantic join, which read nothing
-  from such a stream; `pid_publish_xml <file.pid>` says so on stderr
-  (`tests/publish_chain_faults.rs`), package mode does not.
+  way since 2026-11-11, and a table is built from the records that
+  walk read (`DocumentStyleTable::from_stylecluster_bytes` walks
+  `SheetChain::walk`; it had a walk of its own with no tripwire, which
+  read past the stop a warning named). A `.sym` body carries the
+  faults of its file (`SymbolGeometry::chain_faults`; `pid-plot` does
+  not read that yet). `sheet_record_starts` keeps the all-or-nothing
+  reading for the publish line's row reader and the semantic join,
+  which read nothing from such a stream. `pid_publish_xml` says so on
+  stderr, for a `.pid` and for each drawing of a backup package: one
+  read gives the drawing and the faults
+  (`pid_load::read_publish_from_reader`), and each line says how many
+  records of the kinds the publish reader keeps the chain read before
+  the stop — none, for a style table, whose stop costs the XML
+  nothing (`tests/publish_chain_faults.rs`). `_Index.json` and
+  `_Coverage.json` do not carry the faults.
 - **A length that is wrong and still inside the stream** sends the
   walk on from an offset where no record starts, so "the records the
   chain read" are the file's only as far as the lengths were right.
@@ -503,7 +513,25 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   the corpora carry: that list catches more and would stop a sound
   drawing at its first `igBalloon`. A walk that lands back on the
   chain and reaches the end is given away by the header's count alone,
-  and that fault names no place.
+  and that fault names no place. The class table was read from one
+  build, `radsrvitem.dll` 9.0.0.143 (its slots are not in CLSID order;
+  what ends it is what follows slot `0x0118`, three doubles and
+  pointers): a later build with a class past `0x0118` would write
+  records the walk stops on, loudly.
+- **What a walk reads off the chain, no family decodes.** A walk that
+  has left the record boundaries can still land on a word the class
+  table has: `0x003D`, a page frame's type word, is also the character
+  `=` in a label's text. Of 49 058 records such walks read off the
+  corpora's chains (3 337 379 single-length changes, 885 documents),
+  ten decoded as `igSmartFrame2d` until 2026-11-11 — payloads of
+  65 536 bytes and more, doubles that are denormals. A frame states
+  its extent twice, width and height at `+76` / `+84` and height over
+  width at `+148`, and the decoder now refuses one whose stated ratio
+  is more than a millionth (relative) from that quotient: all 178
+  frames of the corpora's chains agree to 5e-16, none of the ten does.
+  `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs` is
+  the measurement; `tests/sheet_chain_faults.rs` pins the same on the
+  committed streams on every run.
 - `0x0021 ComplexString` and `0x007B Group` are **associations**: a
   member count, a double, and one 14-byte entry per member (oid, range
   box, a word). Neither states a coordinate and neither emits: each
@@ -517,9 +545,19 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   `igArc2d` with its layer and style id, joined by `0x0019 KeyPoint
   Constraint` members, which have no decoder and need none; a Group
   lists the two `igRectangle2d` of a border or, in `A0-W.igr` to
-  `A3-W.igr`, the 37 records of a logo. See
+  `A3-W.igr`, the 37 records of a logo. That a string prints its
+  members and nothing else has a vendor plot behind it for three
+  strings: the A2 acceptance sheet wears `CPECCHB-SQ-A2.igr`, whose
+  frame and title-block borders are `ComplexString`s of four, three
+  and two lines, and the vendor's plot draws each member once, in one
+  pen width, with no other ink, fill or text within 0.4 mm of it
+  (`pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is.rs`).
+  A string whose members are arcs — `D04`'s, the one the census pins —
+  has no plot of its own. See
   `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-  §10.4 and §16.
+  §10.4 and §16, and
+  `docs/analysis/2026-11-11-what-the-plant-backup-census-pins-and-why-none-of-it-draws.md`
+  §2.
 
 Phase 14 milestones are tracked in
 `goals/phase14-sppid-sheet-geometry/progress.jsonl`. See
@@ -612,6 +650,27 @@ the chain: over the 53 backup sheets, coverage of the sheet streams went from
 99.24% to 98.65% (68 552 bytes on 33 streams; `A井场`'s `/Sheet6` from 99.0% to
 97.9%), and every one of those bytes lies in a superseded copy of a record —
 `0x8000` in the type word — which the native reader skips and no family decodes.
+
+`probe_what_passes_for_a_page_frame_off_the_chain` asks what a walk that has
+left the record boundaries takes for an `igSmartFrame2d`. It changes one length
+by ±1 … ±64 on every record of every distinct chain stream of the corpora and
+their archives (885 documents, 3 337 379 changes), and of the 49 058 records the
+walks read off the chain it finds ten that were frames by the decoder's rules
+before 2026-11-11 and none the decoder takes now; beside them it reads the 178
+real frames for their payload lengths (228, 234, 238, 246) and for the ratio
+each states against its own height over its width. It exits non-zero if a
+record read off the chain decodes as a frame, a live frame is refused, or a
+frame's ratio is not that quotient. Run it with `--release`: about three
+minutes.
+
+`pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is`
+reads the vendor's plot of the A2 acceptance sheet along each curve member of
+the three `ComplexString`s its template holds: the member's length against the
+vendor ink that runs along it and the pen widths of that ink, the vendor ink in
+the corridor that ours covers and does not, the fill outlines and text there,
+and — for the frame, whose lines `read_plot` leaves out of both pages as sheet
+edges — the strokes `read_plot_pens` lists. It reads each member drawn once
+and nothing else in the corridors.
 
 `pid-plot/examples/probe_export_bytes_unchanged` records 71 pages — the 53
 backup sheets, the 7 fixtures, the 11 reference sheets — and compares two
