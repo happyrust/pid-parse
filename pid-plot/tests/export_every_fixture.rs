@@ -84,7 +84,7 @@ use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing, lay_out_with_symbol_roots};
 use pid_plot::read::read_plot;
-use pid_plot::write::{PlotFont, WriteLedger, stroked_segments, write_plot_audited, written_order};
+use pid_plot::write::{PlotFont, WriteLedger, stroked_segments, write_plot_audited};
 
 /// The reference share: where this machine keeps the licensed faces, and the
 /// `Ref` library the symbol check at the end of the gate searches.
@@ -266,17 +266,46 @@ fn inked_characters(text: &str) -> impl Iterator<Item = char> + '_ {
     text.chars().filter(|character| !character.is_whitespace())
 }
 
-/// Every character the writer lettered, in the order it wrote them: the
-/// `decoded` layer and then the `inferred` one, each in the order the sheet
-/// draws its objects in — a label where its record stands in the sheet's
-/// list, which is neither the model's order nor the stream's.
+/// The primitives a page is written from, by index, in the order they are
+/// put on it — stated here, not taken from the writer: the `decoded` layer
+/// and then the `inferred` one, and within a layer the order the sheet
+/// draws its objects in when the page model states one
+/// ([`PaperModel::paint_sequence`]), strokes first and labels after, each in
+/// the model's own order, when it states none. `probe_only` primitives are
+/// not written.
+fn painted_order(model: &PaperModel) -> Vec<usize> {
+    let sequence = model.paint_sequence();
+    let mut order = Vec::new();
+    for confidence in ["decoded", "inferred"] {
+        let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+        match &sequence {
+            Some(sequence) => order.extend(sequence.iter().copied().filter(of_layer)),
+            None => {
+                let label = |index: &usize| {
+                    matches!(model.primitives[*index].shape, PaperShape::Text { .. })
+                };
+                let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+                order.extend(layer.iter().copied().filter(|index| !label(index)));
+                order.extend(layer.iter().copied().filter(label));
+            }
+        }
+    }
+    order
+}
+
+/// Every character the writer lettered, in the order a page is painted in
+/// ([`painted_order`]): the `decoded` layer and then the `inferred` one, each
+/// in the order the sheet draws its objects in — a label where its record
+/// stands in the sheet's list, which is neither the model's order nor the
+/// stream's.
 ///
-/// Both halves are the writer's own account of the page rather than a second
-/// copy of its rules: which labels were lettered is its [`WriteLedger`], and
-/// the order it visited them in is [`written_order`].
+/// Which labels were lettered is the writer's own account of the page, its
+/// [`WriteLedger`]. The order is this test's statement, so a writer that
+/// letters a page in another order than the sheet states reads back
+/// differently here.
 fn lettered_characters(model: &PaperModel, ledger: &WriteLedger) -> Vec<InkedChar> {
     let mut lettered = Vec::new();
-    for index in written_order(model) {
+    for index in painted_order(model) {
         let primitive = &model.primitives[index];
         let PaperShape::Text { value, .. } = &primitive.shape else {
             continue;

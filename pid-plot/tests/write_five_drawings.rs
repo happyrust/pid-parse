@@ -6,7 +6,7 @@ use std::process::Command;
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
-use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot, written_order};
+use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
 
 #[path = "../src/scratch.rs"]
 mod scratch;
@@ -186,9 +186,36 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
     None
 }
 
-/// What the writer draws for each placed run, in the order it letters them
-/// ([`written_order`]): where the sheet lists each label among its objects,
-/// not where the model holds it.
+/// The primitives a page is written from, by index, in the order they are
+/// put on it — stated here, not taken from the writer: the `decoded` layer
+/// and then the `inferred` one, and within a layer the order the sheet
+/// draws its objects in when the page model states one
+/// ([`PaperModel::paint_sequence`]), strokes first and labels after, each in
+/// the model's own order, when it states none. `probe_only` primitives are
+/// not written.
+fn painted_order(model: &PaperModel) -> Vec<usize> {
+    let sequence = model.paint_sequence();
+    let mut order = Vec::new();
+    for confidence in ["decoded", "inferred"] {
+        let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+        match &sequence {
+            Some(sequence) => order.extend(sequence.iter().copied().filter(of_layer)),
+            None => {
+                let label = |index: &usize| {
+                    matches!(model.primitives[*index].shape, PaperShape::Text { .. })
+                };
+                let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+                order.extend(layer.iter().copied().filter(|index| !label(index)));
+                order.extend(layer.iter().copied().filter(label));
+            }
+        }
+    }
+    order
+}
+
+/// What the writer draws for each placed run, in the order a page is painted
+/// in ([`painted_order`], this test's own statement of it): where the sheet
+/// lists each label among its objects, not where the model holds it.
 ///
 /// A drawing pads its label fields with spaces (`H=11.8MPa `,
 /// ` 1001102A`). The reference plots letter a leading pad as a glyph and
@@ -197,7 +224,7 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
 /// means no run at all.
 fn text_runs(model: &PaperModel) -> Vec<&str> {
     let mut runs = Vec::new();
-    for index in written_order(model) {
+    for index in painted_order(model) {
         if let PaperShape::Text {
             value,
             height_mm,
