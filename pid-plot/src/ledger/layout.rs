@@ -493,9 +493,8 @@ impl LayoutLedger {
     /// of its stream take no place: how many, and what the page is instead
     /// of the paper when the stream is the drawing's own sheet.
     fn what_a_stop_left_without_a_place(&self, record: &ChainFaultRecord) -> Option<String> {
-        if record.fault.stop.is_none() {
-            return None;
-        }
+        // Only a chain that stopped: one read to its end left nothing unread.
+        record.fault.stop.as_ref()?;
         let item = self.unplaced.iter().find(|item| {
             item.why == UnplacedWhy::NoRecordOfTheSheet
                 && item.domain == record.domain
