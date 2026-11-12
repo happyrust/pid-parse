@@ -127,8 +127,11 @@ pub struct SheetChildTable {
     /// less than a metre from the origin and 2.0 from one metre to two — on
     /// every one of the corpora's 1 273 sheets, whatever paper they state:
     /// one sheet on A1 paper whose children stop 998.0 mm out states 1.0
-    /// where the other thirty-nine state 2.0
-    /// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`).
+    /// where the other thirty-nine state 2.0. The straight-line distance
+    /// with a line at one metre is the rule that fits them; the readings
+    /// give that pair, not either half alone
+    /// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`,
+    /// §2.4).
     pub range_scale: f64,
     /// The sheet's children, in the order the sheet draws them.
     pub children: Vec<SheetChild>,

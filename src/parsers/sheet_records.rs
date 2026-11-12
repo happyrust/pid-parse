@@ -8384,8 +8384,13 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 // with the sheet, the layer or the size of what is listed. `A1-W.igr` keeps
 // its border group at `2.0` and its logo group at `1.0` on one sheet. Held
 // on 1 293 records of the corpora with none against it, read off the files
-// and not off the vendor's code
-// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`).
+// and not off the vendor's code. That the reach is the straight-line
+// distance, and the line a metre, is a pair the readings give only
+// together: other measures of the far corner part the two scales as well
+// (its p-norms from p = 1.63 up), and it is the line at a round metre that
+// leaves the distance
+// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`
+// §2.4).
 //
 // Both decode so that they stop being graphic records nothing reads, and
 // both emit nothing: emitting either would draw its members twice.

@@ -17,7 +17,7 @@
 //! `PlantData~*.zip`, each distinct sheet stream once — and sets the scale
 //! beside what could decide it: the kind of record, the document, the paper
 //! the sheet states, the scale of the sheet the record sits on, its layer,
-//! its owner, and five measures of where its children lie. It prints
+//! its owner, and seven measures of where its children lie. It prints
 //!
 //! 1. every `ComplexString` and Group, one line each;
 //! 2. the sheets, tallied by kind of document, paper and scale;
@@ -26,7 +26,10 @@
 //!    that is a property of the place a record sits in;
 //! 4. for each measure, the largest value among the records at `1.0` and
 //!    the smallest among those at `2.0`: a measure decides the scale only
-//!    if the first is below the second;
+//!    if the first is below the second — and then (4b) the same for the
+//!    family the one measure that passes belongs to, the far corner's
+//!    p-norms from 1 to 12 and weighted sums of its two coordinates, with
+//!    whether the gap between the two scales holds a metre;
 //! 5. the rule that comes out, held to every record: the scale is `1.0`
 //!    while the far corner of the box that holds the children is less than
 //!    a metre from the origin, and `2.0` from there to two metres.
@@ -39,10 +42,22 @@
 //! Read on 2026-11-12: 885 documents, 1 293 records (1 273 sheets, 8
 //! strings, 12 groups), 1 233 at `1.0` and 60 at `2.0`. The far corner's
 //! distance separates them with nothing in between: at most 998.0 mm under
-//! `1.0`, at least 1 015.9 mm under `2.0`. No other measure does, and no
-//! property of the place does: `A1-W.igr` keeps its border group at `2.0`
-//! and its logo group at `1.0` on one sheet, under one owner, on no layer,
-//! and one sheet on A1 paper states `1.0` where thirty-nine state `2.0`.
+//! `1.0`, at least 1 015.9 mm under `2.0`. None of the other six measures
+//! does, and no property of the place does: `A1-W.igr` keeps its border
+//! group at `2.0` and its logo group at `1.0` on one sheet, under one
+//! owner, on no layer, and one sheet on A1 paper states `1.0` where
+//! thirty-nine state `2.0`.
+//!
+//! The distance is not the only measure that could, though. It is the far
+//! corner's 2-norm, and the p-norms separate the two scales for every p
+//! from 1.63 to the 12.00 tried; so do the weighted sums `x + k*y` for k
+//! from 0.01 to 0.50. What leaves the distance is the line: a metre is the
+//! one round length between 998.0 and 1 015.9 mm, and `2^15` of the
+//! record's own units, and the gap between the two scales holds a metre
+//! only for p from 1.99 to 2.10 (and for `x + k*y` at k = 0.29 and 0.30,
+//! a weight nothing recommends). So the rule of section 5 is a pair — the
+//! straight-line distance, and a line at one metre — that fits every
+//! record at both ends; neither half is a reading by itself.
 //!
 //! ```text
 //! cargo run --example probe_what_decides_the_scale_of_a_range_box
@@ -586,6 +601,98 @@ fn main() {
             }
         );
     }
+
+    // The seven above are not the only measures there are. The far corner's
+    // distance is its 2-norm; its largest coordinate is the limit of the
+    // p-norms as p grows, and x + y is the 1-norm. So the family between
+    // them is tried, and the weighted sums beside it: which of them
+    // separate the two scales, and for which of those the gap between the
+    // two holds a metre — the one round length the scale could turn on.
+    println!("\n== 4b. which other measures of the far corner separate the scales?");
+    let corners = |scale: f64| -> Vec<(f64, f64)> {
+        containers
+            .iter()
+            .filter(|c| c.scale == scale)
+            .filter_map(Container::far_corner)
+            .collect()
+    };
+    let (at_one, at_two) = (corners(1.0), corners(2.0));
+    // The largest value under 1.0 and the smallest under 2.0, in metres.
+    let gap = |measure: &dyn Fn(f64, f64) -> f64| -> (f64, f64) {
+        (
+            at_one
+                .iter()
+                .map(|&(x, y)| measure(x, y))
+                .fold(f64::NEG_INFINITY, f64::max),
+            at_two
+                .iter()
+                .map(|&(x, y)| measure(x, y))
+                .fold(f64::INFINITY, f64::min),
+        )
+    };
+    // The runs of consecutive hundredths that `holds` is true of, as text.
+    let runs = |hundredths: std::ops::RangeInclusive<u32>, holds: &dyn Fn(f64) -> bool| -> String {
+        let mut found: Vec<(u32, u32)> = Vec::new();
+        for step in hundredths {
+            if holds(f64::from(step) / 100.0) {
+                match found.last_mut() {
+                    Some((_, last)) if *last + 1 == step => *last = step,
+                    _ => found.push((step, step)),
+                }
+            }
+        }
+        if found.is_empty() {
+            return "none".to_owned();
+        }
+        found
+            .iter()
+            .map(|&(first, last)| {
+                format!(
+                    "{:.2} to {:.2}",
+                    f64::from(first) / 100.0,
+                    f64::from(last) / 100.0
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let p_norm = |p: f64| move |x: f64, y: f64| (x.powf(p) + y.powf(p)).powf(1.0 / p);
+    let separates = |(most_at_one, least_at_two): (f64, f64)| most_at_one < least_at_two;
+    let holds_a_metre =
+        |(most_at_one, least_at_two): (f64, f64)| most_at_one < 1.0 && 1.0 <= least_at_two;
+    println!(
+        "p-norms of the far corner, (x^p + y^p)^(1/p), p from 1.00 to 12.00 by hundredths: separate for p from {}",
+        runs(100..=1200, &|p| separates(gap(&p_norm(p))))
+    );
+    println!(
+        "  of those, the ones whose gap holds 1 000 mm: p from {}",
+        runs(100..=1200, &|p| holds_a_metre(gap(&p_norm(p))))
+    );
+    for p in [1.0, 1.5, 1.8, 2.0, 2.2, 3.0, 8.0, 12.0] {
+        let (most_at_one, least_at_two) = gap(&p_norm(p));
+        println!(
+            "  p = {p:<4} largest at 1.0: {:>8.1} mm   smallest at 2.0: {:>8.1} mm   {}",
+            most_at_one * 1000.0,
+            least_at_two * 1000.0,
+            if !separates((most_at_one, least_at_two)) {
+                "does not"
+            } else if holds_a_metre((most_at_one, least_at_two)) {
+                "separates, and the gap holds a metre"
+            } else {
+                "separates; a metre is not in the gap"
+            }
+        );
+    }
+    println!(
+        "weighted sums x + k*y, k from 0.00 to 2.00 by hundredths: separate for k from {}; the gap holds 1 000 mm for k from {}",
+        runs(0..=200, &|k| separates(gap(&|x, y| x + k * y))),
+        runs(0..=200, &|k| holds_a_metre(gap(&|x, y| x + k * y)))
+    );
+    println!(
+        "weighted sums k*x + y, k from 0.00 to 2.00 by hundredths: separate for k from {}; the gap holds 1 000 mm for k from {}",
+        runs(0..=200, &|k| separates(gap(&|x, y| k * x + y))),
+        runs(0..=200, &|k| holds_a_metre(gap(&|x, y| k * x + y)))
+    );
 
     println!("\n== 5. the rule: 1.0 under a metre to the far corner, 2.0 from one to two");
     let mut broken = 0usize;

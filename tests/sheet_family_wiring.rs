@@ -716,8 +716,9 @@ fn range_scales(
 ///
 /// Three records carry such a list — a sheet's own (`0x0114 JSheet`), a
 /// `ComplexString` and a Group — and the rule is the same for all three. It
-/// is the distance that decides, not the paper, the template, the layer,
-/// the owner, the sheet's own scale or the size of what is listed:
+/// is how far the children reach that decides, not the paper, the template,
+/// the layer, the owner, the sheet's own scale or the size of what is
+/// listed:
 /// `A1-W.igr` keeps the group of its border, which reaches (841, 594) mm,
 /// at `2.0`, and the group of its logo, 14 mm long and 718 mm out, at `1.0`
 /// — on one sheet, under one owner, on no layer; and `A0-W.igr`'s logo, the
@@ -730,6 +731,13 @@ fn range_scales(
 /// `examples/probe_what_decides_the_scale_of_a_range_box.rs`, 1 293 records
 /// of 885 documents; see
 /// `docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`.
+///
+/// What is held is the rule that fits them, and it is a pair: the reach
+/// measured as the straight-line distance to the far corner, and the line
+/// at one metre. The readings do not give either half alone — the far
+/// corner's p-norms part the two scales for every p from 1.63 up, and it is
+/// the line at a round metre that leaves p between 1.99 and 2.10 (the
+/// note, §2.4).
 #[test]
 fn a_range_scale_is_set_by_how_far_the_children_reach() {
     let mut documents = Vec::new();

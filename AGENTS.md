@@ -815,7 +815,17 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   is it whether an `i16` holds each coordinate: an A1 frame ends at
   841 mm and states 2.0 for its diagonal of 1 030. Read off the
   files, not off the vendor's code; a box past two metres has no
-  witness. A reader takes the scale as stated, as before; a writer
+  witness. **The rule is a pair, and the readings give neither half
+  alone.** The straight-line distance is not the only measure of the
+  far corner that parts the two scales: its p-norms do for every p
+  from 1.63 to the 12 tried, and so do weighted sums of its two
+  coordinates. What leaves the distance is the line at one metre —
+  the one round length between 998.0 and 1 015.9 mm, and `2^15` of
+  the record's own units — since the gap between the scales holds a
+  metre only for p from 1.99 to 2.10. The distance with a line at a
+  metre fits every record at both ends; "it is the distance" and "the
+  line is at a metre" are each only compatible with what was read. A
+  reader takes the scale as stated, as before; a writer
   would have to set it by this
   (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`,
   `examples/probe_what_decides_the_scale_of_a_range_box.rs`). A `ComplexString`'s curve members are `igLine2d` /
@@ -1174,11 +1184,17 @@ records) and sets the scale each states beside what could decide it. It
 prints the twenty strings and groups one by one, the sheets by paper and
 scale, the records that share a document, a sheet, an owner and a layer and
 state two scales (two places), and, for seven measures of where the children
-lie, the largest value under 1.0 against the smallest under 2.0: only the
-distance from the origin to the far corner separates them (998.0 mm against
-1 015.9 mm). It exits non-zero when a record does not state the scale that
-distance calls for; an argument lists the records of the documents it names.
-About 70 seconds in a debug build.
+lie, the largest value under 1.0 against the smallest under 2.0: of the seven
+only the distance from the origin to the far corner separates them (998.0 mm
+against 1 015.9 mm). The seven are not all there is, so it goes on (section
+4b, 2026-11-12) to the family the distance belongs to: the far corner's
+p-norms separate the two scales for every p from 1.63 to the 12.00 tried, and
+weighted sums `x + k*y` for k from 0.01 to 0.50, while the gap between the
+scales holds a metre only for p from 1.99 to 2.10 (and at k = 0.29 and 0.30).
+So what the readings single out is a pair — the straight-line distance, with
+the line at one metre — and neither half by itself. It exits non-zero when a
+record does not state the scale that distance calls for; an argument lists
+the records of the documents it names. About 70 seconds in a debug build.
 
 `probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
 its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
