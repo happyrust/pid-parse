@@ -71,7 +71,7 @@ use std::process::Command;
 
 use pid_plot::fonts::font_dirs;
 use pid_plot::ledger::{
-    DropReason, ExportLedger, LedgerDomain, PlacementSource, Tier, UnplacedWhy,
+    DomainAccount, DropReason, ExportLedger, LedgerDomain, PlacementSource, Tier, UnplacedWhy,
 };
 use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, border_template_places, lay_out_drawing,
@@ -2371,32 +2371,34 @@ fn the_gauge() -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-/// A copy of [`flash_b`] whose gauge has no cached body.
+/// A copy of the drawing or border template `source`, written to `out`, in
+/// which no placement of the symbol file named `symbol` has a cached body;
+/// and the path each of those placements names, as the file stores it.
 ///
-/// A drawing carries the body of every symbol it places, and a placement is
-/// drawn from that copy; the `.sym` its site names is read only when the
-/// drawing holds none. Every page of the corpora is drawn from cached
-/// bodies alone. To reach the library, the copy's one placement of the
-/// gauge names a body the drawing does not hold: an `igSymbol2d` record
-/// ends on the two words that name its cached body, the definition sheet's
-/// oid and the site's, and the first of them is given an oid no definition
-/// carries. Every other byte is the fixture's, the cache included, so the
-/// other 64 placements are drawn as before.
-fn flash_b_without_the_gauges_cached_body(case: &str) -> PathBuf {
+/// A document carries the body of every symbol it places, and a placement
+/// is drawn from that copy; the `.sym` it names is read only when the
+/// document holds none. Every page of the corpora is drawn from cached
+/// bodies alone. To reach the library, the copy's placements of the symbol
+/// name a body the document does not hold: an `igSymbol2d` record ends on
+/// the two words that name its cached body, the definition sheet's oid and
+/// the site's, and the first of them is given an oid no definition carries.
+/// Every other byte is the source's, the caches included, so every other
+/// placement is drawn as before.
+fn without_the_cached_bodies_of(source: &Path, symbol: &str, out: &Path) -> Vec<String> {
     use pid_parse::geometry::PidGraphicKind;
     use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
-    let source = flash_b();
     let package = pid_parse::PidParser::new()
-        .parse_package(&source)
+        .parse_package(source)
         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
     let doc = pid_parse::PidParser::new()
-        .parse_file(&source)
+        .parse_file(source)
         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
     let geometry = pid_parse::build_normalized_geometry(&doc);
-    // The placement of the gauge: its stream, where its record ends, and
-    // the definition sheet it names.
-    let gauges: Vec<(String, usize, u32)> = geometry
+    let wanted = symbol.to_ascii_lowercase();
+    // Each placement of the symbol: the path it names, its stream, where
+    // its record ends, and the definition sheet it names.
+    let placements: Vec<(String, String, usize, u32)> = geometry
         .entities
         .iter()
         .filter_map(|entity| match &entity.kind {
@@ -2404,7 +2406,8 @@ fn flash_b_without_the_gauges_cached_body(case: &str) -> PathBuf {
                 symbol_path: Some(path),
                 definition: Some(definition),
                 ..
-            } if path.ends_with("PG-Pressure Gauge.sym") => Some((
+            } if path.to_ascii_lowercase().ends_with(&wanted) => Some((
+                path.clone(),
                 entity.source.stream_path.clone()?,
                 entity.source.byte_range.as_ref()?.end,
                 definition.sheet,
@@ -2412,41 +2415,55 @@ fn flash_b_without_the_gauges_cached_body(case: &str) -> PathBuf {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        gauges.len(),
-        1,
-        "the fixture places the gauge once: {gauges:?}"
-    );
-    let (stream, end, definition_sheet) = gauges[0].clone();
-    let mut sheet = package
-        .get_stream(&stream)
-        .unwrap_or_else(|| panic!("{} has no {stream}", source.display()))
-        .data
-        .clone();
-    let at = end - 8;
-    assert_eq!(
-        sheet[at..at + 4],
-        definition_sheet.to_le_bytes(),
-        "the body the placement names, where its record keeps it"
-    );
-    sheet[at..at + 4].copy_from_slice(&0x7fff_fff0u32.to_le_bytes());
+    let mut streams: std::collections::BTreeMap<String, Vec<u8>> =
+        std::collections::BTreeMap::new();
+    for (_, stream, end, definition_sheet) in &placements {
+        let sheet = streams.entry(stream.clone()).or_insert_with(|| {
+            package
+                .get_stream(stream)
+                .unwrap_or_else(|| panic!("{} has no {stream}", source.display()))
+                .data
+                .clone()
+        });
+        let at = end - 8;
+        assert_eq!(
+            sheet[at..at + 4],
+            definition_sheet.to_le_bytes(),
+            "the body the placement names, where its record keeps it"
+        );
+        sheet[at..at + 4].copy_from_slice(&0x7fff_fff0u32.to_le_bytes());
+    }
     let plan = WritePlan {
-        stream_replacements: vec![StreamReplacement {
-            path: stream,
-            new_data: sheet,
-        }],
+        stream_replacements: streams
+            .into_iter()
+            .map(|(path, new_data)| StreamReplacement { path, new_data })
+            .collect(),
         ..WritePlan::default()
     };
+    PidWriter::write_to(&package, &plan, out)
+        .unwrap_or_else(|error| panic!("write {}: {error}", out.display()));
+    placements.into_iter().map(|(path, ..)| path).collect()
+}
+
+/// A copy of [`flash_b`] whose gauge has no cached body
+/// ([`without_the_cached_bodies_of`]): its one placement of the gauge is
+/// drawn from the symbol library, the other 64 from the bodies the drawing
+/// caches, as before.
+fn flash_b_without_the_gauges_cached_body(case: &str) -> PathBuf {
     let path = scratch(case).join("flash-b-no-cached-gauge.pid");
-    PidWriter::write_to(&package, &plan, &path)
-        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    let placed = without_the_cached_bodies_of(&flash_b(), "PG-Pressure Gauge.sym", &path);
+    assert_eq!(
+        placed.len(),
+        1,
+        "the fixture places the gauge once: {placed:?}"
+    );
     path
 }
 
-/// A symbol root that holds one file, the gauge as `bytes`.
-fn a_library_of_the_gauge(case: &str, bytes: &[u8]) -> PathBuf {
+/// A symbol root that holds one file, `bytes`, at `relative`.
+fn a_library_holding(case: &str, relative: &[&str], bytes: &[u8]) -> PathBuf {
     let root = scratch(case).join("library");
-    let path = GAUGE
+    let path = relative
         .iter()
         .fold(root.clone(), |path, part| path.join(part));
     std::fs::create_dir_all(path.parent().expect("a directory"))
@@ -2455,61 +2472,99 @@ fn a_library_of_the_gauge(case: &str, bytes: &[u8]) -> PathBuf {
     root
 }
 
-/// The gauge with its fullest sheet — `/Sheet6`, its normal view — changed
-/// by `damage`, which is handed the stream's bytes and the offset of its
-/// middle record, and what a reader of the chain finds wrong with it.
-fn a_damaged_gauge(damage: fn(&mut [u8], usize)) -> (Vec<u8>, pid_parse::StreamChainFault) {
+/// A symbol root that holds one file, the gauge as `bytes`.
+fn a_library_of_the_gauge(case: &str, bytes: &[u8]) -> PathBuf {
+    a_library_holding(case, &GAUGE, bytes)
+}
+
+/// What a chain stream opens with.
+const CHAIN_MAGIC: [u8; 4] = [0x44, 0xF5, 0x90, 0x6C];
+
+/// The record starts of a chain stream: an eight-byte header, then records
+/// end to end.
+fn record_starts(data: &[u8]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut at = 8usize;
+    while at + 6 <= data.len() {
+        starts.push(at);
+        let length = u32::from_le_bytes(data[at + 2..at + 6].try_into().expect("four bytes"));
+        at += 6 + length as usize;
+    }
+    starts
+}
+
+/// The gauge with each stream of `streams` changed by `damage` — which is
+/// handed the stream's bytes and the offset of its middle record — and what
+/// a reader of each chain finds wrong with it, in the order of `streams`.
+///
+/// The file keeps four chain streams a body is read from: `/Sheet6`, its
+/// normal view; `/Sheet68`, a second sheet the sound file is not drawn
+/// from; `/StyleCluster`, its pens; and `/PSMcluster0`, its layers and
+/// which of them each sheet shows.
+fn a_gauge_damaged_in(
+    streams: &[&str],
+    damage: fn(&mut [u8], usize),
+) -> (Vec<u8>, Vec<pid_parse::StreamChainFault>) {
     use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
     let package = pid_parse::PidParser::new()
         .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
         .unwrap_or_else(|error| panic!("the gauge: {error}"));
-    // The record starts of a chain stream: an eight-byte header, then
-    // records end to end.
-    let starts = |data: &[u8]| -> Vec<usize> {
-        let mut starts = Vec::new();
-        let mut at = 8usize;
-        while at + 6 <= data.len() {
-            starts.push(at);
-            let length = u32::from_le_bytes(data[at + 2..at + 6].try_into().expect("four bytes"));
-            at += 6 + length as usize;
-        }
-        starts
-    };
-    let (stream, data) = package
+    let mut plan = WritePlan::default();
+    let mut faults = Vec::new();
+    for stream in streams {
+        let mut data = package
+            .get_stream(stream)
+            .unwrap_or_else(|| panic!("the gauge has no {stream}"))
+            .data
+            .clone();
+        assert!(
+            data.starts_with(&CHAIN_MAGIC),
+            "{stream} is no chain stream"
+        );
+        let records = record_starts(&data);
+        assert!(
+            records.len() >= 2,
+            "{stream} holds {} record(s)",
+            records.len()
+        );
+        damage(&mut data, records[records.len() / 2]);
+        let fault = pid_parse::StreamChainFault::of_stream(stream, &data)
+            .unwrap_or_else(|| panic!("the chain of {stream} holds"));
+        assert!(fault.stop.is_some(), "{fault:?}");
+        faults.push(fault);
+        plan.stream_replacements.push(StreamReplacement {
+            path: (*stream).to_string(),
+            new_data: data,
+        });
+    }
+    let bytes = PidWriter::write_to_bytes(&package, &plan)
+        .unwrap_or_else(|error| panic!("the damaged gauge is written: {error}"));
+    (bytes, faults)
+}
+
+/// The gauge with its fullest sheet — `/Sheet6`, its normal view — changed
+/// by `damage`, which is handed the stream's bytes and the offset of its
+/// middle record, and what a reader of the chain finds wrong with it.
+fn a_damaged_gauge(damage: fn(&mut [u8], usize)) -> (Vec<u8>, pid_parse::StreamChainFault) {
+    let package = pid_parse::PidParser::new()
+        .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
+        .unwrap_or_else(|error| panic!("the gauge: {error}"));
+    let fullest = package
         .streams
         .iter()
         .filter(|(path, raw)| {
             path.rsplit('/')
                 .next()
                 .is_some_and(|name| name.starts_with("Sheet"))
-                && raw.data.starts_with(&[0x44, 0xF5, 0x90, 0x6C])
+                && raw.data.starts_with(&CHAIN_MAGIC)
         })
-        .map(|(path, raw)| (path.clone(), raw.data.clone()))
-        .max_by_key(|(_, data)| starts(data).len())
+        .max_by_key(|(_, raw)| record_starts(&raw.data).len())
+        .map(|(path, _)| path.clone())
         .expect("the gauge has a sheet");
-    assert_eq!(stream, "/Sheet6", "the gauge's fullest sheet");
-    let records = starts(&data);
-    assert!(
-        records.len() >= 3,
-        "{stream} holds {} records",
-        records.len()
-    );
-    let mut broken = data;
-    damage(&mut broken, records[records.len() / 2]);
-    let fault =
-        pid_parse::StreamChainFault::of_stream(&stream, &broken).expect("the chain does not hold");
-    assert!(fault.stop.is_some(), "{fault:?}");
-    let plan = WritePlan {
-        stream_replacements: vec![StreamReplacement {
-            path: stream,
-            new_data: broken,
-        }],
-        ..WritePlan::default()
-    };
-    let bytes = PidWriter::write_to_bytes(&package, &plan)
-        .unwrap_or_else(|error| panic!("the damaged gauge is written: {error}"));
-    (bytes, fault)
+    assert_eq!(fullest, "/Sheet6", "the gauge's fullest sheet");
+    let (bytes, mut faults) = a_gauge_damaged_in(&["/Sheet6"], damage);
+    (bytes, faults.remove(0))
 }
 
 /// The middle record of the sheet states a length of zero: the chain stops
@@ -2526,12 +2581,12 @@ fn a_flagged_type_word(data: &mut [u8], record: usize) {
     data[record + 1] |= 0x40;
 }
 
-/// The page laid out with `library` for its one symbol root, and its
-/// account.
-fn laid_out_with(drawing: &Path, library: &Path) -> (PaperModel, ExportLedger) {
+/// The page of `drawing` laid out against `corpus` with `library` for its
+/// one symbol root, and its account.
+fn laid_out_against(drawing: &Path, corpus: &Path, library: &Path) -> (PaperModel, ExportLedger) {
     let model = lay_out_with_symbol_roots(
         drawing,
-        &fixtures(),
+        corpus,
         vec![library.to_path_buf()],
         Vec::new(),
         &["a library of one gauge".to_string()],
@@ -2559,9 +2614,20 @@ fn laid_out_with(drawing: &Path, library: &Path) -> (PaperModel, ExportLedger) {
     (model, account)
 }
 
-/// Start `pid_plot` on `drawing` against the fixtures with `library` for
-/// its symbol library, as far as this machine lets an export go.
-fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str) -> Outcome {
+/// [`laid_out_against`] the repository's fixtures.
+fn laid_out_with(drawing: &Path, library: &Path) -> (PaperModel, ExportLedger) {
+    laid_out_against(drawing, &fixtures(), library)
+}
+
+/// Start `pid_plot` on `drawing` against `corpus` with `library` for its
+/// symbol library, as far as this machine lets an export go.
+fn export_against(
+    case: &str,
+    drawing: &Path,
+    corpus: &Path,
+    library: &Path,
+    name: &str,
+) -> Outcome {
     let out = unwritten(&scratch(case), name);
     let fonts = fonts_for_a_child();
     let mut command = pid_plot();
@@ -2569,7 +2635,7 @@ fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str)
         command.env("PID_PLOT_FONTS", fonts);
     }
     command.env("PID_SYMBOL_LIBRARY", library);
-    let outcome = run(command.arg(drawing).arg(&out).arg(fixtures()));
+    let outcome = run(command.arg(drawing).arg(&out).arg(corpus));
     match fonts {
         Ok(_) => {
             assert_eq!(outcome.code, Some(0), "{outcome}");
@@ -2584,6 +2650,11 @@ fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str)
         }
     }
     outcome
+}
+
+/// [`export_against`] the repository's fixtures.
+fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str) -> Outcome {
+    export_against(case, drawing, &fixtures(), library, name)
 }
 
 /// Whether a primitive of the page is one of the gauge's placement.
@@ -2625,28 +2696,32 @@ fn all_but_the_gauge(model: &PaperModel) -> Vec<PaperPrimitive> {
         .collect()
 }
 
-/// How many placements of the drawing's own a page draws from each source.
-fn drawn_from(account: &ExportLedger, source: PlacementSource) -> u64 {
-    account
-        .drawing
-        .bodies
-        .placements
-        .get(&source)
-        .copied()
-        .unwrap_or(0)
+/// How many placements of one domain a page draws from `source`.
+fn drawn_from_in(domain: &DomainAccount, source: PlacementSource) -> u64 {
+    domain.bodies.placements.get(&source).copied().unwrap_or(0)
 }
 
-/// What the account files of damaged symbol files: the site, the count
-/// and the bytes left unread, for the drawing's own domain.
-fn symbol_files_filed(account: &ExportLedger) -> Vec<(&str, u64, Option<u64>)> {
-    account
-        .drawing
+/// How many placements of the drawing's own a page draws from each source.
+fn drawn_from(account: &ExportLedger, source: PlacementSource) -> u64 {
+    drawn_from_in(&account.drawing, source)
+}
+
+/// What one domain's account files of damaged symbol files: the site, the
+/// count and the bytes left unread.
+fn symbol_files_filed_in(domain: &DomainAccount) -> Vec<(&str, u64, Option<u64>)> {
+    domain
         .parse
         .items
         .iter()
         .filter(|item| item.reason == DropReason::SymbolFileChainFault)
         .map(|item| (item.stream.as_str(), item.count, item.bytes))
         .collect()
+}
+
+/// What the account files of damaged symbol files for the drawing's own
+/// domain.
+fn symbol_files_filed(account: &ExportLedger) -> Vec<(&str, u64, Option<u64>)> {
+    symbol_files_filed_in(&account.drawing)
 }
 
 /// Every suspect count of the page's account, by code, over the page and
