@@ -885,10 +885,12 @@ fn the_w_drawing_templates_embedded_frames_decode_the_same_fills() {
 /// The two doubles where a boundary keeps the point its fill was seeded at
 /// are both `1e30` on every record whose reference count is zero, and a
 /// point inside the fill on every record that names its members: the
-/// 23 distinct templates and drawings the repository commits hold 71 of the
-/// first kind and 61 of the second, and the 111 distinct documents of the
+/// 43 distinct templates and drawings the repository commits — the twelve
+/// on disk and the `.igr` and `.pid` inside its archives — hold 92 of the
+/// first kind and 91 of the second, and the 111 distinct documents of the
 /// corpora 100 and 1 643
-/// (`examples/probe_what_curve_each_boundary_member_relists.rs`).
+/// (`examples/probe_what_curve_each_boundary_member_relists.rs`; run on
+/// `test-file` alone it reads the first three numbers).
 ///
 /// For a record of the first kind the decoder's `anchor` is not the file's:
 /// it is the first vertex of the ring, a point on the fill's edge. That is
