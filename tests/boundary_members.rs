@@ -4,9 +4,9 @@
 //! `A0-W.igr`, `A1-W.igr`, `A2-W.igr` and `A3-W.igr` — border templates a
 //! backup package keeps in its `RefData~4~682.zip` — draw one logo, and five
 //! of its 37 records are `igBoundary2d` fills: two stripes, the two caps of
-//! an ellipse, and a notched crescent. Their loops are not made of lines alone. Each
-//! member opens with a tag byte and then carries the geometry of one curve
-//! exactly as that curve's own record states it after its 18-byte
+//! an ellipse, and a notched crescent. Their loops are not made of lines
+//! alone. Each member opens with a tag byte and then carries the geometry of
+//! one curve exactly as that curve's own record states it after its 18-byte
 //! sub-header:
 //!
 //! | tag | member | the record it re-lists |
@@ -34,6 +34,13 @@
 //! own direction when it is clear. The anchor lies inside every one of the
 //! twenty fills.
 //!
+//! A curved member is flattened after the way its own record is drawn, and
+//! that is held too: a B-spline and an arc of the ellipse to the vertices
+//! of the polyline the sheet draws their records as, so there the edge of
+//! the fill is the line of its outline; the arc of a circle, whose
+//! `igArc2d` is drawn as a true arc, to chords that end on it and stand at
+//! most 0.046 mm inside it — under the 0.13 mm pen the arc is drawn with.
+//!
 //! The probe that measured this is
 //! `examples/probe_what_curve_each_boundary_member_relists.rs`; see
 //! `docs/analysis/2026-11-12-a-boundary-member-is-the-curve-its-reference-names.md`.
@@ -43,7 +50,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 
-use pid_parse::bspline::{sample, SEGMENTS_PER_SPAN};
+use pid_parse::bspline::{elliptical_arc_directed, sample, SEGMENTS_PER_SPAN};
 use pid_parse::parsers::sheet_records::{
     decode_igarcs, decode_igboundaries, decode_igbspcurves, decode_igellipticalarcs,
     decode_iggroups, decode_iglines, SheetIgBoundary2dDecoded,
@@ -151,6 +158,14 @@ fn members_of(data: &[u8], boundary: &SheetIgBoundary2dDecoded) -> Vec<Member> {
 
 /// The five fills of the logo, as measured on `A1-W.igr`: the boundary's
 /// oid there, its members' tags in order, and its area in mm².
+///
+/// The area is of the ring the record is flattened to. A cap is 0.2% short
+/// of the ellipse's own (9.766 98 mm², half the product of the semi-axes
+/// times `Δ − sin Δ` over its 106.26° of parameter): its arc is the 24
+/// segments its record is drawn as. The crescent is 1.7% short of its
+/// outline: its outer edge is the arc of a circle of radius 6.72 mm, cut
+/// into fifteen chords that stand 0.046 mm off it
+/// (`the_edge_of_a_w_fill_stays_under_the_pen_its_outline_is_drawn_with`).
 struct Fill {
     what: &'static str,
     a1_oid: u32,
@@ -168,13 +183,13 @@ const FILLS: [Fill; 5] = [
         what: "the upper stripe",
         a1_oid: 191,
         tags: &[LINE, ARC, LINE, ARC],
-        area_mm2: 10.344_136,
+        area_mm2: 10.370_597,
     },
     Fill {
         what: "the lower stripe",
         a1_oid: 198,
         tags: &[LINE, ARC, LINE, ARC],
-        area_mm2: 10.344_149,
+        area_mm2: 10.370_610,
     },
     Fill {
         what: "the notched crescent",
@@ -188,13 +203,13 @@ const FILLS: [Fill; 5] = [
         what: "the ellipse's lower cap",
         a1_oid: 343,
         tags: &[LINE, ARC],
-        area_mm2: 9.586_107,
+        area_mm2: 9.746_836,
     },
     Fill {
         what: "the ellipse's upper cap",
         a1_oid: 347,
         tags: &[ARC, LINE],
-        area_mm2: 9.586_107,
+        area_mm2: 9.746_836,
     },
 ];
 
@@ -391,6 +406,34 @@ fn hold_the_logo(name: &str, data: &[u8]) -> (Held, Vec<(Vec<u8>, f64)>) {
                         (turned - expected).abs() < 1e-9,
                         "{what}: turns {turned} rad of parameter, the arc {expected}"
                     );
+                    // And it is, vertex for vertex, the polyline the record
+                    // itself is stroked with — its exact rational B-spline
+                    // sampled the way a sheet's elliptical arc is drawn — so
+                    // the fill's edge is the line its own outline draws.
+                    let (poles, weights, knots) = elliptical_arc_directed(
+                        arc.center,
+                        arc.major_axis,
+                        arc.ratio,
+                        arc.sweep_start,
+                        arc.sweep_end,
+                        arc.flag == 0,
+                    )
+                    .unwrap_or_else(|| panic!("{what}: the record is an arc"));
+                    let mut stroke = sample(&poles, &weights, &knots, SEGMENTS_PER_SPAN);
+                    if !forward {
+                        stroke.reverse();
+                    }
+                    assert_eq!(
+                        member.vertices.len(),
+                        stroke.len(),
+                        "{what}: as many vertices as the record's stroke"
+                    );
+                    for (vertex, drawn) in member.vertices.iter().zip(&stroke) {
+                        assert!(
+                            distance(*vertex, *drawn) < 1e-12,
+                            "{what}: {vertex:?} against the record's stroke at {drawn:?}"
+                        );
+                    }
                     held.elliptical_arcs += 1;
                 }
                 (SPLINE, 0x00D4) => {
@@ -561,6 +604,8 @@ fn the_w_templates_fills_reach_the_sheet_and_nothing_is_refused() {
         let fills = pid_parse::style_link::fill_styles_for_document(&package.parsed);
         let boundaries = decode_igboundaries(data);
         assert_eq!(boundaries.len(), 5, "{name}: the logo's five fills decode");
+        // Members whose record the sheet draws as a polyline.
+        let mut along_a_drawn_polyline = 0usize;
         for boundary in &boundaries {
             let entity = normalized
                 .entities
@@ -607,7 +652,56 @@ fn the_w_templates_fills_reach_the_sheet_and_nothing_is_refused() {
                 boundary.oid,
                 boundary.index
             );
+            // A member whose record the sheet draws as a polyline — an arc
+            // of the ellipse, a B-spline — runs through that polyline's
+            // vertices: the edge of the fill is the line the sheet draws
+            // there, not a second flattening beside it.
+            for (member, reference) in members_of(data, boundary).iter().zip(&boundary.member_refs)
+            {
+                let drawn = normalized.entities.iter().find_map(|entity| {
+                    let id = entity.source.record_id.as_deref()?;
+                    let named = entity.graphic_oid == Some(reference.member_oid)
+                        && entity.source.stream_path.as_deref() == Some("/Sheet6")
+                        && (id.starts_with("igellipticalarc2d") || id.starts_with("igbspcurve2d"));
+                    match &entity.kind {
+                        PidGraphicKind::Polyline {
+                            points,
+                            closed: false,
+                        } if named => Some(points),
+                        _ => None,
+                    }
+                });
+                let Some(points) = drawn else {
+                    continue;
+                };
+                let mut drawn: Vec<Point> = points.iter().map(|p| (p.x, p.y)).collect();
+                // Bit 2 of the reference's last word: clear, the member
+                // runs against its record.
+                if reference.sub_word & 4 == 0 {
+                    drawn.reverse();
+                }
+                let what = format!(
+                    "{name} oid {} -> oid {}",
+                    boundary.oid, reference.member_oid
+                );
+                assert_eq!(
+                    member.vertices.len(),
+                    drawn.len(),
+                    "{what}: as many vertices as the polyline the sheet draws"
+                );
+                for (vertex, on_sheet) in member.vertices.iter().zip(&drawn) {
+                    assert!(
+                        distance(*vertex, *on_sheet) < 1e-12,
+                        "{what}: {vertex:?} against the sheet's {on_sheet:?}"
+                    );
+                }
+                along_a_drawn_polyline += 1;
+            }
         }
+        assert_eq!(
+            along_a_drawn_polyline, 8,
+            "{name}: the four arcs of the ellipse and the four B-splines the fills re-list"
+        );
         assert!(
             normalized.refused_graphic_records.is_empty(),
             "{name} refuses: {:?}",
@@ -618,6 +712,138 @@ fn the_w_templates_fills_reach_the_sheet_and_nothing_is_refused() {
             "{name} has records without a decoder: {:?}",
             normalized.dropped_graphic_records
         );
+    }
+}
+
+/// How far the edge of a fill stands from the line its outline draws.
+///
+/// A B-spline and an arc of the ellipse are flattened to the polyline their
+/// records are drawn as, so there the two are one line. The arc of a circle
+/// is drawn as a true arc and filled to chords of a quarter radian at most,
+/// each of which stands `r · (1 − cos(step / 2))` inside it. The farthest
+/// any chord of the corpora's boundaries stands off its arc is on this
+/// logo: 0.046 mm, on the crescent's outer edge — radius 6.72 mm, fifteen
+/// chords — which leaves the crescent filled 1.7% short of its outline.
+/// Every curve the fills re-list is drawn with a 0.13 mm pen, so the edge
+/// of the fill stays under the ink of its own outline, which reaches
+/// 0.065 mm to either side of the arc. No page wears the template and no
+/// vendor plot shows the logo, so that is as far as the gap has been looked
+/// at.
+#[test]
+fn the_edge_of_a_w_fill_stays_under_the_pen_its_outline_is_drawn_with() {
+    for name in ["A0-W.igr", "A1-W.igr", "A2-W.igr", "A3-W.igr"] {
+        let package = archived(name);
+        let data = package.streams["/Sheet6"].data.as_slice();
+        let pens = pid_parse::style_link::line_styles_for_document(&package.parsed);
+        let arcs: BTreeMap<u32, _> = decode_igarcs(data)
+            .into_iter()
+            .map(|arc| (arc.oid, arc))
+            .collect();
+
+        // The widest gap: how far, on an arc of what radius, cut into how
+        // many chords.
+        let mut widest = (0.0f64, 0.0f64, 0usize);
+        let mut arcs_held = 0usize;
+        // Each fill's area against the area inside its outline as the sheet
+        // draws it, by the fill's member count.
+        let mut short = Vec::new();
+        for boundary in decode_igboundaries(data) {
+            let ring: Vec<Point> = boundary
+                .segments
+                .iter()
+                .map(|segment| segment.start)
+                .collect();
+            let area = signed_area(&ring);
+            // What the chords of the fill's arcs leave out of it, or take
+            // into it.
+            let mut beyond = 0.0f64;
+            for (member, reference) in members_of(data, &boundary)
+                .iter()
+                .zip(&boundary.member_refs)
+            {
+                let what = format!(
+                    "{name} oid {} -> oid {}",
+                    boundary.oid, reference.member_oid
+                );
+                let pen = pens
+                    .get(&("/Sheet6".to_string(), reference.member_oid))
+                    .unwrap_or_else(|| panic!("{what}: the record resolves no pen"))
+                    .symbology
+                    .width_m;
+                assert!(
+                    (pen - 0.13e-3).abs() < 1e-12,
+                    "{what}: drawn with a {} mm pen",
+                    pen * 1e3
+                );
+                let Some(arc) = arcs.get(&reference.member_oid) else {
+                    continue;
+                };
+                for chord in member.vertices.windows(2) {
+                    let (from, to) = (chord[0], chord[1]);
+                    let middle = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+                    let gap = arc.radius - distance(middle, arc.center);
+                    assert!(
+                        (0.0..pen / 2.0).contains(&gap),
+                        "{what}: a chord stands {} mm off its arc, under a pen of {} mm",
+                        gap * 1e3,
+                        pen * 1e3
+                    );
+                    if gap > widest.0 {
+                        widest = (gap, arc.radius, member.vertices.len() - 1);
+                    }
+                    // The sliver between the chord and its arc: outside the
+                    // ring when the arc's centre is on the ring's inner
+                    // side of the chord, inside it otherwise.
+                    let angle = 2.0 * (distance(from, to) / (2.0 * arc.radius)).asin();
+                    let sliver = arc.radius * arc.radius * (angle - angle.sin()) / 2.0;
+                    let centre_side = (to.0 - from.0) * (arc.center.1 - from.1)
+                        - (to.1 - from.1) * (arc.center.0 - from.0);
+                    beyond += if centre_side * area > 0.0 {
+                        sliver
+                    } else {
+                        -sliver
+                    };
+                }
+                arcs_held += 1;
+            }
+            let outline = area.abs() + beyond;
+            short.push((boundary.segment_count, (1.0 - area.abs() / outline) * 100.0));
+        }
+        assert_eq!(
+            arcs_held, 6,
+            "{name}: the arcs of a circle the fills re-list"
+        );
+        eprintln!(
+            "{name}: the widest gap {:.6} mm, on an arc of radius {:.6} mm in {} chords; each \
+             fill short of its outline by {short:?} %",
+            widest.0 * 1e3,
+            widest.1 * 1e3,
+            widest.2
+        );
+        assert!(
+            (widest.0 * 1e3 - 0.0463).abs() < 1e-4
+                && (widest.1 * 1e3 - 6.7228).abs() < 1e-4
+                && widest.2 == 15,
+            "{name}: the widest gap is {} mm, on an arc of radius {} mm in {} chords",
+            widest.0 * 1e3,
+            widest.1 * 1e3,
+            widest.2
+        );
+        // The crescent, whose outer edge is that arc; a stripe, one end of
+        // which is a half circle of radius 0.65 mm in thirteen chords; a
+        // cap, which has no arc of a circle.
+        for (members, percent) in short {
+            let expected = match members {
+                14 => 1.7166,
+                4 => 0.0628,
+                _ => 0.0,
+            };
+            assert!(
+                (percent - expected).abs() < 1e-3,
+                "{name}: the fill of {members} members is {percent} % short of its outline, \
+                 measured {expected}"
+            );
+        }
     }
 }
 

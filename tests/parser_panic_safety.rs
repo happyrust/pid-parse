@@ -771,9 +771,9 @@ fn a_boundary_of_every_member_kind_survives_mutation() {
         (4, 2),
         "four members in two loops"
     );
-    // A line, the ellipse's thirteen chords, the cubic's eight and the run's
-    // two.
-    assert_eq!(whole[0].segments.len(), 1 + 13 + 8 + 2);
+    // A line, the half ellipse's four spans of eight segments, the cubic's
+    // eight and the run's two.
+    assert_eq!(whole[0].segments.len(), 1 + 32 + 8 + 2);
     assert_eq!(whole[0].member_refs.len(), 4);
 
     let mut decoded = 0usize;

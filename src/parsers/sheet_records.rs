@@ -4713,6 +4713,17 @@ pub const IGBOUNDARY2D_POINTRUN_TAG: u8 = 0x68;
 /// the corpora's sheets are, and what this tag was first read as. The 32
 /// that are not — a major semi-axis of `(0, −5.488 mm)` and a ratio of
 /// 0.725 — are the ellipse of the `-W` templates' logo.
+///
+/// The two are flattened differently, each after the way its own record is
+/// drawn. An arc of an ellipse proper becomes the vertices of the polyline
+/// its `igEllipticalArc2d` is drawn as
+/// ([`crate::bspline::elliptical_arc_directed`] sampled at
+/// [`crate::bspline::SEGMENTS_PER_SPAN`] segments a 45° span), so the fill's
+/// edge is the line of its outline — on the logo's 32, 0.004 mm off the
+/// ellipse at most, where chords of a quarter radian stood 0.037 mm off it
+/// and a 14° arc was one straight line. The arc of a circle, whose `igArc2d`
+/// is drawn as a true arc, is cut into chords of
+/// `IGBOUNDARY2D_ARC_CHORD_STEP` radians, as it always has been.
 pub const IGBOUNDARY2D_ARC_TAG: u8 = 0x74;
 
 /// Member tag of a B-spline `igBoundary2d` member in the `0x0000` sub-type
@@ -4734,9 +4745,25 @@ pub const IGBOUNDARY2D_TEMPLATE_TRAILER_LEN: usize = 21;
 /// Upper bound accepted for one `0x68` point run's vertex count.
 pub const IGBOUNDARY2D_MAX_POINTRUN_COUNT: u32 = 4096;
 
-/// Radians swept per emitted chord when an `0x74` arc member is
-/// flattened into boundary segments (≈14°; ~0.01mm sag at the logo's
-/// 3mm radii). For an arc of an ellipse they are radians of its parameter.
+/// Radians swept per emitted chord when the arc of a circle — an `0x74`
+/// member whose major semi-axis is `(radius, 0)` and whose ratio is one, or
+/// an `0x73` circle — is flattened into boundary segments (≈14°; ~0.01mm
+/// sag at the logo's 3mm radii).
+///
+/// A chord of that angle stands `0.0078 × radius` inside its arc, and the
+/// arc's own record is drawn as a true arc, so that is how far the fill's
+/// edge lies inside the centre line of its outline. The farthest any chord
+/// of the corpora's sheets stands off its arc is **0.046 mm**: the outer
+/// edge of the `-W` logo's crescent, radius 6.72 mm, in fifteen chords,
+/// which leaves that fill 1.7% short of its outline. That is inside the
+/// half width, 0.065 mm, of the 0.13 mm pen the arc is drawn with — as the
+/// chords of all 49 such members whose record resolves a pen are inside
+/// theirs — so the fill's edge stays under the ink of its own outline. It
+/// has been looked at no further: no page wears that template and no vendor
+/// plot shows the logo. The 0.65–0.69 mm arcs beside it are 0.005 mm off.
+/// `tests/boundary_members.rs` holds the logo to these readings, and
+/// `examples/probe_what_curve_each_boundary_member_relists.rs` takes them
+/// over the corpora.
 const IGBOUNDARY2D_ARC_CHORD_STEP: f64 = 0.25;
 
 /// Highest degree a `0x7F` B-spline member may have. Three on the corpora.
@@ -5250,8 +5277,9 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 ///   `(start, end, centre_x, centre_y, major_x, major_y, ratio)` plus a
 ///   direction byte ([`igboundary_arc_sweep`]), the arc of a circle being
 ///   the one whose major semi-axis is `(radius, 0)` and whose ratio is one
-///   ([`IGBOUNDARY2D_ARC_TAG`]); flattened to chords of at most
-///   [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians;
+///   ([`IGBOUNDARY2D_ARC_TAG`]); the arc of a circle flattened to chords of
+///   at most [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians, an ellipse's as an
+///   `igEllipticalArc2d` is drawn;
 /// * `0x7F` B-spline — the tag and the fields of an `igBspCurve2d`
 ///   ([`IGBOUNDARY2D_BSPLINE_TAG`]); flattened as that record is drawn.
 ///
@@ -5426,27 +5454,64 @@ fn igboundary_template_members(
                 if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
                     return None;
                 }
-                // `P(t) = C + cos t · major + sin t · minor`, `minor` the
-                // major semi-axis turned a quarter and scaled, as an
-                // `igEllipticalArc2d` reads. With `major = (radius, 0)` and
-                // a ratio of one every term but `radius · cos t` and
-                // `radius · sin t` is a zero, so the arc of a circle comes
-                // out as it did when those were the only terms, to the bit.
-                let minor = (-major.1 * ratio, major.0 * ratio);
-                let at = |angle: f64| {
-                    (
-                        cx + (angle.cos() * major.0 + angle.sin() * minor.0),
-                        cy + (angle.cos() * major.1 + angle.sin() * minor.1),
+                let direction = *payload.get(pos + 57)?;
+                // An arc of an ellipse proper re-lists an `igEllipticalArc2d`,
+                // and that record is stroked as the polyline
+                // `bspline::sample` makes of its exact rational B-spline: the
+                // member is flattened to the same vertices, so the edge of
+                // the fill is the line its own record draws. The arc of a
+                // circle — major semi-axis `(radius, 0)`, ratio one, an
+                // `igArc2d`'s — is stroked as a true arc, has no polyline to
+                // share, and is cut into chords as it always has been.
+                let stroked = if major.1 == 0.0 && ratio == 1.0 {
+                    None
+                } else {
+                    crate::bspline::elliptical_arc_directed(
+                        (cx, cy),
+                        major,
+                        ratio,
+                        start_ang,
+                        end_ang,
+                        direction == 0,
                     )
                 };
-                let sweep = igboundary_arc_sweep(start_ang, end_ang, *payload.get(pos + 57)?);
-                let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
-                let mut prev = at(start_ang);
-                for i in 1..=chords {
-                    let angle = start_ang + sweep * (i as f64 / chords as f64);
-                    let next = at(angle);
-                    push_segment(pos, prev, next);
-                    prev = next;
+                if let Some((poles, weights, knots)) = stroked {
+                    let vertices = crate::bspline::sample(
+                        &poles,
+                        &weights,
+                        &knots,
+                        crate::bspline::SEGMENTS_PER_SPAN,
+                    );
+                    for pair in vertices.windows(2) {
+                        push_segment(pos, pair[0], pair[1]);
+                    }
+                } else {
+                    // `P(t) = C + cos t · major + sin t · minor`, `minor` the
+                    // major semi-axis turned a quarter and scaled, as an
+                    // `igEllipticalArc2d` reads. With `major = (radius, 0)`
+                    // and a ratio of one every term but `radius · cos t` and
+                    // `radius · sin t` is a zero, so the arc of a circle
+                    // comes out as it did when those were the only terms, to
+                    // the bit. (An ellipse's arc comes here only when its two
+                    // parameters are the same one, which the stroke has no
+                    // curve for: one chord of no length, as for a circle's.)
+                    let minor = (-major.1 * ratio, major.0 * ratio);
+                    let at = |angle: f64| {
+                        (
+                            cx + (angle.cos() * major.0 + angle.sin() * minor.0),
+                            cy + (angle.cos() * major.1 + angle.sin() * minor.1),
+                        )
+                    };
+                    let sweep = igboundary_arc_sweep(start_ang, end_ang, direction);
+                    let chords =
+                        ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
+                    let mut prev = at(start_ang);
+                    for i in 1..=chords {
+                        let angle = start_ang + sweep * (i as f64 / chords as f64);
+                        let next = at(angle);
+                        push_segment(pos, prev, next);
+                        prev = next;
+                    }
                 }
                 pos = member_end;
             }
@@ -13789,9 +13854,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             HALF_ELLIPSE_REFERENCES
         );
-        // The line is one chord; the arc turns π of parameter in chords of
-        // a quarter radian at most, thirteen of them.
-        assert_eq!(b.segments.len(), 1 + 13);
+        // The line is one segment; the arc turns π of parameter and is
+        // flattened as an `igEllipticalArc2d` of these fields is drawn: four
+        // 45° spans of eight segments.
+        assert_eq!(b.segments.len(), 1 + 32);
         assert_eq!(b.segments[0].tag_offset, 28);
         assert_eq!(
             (b.segments[0].start, b.segments[0].end),
@@ -13813,9 +13879,9 @@ mod tests {
         // vertex of the ellipse.
         let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
         assert!(near(arc[0].start, (0.0, 2.0)), "{:?}", arc[0].start);
-        assert!(near(arc[12].end, (0.0, 0.0)), "{:?}", arc[12].end);
+        assert!(near(arc[31].end, (0.0, 0.0)), "{:?}", arc[31].end);
         let reach = arc.iter().map(|s| s.end.0).fold(f64::MIN, f64::max);
-        assert!((reach - 0.5).abs() < 0.01, "the arc reaches x = {reach}");
+        assert!((reach - 0.5).abs() < 1e-12, "the arc reaches x = {reach}");
         assert!(b.is_closed_loop(1e-12));
         assert_eq!(
             b.byte_range,
@@ -13832,13 +13898,187 @@ mod tests {
         );
         let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
         let arc = &decoded.segments[1..];
-        assert_eq!(arc.len(), 13);
+        assert_eq!(arc.len(), 32);
         // The same two ends, the other half of the ellipse.
         let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
-        assert!(near(arc[0].start, (0.0, 2.0)) && near(arc[12].end, (0.0, 0.0)));
+        assert!(near(arc[0].start, (0.0, 2.0)) && near(arc[31].end, (0.0, 0.0)));
         assert!(arc.iter().all(|segment| segment.end.0 < 1e-12));
         let reach = arc.iter().map(|s| s.end.0).fold(f64::MAX, f64::min);
-        assert!((reach + 0.5).abs() < 0.01, "the arc reaches x = {reach}");
+        assert!((reach + 0.5).abs() < 1e-12, "the arc reaches x = {reach}");
+    }
+
+    /// An arc member is flattened after the way its own record is drawn.
+    ///
+    /// An arc of an ellipse proper re-lists an `igEllipticalArc2d`, which a
+    /// sheet strokes as the polyline `bspline::sample` makes of
+    /// `bspline::elliptical_arc_directed`: the member's vertices are those
+    /// very points, so the fill's edge is the line the record draws. The arc
+    /// of a circle — major semi-axis `(radius, 0)`, ratio one — re-lists an
+    /// `igArc2d`, which is stroked as a true arc: it is cut into chords of a
+    /// quarter radian, as before. An arc that sweeps nothing is one chord of
+    /// no length either way.
+    #[test]
+    fn igboundary2d_arc_member_is_flattened_as_its_own_record_is_drawn() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // The arc alone about `centre`, closed by two lines back to where
+        // it started.
+        let decoded_about = |centre: (f64, f64),
+                             sweep: (f64, f64),
+                             major: (f64, f64),
+                             ratio: f64,
+                             direction: u8| {
+            let on = |t: f64| {
+                let minor = (-major.1 * ratio, major.0 * ratio);
+                (
+                    centre.0 + t.cos() * major.0 + t.sin() * minor.0,
+                    centre.1 + t.cos() * major.1 + t.sin() * minor.1,
+                )
+            };
+            let payload = one_loop_boundary_payload(
+                &[
+                    boundary_arc_member(sweep, centre, major, ratio, direction),
+                    boundary_line_member(on(sweep.1), (5.0, 5.0)),
+                    boundary_line_member((5.0, 5.0), on(sweep.0)),
+                ],
+                centre,
+                &[(354, 0x00D3, 5), (335, 0x00CB, 4), (336, 0x00CB, 4)],
+            );
+            let record = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+            let arc: Vec<(f64, f64)> = record
+                .segments
+                .iter()
+                .filter(|segment| segment.tag_offset == 28)
+                .flat_map(|segment| [segment.start, segment.end])
+                .collect();
+            // Each segment's start and end, in order: the vertices, every
+            // inner one twice.
+            let mut vertices = vec![arc[0]];
+            vertices.extend(arc.chunks(2).map(|pair| pair[1]));
+            (centre, vertices)
+        };
+        let decoded = |sweep: (f64, f64), major: (f64, f64), ratio: f64, direction: u8| {
+            decoded_about((0.3, 0.1), sweep, major, ratio, direction)
+        };
+        let stroke = |centre, sweep: (f64, f64), major, ratio, direction: u8| {
+            let (poles, weights, knots) = crate::bspline::elliptical_arc_directed(
+                centre,
+                major,
+                ratio,
+                sweep.0,
+                sweep.1,
+                direction == 0,
+            )
+            .expect("an arc");
+            crate::bspline::sample(&poles, &weights, &knots, crate::bspline::SEGMENTS_PER_SPAN)
+        };
+
+        // A circle's arc, as an `igArc2d` is re-listed: chords of a quarter
+        // radian — seven for a quarter turn — each ending on the circle at
+        // an equal step of the angle, `centre + radius · (cos, sin)` to the
+        // bit, which is what this member has always decoded to.
+        let sweep = (0.0, FRAC_PI_2);
+        let (centre, circle) = decoded(sweep, (0.002, 0.0), 1.0, 1);
+        assert_eq!(circle.len(), 7 + 1, "a quarter turn of a circle");
+        for (step, vertex) in circle.iter().enumerate() {
+            let angle = sweep.0 + (sweep.1 - sweep.0) * (step as f64 / 7.0);
+            assert_eq!(
+                *vertex,
+                (
+                    centre.0 + 0.002 * angle.cos(),
+                    centre.1 + 0.002 * angle.sin()
+                ),
+                "chord {step} ends on the circle at {angle}"
+            );
+        }
+        // The other way round the same quarter: the angle runs down.
+        let (_, back) = decoded((FRAC_PI_2, 0.0), (0.002, 0.0), 1.0, 0);
+        assert_eq!(back.len(), 7 + 1);
+        for (step, vertex) in back.iter().enumerate() {
+            let angle = FRAC_PI_2 - FRAC_PI_2 * (step as f64 / 7.0);
+            assert_eq!(
+                *vertex,
+                (
+                    centre.0 + 0.002 * angle.cos(),
+                    centre.1 + 0.002 * angle.sin()
+                ),
+                "chord {step} of the clockwise arc ends on the circle at {angle}"
+            );
+        }
+        // The widest arc the corpora's boundaries re-list, the outer edge
+        // of the `-W` logo's crescent — 201.9° of a 6.7228 mm circle, in
+        // fifteen chords — and an arc of 23: the angle of each end is the
+        // start plus that many fifteenths, or twenty-thirds, of the sweep.
+        // About the origin, where the last bit of an angle is the last bit
+        // of the vertex; on the second arc five of the angles come out
+        // another double if the product is taken as `sweep · step / chords`.
+        for (sweep, radius, chords) in [
+            ((1.380_115, 4.903_101), 6.7228e-3, 15usize),
+            ((0.2, 5.9), 0.004, 23),
+        ] {
+            let (_, wide) = decoded_about((0.0, 0.0), sweep, (radius, 0.0), 1.0, 1);
+            assert_eq!(wide.len(), chords + 1, "an arc of {chords} chords");
+            let turned = (sweep.1 - sweep.0).rem_euclid(std::f64::consts::TAU);
+            for (step, vertex) in wide.iter().enumerate() {
+                let angle = sweep.0 + turned * (step as f64 / chords as f64);
+                assert_eq!(
+                    *vertex,
+                    (radius * angle.cos(), radius * angle.sin()),
+                    "chord {step} of {chords} ends on the circle at {angle}"
+                );
+            }
+        }
+
+        // The same quarter of the same circle, written with its major
+        // semi-axis along +Y, is no `igArc2d`'s: it is flattened as the
+        // `igEllipticalArc2d` it would re-list is drawn, two 45° spans of
+        // eight segments, to the bit.
+        let sweep = (-FRAC_PI_2, 0.0);
+        let (centre, turned) = decoded(sweep, (0.0, 0.002), 1.0, 1);
+        assert_eq!(turned, stroke(centre, sweep, (0.0, 0.002), 1.0, 1));
+        assert_eq!(turned.len(), 2 * 8 + 1);
+        for (a, b) in [(turned[0], circle[0]), (turned[16], circle[7])] {
+            assert!(
+                (a.0 - b.0).hypot(a.1 - b.1) < 1e-15,
+                "the two writings of one arc end {a:?} and {b:?}"
+            );
+        }
+
+        // An ellipse's arc, either direction: its record's stroke, to the
+        // bit. 106° is three spans, 14° is one.
+        for (sweep, direction, spans) in [
+            ((5.355_890, 0.927_295), 1u8, 3usize),
+            ((0.927_295, 5.355_890), 0, 3),
+            ((4.341_440, 4.587_061), 1, 1),
+            ((PI, 0.0), 0, 4),
+        ] {
+            let major = (6.574_852e-19, -5.488e-3);
+            let (centre, arc) = decoded(sweep, major, 0.725, direction);
+            assert_eq!(
+                arc,
+                stroke(centre, sweep, major, 0.725, direction),
+                "an arc of the ellipse from {} to {}, direction {direction}",
+                sweep.0,
+                sweep.1
+            );
+            assert_eq!(arc.len(), spans * 8 + 1);
+        }
+
+        // An arc whose two parameters are the same one sweeps nothing: one
+        // chord of no length, where the stroke has no curve at all.
+        for (major, ratio) in [((0.002, 0.0), 1.0), ((0.0, -0.002), 0.725)] {
+            let (centre, still) = decoded((1.0, 1.0), major, ratio, 1);
+            assert_eq!(still.len(), 2, "one chord");
+            assert_eq!(still[0], still[1], "of no length");
+            let minor = (-major.1 * ratio, major.0 * ratio);
+            let at = (
+                centre.0 + 1f64.cos() * major.0 + 1f64.sin() * minor.0,
+                centre.1 + 1f64.cos() * major.1 + 1f64.sin() * minor.1,
+            );
+            assert!(
+                (still[0].0 - at.0).hypot(still[0].1 - at.1) < 1e-15,
+                "at the point of that parameter"
+            );
+        }
     }
 
     /// A cubic of four poles and the chord back to its start, and the same
