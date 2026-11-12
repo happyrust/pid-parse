@@ -1338,11 +1338,14 @@ impl From<crate::parsers::sheet_records::SheetDependencyObjectDecoded>
 }
 
 /// One `(start, end)` segment of a decoded `igBoundary2d` record
-/// (Phase 34-D). Model-shaped mirror of
+/// (Phase 34-D): a line member whole, or one of the chords a curved member
+/// — a point run, an arc of a circle or an ellipse, a B-spline, a circle —
+/// is flattened to. Model-shaped mirror of
 /// [`crate::parsers::sheet_records::SheetIgBoundary2dSegment`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct DecodedIgBoundary2dSegment {
-    /// Payload offset of the segment group's `0x67` tag byte.
+    /// Payload offset of the tag byte of the member the segment comes
+    /// from; the chords of one curved member share it.
     pub tag_offset: usize,
     /// Segment start X in normalized sheet coordinates.
     pub start_x: f64,
@@ -1403,11 +1406,14 @@ pub struct DecodedIgBoundary2dRecord {
     /// layer and refuses the rest. See
     /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
     pub sheet_layer_ref: u32,
-    /// Sub-type word at payload offset 12. Always `0x0010`.
+    /// Sub-type word at payload offset 12: `0x0010` on a drawing's boundary
+    /// over lines, `0x0000` on a linked template's and on a drawing's over
+    /// a circle.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14.
     pub index: u32,
-    /// Number of segment groups / trailer member references.
+    /// How many members the record states, over all its loops: one segment
+    /// a member where every member is a line, several where one is curved.
     pub segment_count: u32,
     /// Sub-header bytes at payload offsets 26–27 (`[2, 1]` across
     /// all fixture records; exposed verbatim).
@@ -1421,16 +1427,20 @@ pub struct DecodedIgBoundary2dRecord {
     /// it is a hole.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loop_segment_counts: Vec<u32>,
-    /// Anchor X following the segment groups: where the fill was seeded
-    /// (inside the loop on every record that carries member references;
-    /// `1e30` on a linked template's, which carry none).
+    /// Anchor X: where the fill was seeded, on a record that names its
+    /// members ([`Self::member_refs`]) — a point inside the fill on every
+    /// such record of the corpora. A record that names none states no
+    /// anchor (the file has `1e30` twice there), and this is then the first
+    /// vertex of the ring: a point on the fill's edge, not inside it.
     pub anchor_x: f64,
-    /// Anchor Y following the segment groups.
+    /// Anchor Y; see [`Self::anchor_x`].
     pub anchor_y: f64,
     /// `u8` flag between the anchor and the member count (`1` in
     /// fixtures; exposed verbatim).
     pub trailer_flag: u8,
-    /// Trailer member references (`segment_count` entries).
+    /// Trailer member references: one to a member on all but one record of
+    /// the corpora, none on a record whose loop is its own geometry (a
+    /// linked template's logo).
     pub member_refs: Vec<DecodedIgBoundary2dMemberRef>,
     /// `true` when the segments chain end-to-start and close back
     /// onto the first start within `1e-9` per axis (20/20 fixture

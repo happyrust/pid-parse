@@ -4700,16 +4700,35 @@ pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
 /// closed outline, so consecutive pairs contribute segments.
 pub const IGBOUNDARY2D_POINTRUN_TAG: u8 = 0x68;
 
-/// Member tag of an arc `igBoundary2d` member in the linked-template
-/// (`0x0000` sub-type) layout: `tag + 7×f64` carrying
-/// `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-/// trailing byte that is the arc's direction (0 = clockwise, 1 =
-/// counter-clockwise), read the way `igArc2d`'s is. 58 bytes in total.
+/// Member tag of an elliptical-arc `igBoundary2d` member in the `0x0000`
+/// sub-type layouts: the tag, then what an `igEllipticalArc2d` record
+/// carries after its 18-byte sub-header — `7×f64`
+/// `(sweep_start, sweep_end, centre_x, centre_y, major_x, major_y, ratio)`
+/// and a trailing byte that is the arc's direction (0 = clockwise, 1 =
+/// counter-clockwise). 58 bytes in total.
+///
+/// The arc of a circle is this member too: an `igArc2d` is re-listed as the
+/// ellipse whose major semi-axis is `(radius, 0)` and whose ratio is one,
+/// its two angles the two parameters — which is all the 378 such members of
+/// the corpora's sheets are, and what this tag was first read as. The 32
+/// that are not — a major semi-axis of `(0, −5.488 mm)` and a ratio of
+/// 0.725 — are the ellipse of the `-W` templates' logo.
 pub const IGBOUNDARY2D_ARC_TAG: u8 = 0x74;
 
-/// Fixed trailer length of the linked-template (`0x0000` sub-type)
-/// `igBoundary2d` variant: two identical 8-byte words followed by
-/// `u32 1` and a `u8` flag — 21 bytes.
+/// Member tag of a B-spline `igBoundary2d` member in the `0x0000` sub-type
+/// layouts: the tag, then what an `igBspCurve2d` record carries after its
+/// 18-byte sub-header — `u32 N`, the poles, the weight flag and weights,
+/// `u32 M`, the knots, a double and four bytes ([`bspcurve_geometry`]).
+///
+/// The member is not the record's own poles. Each of the 32 the corpora
+/// hold re-lists a cubic of five or seven poles as seven or thirteen: the
+/// same curve with every interior knot raised to the degree — its Bézier
+/// pieces — which reads the same at every parameter (to `1e-15` m).
+pub const IGBOUNDARY2D_BSPLINE_TAG: u8 = 0x7F;
+
+/// Bytes a boundary's trailer takes before its references: the anchor (two
+/// doubles), a flag byte and the `u32` reference count. A linked template's
+/// record ends on it — no reference, the anchor a pair of `1e30`.
 pub const IGBOUNDARY2D_TEMPLATE_TRAILER_LEN: usize = 21;
 
 /// Upper bound accepted for one `0x68` point run's vertex count.
@@ -4717,14 +4736,22 @@ pub const IGBOUNDARY2D_MAX_POINTRUN_COUNT: u32 = 4096;
 
 /// Radians swept per emitted chord when an `0x74` arc member is
 /// flattened into boundary segments (≈14°; ~0.01mm sag at the logo's
-/// 3mm radii).
+/// 3mm radii). For an arc of an ellipse they are radians of its parameter.
 const IGBOUNDARY2D_ARC_CHORD_STEP: f64 = 0.25;
 
-/// One `(start, end)` segment decoded from an `igBoundary2d`
-/// segment group (`0x67 tag + 4×f64`).
+/// Highest degree a `0x7F` B-spline member may have. Three on the corpora.
+/// A decode flattens the member, and de Boor's recursion costs the square
+/// of the degree for every vertex, so the bound is what keeps that work in
+/// proportion to the bytes the member takes; it says nothing of the format.
+const IGBOUNDARY2D_MAX_BSPLINE_DEGREE: usize = 32;
+
+/// One `(start, end)` segment of an `igBoundary2d` loop: a `0x67` line
+/// member whole, or one of the chords a curved member — a point run, an
+/// arc, a B-spline, a circle — is flattened to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgBoundary2dSegment {
-    /// Payload offset of the group's `0x67` tag byte.
+    /// Payload offset of the tag byte of the member the segment comes from:
+    /// the chords of one curved member share it.
     pub tag_offset: usize,
     /// Segment start `(x, y)` in normalized sheet coordinates.
     pub start: (f64, f64),
@@ -4742,13 +4769,26 @@ pub struct SheetIgBoundary2dSegment {
 /// first member and `12` for the rest. The words are exposed
 /// verbatim without semantic naming until a native reader confirms
 /// their roles.
+///
+/// What the 5 417 references of the corpora's sheets show of the two words,
+/// each member held against the record its reference names
+/// (`examples/probe_what_curve_each_boundary_member_relists.rs`): the class
+/// word goes with the family of the record named — `0x00CB` a line,
+/// `0x00D1` a circle, `0x00D3` an arc or an elliptical arc, `0x00D4` a
+/// B-spline — and of the last word, bit 0 is set on a record's first
+/// reference and no other, and bit 2 says which way the member runs along
+/// its record: on a record's first loop it is set when the member runs the
+/// record's own way and clear when it runs against it, on the second loop
+/// of the two records that have one the other way round. No decoder rests
+/// on either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SheetIgBoundary2dMemberRef {
-    /// Object identifier of the member record (fixture evidence:
-    /// a `0x0018 igLine2d` in the same stream).
+    /// Object identifier of the member record: a live `igLine2d`,
+    /// `igCircle2d`, `igArc2d`, `igEllipticalArc2d` or `igBspCurve2d` of the
+    /// same stream.
     pub member_oid: u32,
     /// Class-like word at member offset +4 (`0x00CB` across all
-    /// fixture members).
+    /// fixture members, which are lines).
     pub class_word: u16,
     /// Sub-code word at member offset +6 (`13` / `12` in fixtures).
     pub sub_word: u16,
@@ -4789,21 +4829,26 @@ pub struct SheetIgBoundary2dDecoded {
     /// `== <n>` rule here admits one layer and refuses the rest. See
     /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
     pub sheet_layer_ref: u32,
-    /// Sub-type word at payload offset 12: `0x0010` on drawing-side
-    /// records, `0x0000` on linked-template (`.igr`) records.
+    /// Sub-type word at payload offset 12: `0x0010` on a drawing's
+    /// boundary over lines, `0x0000` on every other — a linked template's
+    /// (`.igr`), and a drawing's over a circle.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14 (21 / 24 in fixtures,
     /// constant per fixture family like the other IGDS decoders).
     pub index: u32,
-    /// `u32` at payload offset 22: number of segment groups and
-    /// trailer member references.
+    /// How many members the record states: the `u32` at payload offset 22,
+    /// and on a record of several loops the sum over them. One segment a
+    /// member where every member is a line; a curved member is several of
+    /// [`Self::segments`].
     pub segment_count: u32,
     /// Two sub-header bytes at payload offsets 26–27 (`[2, 1]`
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries), every loop's in
-    /// turn when the record states more than one.
+    /// The record's loops as straight segments, every loop's in turn when
+    /// the record states more than one: a line member whole, a curved one
+    /// as its chords, which share a
+    /// [`tag_offset`](SheetIgBoundary2dSegment::tag_offset).
     pub segments: Vec<SheetIgBoundary2dSegment>,
     /// How many of [`Self::segments`] each loop holds, in order, on a
     /// record that states more than one loop (the `u32` at payload `+18`);
@@ -4811,16 +4856,22 @@ pub struct SheetIgBoundary2dDecoded {
     /// but two. The first loop is the outer edge of a fill and a loop
     /// inside it is a hole: see [`decode_igboundaries`].
     pub loop_segment_counts: Vec<u32>,
-    /// Anchor point following the segment groups: where the fill was
-    /// seeded. It lies inside the loop on every corpus record that carries
-    /// member references, and between the loops on the two that state two.
-    /// A linked template's records carry `(1e30, 1e30)` and no reference.
+    /// Where the fill was seeded — on a record that names its members
+    /// ([`Self::member_refs`]): the point the file states after the last
+    /// member, inside the loop on every such record of the corpora and
+    /// between the loops on the two that state two.
+    ///
+    /// A record that names no member states none: the file has
+    /// `(1e30, 1e30)` there — all 100 such records of the corpora, a linked
+    /// template's logo each — and this field then holds the first vertex of
+    /// the ring instead, **a point on the fill's edge, not inside it**.
     pub anchor: (f64, f64),
     /// `u8` flag between the anchor and the member count (`1`
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub trailer_flag: u8,
-    /// Trailer member references (`segment_count` entries).
+    /// Trailer member references: one to a member on all but one record of
+    /// the corpora, none on a record whose loop is its own geometry.
     pub member_refs: Vec<SheetIgBoundary2dMemberRef>,
 }
 
@@ -4900,6 +4951,15 @@ impl SheetIgBoundary2dDecoded {
 /// 8. trailer `member_count == segment_count`;
 /// 9. not all segment vertices are identical (non-degenerate).
 ///
+/// A record of one loop under sub-type `0x0000` that fails rule 5 or 8 —
+/// a loop that holds an arc, an arc of an ellipse or a B-spline and names
+/// its members, as the logo fills of the `-W` border templates do — is read
+/// the way rule 3 reads each loop of a fill with holes: members of the
+/// linked-template vocabulary ([`IGBOUNDARY2D_ARC_TAG`],
+/// [`IGBOUNDARY2D_BSPLINE_TAG`], [`IGBOUNDARY2D_POINTRUN_TAG`] beside the
+/// line), then the anchor, flag, reference count and references to the
+/// payload's last byte.
+///
 /// Read at each record the stream's chain starts. Panic-free and
 /// bounds-checked: adversarial bytes simply fail validation.
 pub fn decode_igboundaries(data: &[u8]) -> Vec<SheetIgBoundary2dDecoded> {
@@ -4951,7 +5011,11 @@ impl PsmRecordDecoder for IgBoundary2dDecoder {
         if payload_end > data.len() {
             return None;
         }
+        // The three grammars that read every boundary a page of the corpora
+        // draws, as they always have; then, for what they all refuse, the
+        // loop of curves that names its members.
         decode_igboundary_payload(data, offset, &header, payload_end)
+            .or_else(|| decode_igboundary_curved_loop_payload(data, offset, &header, payload_end))
     }
 
     fn advance_of(&self, record: &SheetIgBoundary2dDecoded) -> usize {
@@ -5182,10 +5246,17 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 /// * `0x67` line — `tag + 4×f64` (start, end), 33 bytes;
 /// * `0x68` point run — `tag + u32 count + 2-byte tail +
 ///   count × 16-byte (x, y)`, closed onto its first point;
-/// * `0x74` arc — `tag + 7×f64`
-///   `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-///   direction byte ([`igboundary_arc_sweep`]); flattened to chords of at
-///   most [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians.
+/// * `0x74` arc of an ellipse — `tag + 7×f64`
+///   `(start, end, centre_x, centre_y, major_x, major_y, ratio)` plus a
+///   direction byte ([`igboundary_arc_sweep`]), the arc of a circle being
+///   the one whose major semi-axis is `(radius, 0)` and whose ratio is one
+///   ([`IGBOUNDARY2D_ARC_TAG`]); flattened to chords of at most
+///   [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians;
+/// * `0x7F` B-spline — the tag and the fields of an `igBspCurve2d`
+///   ([`IGBOUNDARY2D_BSPLINE_TAG`]); flattened as that record is drawn.
+///
+/// Each member is a tag byte and then the geometry of one curve as that
+/// curve's own record states it after its 18-byte sub-header.
 ///
 /// Members chain end-to-start and the record ends with a fixed
 /// 21-byte trailer (two identical 8-byte words, `u32 1`, `u8` flag)
@@ -5193,6 +5264,13 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 /// segment list flattens every member to chords so the shared emitter
 /// sees the same closed ring either way; `member_refs` is empty and
 /// `anchor` borrows the first vertex for lack of a trailer anchor.
+///
+/// That trailer is the one every boundary has before its references, on a
+/// record that names no member: the two words are the anchor, `1e30` twice
+/// for want of one; the `u32 1` is the flag byte `1` and the low three
+/// bytes of a reference count of zero; the last byte is that count's high
+/// byte. So the `trailer_flag` this read reports is `0`, the count's last
+/// byte, not the flag byte — kept as it has always been reported.
 fn decode_igboundary_template_payload(
     data: &[u8],
     offset: usize,
@@ -5261,9 +5339,10 @@ fn decode_igboundary_template_payload(
 }
 
 /// Read `member_count` members of the linked-template vocabulary — `0x67`
-/// line, `0x68` point run, `0x74` arc — from `payload[pos..]`, none
-/// starting at or past `members_end`, flattening each to chords appended to
-/// `segments`. Returns the offset after the last member.
+/// line, `0x68` point run, `0x74` arc of an ellipse, `0x7F` B-spline — from
+/// `payload[pos..]`, none starting at or past `members_end`, flattening
+/// each to chords appended to `segments`. Returns the offset after the last
+/// member.
 ///
 /// One loop of a boundary is one such run of members; see
 /// [`decode_igboundary_template_payload`] for the layouts.
@@ -5338,22 +5417,47 @@ fn igboundary_template_members(
                 let end_ang = check(read_f64(pos + 9)?)?;
                 let cx = check(read_f64(pos + 17)?)?;
                 let cy = check(read_f64(pos + 25)?)?;
-                let radius = check(read_f64(pos + 33)?)?;
-                if !radius.is_finite()
-                    || radius <= 0.0
-                    || !start_ang.is_finite()
-                    || !end_ang.is_finite()
-                {
+                // The major semi-axis as a vector, and the other semi-axis
+                // as a fraction of it: `(radius, 0)` and one on the arc of
+                // a circle, which is what these three doubles were first
+                // read as — a radius and two constants.
+                let major = (check(read_f64(pos + 33)?)?, check(read_f64(pos + 41)?)?);
+                let ratio = check(read_f64(pos + 49)?)?;
+                if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
                     return None;
                 }
+                // `P(t) = C + cos t · major + sin t · minor`, `minor` the
+                // major semi-axis turned a quarter and scaled, as an
+                // `igEllipticalArc2d` reads. With `major = (radius, 0)` and
+                // a ratio of one every term but `radius · cos t` and
+                // `radius · sin t` is a zero, so the arc of a circle comes
+                // out as it did when those were the only terms, to the bit.
+                let minor = (-major.1 * ratio, major.0 * ratio);
+                let at = |angle: f64| {
+                    (
+                        cx + (angle.cos() * major.0 + angle.sin() * minor.0),
+                        cy + (angle.cos() * major.1 + angle.sin() * minor.1),
+                    )
+                };
                 let sweep = igboundary_arc_sweep(start_ang, end_ang, *payload.get(pos + 57)?);
                 let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
-                let mut prev = (cx + radius * start_ang.cos(), cy + radius * start_ang.sin());
+                let mut prev = at(start_ang);
                 for i in 1..=chords {
                     let angle = start_ang + sweep * (i as f64 / chords as f64);
-                    let next = (cx + radius * angle.cos(), cy + radius * angle.sin());
+                    let next = at(angle);
                     push_segment(pos, prev, next);
                     prev = next;
+                }
+                pos = member_end;
+            }
+            IGBOUNDARY2D_BSPLINE_TAG => {
+                let (curve, member_end) = bspcurve_geometry_from(payload, pos.checked_add(1)?)?;
+                if member_end > members_end {
+                    return None;
+                }
+                let vertices = igboundary_bspline_vertices(&curve)?;
+                for pair in vertices.windows(2) {
+                    push_segment(pos, pair[0], pair[1]);
                 }
                 pos = member_end;
             }
@@ -5361,6 +5465,36 @@ fn igboundary_template_members(
         }
     }
     Some(pos)
+}
+
+/// The vertices a `0x7F` B-spline member is flattened to: the curve as a
+/// sheet's own `igBspCurve2d` is drawn, [`crate::bspline::SEGMENTS_PER_SPAN`]
+/// segments to each knot span, so the edge of the fill is the polyline the
+/// member's own record strokes.
+///
+/// `None` for a degree past `IGBOUNDARY2D_MAX_BSPLINE_DEGREE`, for a knot
+/// vector whose parameter domain is empty — [`crate::bspline::sample`]
+/// would hand back the control polygon, and a member is a curve or the
+/// record is refused — and for a vertex that is not a finite point of the
+/// coordinate domain, which a weight of any size can make of finite poles.
+fn igboundary_bspline_vertices(curve: &BspCurveGeometry) -> Option<Vec<(f64, f64)>> {
+    let poles = curve.poles.len();
+    let degree = curve.knots.len().checked_sub(poles.checked_add(1)?)?;
+    if degree > IGBOUNDARY2D_MAX_BSPLINE_DEGREE {
+        return None;
+    }
+    if curve.knots.get(poles)? <= curve.knots.get(degree)? {
+        return None;
+    }
+    let vertices = crate::bspline::sample(
+        &curve.poles,
+        &curve.weights,
+        &curve.knots,
+        crate::bspline::SEGMENTS_PER_SPAN,
+    );
+    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
+    (vertices.len() >= 2 && vertices.iter().all(|(x, y)| in_domain(*x) && in_domain(*y)))
+        .then_some(vertices)
 }
 
 /// Whether every vertex of `segments` is the first one: a boundary that
@@ -5377,39 +5511,45 @@ fn igboundary_segments_coincide(segments: &[SheetIgBoundary2dSegment]) -> bool {
 /// `u32` member count, the two bytes after it, and one `0x67` line.
 const IGBOUNDARY2D_MIN_LOOP_LEN: usize = 6 + 33;
 
-/// Family-specific payload validation for an `igBoundary2d` that states
-/// more than one loop: a fill with a hole in it.
+/// Family-specific payload validation for an `igBoundary2d` read loop by
+/// loop: the whole of the record's grammar, of which the linked-template
+/// read and the strict one are the two cases met first.
 ///
-/// The `u32` at payload `+18`, which every other record of the family
-/// carries as `1`, is the loop count. Each loop is what a one-loop record
-/// holds from `+22`: a `u32` member count, the two bytes `[2, 1]`, and that
-/// many members of the linked-template vocabulary
-/// ([`igboundary_template_members`]). After the last loop comes the
-/// drawing-side trailer — the anchor, a flag byte, a `u32` reference count
-/// and that many 8-byte member references — and it closes the payload
-/// exactly.
+/// The `u32` at payload `+18` is the loop count. Each loop is a `u32` member
+/// count, two bytes, and that many members of the `0x0000` sub-type
+/// vocabulary ([`igboundary_template_members`]): a line, a point run, an
+/// arc of an ellipse, a B-spline. After the last loop comes the trailer —
+/// the anchor, a flag byte, a `u32` reference count and that many 8-byte
+/// member references — and it closes the payload exactly.
 ///
-/// Read this way the trailer closes the payload of all 2 158 boundaries on
-/// the sheet chains of the 86 documents the count was taken on — the plant
-/// backup, the acceptance sheets, the share, the fixture drawings and the
-/// two template directories — whichever grammar decodes them today (a
-/// linked template's 21-byte trailer is this one with no reference, its
-/// anchor the pair `1e30`). Two of them state two loops, both in
-/// `XA-A1.igr`: an outer loop and a loop wholly inside it wound the other
-/// way, with the anchor between the two
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §10.6).
+/// Read this way the trailer closes the payload of every one of the 1 743
+/// boundaries on the sheet chains of the 111 distinct documents in reach —
+/// the plant backup, the acceptance sheets, the share, the committed
+/// drawings and templates, and the documents inside the packages' archives
+/// (`examples/probe_what_curve_each_boundary_member_relists.rs`) —
+/// whichever of the grammars decodes it (a linked template's 21-byte trailer
+/// is this one with no reference, its anchor the pair `1e30`). Two kinds of
+/// record are read by this function alone:
 ///
-/// That is not every boundary in reach. The templates inside the committed
-/// `RefData~4~682.zip` keep 41 more on their sheet chains, and 20 of them
-/// — five in the logo of each of `A0-W.igr` to `A3-W.igr` — this grammar
-/// refuses: where a loop's first member tag `0x67` stands they carry
-/// `0x02` or `0x03`. No page wears those templates, so the refusal reaches
-/// no export; it is an open gap all the same (same document, §17.6).
+/// * **More than one loop**, a fill with a hole. Two, both in `XA-A1.igr`:
+///   an outer loop and a loop wholly inside it wound the other way, with the
+///   anchor between the two
+///   (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+///   §10.6).
+/// * **One loop of curves that names its members**
+///   ([`decode_igboundary_curved_loop_payload`]). Forty: the five fills of
+///   the logo of each of `A0-W.igr` to `A3-W.igr`, templates a backup
+///   package keeps in its `RefData~4~682.zip`, and the same five in each of
+///   the four `.pid` templates beside them, which embed those frames. Their
+///   loops hold arcs of an ellipse and B-splines among their lines, and the
+///   record ends in references, so the linked-template read — a loop of
+///   such members and no reference — and the strict one — references, and
+///   members that are lines or a circle — each refused them
+///   (`docs/analysis/2026-11-12-a-boundary-member-is-the-curve-its-reference-names.md`).
 ///
-/// The reference count is not held to the member count. One of the two
-/// names 217 lines for its 216 members; the odd one is a line 32 µm long
-/// that its outer loop steps over.
+/// The reference count is not held to the member count. One of the two-loop
+/// records names 217 lines for its 216 members; the odd one is a line 32 µm
+/// long that its outer loop steps over.
 fn decode_igboundary_loops_payload(
     data: &[u8],
     offset: usize,
@@ -5424,7 +5564,7 @@ fn decode_igboundary_loops_payload(
     let loop_count = usize::try_from(u32_le(payload, 18)?).ok()?;
     // The count is bounded by the payload that has to hold the loops, not
     // by a constant: a letter's outline runs to 162 members here.
-    if loop_count < 2 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
+    if loop_count == 0 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
         return None;
     }
     let members_end = payload
@@ -5457,6 +5597,10 @@ fn decode_igboundary_loops_payload(
     }
     if igboundary_segments_coincide(&segments) {
         return None;
+    }
+    // A record of one loop states no tally: its segments are the loop.
+    if loop_count == 1 {
+        loop_segment_counts.clear();
     }
 
     // Anchor, flag, reference count, references: to the payload's last byte.
@@ -5502,6 +5646,35 @@ fn decode_igboundary_loops_payload(
         trailer_flag,
         member_refs,
     })
+}
+
+/// A boundary of one loop under sub-type `0x0000` that the linked-template
+/// read and the strict one both refuse: a loop of curves that names its
+/// members, read as each loop of a two-loop record is
+/// ([`decode_igboundary_loops_payload`]).
+///
+/// It is tried last, so a record either of the two reads keeps the reading
+/// it has; and it is not tried under the drawing-side sub-type `0x0010`,
+/// whose 1 599 records are lines to a member and are held to that.
+fn decode_igboundary_curved_loop_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+    if u16_le(payload, 12)? != 0x0000 || u32_le(payload, 18)? != 1 {
+        return None;
+    }
+    decode_igboundary_loops_payload(
+        data,
+        offset,
+        header,
+        payload_end,
+        u32_le(payload, 0)?,
+        u32_le(payload, 4)?,
+        u32_le(payload, 8)?,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -8039,8 +8212,17 @@ pub struct BspCurveGeometry {
 /// fields do not account for the payload exactly. Validation rules are
 /// documented on [`decode_igbspcurves`].
 pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
+    let (curve, end) = bspcurve_geometry_from(payload, CURVE_GEOMETRY_AT)?;
+    (end == payload.len()).then_some(curve)
+}
+
+/// The curve whose fields start at `payload[at]` — where an `igBspCurve2d`
+/// record's 18-byte sub-header ends, and where a boundary's `0x7F` member
+/// keeps the same fields behind its tag — and the offset after its last
+/// byte. The rules are [`bspcurve_geometry`]'s, less the one that the
+/// fields end where the payload does, which is the caller's to hold.
+fn bspcurve_geometry_from(payload: &[u8], mut at: usize) -> Option<(BspCurveGeometry, usize)> {
     let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
-    let mut at = CURVE_GEOMETRY_AT;
     let pole_count = u32_le(payload, at)? as usize;
     if !(2..=IGBSPCURVE2D_MAX_POLES).contains(&pole_count) {
         return None;
@@ -8092,16 +8274,16 @@ pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
     at += 8;
     let flags: [u8; 4] = payload.get(at..at + 4)?.try_into().ok()?;
     at += 4;
-    if at != payload.len() {
-        return None;
-    }
-    Some(BspCurveGeometry {
-        poles,
-        weights,
-        knots,
-        trailing,
-        flags,
-    })
+    Some((
+        BspCurveGeometry {
+            poles,
+            weights,
+            knots,
+            trailing,
+            flags,
+        },
+        at,
+    ))
 }
 
 /// [`PsmRecordDecoder`] adapter for `0x005D` `igBspCurve2d`.
