@@ -3577,6 +3577,140 @@ mod tests {
         assert_eq!(ports, from_dump);
     }
 
+    /// The dump of the committed backup package
+    /// `test-file/backup-test/DWG-0202GP06-01_p`: an Oracle `exp` dump of
+    /// seven drawings, read on every checkout.
+    fn committed_dwg_dump() -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-file/backup-test/DWG-0202GP06-01_p/Export.dmp");
+        std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    // A reader that takes `T_PIPERUN` whole or not at all stops on this
+    // dump at `row 0 NUMBER at 0x7a4c07 is not an integer`, and with it the
+    // package publishes no drawing. The cell is the first run's
+    // `SP_INSULTHICKSI`: the dump's own dictionary calls the attribute
+    // "Insulation Thickness SI Value", a double, and the run's `INSULTHICK`
+    // beside it reads `50mm`, which is 0.05 m. No stage follows the column,
+    // so the run reads with every cell a stage does follow, and so does
+    // every other table.
+    #[test]
+    fn the_committed_dwg_dump_projects_through_every_stage() {
+        let dump = committed_dwg_dump();
+        // The cell's two length bytes, then at `0x7a4c07` its two payload
+        // bytes: one base-100 digit, 5, at exponent -1.
+        assert_eq!(dump[0x007a_4c05..0x007a_4c09], [0x02, 0x00, 0xc0, 0x06]);
+
+        every_projection(&dump).expect("every stage reads the committed dump");
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        assert_eq!(tables.drawing_row_count(), 7);
+        assert_eq!(tables.codelist_row_count(), 3_384);
+        let ports = tables.port_tables().expect("ports");
+        assert_eq!(
+            (ports.piping_points.len(), ports.signal_points.len()),
+            (93, 151)
+        );
+        let runs = tables.pipe_runs().expect("pipe runs");
+        assert_eq!(runs.len(), 50);
+        let named = |run: &&PipeRunRow| !run.tag_sequence.is_empty();
+        assert_eq!(runs.iter().filter(named).count(), 20);
+        let first = &runs[0];
+        assert_eq!(first.id, "7042E6B0A1A944E390A08A5A44771C46");
+        assert_eq!(first.tag_sequence, "01");
+        assert_eq!(first.materials_class, "1.6AR12");
+        assert_eq!(first.insulation_spec, "");
+        assert_eq!(first.nominal_diameter, Some(50));
+        assert_eq!(first.fluid_code, Some(493));
+        assert_eq!(first.fluid_system, Some(8));
+        assert_eq!(
+            first.item_tag.as_deref(),
+            Some("OD-50 mm-03-0401-1.6AR12-WE50mm")
+        );
+    }
+
+    // What the fifteen tables of that dump hold that the reader keeps
+    // unread, column by column with the first row and the number of cells.
+    // The two `NUMBER` columns are SI values: 0.05 m beside `50mm` on eight
+    // runs, and 0.0029999910000486 rad, the arctangent of the `0.3 %` beside
+    // it, on two. The three text columns are in the database character
+    // set. None is a column a stage follows, which is why every projection
+    // of the dump goes through.
+    #[test]
+    fn the_committed_dwg_dump_keeps_unread_only_columns_no_stage_follows() {
+        let dump = committed_dwg_dump();
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let mut unread = Vec::new();
+        for table in [
+            &tables.piping_point,
+            &tables.signal_point,
+            &tables.connector,
+            &tables.representation,
+            &tables.piperun,
+            &tables.signalrun,
+            &tables.opc,
+            &tables.nozzle,
+            &tables.note,
+            &tables.itemnote,
+            &tables.modelitem,
+            &tables.plantitem,
+            &tables.inlinecomp,
+            &tables.codelists,
+            &tables.drawing,
+        ] {
+            for (index, column) in table.columns.iter().enumerate() {
+                let cells = table
+                    .rows
+                    .iter()
+                    .filter(|row| matches!(row[index], Field::Unscaled))
+                    .count();
+                if column.kind != Kind::Bytes && column.unread_row.is_none() && cells == 0 {
+                    continue;
+                }
+                let kind = match column.kind {
+                    Kind::Char => "national text",
+                    Kind::Bytes => "database-charset text",
+                    Kind::Num => "NUMBER",
+                    Kind::Date => "DATE",
+                };
+                unread.push((
+                    table.name.as_str(),
+                    column.name.as_str(),
+                    kind,
+                    column.unread_row,
+                    cells,
+                ));
+            }
+        }
+        assert_eq!(
+            unread,
+            [
+                (
+                    "T_REPRESENTATION",
+                    "FILENAME",
+                    "database-charset text",
+                    Some(2),
+                    228
+                ),
+                ("T_PIPERUN", "SP_INSULTHICKSI", "NUMBER", Some(0), 8),
+                ("T_PIPERUN", "SP_SLOPESI", "NUMBER", Some(21), 2),
+                (
+                    "T_OPC",
+                    "MATINGOPCPATH",
+                    "database-charset text",
+                    Some(0),
+                    14
+                ),
+                ("T_NOTE", "BODY", "database-charset text", Some(0), 8),
+            ]
+        );
+        // The two fractions as the dump writes them.
+        assert_eq!(decode_i64(&[0xc0, 0x06]), None);
+        assert_eq!(
+            decode_i64(&[0xbf, 0x1e, 0x64, 0x64, 0x0b, 0x01, 0x05, 0x57]),
+            None
+        );
+    }
+
     #[test]
     fn ijingchang_ports_match_the_reference() {
         let dump_path = std::path::PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");

@@ -1738,6 +1738,64 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             );
         }
     }
+    // Nothing is refused on the way. The dump's `T_PIPERUN` holds SI values
+    // that are not integers (`SP_INSULTHICKSI` 0.05 on its first row), in
+    // columns no stage follows: the index lists no problem, for the package
+    // or for a drawing, and the run prints no warning and no error.
+    assert_eq!(index["problems"], serde_json::json!([]), "{index}");
+    let drawings = index["drawings"].as_array().expect("drawings");
+    for drawing in drawings {
+        assert_eq!(drawing["problems"], serde_json::json!([]), "{drawing}");
+    }
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("warning:") || line.starts_with("error:")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("(0 failed, 1 without a DrawingNo)"),
+        "{stderr}"
+    );
+    // What each drawing states today, as the index counts it: objects,
+    // attribute values, relations. `001` has no `P&IDAttributes` row and is
+    // written as its `PIDDrawing` alone, outside the package's totals.
+    let stated: Vec<(&str, u64, u64, u64)> = drawings
+        .iter()
+        .map(|drawing| {
+            (
+                drawing["name"].as_str().expect("name"),
+                drawing["objects"].as_u64().expect("objects"),
+                drawing["values"].as_u64().expect("values"),
+                drawing["relationships"].as_u64().expect("relationships"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        stated,
+        [
+            ("001", 1, 1, 0),
+            ("002", 3, 2, 2),
+            ("222", 3, 2, 2),
+            ("DWG-0201GP01-01", 492, 362, 688),
+            ("DWG-0201GP06-01", 170, 150, 233),
+            ("DWG-0202GP06-01", 113, 121, 141),
+            ("DWG-0104GP01-08", 5, 6, 4),
+        ]
+    );
+    assert_eq!(index["objects"], 786);
+    assert_eq!(index["values"], 643);
+    assert_eq!(index["relationships"], 1_070);
+    // As many ports as the dump has rows in `T_PIPINGPOINT` and in
+    // `T_SIGNALPOINT`.
+    assert_eq!(index["piping_ports"], 93);
+    assert_eq!(index["signal_ports"], 151);
+    assert_eq!(index["connectivity_rels"], 192);
+    assert_eq!(index["opc_branch_points"], 5);
+    assert_eq!(index["equipment_composition_rels"], 10);
+    assert_eq!(index["item_note_rels"], 2);
+    assert_eq!(index["pipelines"], 12);
+    assert_eq!(index["piping_connectors"], 20);
     // The package draws four off-page connectors on DWG-0202GP06-01 and
     // none has a `ToFromText`. The reference writes `IOffpageConnector`
     // only with one, never as an empty element.
