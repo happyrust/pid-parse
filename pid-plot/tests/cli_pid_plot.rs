@@ -48,6 +48,13 @@
 //! its cache, is held to saying nothing whatever the library holds. A gauge
 //! with two damaged streams is held to a warning and an item for each.
 //!
+//! A border template's placements are held the same way. No template on
+//! hand draws from the library either, so a copy of `D06`'s template has
+//! its two placements of one title-block symbol name a body the template
+//! does not hold; with a damaged library file for them the program is held
+//! to one warning that says the file is the border template's, and the
+//! account to one suspect item among the template's.
+//!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
 //! wherever a font directory is present and says why it did not where none is;
@@ -3117,4 +3124,216 @@ fn a_symbol_file_with_two_damaged_streams_is_said_once_for_each() {
             "the program's summary is not the account's\n{said}"
         );
     }
+}
+
+/// The border template `D06` wears, as `test-file/Ref/Template Files`
+/// keeps it.
+const TEMPLATE: &str = "CPECCHB-SQ-A2.igr";
+
+/// A symbol that template places twice, down its sign-off column. The
+/// template names it by a path on the machine its title block was authored
+/// on, so a library answers by the file's name alone.
+const TEMPLATE_SYMBOL: &str = "hqz.sym";
+
+/// A corpus of `case`'s own that holds one border template — [`TEMPLATE`]
+/// with no cached body for its placements of [`TEMPLATE_SYMBOL`]
+/// ([`without_the_cached_bodies_of`]) — and the path those placements name.
+fn a_corpus_whose_template_draws_from_the_library(case: &str) -> (PathBuf, String) {
+    let corpus = scratch(case).join("corpus");
+    let templates = corpus.join("Ref").join("Template Files");
+    std::fs::create_dir_all(&templates)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", templates.display()));
+    let source = fixtures().join("Ref").join("Template Files").join(TEMPLATE);
+    let mut named =
+        without_the_cached_bodies_of(&source, TEMPLATE_SYMBOL, &templates.join(TEMPLATE));
+    assert_eq!(
+        named.len(),
+        2,
+        "the template places {TEMPLATE_SYMBOL} twice: {named:?}"
+    );
+    named.dedup();
+    assert_eq!(named.len(), 1, "both placements name one file: {named:?}");
+    (corpus, named.remove(0))
+}
+
+/// Whether a primitive of the page is one of the template's placements of
+/// [`TEMPLATE_SYMBOL`].
+fn of_the_templates_symbol(primitive: &PaperPrimitive) -> bool {
+    primitive.symbol.as_deref().is_some_and(|symbol| {
+        symbol
+            .to_ascii_lowercase()
+            .ends_with(&TEMPLATE_SYMBOL.to_ascii_lowercase())
+    })
+}
+
+/// A damaged symbol file that a border template's placement is drawn from
+/// is said as the template's.
+///
+/// A template is a drawing, and a symbol it places is drawn as any other:
+/// from the body the template caches, and from the symbol library only for
+/// a placement it holds no body of. No template on hand has such a
+/// placement, so the corpus here holds a copy of `D06`'s template whose two
+/// placements of `hqz.sym` name a body the template does not hold, and the
+/// library one file of that name. The file is the committed pressure gauge:
+/// no library on hand carries an `hqz.sym`, and what then stands in the
+/// sign-off column — two gauges — is not what this case is about.
+///
+/// With the sound file the page says nothing. With one length of the
+/// file's `/Sheet68` set to zero — a sheet the gauge is not drawn from, so
+/// the page is the sound file's primitive for primitive — the program
+/// prints exactly one warning, which says the file is the border
+/// template's, and the account files it once, among the template's items
+/// and not the drawing's.
+///
+/// The file is named as the template names it: a path on the machine the
+/// title block was authored on. A placement that names no reference share
+/// is found by its file name alone, and the library does not say which
+/// file answered.
+#[test]
+fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_templates() {
+    let case = "symbol-template";
+    let (corpus, named) = a_corpus_whose_template_draws_from_the_library(case);
+    let drawing = d06();
+
+    // The sound file: two of the template's three placements are drawn
+    // from the library, and nothing is said.
+    let sound_library =
+        a_library_holding("symbol-template-sound", &[TEMPLATE_SYMBOL], &the_gauge());
+    let (sound_model, sound) = laid_out_against(&drawing, &corpus, &sound_library);
+    let template = sound_model
+        .template
+        .as_ref()
+        .unwrap_or_else(|| panic!("D06 found no border template under {}", corpus.display()));
+    assert!(
+        Path::new(&template.path).starts_with(&corpus),
+        "the page wears {}, not the copy under {}",
+        template.path,
+        corpus.display()
+    );
+    assert_eq!(
+        (
+            drawn_from_in(&sound.furniture, PlacementSource::Cached),
+            drawn_from_in(&sound.furniture, PlacementSource::Library),
+            drawn_from_in(&sound.furniture, PlacementSource::Missing),
+        ),
+        (1, 2, 0),
+        "the template's three placements"
+    );
+    assert_eq!(
+        drawn_from(&sound, PlacementSource::Library),
+        0,
+        "the drawing's own placements are drawn from the bodies it caches"
+    );
+    assert!(symbol_files_filed_in(&sound.furniture).is_empty());
+    assert!(symbol_files_filed(&sound).is_empty());
+    assert!(sound_model.ledger.symbol_chain_fault_warnings().is_empty());
+    // The copy differs from the committed template in those two placements
+    // alone: every other primitive is the page `D06` is laid out to against
+    // the repository's fixtures.
+    let (committed_model, _) = laid_out_with(&drawing, &sound_library);
+    let all_but = |model: &PaperModel| -> Vec<PaperPrimitive> {
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| !of_the_templates_symbol(primitive))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        all_but(&sound_model),
+        all_but(&committed_model),
+        "the rest of the page"
+    );
+    assert!(
+        sound_model
+            .primitives
+            .iter()
+            .any(|primitive| of_the_templates_symbol(primitive) && primitive.furniture),
+        "the template's placements of {TEMPLATE_SYMBOL} draw nothing"
+    );
+
+    // The same file with a stream that does not hold.
+    let (bytes, faults) = a_gauge_damaged_in(&["/Sheet68"], a_length_of_zero);
+    let fault = &faults[0];
+    let library = a_library_holding(case, &[TEMPLATE_SYMBOL], &bytes);
+    let (model, account) = laid_out_against(&drawing, &corpus, &library);
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+    assert_eq!(
+        symbol_files_filed_in(&account.furniture),
+        [(
+            format!("{named}:{}", fault.stream_path).as_str(),
+            1,
+            Some(fault.unread_bytes as u64)
+        )],
+        "the symbol file, filed once among the template's items"
+    );
+    assert!(
+        symbol_files_filed(&account).is_empty(),
+        "nothing of the drawing's own is drawn from the file: {:?}",
+        symbol_files_filed(&account)
+    );
+    assert_eq!(
+        model.ledger.symbol_chain_faults.len(),
+        1,
+        "{:?}",
+        model.ledger.symbol_chain_faults
+    );
+    let found = &model.ledger.symbol_chain_faults[0];
+    assert_eq!(
+        (
+            found.domain,
+            found.symbol.as_str(),
+            found.placements,
+            &found.fault
+        ),
+        (LedgerDomain::Furniture, named.as_str(), 2, fault)
+    );
+    let sentence = format!(
+        "in the border template, the symbol file {named}, which 2 placement(s) on the page are \
+         drawn from, is damaged: {}",
+        fault.describe()
+    );
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        std::slice::from_ref(&sentence)
+    );
+    let mut expected = suspects(&sound);
+    *expected.entry("symbol_file_chain_fault").or_insert(0) += 1;
+    assert_eq!(suspects(&account), expected, "the suspects of the page");
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + 1,
+        "the summary with the damaged file, `{}`, against the sound file's, `{}`",
+        account.summary(),
+        sound.summary()
+    );
+
+    // The program: one line, the library's sentence, and the sound file's
+    // exit code; with the sound file, not a word.
+    let said = export_against(case, &drawing, &corpus, &library, "template.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned,
+        [format!("warning: {}: {sentence}", drawing.display()).as_str()],
+        "a damaged symbol file the template is drawn from is exactly one warning, the \
+         template's\n{said}"
+    );
+    if said.code == Some(0) {
+        assert_eq!(
+            ledger_count(&said, "suspect"),
+            account.summary().suspect,
+            "the program's summary is not the account's\n{said}"
+        );
+    }
+    let silent = export_against(
+        "symbol-template-sound",
+        &drawing,
+        &corpus,
+        &sound_library,
+        "sound.pdf",
+    );
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "a sound symbol file drew a warning\n{silent}"
+    );
 }
