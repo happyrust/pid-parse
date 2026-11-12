@@ -2334,6 +2334,18 @@ mod tests {
                 "{what} should be refused"
             );
         }
+        // An arc whose stroke leaves the coordinate domain is refused here
+        // as on the drawing side, by the same rule: half an ellipse whose
+        // major semi-axis is two metres, under a ratio that puts its apex
+        // 8e8 out and under one that puts it 2e9 out.
+        let half = |ratio: f64| {
+            elliptical_arc_payload([std::f64::consts::PI, 0.0, 0.0, 0.0, 2.0, 0.0, ratio], 1)
+        };
+        assert!(decode_primitive(TYPE_ELLIPTICALARC, &half(4e8)).is_some());
+        assert!(
+            decode_primitive(TYPE_ELLIPTICALARC, &half(1e9)).is_none(),
+            "an apex 2e9 out should be refused"
+        );
         // A ratio of exactly 1 (a circular arc) is still accepted, as the
         // drawing-side decoder admits it.
         assert!(decode_primitive(TYPE_ELLIPTICALARC, &with(6, 1.0)).is_some());

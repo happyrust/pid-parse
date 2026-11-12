@@ -1036,6 +1036,13 @@ fn bspline_record(layer: u32, poles: usize, degree: usize) -> Vec<u8> {
 /// layer of the sheet's first line, and the stream's count of live records
 /// raised by one: a drawing whose every other byte is the fixture's.
 fn planted(original: &Original, poles: usize, degree: usize) -> Vec<u8> {
+    planted_record(original, |layer| bspline_record(layer, poles, degree))
+}
+
+/// `original` with the record `record_on` makes for a layer appended to its
+/// sheet stream, on the layer of the sheet's first line, and the stream's
+/// count of live records raised by one.
+fn planted_record(original: &Original, record_on: impl FnOnce(u32) -> Vec<u8>) -> Vec<u8> {
     let package = PidParser::new()
         .parse_package_from_reader(Cursor::new(original.bytes.clone()))
         .unwrap_or_else(|error| panic!("{} should parse: {error}", original.name));
@@ -1055,7 +1062,7 @@ fn planted(original: &Original, poles: usize, degree: usize) -> Vec<u8> {
         .clone();
     let live = u32::from_le_bytes([sheet[4], sheet[5], sheet[6], sheet[7]]);
     sheet[4..8].copy_from_slice(&(live + 1).to_le_bytes());
-    sheet.extend_from_slice(&bspline_record(layer, poles, degree));
+    sheet.extend_from_slice(&record_on(layer));
     let plan = WritePlan {
         stream_replacements: vec![StreamReplacement {
             path: PLANT_STREAM.to_string(),
@@ -1171,6 +1178,148 @@ fn a_planted_bspline_of_any_degree_comes_back_in_time() {
             assert!(points
                 .iter()
                 .all(|point| point.x.is_finite() && point.y.is_finite()));
+        }
+    }
+}
+
+/// PSM type code of an `igEllipticalArc2d`.
+const IGELLIPTICALARC2D: u16 = 0x007E;
+
+/// One `igEllipticalArc2d` record: the 18-byte sub-header, the two
+/// parameters, the centre, the major semi-axis vector and the ratio, and
+/// the direction byte.
+fn elliptical_arc_record(layer: u32, doubles: [f64; 7], direction: u8) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&PLANTED_OID.to_le_bytes());
+    payload.extend_from_slice(&PLANT_SHEET_OID.to_le_bytes());
+    payload.extend_from_slice(&layer.to_le_bytes());
+    payload.extend_from_slice(&0x0010u16.to_le_bytes());
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    for value in doubles {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    payload.push(direction);
+    let mut record = IGELLIPTICALARC2D.to_le_bytes().to_vec();
+    record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    record.extend_from_slice(&payload);
+    record
+}
+
+/// An arc of an ellipse states seven doubles, each held to the coordinate
+/// domain, and is drawn as a polyline that they multiply and add up to. A
+/// major semi-axis of two metres under a ratio of 1e9 has its apex 2e9
+/// out; a circle of radius 9e8 about (9e8, 9e8) reaches 1.8e9. Until
+/// 2026-11-13 such a record on a sheet decoded, was drawn there, and
+/// nothing said so.
+///
+/// Planted in a drawing, the record is refused where its stroke leaves the
+/// domain, the geometry names the refusal, and the drawing is otherwise
+/// what it was; the arc of the same ellipse that stays inside is read and
+/// drawn, every vertex a point of the domain.
+#[test]
+fn a_planted_elliptical_arc_whose_stroke_leaves_the_domain_is_refused_and_named() {
+    use std::f64::consts::PI;
+    let _serial = lock(&SERIAL);
+    let original = corpus()
+        .iter()
+        .find(|original| original.name == PLANT_IN)
+        .unwrap_or_else(|| panic!("{PLANT_IN} is committed under test-file"));
+    let refusals = |geometry: &NormalizedPidGeometry| -> Vec<(String, usize)> {
+        geometry
+            .refused_graphic_records
+            .iter()
+            .filter(|refused| refused.type_code == IGELLIPTICALARC2D)
+            .map(|refused| (refused.stream_path.clone(), refused.count))
+            .collect()
+    };
+    let intact = geometry_of(&original.bytes);
+    assert!(refusals(&intact).is_empty());
+
+    // The two parameters, the centre, the major semi-axis, the ratio; the
+    // direction byte; and how many vertices the arc is drawn with, when it
+    // is drawn.
+    let cases: [(&str, [f64; 7], u8, Option<usize>); 5] = [
+        (
+            "half an ellipse with its apex 2e9 out",
+            [PI, 0.0, 0.05, 0.05, 2.0, 0.0, 1e9],
+            0,
+            None,
+        ),
+        (
+            "the same half, its apex 8e8 out",
+            [PI, 0.0, 0.05, 0.05, 2.0, 0.0, 4e8],
+            0,
+            Some(4 * 8 + 1),
+        ),
+        (
+            "that ellipse a tenth of a radian either side of its major axis",
+            [-0.1, 0.1, 0.05, 0.05, 2.0, 0.0, 1e9],
+            1,
+            Some(8 + 1),
+        ),
+        (
+            "the rest of its turn",
+            [-0.1, 0.1, 0.05, 0.05, 2.0, 0.0, 1e9],
+            0,
+            None,
+        ),
+        (
+            "three quarters of a circle of radius 9e8 about (9e8, 9e8)",
+            [PI, 1.5 * PI, 9e8, 9e8, 9e8, 0.0, 1.0],
+            0,
+            None,
+        ),
+    ];
+    for (label, doubles, direction, drawn_with) in cases {
+        let bytes = planted_record(original, |layer| {
+            elliptical_arc_record(layer, doubles, direction)
+        });
+        let geometry = geometry_of(&bytes);
+        let drawn: Vec<&pid_parse::PidGraphicEntity> = geometry
+            .entities
+            .iter()
+            .filter(|entity| entity.graphic_oid == Some(PLANTED_OID))
+            .collect();
+        let others: Vec<&pid_parse::PidGraphicEntity> = geometry
+            .entities
+            .iter()
+            .filter(|entity| entity.graphic_oid != Some(PLANTED_OID))
+            .collect();
+        assert!(
+            others.iter().copied().eq(intact.entities.iter()),
+            "{label}: the rest of the drawing is what the fixture draws"
+        );
+        match drawn_with {
+            None => {
+                assert_eq!(
+                    refusals(&geometry),
+                    [(PLANT_STREAM.to_string(), 1)],
+                    "{label}: the refusal is named"
+                );
+                assert!(drawn.is_empty(), "{label}: a refused record draws nothing");
+                assert!(
+                    geometry
+                        .warnings
+                        .iter()
+                        .any(|warning| warning.contains("0x007E") && warning.contains("refuses")),
+                    "{label}: {:?}",
+                    geometry.warnings
+                );
+            }
+            Some(vertices) => {
+                assert!(refusals(&geometry).is_empty(), "{label}");
+                assert_eq!(drawn.len(), 1, "{label}: the record is drawn once");
+                let PidGraphicKind::Polyline { points, .. } = &drawn[0].kind else {
+                    panic!("{label}: drawn as {:?}", drawn[0].kind);
+                };
+                assert_eq!(points.len(), vertices, "{label}");
+                assert!(
+                    points
+                        .iter()
+                        .all(|point| point.x.abs() <= 1e9 && point.y.abs() <= 1e9),
+                    "{label}: every vertex is a point of the coordinate domain"
+                );
+            }
         }
     }
 }

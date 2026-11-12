@@ -2954,6 +2954,17 @@ const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 /// stored): every family that reads doubles holds them to it.
 const COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
 
+/// Whether `point` is a finite point of the coordinate domain. What a
+/// record states is held to the domain where it is read, double by double;
+/// what a curve is flattened to — a centre plus a radius, a semi-axis times
+/// a ratio — is a vertex no field states, and is held to it by this, where
+/// the vertex is made.
+fn point_in_coordinate_domain(point: (f64, f64)) -> bool {
+    [point.0, point.1]
+        .into_iter()
+        .all(|value| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT)
+}
+
 /// PSM type code of a RAD `JStyleOverride` record.
 ///
 /// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation of
@@ -5168,6 +5179,15 @@ fn decode_igboundary_payload(
             _ => return None,
         };
         for (start, end) in chords {
+            // A chord runs between two points of the coordinate domain, as
+            // every member's of the other vocabulary does
+            // (`igboundary_template_members`). A line's four doubles were
+            // held to it above; a circle's centre and radius were, and what
+            // they add up to was not: radius 9e8 about (9e8, 9e8) reaches
+            // 1.8e9.
+            if !(point_in_coordinate_domain(start) && point_in_coordinate_domain(end)) {
+                return None;
+            }
             let reference = *first_vertex.get_or_insert(start);
             if start != reference || end != reference {
                 all_same = false;
@@ -5373,6 +5393,17 @@ fn decode_igboundary_template_payload(
 ///
 /// One loop of a boundary is one such run of members; see
 /// [`decode_igboundary_template_payload`] for the layouts.
+///
+/// **Every chord runs between two finite points of the coordinate domain**,
+/// or the record is refused: one rule, where the chords of every kind of
+/// member are appended. A member's doubles are each held to the domain as
+/// they are read, which holds a line and a point run whole and does not
+/// hold a curve: an arc's vertices are its centre plus its semi-axes, the
+/// second of them the first times a ratio. Until 2026-11-13 an arc of an
+/// ellipse whose major semi-axis is two metres and whose ratio is 1e9
+/// decoded with its apex 2e9 out — 1e18 for a semi-axis of 1e9 — and three
+/// quarters of a circle of radius 9e8 about (9e8, 9e8) with vertices at
+/// 1.8e9.
 fn igboundary_template_members(
     payload: &[u8],
     mut pos: usize,
@@ -5394,11 +5425,15 @@ fn igboundary_template_members(
         (v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT).then_some(v)
     };
     let mut push_segment = |tag_offset: usize, start: (f64, f64), end: (f64, f64)| {
+        if !(point_in_coordinate_domain(start) && point_in_coordinate_domain(end)) {
+            return None;
+        }
         segments.push(SheetIgBoundary2dSegment {
             tag_offset,
             start,
             end,
         });
+        Some(())
     };
 
     for _ in 0..member_count {
@@ -5411,7 +5446,7 @@ fn igboundary_template_members(
                 let sy = check(read_f64(pos + 9)?)?;
                 let ex = check(read_f64(pos + 17)?)?;
                 let ey = check(read_f64(pos + 25)?)?;
-                push_segment(pos, (sx, sy), (ex, ey));
+                push_segment(pos, (sx, sy), (ex, ey))?;
                 pos += 33;
             }
             IGBOUNDARY2D_POINTRUN_TAG => {
@@ -5430,7 +5465,7 @@ fn igboundary_template_members(
                         check(read_f64(pos + 7 + i * 16)?)?,
                         check(read_f64(pos + 15 + i * 16)?)?,
                     );
-                    push_segment(pos, prev, next);
+                    push_segment(pos, prev, next)?;
                     prev = next;
                 }
                 pos = run_end;
@@ -5484,7 +5519,7 @@ fn igboundary_template_members(
                         crate::bspline::SEGMENTS_PER_SPAN,
                     )?;
                     for pair in vertices.windows(2) {
-                        push_segment(pos, pair[0], pair[1]);
+                        push_segment(pos, pair[0], pair[1])?;
                     }
                 } else {
                     // `P(t) = C + cos t · major + sin t · minor`, `minor` the
@@ -5510,7 +5545,7 @@ fn igboundary_template_members(
                     for i in 1..=chords {
                         let angle = start_ang + sweep * (i as f64 / chords as f64);
                         let next = at(angle);
-                        push_segment(pos, prev, next);
+                        push_segment(pos, prev, next)?;
                         prev = next;
                     }
                 }
@@ -5523,7 +5558,7 @@ fn igboundary_template_members(
                 }
                 let vertices = igboundary_bspline_vertices(&curve)?;
                 for pair in vertices.windows(2) {
-                    push_segment(pos, pair[0], pair[1]);
+                    push_segment(pos, pair[0], pair[1])?;
                 }
                 pos = member_end;
             }
@@ -5548,23 +5583,22 @@ fn igboundary_template_members(
 /// read ([`bspcurve_geometry_from`]), as a record's is, and again here by
 /// the evaluation.
 ///
-/// `None` too for a vertex that is not a finite point of the coordinate
-/// domain. The poles are points of it and the weights are above zero, so
-/// the curve lies among its poles, and all that can put a vertex past the
-/// edge is the rounding of the last division: a pole on the edge itself,
-/// `1e9`, under weights of 0.7 comes out one bit beyond it. (Until a curve's
-/// weights were brought to one scale, weights of 1e308 overflowed de Boor's
-/// recursion and this was the rule that refused the member.)
+/// The vertices are held to the coordinate domain where their chords are
+/// appended, as every member's are ([`igboundary_template_members`]). The
+/// poles are points of the domain and the weights are above zero, so the
+/// curve lies among its poles, and all that can put a vertex of this member
+/// past the edge is the rounding of the last division: a pole on the edge
+/// itself, `1e9`, under weights of 0.7 comes out one bit beyond it. (Until
+/// a curve's weights were brought to one scale, weights of 1e308 overflowed
+/// de Boor's recursion and that rule was what refused the member.)
 fn igboundary_bspline_vertices(curve: &BspCurveGeometry) -> Option<Vec<(f64, f64)>> {
-    let vertices = crate::bspline::try_sample(
+    crate::bspline::try_sample(
         &curve.poles,
         &curve.weights,
         &curve.knots,
         crate::bspline::SEGMENTS_PER_SPAN,
-    )?;
-    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
-    (vertices.len() >= 2 && vertices.iter().all(|(x, y)| in_domain(*x) && in_domain(*y)))
-        .then_some(vertices)
+    )
+    .filter(|vertices| vertices.len() >= 2)
 }
 
 /// Whether every vertex of `segments` is the first one: a boundary that
@@ -7925,8 +7959,11 @@ pub struct SheetIgEllipticalArc2dDecoded {
 /// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
 /// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
 /// major semi-axis; a finite `ratio > 0` (not capped at `1` -- see the
-/// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]). As for
-/// `igArc2d`, the angles only have to be finite: they are not normalised.
+/// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]); and every vertex
+/// of the polyline the arc is drawn as a point of the coordinate domain,
+/// which seven in-domain doubles do not make it -- a semi-axis of two
+/// metres under a ratio of 1e9 has its apex 2e9 out. As for `igArc2d`, the
+/// angles only have to be finite: they are not normalised.
 pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
     SheetChain::walk(data)
         .starts
@@ -7970,6 +8007,23 @@ pub(crate) fn elliptical_arc_geometry(payload: &[u8]) -> Option<EllipticalArcGeo
     if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 {
         return None;
     }
+    // The seven doubles are each in the domain, and the arc they state need
+    // not be: its second semi-axis is the first times the ratio, and its
+    // vertices are the centre plus both. The record is drawn as a polyline,
+    // on a sheet, in a cached body and in a `.sym` alike, and a record
+    // whose polyline leaves the domain is refused here, where all three
+    // read it, as a boundary's member that re-lists such an arc is
+    // (`igboundary_template_members`).
+    let clockwise = *payload.get(IGELLIPTICALARC2D_PAYLOAD_LEN - 1)? == 0;
+    if !elliptical_arc_stroke_keeps_to_the_domain(
+        (center_x, center_y),
+        (major_x, major_y),
+        ratio,
+        (sweep_start, sweep_end),
+        clockwise,
+    ) {
+        return None;
+    }
     Some((
         (center_x, center_y),
         (major_x, major_y),
@@ -7977,6 +8031,30 @@ pub(crate) fn elliptical_arc_geometry(payload: &[u8]) -> Option<EllipticalArcGeo
         sweep_start,
         sweep_end,
     ))
+}
+
+/// Whether every vertex of the polyline an arc of an ellipse is drawn as —
+/// [`crate::bspline::sample`] over the exact rational B-spline of
+/// [`crate::bspline::elliptical_arc_directed`],
+/// [`crate::bspline::SEGMENTS_PER_SPAN`] segments a span — is a finite
+/// point of the coordinate domain. It is the arc that is asked, not its
+/// ellipse: one whose apex is far out may be stated a tenth of a radian
+/// either side of its major axis and stay inside. An arc that sweeps
+/// nothing has no curve and is drawn as nothing, so it keeps to the domain.
+fn elliptical_arc_stroke_keeps_to_the_domain(
+    center: (f64, f64),
+    major: (f64, f64),
+    ratio: f64,
+    sweep: (f64, f64),
+    clockwise: bool,
+) -> bool {
+    let Some((poles, weights, knots)) =
+        crate::bspline::elliptical_arc_directed(center, major, ratio, sweep.0, sweep.1, clockwise)
+    else {
+        return true;
+    };
+    crate::bspline::try_sample(&poles, &weights, &knots, crate::bspline::SEGMENTS_PER_SPAN)
+        .is_some_and(|vertices| vertices.into_iter().all(point_in_coordinate_domain))
 }
 
 /// [`PsmRecordDecoder`] adapter for `0x007E` `igEllipticalArc2d`.
@@ -9769,6 +9847,73 @@ mod nested_curve_family_tests {
             decode_igellipticalarcs(&chain(&[elliptical_record(&doubles)])).len(),
             1
         );
+    }
+
+    /// An arc of an ellipse is drawn as a polyline — the vertices
+    /// `bspline::sample` makes of its exact rational B-spline — and every
+    /// vertex of that polyline is a point of the coordinate domain, or the
+    /// record is refused. Its seven doubles are each held to the domain,
+    /// and that does not hold what they multiply or add up to: a major
+    /// semi-axis of two metres under a ratio of 1e9 puts the apex of the
+    /// other semi-axis 2e9 out, and a circle of radius 9e8 about
+    /// (9e8, 9e8) reaches 1.8e9. Until 2026-11-13 such a record decoded and
+    /// was drawn there.
+    ///
+    /// It is the arc that is held, not its ellipse: a tenth of a radian
+    /// either side of the major semi-axis the first ellipse stays inside,
+    /// and that arc is read; the rest of its turn is not.
+    #[test]
+    fn an_elliptical_arc_whose_stroke_leaves_the_coordinate_domain_is_refused() {
+        use std::f64::consts::PI;
+        let read = |doubles: [f64; 7], flag: u8| {
+            let stream = chain(&[curve_record(
+                PSM_TYPE_CODE_IGELLIPTICALARC2D,
+                533,
+                &doubles,
+                flag,
+            )]);
+            assert!(
+                !sheet_record_starts(&stream).is_empty(),
+                "the chain itself must still walk"
+            );
+            let decoded = decode_igellipticalarcs(&stream);
+            assert_eq!(
+                decode_igellipticalarc_at(&stream, SHEET_STREAM_HEADER_LEN).is_some(),
+                !decoded.is_empty()
+            );
+            decoded.len()
+        };
+        // The two parameters, the centre, the major semi-axis, the ratio.
+        // Half the ellipse, from one end of its major axis to the other:
+        // whichever way round, through an apex.
+        let half = |ratio: f64| [PI, 0.0, 0.0, 0.0, 2.0, 0.0, ratio];
+        for flag in [0u8, 1] {
+            assert_eq!(
+                read(half(4e8), flag),
+                1,
+                "an apex 8e8 out, direction {flag}"
+            );
+            assert_eq!(
+                read(half(1e9), flag),
+                0,
+                "an apex 2e9 out, direction {flag}"
+            );
+        }
+        // The same ellipse a tenth of a radian either side of its major
+        // axis, where it is 2e8 off that axis at the most; and the rest of
+        // the turn, which the other direction byte states.
+        let about_the_axis = [-0.1, 0.1, 0.0, 0.0, 2.0, 0.0, 1e9];
+        assert_eq!(read(about_the_axis, 1), 1, "the arc that stays inside");
+        assert_eq!(read(about_the_axis, 0), 0, "the rest of the turn");
+        // A centre and a semi-axis that are each a point of the domain and
+        // add up past it: the quarter of the circle nearest the origin, and
+        // the other three.
+        let off_centre = [PI, 1.5 * PI, 9e8, 9e8, 9e8, 0.0, 1.0];
+        assert_eq!(read(off_centre, 1), 1, "the quarter nearest the origin");
+        assert_eq!(read(off_centre, 0), 0, "three quarters, out to 1.8e9");
+        // An arc that sweeps nothing has no stroke to hold: it decodes, as
+        // it always has, and is drawn as nothing.
+        assert_eq!(read([1.0, 1.0, 0.0, 0.0, 2.0, 0.0, 1e9], 1), 1);
     }
 
     /// `Air Cooler Type 1.sym`'s left fan oval (`Sheet6` oid 726): centre,
@@ -13905,6 +14050,44 @@ mod tests {
         );
     }
 
+    /// The chords of a `0x73` circle member are held as every other member's
+    /// are: a centre and a radius that are each in the coordinate domain and
+    /// reach past it together refuse the record. Until 2026-11-13 the dot
+    /// below decoded with vertices 1.8e9 out.
+    #[test]
+    fn igboundary2d_circle_member_past_the_coordinate_domain_is_refused() {
+        // The record of `EF井场`'s dot with another centre — the member's,
+        // and the anchor, which is that centre — and another radius.
+        let with = |centre: (f64, f64), radius: f64| {
+            let mut record = ef_circle_boundary_record();
+            for (at, value) in [
+                (29, centre.0),
+                (37, centre.1),
+                (45, radius),
+                (70, centre.0),
+                (78, centre.1),
+            ] {
+                let at = PSM_ENVELOPE_LEN + at;
+                record[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            record
+        };
+        let inside = decode_igboundary_at(&with((0.0, 0.0), 9e8), 0)
+            .expect("a circle of radius 9e8 about the origin");
+        assert_eq!(inside.segments.len(), 26, "a whole turn in 0.25 rad chords");
+        assert!(inside.segments.iter().all(|segment| {
+            [segment.start, segment.end]
+                .into_iter()
+                .all(|(x, y)| x.abs() <= 9e8 + 1.0 && y.abs() <= 9e8 + 1.0)
+        }));
+        for centre in [(9e8, 9e8), (-9e8, 0.0), (0.0, 2e8)] {
+            assert!(
+                decode_igboundary_at(&with(centre, 9e8), 0).is_none(),
+                "a circle of radius 9e8 about {centre:?} leaves the domain"
+            );
+        }
+    }
+
     #[test]
     fn igboundary2d_open_chain_reports_not_closed() {
         let record = build_synthetic_igboundary2d_record(
@@ -14851,6 +15034,84 @@ mod tests {
                 "cut at {cut}"
             );
         }
+    }
+
+    /// Every chord a member is flattened to runs between two points of the
+    /// coordinate domain, or the record is refused: one rule, where the
+    /// chords of every kind of member are appended. A member's own doubles
+    /// are each held to the domain where they are read, and that does not
+    /// hold what they multiply or add up to. Until 2026-11-13 an arc of an
+    /// ellipse whose major semi-axis is two metres and whose ratio is 1e9
+    /// decoded with its apex at 2e9, and three quarters of a circle of
+    /// radius 9e8 about (9e8, 9e8) with vertices 1.8e9 out.
+    #[test]
+    fn igboundary2d_member_vertex_past_the_coordinate_domain_refuses_the_record() {
+        use std::f64::consts::PI;
+        let references = [(354, 0x00D3, 5), (335, 0x00CB, 4)];
+        let decode = |members: &[Vec<u8>], anchor: (f64, f64)| {
+            decode_igboundary_at(
+                &boundary_record(&one_loop_boundary_payload(members, anchor, &references)),
+                0,
+            )
+        };
+        let farthest = |record: &SheetIgBoundary2dDecoded| {
+            record
+                .segments
+                .iter()
+                .flat_map(|segment| [segment.start, segment.end])
+                .map(|(x, y)| x.abs().max(y.abs()))
+                .fold(0.0, f64::max)
+        };
+
+        // An arc of an ellipse proper, which takes the vertices its record
+        // is stroked with: half the ellipse about the origin whose major
+        // semi-axis is (2, 0), closed by the chord along that axis. The
+        // ratio times two metres is how far the apex stands off the chord.
+        let half_ellipse = |ratio: f64, direction: u8| {
+            decode(
+                &[
+                    boundary_arc_member((PI, 0.0), (0.0, 0.0), (2.0, 0.0), ratio, direction),
+                    boundary_line_member((2.0, 0.0), (-2.0, 0.0)),
+                ],
+                (0.0, 1.0),
+            )
+        };
+        for direction in [0u8, 1] {
+            let inside = half_ellipse(4e8, direction)
+                .unwrap_or_else(|| panic!("an apex 8e8 out, direction {direction}"));
+            assert_eq!(inside.segments.len(), 4 * 8 + 1);
+            assert!(
+                (farthest(&inside) - 8e8).abs() < 1.0,
+                "{}",
+                farthest(&inside)
+            );
+            assert!(
+                half_ellipse(1e9, direction).is_none(),
+                "an apex 2e9 out, direction {direction}"
+            );
+        }
+
+        // The arc of a circle, which is cut into chords of a quarter radian:
+        // radius 9e8 about (9e8, 9e8), between the two points where the
+        // circle touches the axes. Counter-clockwise that is the quarter
+        // nearest the origin; clockwise it is the other three, out to 1.8e9.
+        let on = |t: f64| (9e8 + 9e8 * t.cos(), 9e8 + 9e8 * t.sin());
+        let arc_of_the_circle = |direction: u8| {
+            decode(
+                &[
+                    boundary_arc_member((PI, 1.5 * PI), (9e8, 9e8), (9e8, 0.0), 1.0, direction),
+                    boundary_line_member(on(1.5 * PI), on(PI)),
+                ],
+                (4e8, 4e8),
+            )
+        };
+        let quarter = arc_of_the_circle(1).expect("the quarter nearest the origin");
+        assert_eq!(quarter.segments.len(), 7 + 1);
+        assert!(farthest(&quarter) <= 9e8 + 1.0, "{}", farthest(&quarter));
+        assert!(
+            arc_of_the_circle(0).is_none(),
+            "three quarters of the circle, out to 1.8e9"
+        );
     }
 
     #[test]
