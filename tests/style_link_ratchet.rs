@@ -55,7 +55,7 @@ use pid_parse::style_link::{
 fn dwg0201s_table_rules_draw_thin_and_solid_through_their_overrides() {
     let path = Path::new("test-file/DWG-0201GP06-01.pid");
     if !path.exists() {
-        eprintln!("skip: {} absent", path.display());
+        eprintln!("skipping: {} absent", path.display());
         return;
     }
     let styles = line_styles_for_file(path).expect("the index builds");
@@ -323,7 +323,7 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
     for expected in &EXPECTED {
         let path = Path::new(expected.fixture);
         if !path.exists() {
-            eprintln!("skip: {} is absent", expected.fixture);
+            eprintln!("skipping: {} is absent", expected.fixture);
             continue;
         }
         fixtures_seen += 1;
@@ -376,7 +376,7 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
     }
 
     if fixtures_seen == 0 {
-        eprintln!("skip: no fixture present");
+        eprintln!("skipping: no fixture present");
         return;
     }
     if fixtures_seen < EXPECTED.len() {
@@ -997,7 +997,7 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
     }
 
     if fixtures_seen < EXPECTED.len() {
-        eprintln!("skip: partial corpus cannot be held to corpus-wide totals");
+        eprintln!("skipping: partial corpus cannot be held to corpus-wide totals");
         return;
     }
 
@@ -1091,7 +1091,7 @@ fn a_style_cluster_names_the_library_it_was_read_from() {
     for (fixture, expected_source) in &EXPECTED_STYLE_LIBRARY {
         let path = Path::new(fixture);
         if !path.exists() {
-            eprintln!("skip: {fixture} is absent");
+            eprintln!("skipping: {fixture} is absent");
             continue;
         }
         fixtures_seen += 1;
@@ -1124,7 +1124,7 @@ fn a_style_cluster_names_the_library_it_was_read_from() {
         }
     }
     if fixtures_seen == 0 {
-        eprintln!("skip: no fixture present");
+        eprintln!("skipping: no fixture present");
     }
 }
 
@@ -1145,7 +1145,7 @@ fn a_symbol_library_names_the_scheme_its_styles_came_from() {
     for fixture in LIBRARIES {
         let path = Path::new(fixture);
         if !path.exists() {
-            eprintln!("skip: {fixture} is absent");
+            eprintln!("skipping: {fixture} is absent");
             continue;
         }
         let file = std::fs::File::open(path).expect("fixture opens");
@@ -1160,7 +1160,7 @@ fn a_symbol_library_names_the_scheme_its_styles_came_from() {
         seen += 1;
     }
     if seen == 0 {
-        eprintln!("skip: no symbol library present");
+        eprintln!("skipping: no symbol library present");
     }
 }
 
@@ -1177,7 +1177,7 @@ fn every_sheet_reports_the_library_its_own_document_names() {
     for (fixture, expected_source) in &EXPECTED_STYLE_LIBRARY {
         let path = Path::new(fixture);
         if !path.exists() {
-            eprintln!("skip: {fixture} is absent");
+            eprintln!("skipping: {fixture} is absent");
             continue;
         }
         let libraries = style_libraries_for_file(path).expect("fixture reads");
@@ -1208,7 +1208,7 @@ fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
     for expected in &EXPECTED {
         let path = Path::new(expected.fixture);
         if !path.exists() {
-            eprintln!("skip: {} is absent", expected.fixture);
+            eprintln!("skipping: {} is absent", expected.fixture);
             continue;
         }
         let names = style_names_for_file(path).expect("fixture reads");
@@ -1380,7 +1380,7 @@ fn the_authored_name_cuts_the_drawing_where_width_and_colour_cannot() {
     }
 
     if fixtures_seen < EXPECTED.len() {
-        eprintln!("skip: partial corpus cannot be held to corpus-wide crossings");
+        eprintln!("skipping: partial corpus cannot be held to corpus-wide crossings");
         return;
     }
 

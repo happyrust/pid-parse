@@ -351,7 +351,7 @@ fn find_drawing(dir: &Path, name: &str) -> Option<PathBuf> {
 fn once_refusing_backup_sheet() -> Option<NormalizedPidGeometry> {
     let Some(backup) = backup_dir() else {
         eprintln!(
-            "skipping {ONCE_REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present"
+            "skipping: {ONCE_REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present"
         );
         return None;
     };

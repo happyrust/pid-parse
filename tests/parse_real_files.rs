@@ -28,6 +28,8 @@ use pid_parse::{
 
 /// The matchers of the four retired families: what the evidence tests below
 /// re-find the old byte-sliding hits with.
+#[path = "support/library_symbols.rs"]
+mod library_symbols;
 #[path = "support/retired_matchers.rs"]
 mod retired_matchers;
 use retired_matchers::{
@@ -2578,7 +2580,7 @@ fn psm_aux_hi_is_the_sheet_layer_every_object_sits_on() {
     }
 
     if !any {
-        eprintln!("skip: no fixture present");
+        eprintln!("skipping: no fixture present");
         return;
     }
 
@@ -4117,7 +4119,7 @@ fn every_placement_names_a_body_the_drawing_carries() {
 /// (`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`).
 #[test]
 fn rectangles_own_their_edges_and_the_bspline_reaches_its_body() {
-    use pid_parse::symbol_library::{read_symbol_geometry, SymbolPrimitive};
+    use pid_parse::symbol_library::{read_symbol_geometry_from_bytes, SymbolPrimitive};
     use pid_parse::PidGraphicKind;
 
     let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
@@ -4272,11 +4274,14 @@ fn rectangles_own_their_edges_and_the_bspline_reaches_its_body() {
     // femtometre, not to the bit: one pole differs by two ulps (2e-18 m), so
     // the cache is a re-serialised copy that went through arithmetic once,
     // not a byte copy of the .sym record.
-    let sym = std::path::Path::new(
-        "test-file/symbols-full/Piping/Valves/2 Way Other/arrester breather valve(RD).sym",
-    );
-    if sym.exists() {
-        let library = read_symbol_geometry(sym).expect("the .sym reads");
+    //
+    // Read out of the library's archive. Until 2026-11-12 this half ran
+    // only where `test-file/symbols-full` had been unpacked, and said
+    // nothing where it did not.
+    if let Some(sym) =
+        library_symbols::library_symbol("Piping/Valves/2 Way Other/arrester breather valve(RD).sym")
+    {
+        let library = read_symbol_geometry_from_bytes(&sym).expect("the .sym reads");
         let from_library: Vec<&SymbolPrimitive> = library
             .primitives
             .iter()
@@ -5835,10 +5840,19 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
     /// still, now that four strokes dash rather than fifty-seven.
     const THE_DASH: &[i64] = &[350, 175];
 
-    let library_root = std::path::Path::new("test-file/symbols-full");
+    // The whole library, out of the archives it is committed in; a build
+    // that reads no archive has the unpacked directory, where a machine has
+    // one.
+    let library_root = library_symbols::unpacked_library();
+    #[cfg(feature = "refdata-archive")]
+    let mut library = Some(
+        SymbolLibrary::with_roots(Vec::<PathBuf>::new())
+            .with_archives(library_symbols::library_archives()),
+    );
+    #[cfg(not(feature = "refdata-archive"))]
     let mut library = library_root
         .is_dir()
-        .then(|| SymbolLibrary::with_roots([library_root]));
+        .then(|| SymbolLibrary::with_roots([library_root.clone()]));
 
     for expected in EXPECTED {
         let fixture = expected.fixture;
@@ -6002,7 +6016,10 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
         //    `PSMcluster0`, so it is in the cache and not in the library
         //    body. Its style is in the `.sym`'s table all the same.
         let Some(library) = library.as_mut() else {
-            eprintln!("{fixture}: skipping the library comparison: no test-file/symbols-full");
+            eprintln!(
+                "skipping: {fixture}: the library comparison: no {}, and this build reads no archive",
+                library_root.display()
+            );
             continue;
         };
         let mut compared = 0usize;
@@ -6018,11 +6035,12 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
                 let relative = pid_parse::symbol_library::library_relative_path(path)
                     .expect("the library resolved it, so it is library-relative")
                     .replace('\\', "/");
-                let package = pid_parse::PidParser::new()
-                    .parse_package(library_root.join(&relative))
-                    .unwrap_or_else(|e| {
-                        panic!("{fixture} ({path}): the .sym the library read: {e}")
-                    });
+                let sym = library_symbols::library_symbol(&relative).unwrap_or_else(|| {
+                    panic!("{fixture} ({path}): the library resolved it, so it holds {relative}")
+                });
+                let package = pid_parse::PidPackage::from_bytes(&sym).unwrap_or_else(|e| {
+                    panic!("{fixture} ({path}): the .sym the library read: {e}")
+                });
                 let mut defined: BTreeSet<Look> = BTreeSet::new();
                 for (stream_path, raw) in &package.streams {
                     if stream_path.rsplit('/').next() != Some("StyleCluster") {
@@ -6051,6 +6069,7 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
             compared > 0,
             "{fixture}: at least one placed symbol is in the reference library"
         );
+        eprintln!("{fixture}: {compared} placed symbol(s) held to the library's own style table");
     }
 }
 
@@ -6247,8 +6266,8 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
 
         // The library's Remarks cloud (工艺 places it 35 times): the two
         // arcs whose endpoints sit on the frame of its line work bulge out
-        // of it read clockwise, back into it read the other way. Skips
-        // without the reference library beside the fixtures.
+        // of it read clockwise, back into it read the other way. The
+        // library is read out of the archives it is committed in.
         if fixture != "工艺管道及仪表流程-1.pid" {
             continue;
         }
@@ -6265,9 +6284,13 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
         else {
             panic!("{fixture}: places Remarks.sym");
         };
-        let mut library = SymbolLibrary::with_roots(["test-file/symbols-full"]);
+        #[cfg(feature = "refdata-archive")]
+        let mut library = SymbolLibrary::with_roots(Vec::<PathBuf>::new())
+            .with_archives(library_symbols::library_archives());
+        #[cfg(not(feature = "refdata-archive"))]
+        let mut library = SymbolLibrary::with_roots([library_symbols::unpacked_library()]);
         let Some(cloud) = library.resolve(&remarks) else {
-            eprintln!("skipping the Remarks cloud: {remarks} is not under test-file/symbols-full");
+            eprintln!("skipping: the Remarks cloud: {remarks} is not in the symbol library");
             continue;
         };
         let lines: Vec<Segment> = cloud
@@ -10537,14 +10560,14 @@ fn available_pid_fixtures_geometry_evidence_inventory_tracks_promoted_hints() {
 
         let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
             eprintln!(
-                "skipping fixture {} ({}): cross reference not built",
+                "skipping: fixture {} ({}): cross reference not built",
                 fixture.path, fixture.category
             );
             continue;
         };
         let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
             eprintln!(
-                "skipping fixture {} ({}): dynamic attributes not built",
+                "skipping: fixture {} ({}): dynamic attributes not built",
                 fixture.path, fixture.category
             );
             continue;

@@ -861,7 +861,7 @@ mod tests {
         ];
         for (path, items, bytes, keys, multi) in cases {
             if !path.is_file() {
-                eprintln!("skip: {} is missing", path.display());
+                eprintln!("skipping: {} is missing", path.display());
                 continue;
             }
             let reading = read_catalog_index_from_zip(&path).unwrap();
@@ -893,7 +893,7 @@ mod tests {
     fn real_refdata_zips_cross_check_against_the_publish_catalog() {
         for path in [PathBuf::from(CORPUS_ZIP), fixture_zip()] {
             if !path.is_file() {
-                eprintln!("skip: {} is missing", path.display());
+                eprintln!("skipping: {} is missing", path.display());
                 continue;
             }
             let reading = read_catalog_index_from_zip(&path).unwrap();

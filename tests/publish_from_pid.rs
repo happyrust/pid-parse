@@ -253,7 +253,7 @@ fn export_and_score(
 #[test]
 fn the_pid_alone_export_matches_the_reference_wherever_it_says_anything() {
     let Some(drawings) = corpus() else {
-        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        eprintln!("skipping: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
         return;
     };
     let mut wrong = Vec::new();
@@ -316,7 +316,7 @@ fn unique_out_dir(label: &str) -> PathBuf {
 #[test]
 fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
     let Some(drawings) = corpus() else {
-        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        eprintln!("skipping: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
         return;
     };
     let (stem, pid, _) = &drawings[0];
@@ -360,7 +360,7 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
 #[test]
 fn diff_against_a_pid_exits_zero_when_nothing_emitted_is_wrong() {
     let Some(drawings) = corpus() else {
-        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        eprintln!("skipping: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
         return;
     };
     for (stem, pid, reference) in &drawings {
@@ -389,17 +389,17 @@ fn diff_against_a_pid_exits_zero_when_nothing_emitted_is_wrong() {
 fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     let dump = PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
     let Some(drawings) = corpus() else {
-        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        eprintln!("skipping: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
         return;
     };
     let Some((_, pid, reference_xml)) =
         drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
     else {
-        eprintln!("skip: I井场 is not in the corpus");
+        eprintln!("skipping: I井场 is not in the corpus");
         return;
     };
     if !dump.is_file() {
-        eprintln!("skip: oracle exp dump is missing");
+        eprintln!("skipping: oracle exp dump is missing");
         return;
     }
     let mut drawing = load_publish_from_pid(pid).expect("the .pid loads");
@@ -425,7 +425,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     drawing.opc_points = opc_points;
     let datamap_path = PathBuf::from(r"D:\work\cad\pid-test-data\RefData~4~804.zip");
     if !datamap_path.is_file() {
-        eprintln!("skip: SPPID data map zip is missing");
+        eprintln!("skipping: SPPID data map zip is missing");
         return;
     }
     let datamap = pid_parse::backup::read_datamap(&datamap_path).expect("datamap");
@@ -547,16 +547,16 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
 fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
     let dump = PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
     let Some(drawings) = corpus() else {
-        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        eprintln!("skipping: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
         return;
     };
     let Some((stem, pid, reference)) = drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
     else {
-        eprintln!("skip: I井场 is not in the corpus");
+        eprintln!("skipping: I井场 is not in the corpus");
         return;
     };
     if !dump.is_file() {
-        eprintln!("skip: oracle exp dump is missing");
+        eprintln!("skipping: oracle exp dump is missing");
         return;
     }
     let output = Command::new(CLI)
@@ -622,7 +622,7 @@ fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
 
     let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/TEST02_p");
     if !package.join("Manifest.txt").is_file() {
-        eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
+        eprintln!("skipping: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
     let out_dir = unique_out_dir("style-refused-package");
@@ -791,7 +791,7 @@ fn stored_zip(name: &str, payload: &[u8]) -> Vec<u8> {
 fn a_backup_directory_without_a_dump_publishes_the_pid() {
     let pid = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/D06.pid");
     if !pid.is_file() {
-        eprintln!("skip: test-file/D06.pid is missing");
+        eprintln!("skipping: test-file/D06.pid is missing");
         return;
     }
     let bytes = std::fs::read(&pid).expect("read D06.pid");
@@ -965,7 +965,7 @@ fn backup_directory_publishes_the_whole_package() {
         || !package.join("Export.dmp").is_file()
         || !package.join("PlantData~2~711.zip").is_file()
     {
-        eprintln!("skip: D:\\work\\cad\\pid-test-data is not a backup package");
+        eprintln!("skipping: D:\\work\\cad\\pid-test-data is not a backup package");
         return;
     }
     let out = unique_out_dir("sqplant");
@@ -1142,12 +1142,12 @@ fn backup_directory_publishes_the_whole_package() {
     );
 
     let Some(drawings) = corpus() else {
-        eprintln!("skip: I井场 single-file comparison, corpus is missing");
+        eprintln!("skipping: I井场 single-file comparison, corpus is missing");
         return;
     };
     let Some((stem, pid, _)) = drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
     else {
-        eprintln!("skip: I井场 is not in the corpus");
+        eprintln!("skipping: I井场 is not in the corpus");
         return;
     };
     let single = unique_out_dir("ijingchang-single");
@@ -1195,7 +1195,7 @@ fn backup_directory_publishes_the_whole_package() {
 fn sql_server_mtf_directory_publishes_t_drawing_rows() {
     let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/TEST02_p");
     if !package.join("Manifest.txt").is_file() || !package.join("Export.dmp").is_file() {
-        eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
+        eprintln!("skipping: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
     let out = unique_out_dir("test02-mtf");
@@ -1353,7 +1353,7 @@ fn run_meta_gate(reference_data: &Path, out_dir: &Path) -> (Option<i32>, String)
 #[test]
 fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
     if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     let out_dir = unique_out_dir("meta-gate");
@@ -1384,7 +1384,7 @@ fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
 #[test]
 fn meta_gate_names_a_drifted_container_attribute() {
     if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     let reference = unique_out_dir("meta-gate-attr");
@@ -1405,7 +1405,7 @@ fn meta_gate_names_a_drifted_container_attribute() {
 #[test]
 fn meta_gate_names_a_drifted_block_order() {
     if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
@@ -1447,7 +1447,7 @@ fn meta_gate_names_a_drifted_block_order() {
 #[test]
 fn meta_gate_names_a_drifted_def_uid_and_wiring() {
     if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
@@ -1488,7 +1488,7 @@ fn meta_gate_names_a_drifted_def_uid_and_wiring() {
 #[test]
 fn meta_gate_does_not_run_without_a_generated_meta_document() {
     if !a01_fixture("A01.pid").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     let output = Command::new(CLI)
@@ -1512,7 +1512,7 @@ fn meta_gate_does_not_run_without_a_generated_meta_document() {
 #[test]
 fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
     if !a01_fixture("A01.pid").is_file() {
-        eprintln!("skip: {A01_DIR} fixture is missing");
+        eprintln!("skipping: {A01_DIR} fixture is missing");
         return;
     }
     // Only the `_Data.xml` is staged: the run writes a meta document, but

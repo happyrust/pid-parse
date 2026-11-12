@@ -2,27 +2,26 @@
 //! shares with a twin stays on the clean sheet, so the sheet the pick lands on
 //! draws the body together with its own lettering.
 //!
-//! Soft-skips where `test-file/symbols-full` is absent.
+//! The library is read out of the archives it is committed in
+//! (`tests/support/library_symbols.rs`), so these run on every checkout.
+//! Until 2026-11-12 they read `test-file/symbols-full`, a directory only a
+//! machine that had unpacked the library holds, and returned without a word
+//! where it was absent.
 
-use std::path::{Path, PathBuf};
+#[path = "support/library_symbols.rs"]
+mod library_symbols;
 
-use pid_parse::symbol_library::{read_symbol_geometry, SymbolPrimitive};
+use pid_parse::symbol_library::{read_symbol_geometry_from_bytes, SymbolPrimitive};
 
 const SOLENOID_VALVES: &str = "Instrumentation/Off-Line/Without Implied Components/Solenoid Valves";
 const SLOPE_LABELS: &str = "Piping/Labels - Piping Segments";
 
-fn library_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/symbols-full")
-}
-
 /// What a body draws: how many displayed primitives are geometry, and the
-/// displayed lettering. `None` where the file is not in this checkout.
+/// displayed lettering. `None`, after a `skipping: ` line, where the symbol
+/// is not in reach.
 fn displayed(folder: &str, file: &str) -> Option<(usize, Vec<String>)> {
-    let path = library_root().join(folder).join(file);
-    if !path.is_file() {
-        return None;
-    }
-    let body = read_symbol_geometry(&path).expect("a readable .sym");
+    let bytes = library_symbols::library_symbol(&format!("{folder}/{file}"))?;
+    let body = read_symbol_geometry_from_bytes(&bytes).expect("a readable .sym");
     let mut geometry = 0;
     let mut lettering = Vec::new();
     for styled in body.displayed_primitives() {

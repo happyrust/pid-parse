@@ -1850,7 +1850,10 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let mut read: Vec<PathBuf> = Vec::new();
     for root in roots {
         let Ok(canonical) = root.canonicalize() else {
-            eprintln!("not on this machine: {}", root.display());
+            eprintln!(
+                "skipping: {} is not on this machine, so the corpus under it is not read",
+                root.display()
+            );
             continue;
         };
         if read.contains(&canonical) {
