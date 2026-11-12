@@ -2884,6 +2884,15 @@ fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() 
     let mut expected = suspects(&sound);
     *expected.entry("symbol_file_chain_fault").or_insert(0) += 1;
     assert_eq!(suspects(&account), expected, "the suspects of the page");
+    // The count a gate reads, and the program prints, is the summary's:
+    // one suspect more than with the sound file.
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + 1,
+        "the summary with the damaged file, `{}`, against the sound file's, `{}`",
+        account.summary(),
+        sound.summary()
+    );
     // And of the page: the gauge is drawn from the sheet that was read.
     assert_eq!(the_gauge_as_drawn(&sound_model), ["circle"]);
     assert_eq!(the_gauge_as_drawn(&model), ["circle", "text \"PG\""]);
@@ -2921,6 +2930,15 @@ fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() 
         )],
         "the sentence the program prints after the drawing's path"
     );
+    if said.code == Some(0) {
+        // The export ran to its end, so the program printed its summary:
+        // the account's own, with the file among its suspects.
+        assert_eq!(
+            ledger_count(&said, "suspect"),
+            account.summary().suspect,
+            "the program's summary is not the account's\n{said}"
+        );
+    }
 
     // Not drawn from it: the fixture as committed, the same library.
     let (_, committed) = laid_out_with(&flash_b(), &library);
@@ -2970,6 +2988,15 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
     let mut expected = suspects(&sound);
     *expected.entry("symbol_file_chain_fault").or_insert(0) += 1;
     assert_eq!(suspects(&account), expected, "the suspects of the page");
+    // The count a gate reads is the summary's: one suspect more, for a
+    // page that is the sound file's primitive for primitive.
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + 1,
+        "the summary with the damaged file, `{}`, against the sound file's, `{}`",
+        account.summary(),
+        sound.summary()
+    );
     assert_eq!(
         model.ledger.symbol_chain_fault_warnings(),
         [format!(
