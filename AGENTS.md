@@ -572,7 +572,34 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   the body is the sound file's though the fault states a stop. So the
   line says the file is damaged and that placements are drawn from
   it, and claims neither missing ink nor none
-  (`pid-plot/tests/cli_pid_plot.rs`, the three symbol-file cases).
+  (`pid-plot/tests/cli_pid_plot.rs`, the five symbol-file cases). A
+  file with two damaged streams is two lines and two items. A file
+  that a border template's placement is drawn from is said as the
+  template's ("in the border template, …") and filed among the
+  template's items; it is named as the template names it, which for a
+  title-block symbol is a path on the machine it was authored on — such
+  a placement is found by its file name, and the library does not say
+  which file answered. **One of the streams a body is read from is
+  outside all of this: the root `/PSMcluster0` of the `.sym`**, which
+  keeps the file's layers and which of them each sheet shows (the
+  body is read from that stream, the sheets and the `StyleCluster`,
+  and from no other). The parse does not report that stream's chain,
+  so a fault in it is not among `SymbolGeometry::chain_faults`, and a
+  page drawn from such a file says nothing and files nothing.
+  Measured on the committed gauge
+  (2026-11-12, the eleventh review's finding, read again here): with
+  a length of zero in the middle of that stream, or with its last
+  record one byte too long, the page draws two circles where the sound
+  file draws one — no warning, no item, no suspect, exit 0; with a
+  type word flagged `0x4000` the page is the sound file's, and still
+  nothing is said. The chain walk does find all three
+  (`StreamChainFault::of_stream`), and the review counted the root
+  cluster of all 624 `.sym` files on hand as one sound chain, so the
+  fault can be held; that is the parser's to do, in ticket #67, and
+  once the fault is in `chain_faults` the warning and the item above
+  follow with no change on this side. Until then a damaged symbol
+  file is said only when the damage is in a sheet or in its
+  `StyleCluster`.
   `sheet_record_starts` keeps the all-or-nothing
   reading for the publish line's row reader and the semantic join,
   which read nothing from such a stream. `pid_publish_xml` says so on
