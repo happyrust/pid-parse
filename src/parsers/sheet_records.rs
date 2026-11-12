@@ -14155,6 +14155,69 @@ mod tests {
         );
         refused("degree 33", of_degree(33));
 
+        // Fields that read as a B-spline's and draw no curve: a knot vector
+        // whose parameter domain — from knot `degree` to knot `poles` — is
+        // empty. `bspline::sample` hands back the control polygon for such
+        // a record, three segments here, and a member is a curve or the
+        // record is refused.
+        refused(
+            "four poles under nine knots: degree four, which wants a fifth pole",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "eight knots that are all alike",
+            build(boundary_spline_member(&poles, &[], &[0.5; 8])),
+        );
+        refused(
+            "knots whose one step lies past the domain",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            )),
+        );
+
+        // Finite poles do not make finite vertices. De Boor's recursion runs
+        // on each pole times its weight, and a weight has only to be finite
+        // and positive: the corners of the coordinate domain under weights
+        // of 1e308 overflow there, and the eight segments that come out are
+        // not numbers. The same poles decode unweighted and under weights of
+        // one, so it is the vertices that refuse the record, not the poles.
+        let corners = [(-1e9, -1e9), (1e9, -1e9), (1e9, 1e9), (-1e9, 1e9)];
+        let cornered = |weights: &[f64]| {
+            one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&corners, weights, &knots),
+                    boundary_line_member((-1e9, 1e9), (-1e9, -1e9)),
+                ],
+                (0.0, 0.0),
+                &references,
+            )
+        };
+        for weights in [&[][..], &[1.0; 4][..]] {
+            let decoded = decode_igboundary_at(&boundary_record(&cornered(weights)), 0)
+                .unwrap_or_else(|| panic!("the corners under {} weights of one", weights.len()));
+            assert_eq!(decoded.segments.len(), 8 + 1);
+            assert!(decoded.segments.iter().all(|segment| {
+                [
+                    segment.start.0,
+                    segment.start.1,
+                    segment.end.0,
+                    segment.end.1,
+                ]
+                .into_iter()
+                .all(|value| value.abs() <= 1e9)
+            }));
+        }
+        refused(
+            "weights of 1e308 on poles at the corners of the coordinate domain",
+            cornered(&[1e308; 4]),
+        );
+
         for cut in 0..whole.len() {
             assert!(
                 decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
