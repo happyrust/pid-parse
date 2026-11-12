@@ -22,10 +22,11 @@ with `-- --nocapture` and counts them.
 `--by-test` names the test each line came from. That needs the tests of a
 binary to run one after another (`--test-threads 1`, which `--run` then
 passes; a log given by path has to have been made that way), so it is slower.
-Without it the lines are counted and listed. A line counts when it starts
-`skipping: `, or when nothing stands in front of that but the harness's own
-`test <name> ... ` — of the test that printed it and, where tests run side by
-side, of others. The words inside a sentence do not count.
+Without it the lines are counted and listed. Tests that run side by side
+write into one another's lines — the harness's `test <name> ... ` or its `ok`
+can land in front of a notice or behind it — so a notice is found wherever in
+a line it starts, and what the harness glued onto it is cut off. The words
+quoted inside a sentence (after a backtick or a quote) do not count.
 
 The spelling is the convention, see "Soft skips" in `AGENTS.md`;
 `tests/soft_skip_spelling.rs` refuses the two the tests used beside it. A test
@@ -37,11 +38,12 @@ import re
 import subprocess
 import sys
 
-SKIP = re.compile(r"^(?:test \S+ \.\.\. )*(skipping: .*)$")
+SKIP = re.compile(r"(?<![`\x22\x27])(skipping: .*)$")
 RESULT = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
 RUNNING = re.compile(r"^\s+Running (?:unittests )?(\S+) \(")
 TEST = re.compile(r"^test (\S+) \.\.\. ?(.*)$")
 GLUED = re.compile(r"test [A-Za-z0-9_:]+ \.\.\. ")
+TRAILING_OK = re.compile(r"(?<=[^A-Za-z\s])ok$")
 WIDTH = 150
 
 
@@ -76,17 +78,18 @@ def census(lines, by_test):
         elif line in ("ok", "FAILED"):
             test = None
             continue
-        found = SKIP.match(line)
+        found = SKIP.search(line)
         if found:
             # Where tests run side by side, the harness's `test <name> ... `
             # of another test can land on the same line; the notice ends
             # where that begins.
             text = GLUED.split(found.group(1), maxsplit=1)[0].rstrip()
+            text = TRAILING_OK.sub("", text)
             skips.append((binary, test if by_test else None, text))
 
     out = []
     out.append(
-        "soft skips of the root crate's tests: %d line(s) starting `skipping: ` "
+        "soft skips of the root crate's tests: %d notice(s) that open `skipping: ` "
         "(%d test binaries, %d passed, %d failed, %d ignored)"
         % (len(skips), binaries, passed, failed, ignored)
     )
