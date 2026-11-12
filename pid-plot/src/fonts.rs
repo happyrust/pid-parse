@@ -715,13 +715,26 @@ pub(crate) mod test_faces {
     /// one. It stands in for SimSun and FangSong, whose files cannot be
     /// committed.
     pub(crate) fn drawing(extra: &str) -> Vec<u8> {
+        drawing_as(extra, 'A')
+    }
+
+    /// [`drawing`] with the glyph of `stand_in`, not of `A`, for the
+    /// characters of `extra` Inter has no glyph for.
+    ///
+    /// Which glyph stands in matters to a test that reads how far such a
+    /// character advances. `A` is 1413 of Inter's 2048 units wide; the em
+    /// dash is the whole 2048, which is what a Han glyph of SimSun or
+    /// NSimSun is of its own em.
+    pub(crate) fn drawing_as(extra: &str, stand_in: char) -> Vec<u8> {
         use fontcull_skrifa::{FontRef, MetadataProvider};
         use fontcull_write_fonts::FontBuilder;
         use fontcull_write_fonts::tables::cmap::Cmap;
 
         let font = FontRef::new(pdfcraft_fonts::INTER_REGULAR).expect("Inter parses");
         let charmap = font.charmap();
-        let stand_in = charmap.map('A').expect("Inter draws A");
+        let stand_in = charmap
+            .map(stand_in)
+            .unwrap_or_else(|| panic!("Inter draws {stand_in:?}"));
         let lacking = extra.chars().filter(|ch| charmap.map(*ch).is_none());
         let mappings = charmap
             .mappings()

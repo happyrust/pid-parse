@@ -7735,10 +7735,14 @@ mod tests {
     /// step to.
     #[test]
     fn a_borrowed_run_the_reference_shows_is_set_at_twenty_units() {
-        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+        use crate::fonts::test_faces::{ascii_only, drawing_as, scratch_dir};
 
         let latin = ascii_only();
-        let han = drawing("动火点℃");
+        // The borrowed glyphs are a whole em wide, as NSimSun's are: the em
+        // dash of the stand-in is 2048 of its 2048 units, 20 device units at
+        // `Tf 9.6`. On the glyph of `A`, 1413 units, one is 3532.5 256ths of
+        // a unit wide — halfway between two — and no step is nine units.
+        let han = drawing_as("动火点℃", '\u{2014}');
         let dirs = scratch_dir(
             "write-as-the-reference",
             &[("ARIALN.TTF", &latin), ("nsimsun.ttf", &han)],
@@ -7788,26 +7792,30 @@ mod tests {
         );
         // One text object of three glyphs of one width, under the driver's
         // letter-spacing: the 9 units less a glyph's width to its nearest
-        // 256th of a unit, cut to three decimals. So a step is 9 units to
-        // within a 512th of a unit and a thousandth of a point (NSimSun's
-        // own glyphs are a whole 20 units wide and step 9 exactly, under
-        // `Tc -5.28`; the stand-in's are 13.7988).
+        // 256th of a unit, cut to three decimals. A glyph here is a whole
+        // em, 20 units, as NSimSun's are, so the spacing is the 9 less the
+        // 20 — `Tc -5.28`, the number the reference writes, to the digit —
+        // and a step is 9 units exactly.
         assert_eq!(whole.len(), 1, "the label is one text object: {whole:?}");
         let run = &whole[0];
         assert_eq!(run.glyphs, 3, "{run:?}");
         #[allow(clippy::cast_precision_loss)]
         let glyph_pt = run.natural_pt / run.glyphs as f64;
-        let step_pt = glyph_pt + run.tc_pt;
-        let over_pt = step_pt - 9.0 * 72.0 / super::PLOT_DPI;
         assert!(
-            over_pt.abs() < 0.001 + 72.0 / super::PLOT_DPI / 512.0,
-            "each glyph of {:?} steps {:.4} units, not the 9 of the named face's `?`",
+            (glyph_pt - 9.6).abs() < 1e-9,
+            "a borrowed glyph is a whole em of `Tf 9.6`, 20 units: {run:?}"
+        );
+        assert_eq!(
+            run.tc_pt.to_bits(),
+            (-5.28f64).to_bits(),
+            "the letter-spacing is the reference's -5.28: {run:?}"
+        );
+        let step_pt = glyph_pt + run.tc_pt;
+        assert!(
+            (step_pt - 9.0 * 72.0 / super::PLOT_DPI).abs() < 1e-9,
+            "each glyph of {:?} steps {:.6} units, not the 9 of the named face's `?`",
             run.text,
             step_pt * super::PLOT_DPI / 72.0
-        );
-        assert!(
-            (run.tc_pt * 1000.0 - (run.tc_pt * 1000.0).round()).abs() < 1e-9,
-            "the letter-spacing is cut to three decimals: {run:?}"
         );
         assert!(
             step_pt < glyph_pt,
