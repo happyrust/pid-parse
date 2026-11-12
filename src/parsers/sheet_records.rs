@@ -14786,6 +14786,41 @@ mod tests {
             );
         }
 
+        // The other half of what makes an arc a circle's. A major semi-axis
+        // along +X is every `igArc2d`'s, and it is an ellipse's too whenever
+        // the ellipse lies level on the sheet: with another ratio than one
+        // the member is no `igArc2d`'s and takes its record's stroke — two
+        // 45° spans of eight segments for the quarter turn the circle above
+        // takes in seven chords — to the bit, either way round and on either
+        // side of one.
+        for (ratio, direction, sweep) in [
+            (0.5, 1u8, (0.0, FRAC_PI_2)),
+            (0.5, 0, (FRAC_PI_2, 0.0)),
+            (2.0, 1, (0.0, FRAC_PI_2)),
+        ] {
+            let major = (0.002, 0.0);
+            let (centre, level) = decoded(sweep, major, ratio, direction);
+            assert_eq!(
+                level,
+                stroke(centre, sweep, major, ratio, direction),
+                "an arc of a level ellipse of ratio {ratio}, direction {direction}"
+            );
+            assert_eq!(level.len(), 2 * 8 + 1);
+            // One end is on the major semi-axis, a radius out; the other on
+            // the minor, `ratio` radii up, where no circle of that radius is.
+            let (on_major, on_minor) = if direction == 1 {
+                (level[0], level[16])
+            } else {
+                (level[16], level[0])
+            };
+            let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-15;
+            assert!(near(on_major, (centre.0 + 0.002, centre.1)), "{on_major:?}");
+            assert!(
+                near(on_minor, (centre.0, centre.1 + 0.002 * ratio)),
+                "{on_minor:?}"
+            );
+        }
+
         // An ellipse's arc, either direction: its record's stroke, to the
         // bit. 106° is three spans, 14° is one.
         for (sweep, direction, spans) in [
