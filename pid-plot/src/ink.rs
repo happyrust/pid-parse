@@ -652,6 +652,94 @@ pub enum WipeSide {
 /// shape, not a mark, and the eleven references have none on ink.
 #[must_use]
 pub fn wipe_order(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> WipeOrder {
+    let mut order = WipeOrder::default();
+    for site in wipe_sites(reference, ours, fit) {
+        order.sites += 1;
+        order.ink_first += usize::from(site.ink_first);
+        let Some(ours) = site.ours() else {
+            order.same += 1;
+            continue;
+        };
+        if matches!(ours, WipeSide::NoMark | WipeSide::NoInk) {
+            order.absent += 1;
+        } else {
+            order.other += 1;
+        }
+        order.apart.push(WipePlace {
+            mark_mm: site.mark_mm,
+            glyph: site.glyph,
+            ink_mm: site.ink_mm,
+            ink_first: site.ink_first,
+            ours,
+        });
+    }
+    order
+}
+
+/// One site of [`wipe_order`], with the steps both pages paint it at: a
+/// path the reference strokes in the paper's colour, and one inked path or
+/// glyph it lies on.
+///
+/// [`wipe_order`] folds these into counts. A reader that asks *why* a page
+/// paints a site the way it does — which records the stroke and the ink
+/// come from, where the sheet lists them — reads them one by one
+/// (`probe_which_of_a_mark_and_its_ink_a_plot_paints_first`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WipeSite {
+    /// The middle of the first piece of the reference's stroke in the paper's
+    /// colour, reference paper millimetres.
+    pub mark_mm: [f64; 2],
+    /// The character the stroke lies on, or `None` for an inked stroke.
+    pub glyph: Option<String>,
+    /// Where the ink is: the glyph's origin, or the point of the inked
+    /// stroke nearest the mark.
+    pub ink_mm: [f64; 2],
+    /// Whether the reference paints the ink before the stroke.
+    pub ink_first: bool,
+    /// The step the reference paints the stroke in the paper's colour at.
+    pub mark_step: u32,
+    /// The step the reference paints the ink at.
+    pub ink_step: u32,
+    /// The steps of our strokes in the paper's colour along the reference's.
+    pub our_mark_steps: Vec<u32>,
+    /// The steps of our ink where the reference's ink is.
+    pub our_ink_steps: Vec<u32>,
+}
+
+impl WipeSite {
+    /// How our page paints the site where it does not paint it in the
+    /// reference's order; `None` where it does.
+    #[must_use]
+    pub fn ours(&self) -> Option<WipeSide> {
+        if self.our_mark_steps.is_empty() {
+            return Some(WipeSide::NoMark);
+        }
+        if self.our_ink_steps.is_empty() {
+            return Some(WipeSide::NoInk);
+        }
+        let ours_first = self
+            .our_ink_steps
+            .iter()
+            .all(|ink| self.our_mark_steps.iter().all(|mark| ink < mark));
+        let ours_last = self
+            .our_ink_steps
+            .iter()
+            .all(|ink| self.our_mark_steps.iter().all(|mark| ink > mark));
+        if (self.ink_first && ours_first) || (!self.ink_first && ours_last) {
+            None
+        } else if ours_first || ours_last {
+            Some(WipeSide::Other)
+        } else {
+            Some(WipeSide::Mixed)
+        }
+    }
+}
+
+/// Every site [`wipe_order`] reads, in the reference's painting order of
+/// the strokes in the paper's colour; see there for what a site is and how
+/// it is found on our page.
+#[must_use]
+pub fn wipe_sites(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> Vec<WipeSite> {
     // Our strokes in the reference's frame, the paper's and the inked apart.
     let mut our_marks: Vec<InkSegment> = Vec::new();
     let mut our_mark_steps: Vec<u32> = Vec::new();
@@ -713,39 +801,7 @@ pub fn wipe_order(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> W
         paths.entry(stroke.step).or_default().push(&stroke.segment);
     }
 
-    let mut order = WipeOrder::default();
-    // File one site: what it is, the reference's order, and our steps there.
-    let mut file = |place: WipePlace, ink_steps: &[u32], mark_steps: &[u32]| {
-        order.sites += 1;
-        order.ink_first += usize::from(place.ink_first);
-        let ours = if mark_steps.is_empty() {
-            WipeSide::NoMark
-        } else if ink_steps.is_empty() {
-            WipeSide::NoInk
-        } else {
-            let ours_first = ink_steps
-                .iter()
-                .all(|ink| mark_steps.iter().all(|mark| ink < mark));
-            let ours_last = ink_steps
-                .iter()
-                .all(|ink| mark_steps.iter().all(|mark| ink > mark));
-            if (place.ink_first && ours_first) || (!place.ink_first && ours_last) {
-                order.same += 1;
-                return;
-            }
-            if ours_first || ours_last {
-                WipeSide::Other
-            } else {
-                WipeSide::Mixed
-            }
-        };
-        if matches!(ours, WipeSide::NoMark | WipeSide::NoInk) {
-            order.absent += 1;
-        } else {
-            order.other += 1;
-        }
-        order.apart.push(WipePlace { ours, ..place });
-    };
+    let mut sites: Vec<WipeSite> = Vec::new();
     for (mark_step, pieces) in &marks {
         // Our strokes in the paper's colour along this path: at the middle
         // of each of its pieces.
@@ -776,17 +832,16 @@ pub fn wipe_order(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> W
                 }
             }
             if let Some(ink_mm) = touched {
-                file(
-                    WipePlace {
-                        mark_mm,
-                        glyph: None,
-                        ink_mm,
-                        ink_first: ink_step < mark_step,
-                        ours: WipeSide::Other,
-                    },
-                    &ink_steps,
-                    &mark_steps,
-                );
+                sites.push(WipeSite {
+                    mark_mm,
+                    glyph: None,
+                    ink_mm,
+                    ink_first: ink_step < mark_step,
+                    mark_step: *mark_step,
+                    ink_step: *ink_step,
+                    our_mark_steps: mark_steps.clone(),
+                    our_ink_steps: ink_steps,
+                });
             }
         }
         for glyph in reference.glyphs.iter().filter(|glyph| !glyph.paper) {
@@ -804,20 +859,19 @@ pub fn wipe_order(reference: &PlotSequence, ours: &PlotSequence, fit: &Fit) -> W
                 })
                 .map(|other| other.step)
                 .collect();
-            file(
-                WipePlace {
-                    mark_mm,
-                    glyph: Some(glyph.text.clone()),
-                    ink_mm: glyph.origin_mm,
-                    ink_first: glyph.step < *mark_step,
-                    ours: WipeSide::Other,
-                },
-                &glyph_steps,
-                &mark_steps,
-            );
+            sites.push(WipeSite {
+                mark_mm,
+                glyph: Some(glyph.text.clone()),
+                ink_mm: glyph.origin_mm,
+                ink_first: glyph.step < *mark_step,
+                mark_step: *mark_step,
+                ink_step: glyph.step,
+                our_mark_steps: mark_steps.clone(),
+                our_ink_steps: glyph_steps,
+            });
         }
     }
-    order
+    sites
 }
 
 /// How far apart two pieces' centre lines are, and the point of `ink`

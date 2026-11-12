@@ -28,6 +28,16 @@
 //!   whether our page paints the two in the same order, which is what
 //!   decides whether the mark takes a piece out of the ink ([`wipe_order`]).
 //!
+//! What decides that order is the sheet's own list, and a second test holds
+//! it: `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
+//! reads every label whose symbol carries an origin mark — 96 on the eleven
+//! sheets — for where the sheet lists the symbol and the text and which the
+//! plot paints first ([`MARKED_LABELS`]). 95 are painted as listed. The one
+//! that is not is pinned with the sheet that holds the same label at the
+//! same places and is plotted the other way ([`AGAINST_ITS_LIST`],
+//! [`ITS_TWIN`]), which is why that place is a known defect line and not a
+//! rule our page could take up.
+//!
 //! # How a page is pinned
 //!
 //! A page that prints as its reference does reads the same on every line
@@ -64,6 +74,9 @@ use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colo
 use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::read::{SheetEdge, read_plot_sequence};
 use pid_plot::write::{PlotFont, write_plot};
+
+#[path = "support/marked_labels.rs"]
+mod marked_labels;
 
 /// One number a page is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -393,11 +406,29 @@ const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing
                            whether the drawing had its frame then";
 
 /// The one mark `一级闪蒸分离器A`'s plot paints on the other side of its ink.
-const OTHER_ORDER: &str = "the origin mark of the label `P` at (339.85, 384.39) mm: the reference \
-                           letters the `P` after the mark and our page before it. This is one of \
-                           the two plots that do not paint in the order the sheet on hand lists \
-                           its objects in (see the border they do not print), so the sheet's \
-                           order is not this plot's";
+///
+/// Whether a mark comes before the ink it lies on is not a rule of its own:
+/// of the 90 places on the eleven sheets where both sides are ours, the
+/// reference paints the ink first at 60 and the mark first at 30, and the
+/// sheet's list puts 89 in the reference's order
+/// (`probe_which_of_a_mark_and_its_ink_a_plot_paints_first`). This place is
+/// the ninetieth, and
+/// `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
+/// holds what is said of it here.
+const OTHER_ORDER: &str = "the origin mark of the label `P70` at (339.85, 384.39) mm: the \
+                           reference letters the `P` after the mark and our page before it. Our \
+                           page follows the sheet, which lists the text ahead of its symbol \
+                           (places 99 and 104). Of the 96 labels with an origin mark on the \
+                           eleven sheets the plots paint 95 in the order their sheet lists them, \
+                           49 symbol first and 46 text first; this is the other one. No rule over \
+                           the records gives both: `一级闪蒸分离器B` holds the same label, at the \
+                           same point and the same two places, and its plot letters the `P` \
+                           first, as listed. So this plot was not painted from the list the file \
+                           holds — it is one of the two that do not paint in the order the sheet \
+                           on hand lists its objects in (see the border they do not print). The \
+                           file was saved on 2026-07-06 and the plot made on 2026-10-12; whether \
+                           the drawing changed in between or the plot was made another way, \
+                           nothing on hand says";
 
 /// The A2 sheet's instrument loop and its two pipeline strings.
 const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
@@ -1254,5 +1285,180 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         "{} reading(s) are not what they are pinned at:\n{}",
         failures.len(),
         failures.join("\n")
+    );
+}
+
+/// What each plot does with the labels whose symbol carries an origin mark,
+/// in the order of [`SHEETS`]: how many the sheet has; how many it lists
+/// text first, the text's owner ahead of the symbol (for every other one
+/// the owner stands at the place right after the symbol's); how many the
+/// plot letters ahead of the mark; and how many it paints in the order the
+/// sheet lists them.
+///
+/// 96 labels: 49 listed symbol first and 47 text first, so neither comes
+/// first as a rule, and 95 painted as listed. A label's symbol and its text
+/// are two records the sheet lists apart — the text is an `igTextBox` whose
+/// owner, a `DependencyObject`, names the symbol
+/// (`tests/support/marked_labels.rs`) — and the plots draw them where the
+/// list puts them, as they do everything else.
+const MARKED_LABELS: [[usize; 4]; 11] = [
+    [18, 10, 10, 18],
+    [24, 13, 13, 24],
+    [27, 14, 14, 27],
+    [3, 1, 0, 2],
+    [3, 1, 1, 3],
+    [2, 0, 0, 2],
+    [2, 1, 1, 2],
+    [5, 2, 2, 5],
+    [5, 2, 2, 5],
+    [5, 2, 2, 5],
+    [2, 1, 1, 2],
+];
+
+/// The one label a plot paints against its sheet's list: the sheet, the
+/// text, the symbol, and where the sheet lists the symbol and the text.
+///
+/// This is the label of [`OTHER_ORDER`]. The sheet lists the text first —
+/// its owner at place 99, the symbol at place 104 — and the plot strokes the
+/// mark and letters the `P` at the very next step, the way it paints a label
+/// whose owner is listed right after its symbol.
+const AGAINST_ITS_LIST: (&str, &str, &str, [(u32, u32); 2]) = (
+    "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+    "P70",
+    "Remarks.sym",
+    [(104, 0), (99, 1)],
+);
+
+/// The sheet that holds the same label: the same text and symbol at the
+/// same point of the page, listed at the same two places. Its plot letters
+/// the `P` ahead of the mark, as listed.
+///
+/// So the records do not decide what the plot of [`AGAINST_ITS_LIST`] did:
+/// two plots, the same records at the same places, the two orders. No rule
+/// our page could follow gives both.
+const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
+
+/// A label and its origin mark are painted in the order the sheet lists
+/// them: on every label of the eleven sheets but one, and that one has a
+/// twin painted the other way.
+///
+/// This is what the two `WipesSame` / `WipesOther` lines of
+/// `一级闪蒸分离器A` rest on. It reads the plots and the drawings and writes
+/// no page, so it needs no typeface; like the gate beside it, it passes
+/// with a word when the corpus is absent.
+#[test]
+fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
+    use marked_labels::{MarkedLabel, apart, marked_labels};
+
+    let corpus = corpus_dir();
+    let first_reference = corpus.join(format!("{}.pdf", SHEETS[0].name));
+    if !first_reference.is_file() {
+        eprintln!(
+            "skipping the labels and their marks; {} is absent",
+            first_reference.display()
+        );
+        return;
+    }
+    let mut read: Vec<(&str, Vec<MarkedLabel>)> = Vec::new();
+    for sheet in &SHEETS {
+        let name = sheet.name;
+        let path = corpus.join(format!("{name}.pid"));
+        let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = pid_parse::PidParser::new()
+            .parse_file(&path)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let plot = std::fs::read(corpus.join(format!("{name}.pdf")))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let plot = read_plot_sequence(&plot).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let labels =
+            marked_labels(&path, &model, &doc, &plot).unwrap_or_else(|e| panic!("{name}: {e}"));
+        read.push((name, labels));
+    }
+
+    let mut against: Vec<(&str, &MarkedLabel)> = Vec::new();
+    for ((name, labels), pinned) in read.iter().zip(&MARKED_LABELS) {
+        let count = |test: fn(&MarkedLabel) -> bool| labels.iter().filter(|l| test(l)).count();
+        assert_eq!(
+            [
+                labels.len(),
+                count(MarkedLabel::listed_text_first),
+                count(MarkedLabel::painted_text_first),
+                count(MarkedLabel::as_listed),
+            ],
+            *pinned,
+            "{name}: labels with a mark, listed text first, lettered ahead of the mark, painted \
+             as listed"
+        );
+        for label in labels {
+            // The text's owner stands right after the symbol or ahead of it.
+            assert_ne!(
+                label.listed_next(),
+                label.listed_text_first(),
+                "{name}: {label:?}"
+            );
+            if label.as_listed() {
+                // And a plot that follows the list letters the text at the
+                // step after the mark exactly when the owner is listed next.
+                assert_eq!(
+                    label.painted_next(),
+                    label.listed_next(),
+                    "{name}: {label:?}"
+                );
+            } else {
+                against.push((*name, label));
+            }
+        }
+    }
+    let total: usize = read.iter().map(|(_, labels)| labels.len()).sum();
+    eprintln!(
+        "labels with an origin mark: {total} on {} sheet(s), {} painted as their sheet lists \
+         them",
+        read.len(),
+        total - against.len()
+    );
+
+    // The one against its list, and what it is.
+    let (sheet, value, symbol, [symbol_rank, text_rank]) = AGAINST_ITS_LIST;
+    assert_eq!(
+        against.len(),
+        1,
+        "labels painted against their sheet's list: {against:#?}"
+    );
+    let (found_on, label) = against[0];
+    assert_eq!(
+        (
+            found_on,
+            label.value.as_str(),
+            label.symbol.as_str(),
+            label.symbol_rank,
+            label.text_rank
+        ),
+        (sheet, value, symbol, symbol_rank, text_rank)
+    );
+    assert!(label.listed_text_first() && !label.painted_text_first());
+    assert!(
+        label.painted_next(),
+        "the plot letters the text at the step after the mark: {label:?}"
+    );
+
+    // Its twin: the same label at the same point and the same places, on a
+    // sheet whose plot paints it as listed.
+    let twins: Vec<&MarkedLabel> = read
+        .iter()
+        .filter(|(name, _)| *name == ITS_TWIN)
+        .flat_map(|(_, labels)| labels)
+        .filter(|twin| {
+            twin.value == label.value
+                && twin.symbol == label.symbol
+                && twin.symbol_rank == label.symbol_rank
+                && twin.text_rank == label.text_rank
+                && apart(twin.mark_mm, label.mark_mm) <= 0.01
+        })
+        .collect();
+    assert_eq!(twins.len(), 1, "{ITS_TWIN}: {twins:#?}");
+    assert!(
+        twins[0].as_listed() && twins[0].painted_text_first() && !twins[0].painted_next(),
+        "{ITS_TWIN}: {:?}",
+        twins[0]
     );
 }
