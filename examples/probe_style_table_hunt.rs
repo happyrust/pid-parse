@@ -16,8 +16,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{decode_igtextboxes, decode_jstyle_overrides};
+use pid_parse::parsers::sheet_records::{decode_igtextboxes, PsmRecordDecoder};
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::PidPackage;
+use retired_matchers::JStyleOverrideDecoder;
 
 // "\u{5DE5}\u{827A}..." is the gongyi fixture.
 const FIXTURES: &[&str] = &[
@@ -75,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 *ids.entry(u32::from_be_bytes(last4)).or_default() += 1;
             }
-            for style in decode_jstyle_overrides(bytes) {
+            for style in JStyleOverrideDecoder.scan(bytes) {
                 style_count += 1;
                 for v in [
                     style.oid,

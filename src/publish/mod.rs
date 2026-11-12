@@ -121,6 +121,9 @@ pub use pid_load::{
     load_publish_from_pid, load_publish_from_reader, PidLoadError, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidPublishStats, PidValueSource,
 };
+pub use pid_load::{
+    read_publish_from_pid, read_publish_from_reader, PidPublishRead, PublishChainFault,
+};
 pub use pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
 #[cfg(feature = "backup-mdf")]
 pub use sqlite_load::{

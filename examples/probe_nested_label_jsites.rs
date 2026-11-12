@@ -21,10 +21,11 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{
-    decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
-};
+use pid_parse::parsers::sheet_records::{decode_igsymbols, decode_igtextboxes, PsmRecordDecoder};
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::PidPackage;
+use retired_matchers::JStyleOverrideDecoder;
 
 const FIXTURES: &[&str] = &[
     "DWG-0201GP06-01.pid",
@@ -100,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let bytes = raw.data.as_slice();
             let symbols = decode_igsymbols(bytes);
-            let styles = decode_jstyle_overrides(bytes);
+            let styles = JStyleOverrideDecoder.scan(bytes);
             if symbols.is_empty() {
                 continue;
             }

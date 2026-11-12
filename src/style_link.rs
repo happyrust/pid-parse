@@ -139,7 +139,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::PidError;
 use crate::model::{PidDocument, SheetGeometry};
 use crate::parsers::sheet_records::{
-    IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+    SheetChain, IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
 /// Magic word every cluster-family stream opens with, `StyleCluster`
@@ -147,6 +147,7 @@ use crate::parsers::sheet_records::{
 const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 
 /// Bytes of stream header (`magic` + `record_count`) before the record chain.
+#[cfg(test)]
 const STREAM_HEADER_LEN: usize = 8;
 
 /// Bytes of PSM envelope (`type_word` + `bytes_to_follow`) before a payload.
@@ -239,6 +240,11 @@ pub const OVERRIDE_STATES_DASH: u32 = 0x80;
 /// copies it across unconditionally. This crate has no layer colour to
 /// hand back, so an override stating it keeps the base style's colour. Six
 /// corpus overrides — symbol-body strokes, all of them — state it.
+///
+/// What the word draws is on the vendor's plots: every stroke stating it is
+/// painted in the paper's own white there, so the resolved style carries it
+/// as [`LineSymbology::paper`] beside the base's colour. The name is the
+/// compose routine's; the reading is the plots'.
 const OVERRIDE_COLOUR_BY_LAYER: u32 = 0x8000_0000;
 
 /// Offset of the line width, an `f64` in metres, within a
@@ -331,7 +337,7 @@ pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
 /// (W drawing, style id 26), a 234-byte payload naming a `JStyleTextPara`
 /// at `+32` and a `JStylePointSymbol` at [`COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET`],
 /// reached from the dash's trailing word — see
-/// [`read_complex_dash_pattern`].
+/// `read_complex_dash_pattern`.
 pub const PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT: u16 = 0x0034;
 
 /// Offset at which a complex-dash component names the `JStylePointSymbol`
@@ -779,6 +785,18 @@ pub struct LineSymbology {
     /// Colour as the raw Win32 `COLORREF` word from
     /// [`SIMPLE_LINE_COLOUR_OFFSET`], i.e. `0x00BBGGRR`.
     pub colour: u32,
+    /// Whether an override on the way states the colour word `0x8000_0000`
+    /// under [`OVERRIDE_STATES_COLOUR`]: the stroke is drawn in the page's
+    /// own colour, which on a plot is the paper's white, so it leaves no
+    /// ink. [`Self::colour`] is still the base style's.
+    ///
+    /// Level: reference plots. The strokes stating it on the eleven
+    /// `验收数据` sheets are the origin marks of the label symbols —
+    /// `Remarks.sym`, `Remarks Chinese_large.sym`, `Item Note & Label.sym`,
+    /// 261 strokes, every one placed under `As Drawn` — and the vendor's
+    /// plots paint each of them `1 G`. See
+    /// `docs/analysis/2026-11-10-the-acceptance-gate-reads-paint-not-ink.md`.
+    pub paper: bool,
 }
 
 impl LineSymbology {
@@ -913,7 +931,7 @@ impl DashPattern {
 /// with a shape embedded. The one corpus instance is the W drawing's
 /// `Hydraulic Line` dash (`[-7.62 mm, sentinel]` then component 26), whose
 /// line draws solid with the symbol stamped once per cell; see
-/// [`DocumentStyleTable::complex_dash_named`] for the resolved glyph.
+/// `DocumentStyleTable::complex_dash_named` for the resolved glyph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComplexDashPattern {
     /// The declared segments in order, metres. The symbol slot reads
@@ -1226,6 +1244,10 @@ pub struct StyleRecord {
     /// sentinel. Meaningful only with [`OVERRIDE_STATES_COLOUR`] set in
     /// [`Self::override_mask`]; the field is read regardless.
     pub override_colour: Option<u32>,
+    /// Whether a `JStyleOverride`'s colour word is `0x8000_0000` — the page's
+    /// own colour, see [`LineSymbology::paper`]. Meaningful only with
+    /// [`OVERRIDE_STATES_COLOUR`] set.
+    pub override_states_paper: bool,
     /// The width in metres a `JStyleOverride` states, when it reads
     /// plausibly (the same gate as [`Self::symbology`]). Meaningful only
     /// with [`OVERRIDE_STATES_WIDTH`] set.
@@ -1543,8 +1565,21 @@ impl DocumentStyleTable {
     ///
     /// The stream is a pure record chain — `u32` magic, `u32` count, then
     /// records nose to tail — so it is walked exactly rather than scanned.
-    /// Anything that is not such a chain yields an empty table; nothing here
-    /// panics or allocates unboundedly on hostile input.
+    /// Anything that does not open with the chain magic yields an empty
+    /// table; nothing here panics or allocates unboundedly on hostile
+    /// input.
+    ///
+    /// The walk is [`SheetChain::walk`], the one a sheet's record families
+    /// decode on and the one a [`crate::model::StreamChainFault`] is
+    /// computed with: the table holds the records the chain read and no
+    /// others, so a fault that says "the chain read 21 record(s) … and the
+    /// bytes from it on are not read" says what this table was built from.
+    /// Until 2026-11-11 the table walked the stream by itself, with no
+    /// type-word tripwire, and after a length that is wrong and still in
+    /// bounds it read on from where no record starts — on the three style
+    /// tables of `DWG-0201GP06-01.pid`, past the fault's stop on 122 of the
+    /// 3 405 single-length changes that stop the walk
+    /// (`tests/sheet_chain_faults.rs`).
     #[must_use]
     pub fn from_stylecluster_bytes(data: &[u8]) -> Self {
         let mut table = Self::default();
@@ -1555,21 +1590,18 @@ impl DocumentStyleTable {
         // records they name. They are held here and bound once the walk has
         // seen everything.
         let mut librarian_names: Vec<LibrarianName> = Vec::new();
-        let mut at = STREAM_HEADER_LEN;
-        while let (Some(type_word), Some(bytes_to_follow)) =
-            (u16_at(data, at), u32_at(data, at + 2))
-        {
-            let Some(payload_start) = at.checked_add(PSM_ENVELOPE_LEN) else {
+        for at in SheetChain::walk(data).starts {
+            // The walk read this record, so its envelope and the payload it
+            // states lie inside the stream.
+            let (Some(type_word), Some(bytes_to_follow)) = (u16_at(data, at), u32_at(data, at + 2))
+            else {
                 break;
             };
-            let Some(end) = payload_start.checked_add(bytes_to_follow as usize) else {
+            let payload_start = at + PSM_ENVELOPE_LEN;
+            let end = payload_start + bytes_to_follow as usize;
+            let Some(payload) = data.get(payload_start..end) else {
                 break;
             };
-            // A zero-length record would not advance the cursor.
-            if bytes_to_follow == 0 || end > data.len() {
-                break;
-            }
-            let payload = &data[payload_start..end];
             let type_code = type_word & 0x3FFF;
             if !STYLE_FAMILY_TYPE_CODES.contains(&type_code) {
                 // A point symbol's glyph rides in this stream as ordinary
@@ -1603,7 +1635,6 @@ impl DocumentStyleTable {
                     }
                     _ => {}
                 }
-                at = end;
                 continue;
             }
             if let Some(style_id) = u32_at(payload, STYLE_ID_OFFSET) {
@@ -1618,6 +1649,9 @@ impl DocumentStyleTable {
                     base_reference: read_base_reference(payload),
                     override_mask: read_override_mask(type_code, payload),
                     override_colour: read_override_colour(type_code, payload),
+                    override_states_paper: type_code == PSM_TYPE_CODE_JSTYLE_OVERRIDE
+                        && u32_at(payload, OVERRIDE_COLOUR_OFFSET)
+                            == Some(OVERRIDE_COLOUR_BY_LAYER),
                     override_width_m: read_override_width(type_code, payload),
                     override_dash_reference: read_reference_of(
                         type_code,
@@ -1665,7 +1699,6 @@ impl DocumentStyleTable {
                 table.by_id.entry(style_id).or_insert(slot);
                 table.records.push(record);
             }
-            at = end;
         }
         table.bind_librarian_names(&librarian_names);
         table
@@ -1825,6 +1858,9 @@ impl DocumentStyleTable {
             if mask & OVERRIDE_STATES_COLOUR != 0 {
                 if let Some(colour) = record.override_colour {
                     symbology.colour = colour;
+                    symbology.paper = false;
+                } else if record.override_states_paper {
+                    symbology.paper = true;
                 }
             }
             let (dash, complex_dash) = if mask & OVERRIDE_STATES_DASH != 0 {
@@ -2087,7 +2123,11 @@ fn read_symbology(type_code: u16, payload: &[u8]) -> Option<LineSymbology> {
     {
         return None;
     }
-    Some(LineSymbology { width_m, colour })
+    Some(LineSymbology {
+        width_m,
+        colour,
+        paper: false,
+    })
 }
 
 fn read_char_height(type_code: u16, payload: &[u8]) -> Option<f64> {
@@ -3041,10 +3081,10 @@ pub fn text_styles_for_file(path: &Path) -> Result<TextStyleIndex, PidError> {
 
 /// Resolve the line style of every drawable record in one parsed `.pid`.
 ///
-/// Walks each `Sheet*`, takes the five families that carry an `index` —
-/// `igLine2d`, `igPoint2d`, `igLineString2d`, `igArc2d`, `igCircle2d` —
-/// plus the symbol placements, and resolves each against the `StyleCluster`
-/// of that sheet's own storage.
+/// Walks each `Sheet*`, takes the seven families that carry an `index` —
+/// `igLine2d`, `igPoint2d`, `igLineString2d`, `igArc2d`, `igCircle2d`,
+/// `igEllipticalArc2d`, `igBspCurve2d` — plus the symbol placements, and
+/// resolves each against the `StyleCluster` of that sheet's own storage.
 ///
 /// Records whose index resolves to something with no line symbology are left
 /// out rather than defaulted, so a caller can tell "this record asks for a
@@ -3078,6 +3118,18 @@ pub fn line_styles_for_document(doc: &PidDocument) -> LineStyleIndex {
             .chain(
                 sheet
                     .decoded_igcircles
+                    .iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                sheet
+                    .decoded_igellipticalarcs
+                    .iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                sheet
+                    .decoded_igbspcurves
                     .iter()
                     .map(|record| (record.oid, record.index)),
             )
@@ -4625,6 +4677,48 @@ mod tests {
         let resolved = table.resolve_line_style(21).expect("id 21 is defined");
         assert_eq!(resolved.symbology.rgb(), [0x80, 0x80, 0x00]);
         assert!((resolved.symbology.width_mm() - 0.01).abs() < 1e-9);
+    }
+
+    /// The same overrides again: `0x80000000` is the page's own colour, and
+    /// the eleven reference plots paint every stroke stating it white. The
+    /// resolved style says so, while its colour stays the base's; an override
+    /// stating a colour of its own, or none at all, does not.
+    #[test]
+    fn an_override_stating_the_by_layer_colour_is_drawn_in_the_pages_colour() {
+        let data = stream(&[
+            simple_line(1, 0.000_35, 0x0000_8080),
+            override_stating(
+                21,
+                1,
+                OVERRIDE_STATES_COLOUR | OVERRIDE_STATES_WIDTH,
+                OVERRIDE_COLOUR_BY_LAYER,
+                0.000_01,
+                0,
+            ),
+            // White is a colour like any other here.
+            override_stating(22, 1, OVERRIDE_STATES_COLOUR, 0x00FF_FFFF, 0.0, 0),
+            // The word is there, but the mask does not say a colour is stated.
+            override_stating(
+                23,
+                1,
+                OVERRIDE_STATES_WIDTH,
+                OVERRIDE_COLOUR_BY_LAYER,
+                0.000_01,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let paper = |id: u32| {
+            table
+                .resolve_line_style(id)
+                .expect("defined")
+                .symbology
+                .paper
+        };
+        assert!(paper(21), "the override states the page's own colour");
+        assert!(!paper(1), "the base states a colour");
+        assert!(!paper(22), "white is stated, not the page's colour");
+        assert!(!paper(23), "the mask states no colour");
     }
 
     /// A stated width that cannot be a width — a framing slip's enormous

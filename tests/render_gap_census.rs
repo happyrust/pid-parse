@@ -23,10 +23,15 @@
 //!
 //! Fixtures soft-skip when absent, mirroring `tests/parse_real_files.rs`.
 //!
-//! No fixture carries a refused graphic record, so the two tests about how a
-//! refusal is worded also read [`REFUSING_BACKUP_SHEET`], the one drawing of
-//! the plant backup that does. That half skips, and says so, on a machine
-//! without the backup, which is what CI sees.
+//! No document in reach carries a refused graphic record any more, so the two
+//! tests about how a refusal is worded hold the two that last did —
+//! [`ONCE_REFUSING_BACKUP_SHEET`], the one drawing of the plant backup, and
+//! [`ONCE_REFUSING_TEMPLATE`], a committed border template — to refusing
+//! nothing. The wording itself is held on rows of its own making by
+//! `geometry.rs`'s `refused_graphic_records_become_named_warnings_too` and
+//! `a_refusal_reads_differently_from_a_missing_decoder`. The backup half
+//! skips, and says so, on a machine without the backup, which is what CI
+//! sees; the template half runs wherever the repository is checked out.
 
 use std::path::{Path, PathBuf};
 
@@ -61,10 +66,12 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("D06.pid", 0, 0),
     // Clean since the sub-type layout landed: the 18 text records that used
     // to sit here were all sub-type 1 or 3, refused only because the decoder
-    // looked for their count at sub-type 2's offset. The dropped record is
-    // /JSite204/Sheet6's one 0x007B Group implementation; the two A2 border
-    // rectangles that sat beside it decode since 2026-09-07.
-    ("export-test/publish-data/A01/A01.pid", 0, 1),
+    // looked for their count at sub-type 2's offset. The one dropped record
+    // was /JSite204/Sheet6's 0x007B Group implementation (oid 311), which
+    // decodes since 2026-11-10: it lists the two A2 border rectangles that
+    // sit beside it — oid 295 and oid 114, decoded since 2026-09-07 — and
+    // emits nothing, their edges being lines that already draw.
+    ("export-test/publish-data/A01/A01.pid", 0, 0),
 ];
 
 /// `(fixture, graphic records the native reader skips)`, as `(type code,
@@ -285,11 +292,20 @@ fn the_corpus_line_counts_include_what_the_retired_rule_refused() {
     }
 }
 
-/// The one drawing of the 53-sheet plant backup with a refused graphic
-/// record: a 36-byte `DependencyObject` with no member on its `/Sheet6`, the
-/// same record `tests/plant_backup_census.rs` pins as that backup's whole
-/// refusal census.
-const REFUSING_BACKUP_SHEET: &str = "A井场 注采阀组工艺及自控流程图.pid";
+/// The one drawing of the 53-sheet plant backup that had a refused graphic
+/// record: a 36-byte `DependencyObject` with no member on its `/Sheet6`.
+/// The family reads a count of zero now, so the sheet refuses nothing — the
+/// reading `tests/plant_backup_census.rs` pins for the whole backup.
+const ONCE_REFUSING_BACKUP_SHEET: &str = "A井场 注采阀组工艺及自控流程图.pid";
+
+/// The committed document that last had both kinds of gap: the border
+/// template the 熊安 fixture wears. Two of the four `igBoundary2d` of its
+/// `/Sheet6` are fills with a hole — two loops where the decoder read one —
+/// and were refused, and the same sheet had two `igEllipticalArc2d` no sheet
+/// family decoded. Both decode since 2026-11-10 (`tests/boundary_loops.rs`,
+/// `tests/elliptical_arcs.rs`), so the sheet refuses nothing and drops
+/// nothing.
+const ONCE_REFUSING_TEMPLATE: &str = "test-file/Ref/Template Files/XA-A1.igr";
 
 /// The extracted plant backup, if this machine has one: under
 /// `PID_TEST_DATA_DIR`, then the two local copies of `pid-test-data` — the
@@ -327,24 +343,40 @@ fn find_drawing(dir: &Path, name: &str) -> Option<PathBuf> {
     })
 }
 
-/// The geometry of [`REFUSING_BACKUP_SHEET`], or `None` — after saying so —
-/// on a machine with no plant backup.
+/// The geometry of [`ONCE_REFUSING_BACKUP_SHEET`], or `None` — after saying
+/// so — on a machine with no plant backup.
 ///
 /// A backup that is present and lacks the sheet is not a reason to skip: the
-/// refusal checks would go back to passing on nothing, so that panics.
-fn refusing_backup_sheet() -> Option<NormalizedPidGeometry> {
+/// check would go back to passing on nothing, so that panics.
+fn once_refusing_backup_sheet() -> Option<NormalizedPidGeometry> {
     let Some(backup) = backup_dir() else {
         eprintln!(
-            "skipping {REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present, so no \
-             refusal warning is read"
+            "skipping {ONCE_REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present"
         );
         return None;
     };
-    let path = find_drawing(&backup, REFUSING_BACKUP_SHEET)
-        .unwrap_or_else(|| panic!("{} carries no {REFUSING_BACKUP_SHEET}", backup.display()));
+    let path = find_drawing(&backup, ONCE_REFUSING_BACKUP_SHEET).unwrap_or_else(|| {
+        panic!(
+            "{} carries no {ONCE_REFUSING_BACKUP_SHEET}",
+            backup.display()
+        )
+    });
     let parsed = PidParser::new()
         .parse_file(&path)
         .unwrap_or_else(|err| panic!("{} should parse: {err}", path.display()));
+    Some(build_normalized_geometry(&parsed))
+}
+
+/// The geometry of [`ONCE_REFUSING_TEMPLATE`], or `None` — after saying so —
+/// in a checkout that does not carry it.
+fn once_refusing_template() -> Option<NormalizedPidGeometry> {
+    if !Path::new(ONCE_REFUSING_TEMPLATE).exists() {
+        eprintln!("skipping: {ONCE_REFUSING_TEMPLATE} not found");
+        return None;
+    }
+    let parsed = PidParser::new()
+        .parse_file(ONCE_REFUSING_TEMPLATE)
+        .unwrap_or_else(|err| panic!("{ONCE_REFUSING_TEMPLATE} should parse: {err}"));
     Some(build_normalized_geometry(&parsed))
 }
 
@@ -414,15 +446,29 @@ fn every_refused_graphic_record_is_named_in_a_warning() {
         );
     }
 
-    // The backup sheet is where the comparison has a row to make.
-    let Some(geometry) = refusing_backup_sheet() else {
+    // The backup sheet that was where the comparison had a row to make has
+    // none now: its one refused record decodes.
+    if let Some(geometry) = once_refusing_backup_sheet() {
+        assert_eq!(
+            refused_rows_named_in_a_warning(ONCE_REFUSING_BACKUP_SHEET, &geometry),
+            0,
+            "{ONCE_REFUSING_BACKUP_SHEET}: a refused graphic record is back: {:?}",
+            geometry.refused_graphic_records
+        );
+    }
+
+    // The committed template that had the last rows has none either: its
+    // two fills with a hole decode. With no document left to read a row
+    // from, the comparison of a row with its warning is `geometry.rs`'s
+    // `refused_graphic_records_become_named_warnings_too`, on a row it makes.
+    let Some(geometry) = once_refusing_template() else {
         return;
     };
-    let checked = refused_rows_named_in_a_warning(REFUSING_BACKUP_SHEET, &geometry);
-    assert!(
-        checked > 0,
-        "{REFUSING_BACKUP_SHEET}: no refused graphic record is left to hold against a warning; \
-         this check needs a drawing that still carries one"
+    assert_eq!(
+        refused_rows_named_in_a_warning(ONCE_REFUSING_TEMPLATE, &geometry),
+        0,
+        "{ONCE_REFUSING_TEMPLATE}: a refused graphic record is back: {:?}",
+        geometry.refused_graphic_records
     );
 }
 
@@ -433,8 +479,15 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
     // its /Sheet6615 rectangle has a decoder (it is the parent of four edge
     // lines and emits nothing) and none of its records is refused, so both of
     // its lists are empty and it has no refusal wording to read. The backup
-    // sheet below has a refusal and no missing decoder, and the synthetic
-    // pair in `geometry.rs` keeps the two wordings apart where both occur.
+    // sheet below used to have a refusal and no longer has either; the
+    // template after it had both and has neither. With no document left
+    // that carries a refusal, what this test held on one — a sheet whose
+    // only gap is a refusal reports no missing decoder, in the prose or in
+    // the list — is held on synthetic rows in `geometry.rs`
+    // (`a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`),
+    // beside the pair that keeps the two wordings apart where both occur
+    // (`a_refusal_reads_differently_from_a_missing_decoder`). What is held
+    // here is that all three documents are empty in both, prose and list.
     let path = "test-file/DWG-0202GP06-01.pid";
     if !std::path::Path::new(path).exists() {
         eprintln!("skipping: fixture {path} not found");
@@ -463,17 +516,30 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         geometry.warnings
     );
 
-    // The refusal wording, on the one sheet that has it. The sheet's only gap
-    // is that refusal, so nothing on it may be reported as a missing decoder
-    // either, in the prose or in the structured list.
-    let Some(geometry) = refusing_backup_sheet() else {
+    // The backup sheet that carried the refusal wording carries neither
+    // wording now.
+    if let Some(geometry) = once_refusing_backup_sheet() {
+        assert_eq!(
+            refusal_warnings_read_as_refusals(ONCE_REFUSING_BACKUP_SHEET, &geometry),
+            0,
+            "{ONCE_REFUSING_BACKUP_SHEET}: a refusal warning is back: {:?}",
+            geometry.warnings
+        );
+        assert!(
+            geometry.dropped_graphic_records.is_empty(),
+            "{ONCE_REFUSING_BACKUP_SHEET}: a graphic record without a decoder: {:?}",
+            geometry.dropped_graphic_records
+        );
+    }
+
+    // The committed template that carried both wordings carries neither.
+    let Some(geometry) = once_refusing_template() else {
         return;
     };
-    let refusals = refusal_warnings_read_as_refusals(REFUSING_BACKUP_SHEET, &geometry);
-    assert!(
-        refusals > 0,
-        "{REFUSING_BACKUP_SHEET}: no refusal warning is left to read; this check needs a \
-         drawing that still carries one: {:?}",
+    assert_eq!(
+        refusal_warnings_read_as_refusals(ONCE_REFUSING_TEMPLATE, &geometry),
+        0,
+        "{ONCE_REFUSING_TEMPLATE}: a refusal warning is back: {:?}",
         geometry.warnings
     );
     let missing: Vec<_> = geometry
@@ -483,8 +549,7 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         .collect();
     assert!(
         missing.is_empty() && geometry.dropped_graphic_records.is_empty(),
-        "{REFUSING_BACKUP_SHEET}: a sheet whose only gap is a refusal reports a missing \
-         decoder: {missing:?} {:?}",
+        "{ONCE_REFUSING_TEMPLATE}: a graphic record without a decoder: {missing:?} {:?}",
         geometry.dropped_graphic_records
     );
 }

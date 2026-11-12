@@ -101,7 +101,18 @@ fn dwg0202_publish_pair_resolves_directly_and_through_aggregates() {
         .filter_map(|entity| entity.graphic_oid)
         .filter(|oid| index.resolve(*oid).is_some())
         .count();
-    assert_eq!(joining_entities, 41, "41 drawn entities join, as before");
+    // One entity per published representation: 27 join directly and 12
+    // through an aggregate. Two more used to, and neither was drawn or a
+    // record: position-less `JStyleOverride` entities a byte-sliding walk
+    // read out of two `DependencyObject` tails, whose "oid" came out as 1 —
+    // a value eight published aggregates hold in their own tails, so the
+    // two-hop rule joined them. A family decodes only what the chain starts
+    // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    // §3.2), and the sheet's chain has no such record.
+    assert_eq!(
+        joining_entities, 39,
+        "one drawn entity per published representation"
+    );
 
     // Hop 1: every published oid resolves directly.
     for object in index.objects() {

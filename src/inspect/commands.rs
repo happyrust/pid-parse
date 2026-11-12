@@ -1177,7 +1177,7 @@ fn render_geometry_summary_text(geometry: &NormalizedPidGeometry) -> String {
     writeln!(out, "Decoded (PSM record geometry):").ok();
     writeln!(
         out,
-        "  Lines (GLine2d / igLine2d):              {decoded_lines}"
+        "  Lines (igLine2d):                         {decoded_lines}"
     )
     .ok();
     writeln!(

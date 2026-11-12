@@ -2137,19 +2137,16 @@ fn primitive_line_numeric_samples(
 /// family: `u16` LE type word (14-bit type code + 2 flag bits) followed
 /// by a `u32` LE `bytes_to_follow`.
 ///
-/// Not to be confused with [`PSM_RECORD_HEADER_LEN`] (18), which is the
-/// `GLine2d`-specific header that additionally carries `oid` + an 8-byte
-/// aux prefix after the shared envelope.
+/// The `oid` and the eight-byte `aux` pair that follow are the first
+/// twelve bytes of the payload this length is counted from.
 pub const PSM_ENVELOPE_LEN: usize = 6;
 
 /// The decoded 6-byte PSM record envelope shared by every PSM record
 /// family (see [`parse_psm_header`]).
 ///
 /// Deliberately minimal: `oid` is **not** part of the shared envelope —
-/// `igLine2d` and friends carry it in their payload sub-header, while
-/// `GLine2d` (PSM `0x3FE6`) carries it inside its 18-byte
-/// [`PSM_RECORD_HEADER_LEN`] header. Each family reads its own fields
-/// after [`Self::body_start`].
+/// every family carries it in its payload sub-header and reads its own
+/// fields after [`Self::body_start`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PsmHeader {
     /// 14-bit PSM type code (`type_word & 0x3FFF`).
@@ -2182,12 +2179,100 @@ pub struct PsmHeader {
 /// anywhere in the corpus.
 pub const PSM_TYPE_FLAG_NATIVE_SKIP: u16 = 0b10;
 
+/// The other bit of [`PsmHeader::type_flags`]: the type word's `0x4000`.
+/// No record of any chain stream in the corpora sets it, and a chain walk
+/// does not read past a word that does ([`psm_type_word_opens_a_record`]).
+pub const PSM_TYPE_FLAG_UNSEEN: u16 = 0b01;
+
+/// The last type code the native reader has a class for.
+///
+/// `radsrvitem.dll` keeps one CLSID per type code in a table the code
+/// indexes (`dword_5667B068`, 20 bytes a slot;
+/// `docs/analysis/2026-08-04-psm-type-code-registry.md`). It has 281
+/// slots, `0x0000` to `0x0118`. What says the table ends there is what
+/// follows slot `0x0118` in the file: four zero bytes, three doubles
+/// (`1e-6`, `1e-10`, `0.001`) and then pointers into the image — not a
+/// GUID. (The slots are not in CLSID order, which this comment said until
+/// 2026-11-11: they ascend from `0x0000` through `0x0088` and not after,
+/// 78 slots sorting below the one before them.) 230 of the slots name a
+/// class of the RAD registry in `jutil.dll`, 50 hold a CLSID that
+/// registry does not list, and one, [`PSM_TYPE_CODE_EMPTY_SLOT`], holds
+/// none.
+///
+/// The table was read from one build of the reader, `radsrvitem.dll`
+/// 9.0.0.143. A later build that has a class past `0x0118` writes records
+/// this walk stops on: a drawing of it would be read as far as the first
+/// such record and reported with a
+/// [`SheetChainStop::NoSuchClass`] fault — loudly, and short of the rest
+/// of the stream. No record of the corpora states a type code the table
+/// lacks.
+pub const PSM_TYPE_CODE_LAST: u16 = 0x0118;
+
+/// The one slot of the native reader's class table that holds no CLSID.
+pub const PSM_TYPE_CODE_EMPTY_SLOT: u16 = 0x00F8;
+
+/// Whether `type_word` can open a record of a chain stream: the tripwire
+/// [`SheetChain::walk`] stops on.
+///
+/// A record's length is the only thing that says where the next one
+/// starts, so a length that is wrong and still inside the stream sends the
+/// walk on from an offset where no record starts, reading whatever bytes
+/// lie there as an envelope. Nothing about a length says it is wrong; the
+/// type word beside it can. A word is refused when
+///
+/// * its type code is past [`PSM_TYPE_CODE_LAST`] or is
+///   [`PSM_TYPE_CODE_EMPTY_SLOT`]: the native reader has no class to make
+///   of it, so no file it wrote or can read holds such a record;
+/// * its `0x4000` bit is set ([`PSM_TYPE_FLAG_UNSEEN`]). `PSMSerializeIn`
+///   holds the word of every record it reads against the 14-bit type code
+///   of the object the record's oid names, and reports "Stream offset
+///   mismatch while reading serial data" when they differ
+///   (`docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`): a
+///   record it reads cannot carry the bit, and it names the failure this
+///   rule is for;
+/// * its type code is zero. The class table does not rule that out — slot
+///   `0` is `JFeatureControlFrame Object` — but zero is the commonest word
+///   a payload holds, and no record states it.
+///
+/// None of the three occurs once on the 499 289 records of the 3 984
+/// distinct streams that open with the chain magic in the corpora (sheets,
+/// symbol caches, `StyleCluster`, the `PSMcluster` and attribute streams,
+/// the sheets of symbol files). Changing one length field by ±1, ±2 … ±64
+/// on every record of the corpora's sheets and symbol caches, 353 changes
+/// used to read as a sound chain: 351 through a "record" of type word
+/// `0x0000`, the other two through `0x4000` and `0xF000`.
+///
+/// The rule is the class table's and not the list of codes the corpora
+/// happen to carry (18 on sheets, 49 in symbol caches). That list refuses
+/// more — of 2 106 074 length changes on the corpora's sheets it leaves
+/// 1 156 reading a record off the chain, where this rule leaves 35 074 and
+/// no rule 620 049 — and it would stop a sound stream at the first record
+/// of a class these corpora lack: `igBalloon`, `igLeader` and `Graphics
+/// Bag` pass the native graphic predicate and no corpus chain holds one. A
+/// stop is loud either way; one on a sound drawing costs the rest of its
+/// sheet. `tests/sheet_chain_faults.rs` makes the same changes on the
+/// committed streams on every run and pins what each reads as.
+#[must_use]
+pub fn psm_type_word_opens_a_record(type_word: u16) -> bool {
+    let code = type_word & 0x3FFF;
+    type_word & 0x4000 == 0
+        && code != 0
+        && code <= PSM_TYPE_CODE_LAST
+        && code != PSM_TYPE_CODE_EMPTY_SLOT
+}
+
 impl PsmHeader {
     /// Whether the native reader skips this record without reading it —
     /// [`PSM_TYPE_FLAG_NATIVE_SKIP`] is set in its type word.
     #[must_use]
     pub fn native_reader_skips(&self) -> bool {
         self.type_flags & PSM_TYPE_FLAG_NATIVE_SKIP != 0
+    }
+
+    /// The type word as stored: the 14-bit code under its two flag bits.
+    #[must_use]
+    pub fn type_word(&self) -> u16 {
+        (self.type_flags << 14) | (self.type_code & 0x3FFF)
     }
 }
 
@@ -2231,52 +2316,262 @@ pub fn parse_live_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
 /// header (`magic` + `record_count`) precedes the chain.
 pub const SHEET_STREAM_HEADER_LEN: usize = 8;
 
-/// Every offset a record actually starts at, by walking the stream as the
-/// chain it is: `u16` type word, `u32 bytes_to_follow`, payload, repeat.
+/// The word every chain stream opens with: the cluster magic.
+pub const SHEET_STREAM_MAGIC: u32 = crate::parsers::cluster_header::CLUSTER_MAGIC;
+
+/// Why a chain walk stopped before the end of its stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SheetChainStop {
+    /// The stream is shorter than the eight-byte header a chain stream opens
+    /// with.
+    ShortHeader,
+    /// Fewer than six bytes are left at the stop: too few for a record's
+    /// envelope.
+    ShortEnvelope,
+    /// The record at the stop states that no byte follows its envelope. A
+    /// record holds at least its own oid, and six bytes on from here is the
+    /// middle of whatever this one really held.
+    ZeroLength,
+    /// The record at the stop states more bytes than the stream has left.
+    PastEnd {
+        /// The `bytes_to_follow` it states.
+        stated: u32,
+    },
+    /// The word at the stop is not one a record opens with
+    /// ([`psm_type_word_opens_a_record`]): the walk has left the record
+    /// boundaries by here, and the length of the last record it read is
+    /// the first thing in doubt.
+    NoSuchClass {
+        /// The type word found there.
+        type_word: u16,
+    },
+}
+
+/// A chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
+/// read by its own framing: the eight-byte header (`magic`, live-record
+/// count) and then records end to end, `u16` type word, `u32
+/// bytes_to_follow`, payload, repeat.
 ///
-/// This is what tells a record from a byte pattern that merely looks like
-/// one. [`PsmRecordDecoder::scan`] tries every offset and slides a byte on
-/// rejection, so a header shape occurring *inside* another record's payload
-/// is accepted as a record — which is how `0x3FE6 GLine2d` came to have
+/// The walk is what tells a record from a byte pattern that merely looks
+/// like one, and it is where every family decodes
+/// ([`PsmRecordDecoder::scan`]). A walk that tries every offset and slides a
+/// byte on rejection accepts a header shape occurring *inside* another
+/// record's payload as a record — which is how `0x3FE6 GLine2d` came to have
 /// three corpus "records" that are really the top two bytes of an
 /// `igSmartFrame2d` page-ratio `f64` (see
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`),
+/// and how three whole families came to decode nothing but such patterns
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3).
 ///
-/// Returns an empty vector unless the walk consumes the stream exactly. A
-/// partial walk means the stream is not the chain this assumes, and half a
-/// chain is worse evidence than none: a caller gating on membership would
-/// silently drop every record past the stall.
+/// A stream whose framing does not hold is read as far as it holds and no
+/// further. The records the chain read before a stop decode as on any
+/// stream; what follows the stop is not searched for a place to pick the
+/// chain up again.
+///
+/// "The records the chain read", not "the records the file holds": each
+/// one's offset came from the lengths before it, and a length can be wrong
+/// without running past the stream. The walk then goes on from an offset
+/// where no record starts. It stops there when the word it finds is not
+/// one a record opens with ([`psm_type_word_opens_a_record`]) — on 98.3%
+/// of the length changes measured on the corpora's sheets that is the very
+/// next offset, so the stop names the first byte past the record whose
+/// length is wrong — and otherwise where the bytes it took for records run
+/// out: on the other 1.7% it reads one such record, rarely two, before it
+/// stops, and on 450 of 2 106 074 it rejoins the chain further on and
+/// reaches the stream's end, where only the header's count says something
+/// is wrong and nothing says where. What it read on the way is not in the
+/// file as a record, and the families that could decode one are the ones
+/// whose type code it happened to state.
+///
+/// `examples/probe_can_a_stopped_chain_be_picked_up_again`
+/// measures what such a search would find if each record of each intact
+/// sheet stream in turn were the one the walk stops on. Of the 173 982
+/// records of the corpora's sheet streams that have another after them,
+/// 21 214 hold an offset inside themselves from which a chain walks exactly
+/// to the stream's end; held to the header's live-record count as well, the
+/// search still lands inside the record, short of the next record's start,
+/// on 743. A payload read as records of its own is geometry no file holds
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §15). Instead the stop is stated — [`Self::stop`], [`Self::unread_bytes`]
+/// — for the caller to report, which is what
+/// [`crate::model::StreamChainFault`] is for.
+///
+/// The header is held to the chain as well: on every chain stream of the
+/// corpora — the 1 684 sheet streams and 171 symbol caches of their 856
+/// distinct files, 259 821 records, `tests/sheet_chain_faults.rs` — the
+/// first word is the magic and the second is the number of records the
+/// native reader reads (those without `0x8000` in the type word). A stream
+/// cut off at a record boundary walks cleanly to its new end, and only that
+/// count says records are missing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetChain {
+    /// The stream's length in bytes.
+    pub len: usize,
+    /// The stream's first word, when it has four bytes.
+    pub magic: Option<u32>,
+    /// The live-record count the header states, when the stream has a
+    /// header.
+    pub stated_records: Option<u32>,
+    /// Offset of every record the walk read, in stream order.
+    pub starts: Vec<usize>,
+    /// How many of them the native reader reads: the ones whose type word
+    /// does not carry [`PSM_TYPE_FLAG_NATIVE_SKIP`].
+    pub live_records: usize,
+    /// The first offset the walk did not read as a record: [`Self::len`]
+    /// when it read the stream to its end.
+    pub end: usize,
+    /// Why the walk stopped at [`Self::end`], when that is short of the
+    /// stream's end.
+    pub stop: Option<SheetChainStop>,
+}
+
+impl SheetChain {
+    /// Walk `data` as a chain stream.
+    ///
+    /// Panic-free on arbitrary input. An empty stream reads as an empty
+    /// chain with nothing wrong with it: there is no byte it failed to read.
+    #[must_use]
+    pub fn walk(data: &[u8]) -> Self {
+        let word = |at: usize| {
+            data.get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let mut chain = Self {
+            len: data.len(),
+            magic: word(0),
+            stated_records: word(4),
+            starts: Vec::new(),
+            live_records: 0,
+            end: data.len().min(SHEET_STREAM_HEADER_LEN),
+            stop: None,
+        };
+        if data.is_empty() {
+            return chain;
+        }
+        if data.len() < SHEET_STREAM_HEADER_LEN {
+            chain.end = 0;
+            chain.stop = Some(SheetChainStop::ShortHeader);
+            return chain;
+        }
+        let mut at = SHEET_STREAM_HEADER_LEN;
+        while at < data.len() {
+            let Some(header) = parse_psm_header(data, at) else {
+                chain.stop = Some(SheetChainStop::ShortEnvelope);
+                break;
+            };
+            if !psm_type_word_opens_a_record(header.type_word()) {
+                chain.stop = Some(SheetChainStop::NoSuchClass {
+                    type_word: header.type_word(),
+                });
+                break;
+            }
+            if header.bytes_to_follow == 0 {
+                chain.stop = Some(SheetChainStop::ZeroLength);
+                break;
+            }
+            let end = header
+                .body_start
+                .checked_add(header.bytes_to_follow as usize)
+                .filter(|end| *end <= data.len());
+            let Some(end) = end else {
+                chain.stop = Some(SheetChainStop::PastEnd {
+                    stated: header.bytes_to_follow,
+                });
+                break;
+            };
+            chain.starts.push(at);
+            if !header.native_reader_skips() {
+                chain.live_records += 1;
+            }
+            at = end;
+        }
+        chain.end = at;
+        chain
+    }
+
+    /// Bytes from where the walk stopped to the stream's end: read as
+    /// nothing. Zero when the walk read the stream to its end.
+    #[must_use]
+    pub fn unread_bytes(&self) -> usize {
+        self.len.saturating_sub(self.end)
+    }
+
+    /// Whether the stream's first word is not the chain magic. An empty
+    /// stream has no first word to be wrong.
+    #[must_use]
+    pub fn wrong_magic(&self) -> Option<u32> {
+        match self.magic {
+            Some(SHEET_STREAM_MAGIC) => None,
+            Some(found) => Some(found),
+            // One to three bytes: a header cut short, which `stop` says.
+            None => None,
+        }
+    }
+
+    /// Whether the chain runs to the stream's end and holds a different
+    /// number of live records than the header states.
+    #[must_use]
+    pub fn count_differs(&self) -> bool {
+        self.stop.is_none()
+            && self
+                .stated_records
+                .is_some_and(|stated| usize::try_from(stated).ok() != Some(self.live_records))
+    }
+
+    /// Whether the stream is what it says it is: the magic, a chain that
+    /// runs to the last byte, and as many live records as the header
+    /// states. An empty stream is sound.
+    #[must_use]
+    pub fn is_sound(&self) -> bool {
+        self.stop.is_none() && self.wrong_magic().is_none() && !self.count_differs()
+    }
+}
+
+/// Every offset a record starts at in a chain stream that walks to its last
+/// byte, and nothing for one that does not.
+///
+/// This is the all-or-nothing reading, for a caller that tests membership
+/// of the chain or that has no way to say a stream was cut short: the
+/// publish line's row reader, the semantic join, the probes. The record
+/// families read [`SheetChain::walk`] instead — what the chain read before
+/// a stop still decodes — and what stopped the walk is reported beside it.
+/// Neither reading holds the header to the chain; [`SheetChain::is_sound`]
+/// does.
 #[must_use]
 pub fn sheet_record_starts(data: &[u8]) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut at = SHEET_STREAM_HEADER_LEN;
-    while at < data.len() {
-        let Some(header) = parse_psm_header(data, at) else {
-            return Vec::new();
-        };
-        let Some(end) = header
-            .body_start
-            .checked_add(header.bytes_to_follow as usize)
-        else {
-            return Vec::new();
-        };
-        if header.bytes_to_follow == 0 || end > data.len() {
-            return Vec::new();
-        }
-        starts.push(at);
-        at = end;
+    let chain = SheetChain::walk(data);
+    if chain.stop.is_some() {
+        return Vec::new();
     }
-    starts
+    chain.starts
+}
+
+/// `records` — one record or a run of them, end to end — behind the 8-byte
+/// header a chain stream opens with, so that a test hands a family the
+/// stream it would be handed in a file.
+///
+/// The header is the one a file writes: the magic, and the number of records
+/// among `records` the native reader reads. Bytes that are not a run of
+/// whole records get a count of what the walk reads before it stops.
+#[cfg(test)]
+pub(crate) fn chain_stream(records: &[u8]) -> Vec<u8> {
+    let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+    stream.extend_from_slice(records);
+    let live = u32::try_from(SheetChain::walk(&stream).live_records).unwrap_or(u32::MAX);
+    stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+    stream[4..8].copy_from_slice(&live.to_le_bytes());
+    stream
 }
 
 /// One PSM record family's decoder (RFC §3.1, L4 seam).
 ///
 /// Implementations are unit structs owning only the family-specific
-/// payload validation inside [`Self::decode_at`]; the walk+advance scan
-/// loop lives once in the provided [`Self::scan`]. The associated
-/// [`Self::Record`] keeps each family's typed parser DTO — this seam
-/// deliberately does **not** collapse families into an enum or an
-/// untyped map (that would erase the Typed Audit evidence language from
+/// payload validation inside [`Self::decode_at`]; the walk lives once in
+/// the provided [`Self::scan`], and it is the stream's own record chain.
+/// The associated [`Self::Record`] keeps each family's typed parser DTO —
+/// this seam deliberately does **not** collapse families into an enum or
+/// an untyped map (that would erase the Typed Audit evidence language from
 /// `CONTEXT.md`).
 ///
 /// Contract for implementors:
@@ -2284,12 +2579,13 @@ pub fn sheet_record_starts(data: &[u8]) -> Vec<usize> {
 /// - [`Self::decode_at`] must be panic-free on arbitrary bytes and
 ///   return `None` on any validation failure (same bar as every
 ///   `decode_*_at` free function, enforced by
-///   `tests/parser_panic_safety.rs`).
+///   `tests/parser_panic_safety.rs`). It judges the bytes at one offset
+///   and nothing about where that offset came from; whether a record
+///   starts there is [`Self::scan`]'s question, not the payload's.
 /// - [`Self::advance_of`] returns the accepted record's full on-disk
-///   byte length; [`Self::scan`] clamps it to ≥ 1 so a buggy zero can
-///   never stall the walk.
-/// - Families whose scan must deviate from the shared loop (none today;
-///   watch `0x0010` Mode B) may override [`Self::scan`], documenting why.
+///   byte length — the step the chain takes over it.
+/// - No family overrides [`Self::scan`]: a record is a member of the
+///   chain or it is not a record, whatever its family.
 pub trait PsmRecordDecoder {
     /// Typed decoded-record DTO for this family (e.g.
     /// [`SheetIgLine2dDecoded`]).
@@ -2299,9 +2595,7 @@ pub trait PsmRecordDecoder {
     fn type_code(&self) -> u16;
 
     /// Smallest possible full-record byte length for this family
-    /// (envelope + minimum payload). [`Self::scan`] uses it to bound
-    /// the walk so trailing bytes shorter than one record are skipped
-    /// without per-offset decode attempts.
+    /// (envelope + minimum payload).
     fn min_record_len(&self) -> usize;
 
     /// Try to decode one record starting at `offset`. `None` when any
@@ -2309,31 +2603,38 @@ pub trait PsmRecordDecoder {
     /// bounds-checked.
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<Self::Record>;
 
-    /// Byte count [`Self::scan`] advances after accepting `record` —
-    /// the record's full on-disk length (envelope + payload).
+    /// The record's full on-disk length (envelope + payload): how far the
+    /// chain steps over it.
     fn advance_of(&self, record: &Self::Record) -> usize;
 
-    /// Shared walk+advance scan loop (previously copy-pasted per
-    /// family): try [`Self::decode_at`] at each offset, jump past
-    /// accepted records, slide one byte on rejection.
+    /// Every record of this family in a chain stream — a `Sheet*` stream
+    /// or a symbol cache's `PSMcluster0`: [`Self::decode_at`] at each
+    /// offset the stream's own chain starts a record
+    /// ([`SheetChain::walk`]), in on-disk order.
+    ///
+    /// A record is a member of the chain before its payload is even looked
+    /// at. This used to try every offset and slide a byte on rejection,
+    /// which reads any run of bytes that satisfies a family's rules as a
+    /// record of it wherever the run sits — inside a text box, inside a
+    /// dependency object's member list — and then steps over whatever that
+    /// "record" claims, real records included. Measured over 118 sheet
+    /// streams and 147 symbol caches
+    /// (`examples/probe_which_decoded_records_start_off_the_chain.rs`),
+    /// the chain costs no family a record: 191 256 decodes started on it,
+    /// and what started off it was thirteen `igSmartFrame2d` and every one
+    /// of the 92 392 "records" of three families — `0x0010` sub-records,
+    /// attribute fragments, `JStyleOverride` — which had none on it, since
+    /// no sheet chain carries either type code.
+    ///
+    /// A stream whose chain stops before its end yields the records before
+    /// the stop and never falls back to a scan for the rest: the stop is
+    /// the caller's to report ([`SheetChain::stop`]), not to paper over.
     fn scan(&self, data: &[u8]) -> Vec<Self::Record> {
-        let mut out = Vec::new();
-        let min_len = self.min_record_len().max(1);
-        if data.len() < min_len {
-            return out;
-        }
-        let max_offset = data.len() - min_len;
-        let mut off = 0usize;
-        while off <= max_offset {
-            if let Some(record) = self.decode_at(data, off) {
-                let advance = self.advance_of(&record).max(1);
-                out.push(record);
-                off = off.saturating_add(advance);
-                continue;
-            }
-            off += 1;
-        }
-        out
+        SheetChain::walk(data)
+            .starts
+            .into_iter()
+            .filter_map(|at| self.decode_at(data, at))
+            .collect()
     }
 }
 
@@ -2341,29 +2642,14 @@ pub trait PsmRecordDecoder {
 // Phase 14 Slices D/F: PSM-encoded geometry decoder family
 // ---------------------------------------------------------------------------
 
-/// Byte length of one PSM record header in
-/// [`decode_primitive_lines`].
-///
-/// Layout reverse-engineered from `radsrvitem.dll`
-/// `PSMSerializeOut` (0x56491E80) / `PSMSerializeIn` (0x564915E0)
-/// in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`:
-///
-/// ```text
-/// 0..2    uint16_le  type_code         // 14-bit, top 2 bits flags
-/// 2..6    uint32_le  bytes_to_follow   // payload length excl. these 6
-/// 6..10   uint32_le  oid               // object identifier
-/// 10..18  8 bytes    aux               // type-specific aux payload prefix
-/// ```
-pub const PSM_RECORD_HEADER_LEN: usize = 18;
-
-/// Byte length of one in-memory `GLine2d` payload:
-/// 6 × `f64` LE = 48 bytes.
-///
-/// Layout reverse-engineered from `radsrvitem.dll`
-/// `GLine2d::Validate` (`sub_56524C50` @ 0x56524C50). Documented in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
-pub const GLINE2D_PAYLOAD_LEN: usize = 48;
+// The matchers of four retired families stood in this file until 2026-11-11:
+// `GLine2d` (`0x3FE6`) below this banner, `JStyleOverride` as a sheet family
+// (`0x0030`), `SubRecord0x0010` and `AttributeFragment` (`0x0010`) after the
+// dependency object. No chain of any stream holds a record any of them reads,
+// nothing in the library called them, and an entry point that reads untrusted
+// bytes and matches nothing a file holds is not one to export. They live on
+// the test side now, `tests/support/retired_matchers.rs`, for the tests and
+// probes that say what their hits were.
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igLine2d` record on disk.
@@ -2371,10 +2657,13 @@ pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 /// Equals the Intergraph IGDS class tag for `igLine2d` (`0x18 = 24`,
 /// looked up by `radsrvitem.dll!sub_56448F70`). The fixture
 /// histogram in `examples/probe_psm_type_code_histogram.rs` shows
-/// 309 cross-fixture hits for this type code on `Sheet*` streams,
-/// far more than the 3 `GLine2d` (PSM `0x3FE6`) records — `igLine2d`
-/// is the canonical Sigma 2D line representation, while `GLine2d`
-/// (PSM `0x3FE6`) is `SmartPlant`'s extended parametric wrapper.
+/// 309 cross-fixture hits for this type code on `Sheet*` streams:
+/// `igLine2d` is the Sigma 2D line record, and the only line record a
+/// sheet holds. (Phase 14 set a "`GLine2d`, PSM `0x3FE6`" family beside
+/// it as `SmartPlant`'s parametric wrapper of the same line; no such type
+/// code exists — it is past [`PSM_TYPE_CODE_LAST`] — and what that family
+/// matched was the top two bytes of a page frame's aspect ratio,
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.)
 pub const PSM_TYPE_CODE_IGLINE2D: u16 = 0x0018;
 
 /// Byte length of one PSM `igLine2d` payload (after the 6-byte
@@ -2540,7 +2829,7 @@ pub const PSM_TYPE_CODE_IGSYMBOL2D: u16 = 0x00CE;
 /// run 109 (the two title-block templates' placements) through 123 bytes, and
 /// the tail's optional members make the length vary without touching a byte
 /// the decoder reads. What a record must actually hold is checked per record
-/// against the matrix the tag anchors — see [`IGSYMBOL2D_MATRIX_AND_TAIL_LEN`].
+/// against the matrix the tag anchors — see `IGSYMBOL2D_MATRIX_AND_TAIL_LEN`.
 pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 8 + IGSYMBOL2D_MATRIX_AND_TAIL_LEN;
 
 /// What an `igSymbol2d` payload must hold from its matrix tag on: the 2×2
@@ -2635,9 +2924,15 @@ pub const IGSYMBOL2D_STYLE_REF_OFFSET: usize = 25;
 /// and a sub-type discriminator, followed by a reference-like raw tail.
 pub const PSM_TYPE_CODE_DEPENDENCY_OBJECT: u16 = 0x00FA;
 
-/// Minimum `0x00FA` payload size observed in current fixtures: a group of
-/// one member, `DEPENDENCY_OBJECT_FIXED_LEN + DEPENDENCY_OBJECT_BYTES_PER_MEMBER`.
-pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = 44;
+/// Minimum `0x00FA` payload size: a dependency object that lists no member,
+/// which is the part that does not grow with the count
+/// (`DEPENDENCY_OBJECT_FIXED_LEN`).
+///
+/// This was 44 — one member — for as long as every record in the fixtures
+/// had one. `A井场`'s `/Sheet6 +251219` has none and is 36 bytes of the
+/// same grammar; at 44 it was the one record of the 53-sheet plant backup a
+/// family refused.
+pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = DEPENDENCY_OBJECT_FIXED_LEN;
 
 /// The part of a `0x00FA` payload that does not grow with its member count:
 /// the 16-byte head (oid, parent, six zero bytes, the count) and the shortest
@@ -2654,272 +2949,28 @@ const DEPENDENCY_OBJECT_BYTES_PER_MEMBER: usize = 8;
 /// variant growth while rejecting obvious wide-scan false positives.
 const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 
-/// PSM type code the `GLine2d` `PrimitiveLine` decoder accepts.
-///
-/// **Retracted as a corpus identification, 2026-08-10.** The original
-/// claim was that every record whose 18-byte PSM header is followed by 48
-/// bytes matching the `GLine2d` validation rules carries
-/// `type_code == 0x3FE6`. That is a tautology: the candidate set was
-/// *defined* by those rules. Two independent tests both say no —
-/// `radsrvitem.dll`'s authoritative type→class enumeration
-/// (`sub_56448F70`) covers `0x06`..`0x117` and has no `0x3FE6`, and none
-/// of the corpus's three former "records" sits on a record boundary. Each
-/// sits 160 bytes inside an `igSmartFrame2d`, on the top two bytes of its
-/// `1/√2` page-ratio `f64`. See
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
-///
-/// The class is real — `radsrvitem.dll` has a `GLine2d::Validate`
-/// (`sub_56524C50`) and the six-double parametric layout is its — so the
-/// decoder stays, now gated on chain membership by
-/// [`decode_primitive_lines`]. It decodes nothing on this corpus, which is
-/// the correct answer for a corpus that contains none.
-pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
+/// Sentinel beyond which a coordinate, a length or a parameter is treated
+/// as garbage (uninitialized memory, a value read from where none is
+/// stored): every family that reads doubles holds them to it.
+const COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
 
-/// Unit-vector tolerance used when accepting a candidate `GLine2d`
-/// record. The IDA-decoded `GLine2d::Validate` uses a strict
-/// tolerance (`sub_56472D30()` returns ~1e-9 for normalized 2D),
-/// but real `SmartPlant` writes can have direction vectors rounded
-/// through coordinate transforms; 1e-3 catches every fixture record
-/// we have without bringing in obvious false positives.
-const GLINE2D_UNIT_VECTOR_TOLERANCE: f64 = 1e-3;
-
-/// Sentinel beyond which an origin / parameter / direction value
-/// is treated as garbage (uninitialized memory, out-of-domain).
-const GLINE2D_COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
-
-/// PSM type code that identifies a RAD `JStyleOverride` record.
+/// PSM type code of a RAD `JStyleOverride` record.
 ///
-/// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation
-/// of `0x0030` was a historical misidentification. The authoritative
-/// implementation is RAD `style.dll` `JStyleOverride` (CLSID
-/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`), documented in
-/// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+/// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation of
+/// `0x0030` was a historical misidentification: the type-code table of
+/// `radsrvitem.dll` resolves the code to CLSID
+/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`, which the RAD registry in
+/// `JUTIL.dll` names "JSL Override Style" and `style.dll` implements as
+/// `JStyleOverride` (`docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`).
+///
+/// The class's records are in `StyleCluster`, where
+/// [`crate::style_link`] reads them by their own layout. No `Sheet*` chain
+/// holds one: the sheet family this crate had for the code until
+/// 2026-11-11 matched the length word of the block a `DependencyObject`
+/// ends with (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.2, §12), and its matcher is kept on the test side
+/// (`tests/support/retired_matchers.rs`).
 pub const PSM_TYPE_CODE_JSTYLE_OVERRIDE: u16 = 0x0030;
-
-/// One decoded PSM `GLine2d` `PrimitiveLine` record.
-///
-/// Phase 14 anti-promotion guarantee: this DTO carries the **raw
-/// parametric** geometry (`origin + t * direction` for
-/// `t ∈ [param_start, param_end]`), not Cartesian `start`/`end`
-/// endpoints, and exposes a [`Self::byte_range`] covering the full
-/// PSM record. Producing
-/// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
-/// responsibility of `geometry.rs`; this module only decodes
-/// bytes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetPrimitiveLineDecoded {
-    /// Byte range covering the **entire** PSM record (header +
-    /// inner payload + any trailing attribute bytes the writer
-    /// included in `bytes_to_follow`).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code from the record header. Always
-    /// [`PSM_TYPE_CODE_GLINE2D`] for records this decoder emits.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    /// Documented as the `0x8000` / `0x4000` bits in
-    /// `PSMSerializeIn`'s skip-record branch.
-    pub type_flags: u16,
-    /// `bytes_to_follow` field from the PSM header. The decoder
-    /// uses this as the trailing edge of [`Self::byte_range`].
-    pub bytes_to_follow: u32,
-    /// `oid` field from the PSM header (the object identifier
-    /// `SmartPlant` assigns to this geometry).
-    pub oid: u32,
-    /// Local-space origin: `point(t) = origin + t * direction`.
-    pub origin: (f64, f64),
-    /// Unit direction vector. `sqrt(direction_x^2 + direction_y^2)`
-    /// is guaranteed within 1e-3 of 1.0 at decode time (a private
-    /// `GLINE2D_UNIT_VECTOR_TOLERANCE` constant in this module).
-    pub direction: (f64, f64),
-    /// Parameter range start. `param_start < param_end` is
-    /// guaranteed at decode time.
-    pub param_start: f64,
-    /// Parameter range end.
-    pub param_end: f64,
-}
-
-impl SheetPrimitiveLineDecoded {
-    /// Cartesian endpoint A computed from the parametric form
-    /// (`origin + param_start * direction`).
-    pub fn endpoint_a(&self) -> (f64, f64) {
-        (
-            self.origin.0 + self.param_start * self.direction.0,
-            self.origin.1 + self.param_start * self.direction.1,
-        )
-    }
-
-    /// Cartesian endpoint B computed from the parametric form
-    /// (`origin + param_end * direction`).
-    pub fn endpoint_b(&self) -> (f64, f64) {
-        (
-            self.origin.0 + self.param_end * self.direction.0,
-            self.origin.1 + self.param_end * self.direction.1,
-        )
-    }
-}
-
-/// Decode every PSM-encoded `GLine2d` `PrimitiveLine` record in a
-/// `Sheet*` stream's bytes.
-///
-/// A candidate has to be a **member of the stream's record chain**
-/// ([`sheet_record_starts`]) before its payload is even looked at, and
-/// then satisfy all of:
-///
-/// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
-///    [`PSM_TYPE_CODE_GLINE2D`];
-/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 48 and fits
-///    within the remaining stream;
-/// 3. All six payload `f64`s are finite (rejecting NaN / inf /
-///    sub-domain values: `|x| <= 1e9`, a private
-///    `GLINE2D_COORDINATE_DOMAIN_LIMIT` in this module);
-/// 4. `(direction.x, direction.y)` has unit length within `1e-3`
-///    (a private `GLINE2D_UNIT_VECTOR_TOLERANCE`) and is not the
-///    zero vector;
-/// 5. `param_start < param_end` strictly.
-///
-/// **Chain membership is the load-bearing rule, and it is why this family
-/// no longer decodes anything on the reference corpus.** Rules 1–5 alone
-/// are satisfiable by accident: a `[1 0; 0 1]` placement matrix reads as a
-/// unit direction plus an ordered parameter pair, and `1/√2` — the ISO
-/// A-series page ratio every `igSmartFrame2d` carries — is an `f64` whose
-/// top two bytes are literally `E6 3F`. All eleven page frames in the
-/// corpus spell the type code that way and three of them used to decode as
-/// lines 160 bytes inside another record. See
-/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
-///
-/// Adversarial bytes pass through without panics, and a stream that is not
-/// a clean chain yields nothing rather than falling back to a scan.
-pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-    sheet_record_starts(data)
-        .into_iter()
-        .filter_map(|at| GLine2dDecoder.decode_at(data, at))
-        .collect()
-}
-
-/// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
-/// `offset` in `data`. Returns `None` when any of the validation
-/// rules in [`decode_primitive_lines`] fail. Bounds-checked: passing
-/// `offset >= data.len()` or a truncated tail simply returns `None`.
-///
-/// Thin wrapper over [`GLine2dDecoder::decode_at`].
-pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-    GLine2dDecoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for the `SmartPlant` extended
-/// `GLine2d` family (PSM type `0x3FE6`).
-///
-/// The family deviation from the standard IGDS record shape lives
-/// here, not in the shared seam: `GLine2d` uses the extended
-/// [`PSM_RECORD_HEADER_LEN`] (18-byte) header carrying `oid` at
-/// header bytes 6..10 (standard families carry `oid` in their payload
-/// sub-header), and its `bytes_to_follow` may exceed the 48-byte
-/// geometry payload — the trailing attribute bytes are included in
-/// the decoded [`SheetPrimitiveLineDecoded::byte_range`] so
-/// [`PsmRecordDecoder::scan`] jumps the whole record.
-pub struct GLine2dDecoder;
-
-impl PsmRecordDecoder for GLine2dDecoder {
-    type Record = SheetPrimitiveLineDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_GLINE2D
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-        let envelope = parse_live_psm_header(data, offset)?;
-        if envelope.type_code != PSM_TYPE_CODE_GLINE2D {
-            return None;
-        }
-        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-        let payload_end = header_end.checked_add(GLINE2D_PAYLOAD_LEN)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        let bytes_to_follow_usize = envelope.bytes_to_follow as usize;
-        // bytes_to_follow must cover at least the 48-byte payload.
-        if bytes_to_follow_usize < GLINE2D_PAYLOAD_LEN {
-            return None;
-        }
-        // The full record (envelope + bytes_to_follow trailer) must fit.
-        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + bytes_to_follow_usize)?;
-        if record_end > data.len() {
-            return None;
-        }
-        decode_primitive_line_payload(data, offset, &envelope, header_end, payload_end, record_end)
-    }
-
-    fn advance_of(&self, record: &SheetPrimitiveLineDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Family-specific payload validation for `GLine2d` (the 18-byte
-/// extended header's `oid` plus the six-double parametric payload).
-fn decode_primitive_line_payload(
-    data: &[u8],
-    offset: usize,
-    envelope: &PsmHeader,
-    header_end: usize,
-    payload_end: usize,
-    record_end: usize,
-) -> Option<SheetPrimitiveLineDecoded> {
-    let type_code = envelope.type_code;
-    let type_flags = envelope.type_flags;
-    let bytes_to_follow = envelope.bytes_to_follow;
-
-    let header = data.get(offset..header_end)?;
-    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
-
-    // 6-double GLine2d payload at offset + 18.
-    let payload = data.get(header_end..payload_end)?;
-    let mut d = [0f64; 6];
-    for (i, slot) in d.iter_mut().enumerate() {
-        let chunk = payload.get(i * 8..i * 8 + 8)?;
-        *slot = f64::from_le_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
-    }
-    if !d.iter().all(|x| x.is_finite()) {
-        return None;
-    }
-    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
-        return None;
-    }
-    let dir_x = d[2];
-    let dir_y = d[3];
-    if dir_x.abs() < 1e-12 && dir_y.abs() < 1e-12 {
-        return None;
-    }
-    let unit_err = ((dir_x * dir_x + dir_y * dir_y).sqrt() - 1.0).abs();
-    if unit_err > GLINE2D_UNIT_VECTOR_TOLERANCE {
-        return None;
-    }
-    let param_start = d[4];
-    let param_end = d[5];
-    if param_start >= param_end {
-        return None;
-    }
-
-    Some(SheetPrimitiveLineDecoded {
-        byte_range: offset..record_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        oid,
-        origin: (d[0], d[1]),
-        direction: (dir_x, dir_y),
-        param_start,
-        param_end,
-    })
-}
 
 // ---------------------------------------------------------------------------
 // Phase 14 Slice J: PSM-encoded igLine2d decoder
@@ -2956,11 +3007,8 @@ fn decode_primitive_line_payload(
 /// local it never consults. Chain membership, not `aux_hi`, is what
 /// tells a record from a coincidence.
 ///
-/// 4-double Cartesian `(start, end)` representation. Compare to
-/// the parametric 6-double `GLine2d` (PSM `0x3FE6`) family, which
-/// is `SmartPlant`'s extended wrapper of the same geometric concept.
-/// `igLine2d` is by far the more common form in real fixtures
-/// (309 vs 3 cross-fixture hits).
+/// 4-double Cartesian `(start, end)` representation: the one line record
+/// a sheet holds (309 across the four fixtures).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgLine2dDecoded {
     /// Byte range covering the full PSM record (6-byte header +
@@ -3016,9 +3064,8 @@ impl SheetIgLine2dDecoded {
 /// stream's bytes.
 ///
 /// A candidate has to be a **member of the stream's record chain**
-/// ([`sheet_record_starts`]) before its payload is even looked at —
-/// the same gate `decode_primitive_lines` has used since the
-/// `GLine2d` ghost family was retired — and then satisfy all of:
+/// ([`SheetChain::walk`]) before its payload is even looked at, and then
+/// satisfy all of:
 ///
 /// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINE2D`] (`0x0018`);
 /// 2. `bytes_to_follow` == 50 (igLine2d records are fixed-size);
@@ -3035,10 +3082,11 @@ impl SheetIgLine2dDecoded {
 /// the 88 (`examples/probe_phase40_igline_chain_vs_rule`).
 ///
 /// Panic-free and bounds-checked: adversarial bytes simply fail
-/// validation and are skipped, and a stream that is not a clean chain
-/// yields nothing rather than falling back to a scan.
+/// validation and are skipped. A stream whose chain stops before its end
+/// yields the records before the stop and is never scanned for the rest.
 pub fn decode_iglines(data: &[u8]) -> Vec<SheetIgLine2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgLine2dDecoder.decode_at(data, at))
         .collect()
@@ -3129,7 +3177,7 @@ fn decode_igline_payload(
     if !d.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+    if d.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -3242,7 +3290,7 @@ impl SheetIgLineString2dDecoded {
 /// Decode every PSM-encoded `igLineString2d` record in a `Sheet*`
 /// stream's bytes.
 ///
-/// Walk every byte offset and verify:
+/// At every record the stream's chain starts, verify:
 ///
 /// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINESTRING2D`];
 /// 2. `bytes_to_follow >= IGLINESTRING2D_MIN_PAYLOAD_LEN` (56);
@@ -3376,7 +3424,7 @@ fn decode_iglinestring_payload(
         if !x.is_finite() || !y.is_finite() {
             return None;
         }
-        if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if x.abs() > COORDINATE_DOMAIN_LIMIT || y.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
         vertices.push((x, y));
@@ -3456,7 +3504,7 @@ pub struct SheetIgPoint2dDecoded {
 /// Decode every PSM-encoded `igPoint2d` record in a `Sheet*`
 /// stream's bytes.
 ///
-/// Walk every byte offset and verify:
+/// At every record the stream's chain starts, verify:
 /// 1. `type_code == 0x005E`
 /// 2. `bytes_to_follow == 34`
 /// 3. 2 doubles finite + in domain `[-1e9, 1e9]`
@@ -3557,7 +3605,7 @@ fn decode_igpoint_payload(
     if !x.is_finite() || !y.is_finite() {
         return None;
     }
-    if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+    if x.abs() > COORDINATE_DOMAIN_LIMIT || y.abs() > COORDINATE_DOMAIN_LIMIT {
         return None;
     }
 
@@ -3976,10 +4024,7 @@ fn decode_igtextbox_payload(
     if !trailing.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if trailing
-        .iter()
-        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
-    {
+    if trailing.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -4054,8 +4099,7 @@ fn igtextbox_box(payload: &[u8], tail_start: usize) -> (f64, f64) {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     };
-    let usable =
-        |value: f64| value.is_finite() && value > 0.0 && value <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let usable = |value: f64| value.is_finite() && value > 0.0 && value <= COORDINATE_DOMAIN_LIMIT;
     let (Some(width), Some(height)) = (
         read(tail_start + IGTEXTBOX_BOX_WIDTH_AT),
         read(tail_start + IGTEXTBOX_BOX_HEIGHT_AT),
@@ -4135,8 +4179,8 @@ pub struct SheetIgSymbol2dDecoded {
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Third byte of the matrix tag this record actually carries: `0xA7`
-    /// (canonical, [`IGSYMBOL2D_MATRIX_TAG`]) on every corpus fixture but
-    /// one, `0x27` ([`IGSYMBOL2D_MATRIX_TAG_ALT`]) on every `igSymbol2d`
+    /// (canonical, `IGSYMBOL2D_MATRIX_TAG`) on every corpus fixture but
+    /// one, `0x27` (`IGSYMBOL2D_MATRIX_TAG_ALT`) on every `igSymbol2d`
     /// record in the plant backup's `D04`. The two differ only in this
     /// byte's `0x80` bit; every other field at and after the tag reads the
     /// same shape under both, which is why this is carried as data rather
@@ -4212,7 +4256,7 @@ pub struct SheetIgSymbol2dDecoded {
 /// Validation:
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [IGSYMBOL2D_MIN_PAYLOAD_LEN, 200]`;
-/// 3. one of [`IGSYMBOL2D_MATRIX_TAG_VARIANTS`] occurs within the first
+/// 3. one of `IGSYMBOL2D_MATRIX_TAG_VARIANTS` occurs within the first
 ///    `IGSYMBOL2D_TAG_SEARCH_END` payload bytes;
 /// 4. the payload holds everything from that tag on
 ///    (`matrix_at + IGSYMBOL2D_MATRIX_AND_TAIL_LEN`);
@@ -4335,10 +4379,7 @@ fn decode_igsymbol_payload(
     if !doubles.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if doubles
-        .iter()
-        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
-    {
+    if doubles.iter().any(|x| x.abs() > COORDINATE_DOMAIN_LIMIT) {
         return None;
     }
 
@@ -4401,10 +4442,11 @@ pub const PSM_TYPE_CODE_JSHEET: u16 = 0x0114;
 /// [`parse_live_psm_header`], the judgement every family decoder starts
 /// from (OCS plan `2026-09-28-pid-import-next-steps.md` P-D12, applied here
 /// by `2026-09-29-pid-import-next-round.md` P-D21). The walk stays
-/// [`sheet_record_starts`], unfiltered: it has to see every record, a
+/// [`SheetChain::walk`], unfiltered: it has to see every record, a
 /// skipped one included, to reach the next.
 pub fn jsheet_oids(data: &[u8]) -> Vec<u32> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| {
             let header = parse_live_psm_header(data, at)?;
@@ -4460,11 +4502,11 @@ pub struct SheetDependencyObjectDecoded {
 ///
 /// Validation:
 /// 1. `type_code == 0x00FA` and type flags are zero;
-/// 2. `bytes_to_follow` is even and in `[44, 512]`;
+/// 2. `bytes_to_follow` is even and in `[36, 512]`;
 /// 3. payload exists, `oid != 0`, `parent_ref == 6`;
 /// 4. payload bytes 8..13 are zero in the current fixture family;
-/// 5. `group_kind_word` -- the member count -- is non-zero and the payload
-///    has room for that many members: `36 + 8·k <= bytes_to_follow`.
+/// 5. the payload has room for the members `group_kind_word` counts:
+///    `36 + 8·k <= bytes_to_follow`, zero members included.
 pub fn decode_dependency_objects(data: &[u8]) -> Vec<SheetDependencyObjectDecoded> {
     DependencyObjectDecoder.scan(data)
 }
@@ -4557,11 +4599,15 @@ fn decode_dependency_object_payload(
     // `k <= 16`, the largest count one batch of fixtures showed; DWG-0201's
     // 22-member group follows the same layout and was refused for it. See
     // `docs/analysis/2026-09-24-the-last-five-refusals.md`.
+    //
+    // The count may be zero: the record is then its head, the six bytes that
+    // precede every closing block, and the block — 36 bytes, which is what
+    // `36 + 8·k` gives. A count of zero used to be refused outright, on no
+    // evidence but that no fixture had one.
     let group_kind_word = u16::from_le_bytes([payload[14], payload[15]]);
-    if group_kind_word == 0
-        || DEPENDENCY_OBJECT_FIXED_LEN
-            + DEPENDENCY_OBJECT_BYTES_PER_MEMBER * usize::from(group_kind_word)
-            > payload.len()
+    if DEPENDENCY_OBJECT_FIXED_LEN
+        + DEPENDENCY_OBJECT_BYTES_PER_MEMBER * usize::from(group_kind_word)
+        > payload.len()
     {
         return None;
     }
@@ -4579,716 +4625,6 @@ fn decode_dependency_object_payload(
         sub_type_word,
         raw_reference_payload,
     })
-}
-
-// ---------------------------------------------------------------------------
-// Phase 16 Slice D: PSM-encoded `JStyleOverride` decoder (PSM type `0x0030`)
-//
-// **Re-identification of Phase 14 §6.1 future-slice.**
-//
-// The PSM type code `0x0030` does **not** map to IGDS `GArc2d`. IDA
-// reverse engineering (see `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`)
-// proves that:
-//
-// 1. The PSM lookup table at `radsrvitem.dll!dword_5667B068[48]` resolves
-//    `type_code == 0x0030` to CLSID
-//    `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`.
-// 2. The RAD framework CLSID registry in `JUTIL.dll` (file offset
-//    `0x35680`) maps that CLSID to `style.dll` class **"JSL Override
-//    Style"** (RAD friendly name).
-// 3. The implementing C++ class name is **`JStyleOverride`** (from
-//    `style.dll` RTTI), with inheritance chain `JStyleOverride →
-//    JStyleR2d → JStyleBase`.
-// 4. The on-disk serialization for the SmartPlant fixture set is the
-//    **Version 3** path (`style.dll!sub_1000F030`), which writes exactly
-//    13 `IOContext::DoIO` calls totalling **64 bytes**, matching the
-//    fixture PSM payload exactly.
-//
-// Authoritative Version-3 byte layout:
-//
-// ```text
-// disk +0..3   u32 (host this+22)
-// disk +4..7   u32 (host this+24)
-// disk +8..11  u32 (host this+25)
-// disk +12..15 u32 (host this+38)
-// disk +16..23 f64 (host this+26)
-// disk +24..31 f64 (host this+28) — `rotation_angle` candidate
-// disk +32..39 f64 (host this+30)
-// disk +40..47 f64 (host this+34)
-// disk +48..51 u32 (host this+32)
-// disk +52..55 u32 (host this+47)
-// disk +56..59 u32 (host this+48)
-// disk +60..61 u16 (host this+36)
-// disk +62..63 u16 (host byte+146)
-// ```
-//
-// Phase 17 removed the historical Phase 14 `PrimitiveArc` compatibility
-// decoder. PSM type `0x0030` is now represented solely by this
-// `JStyleOverride` decoder on the parser surface.
-
-/// Inner PSM payload length emitted by `JStyleOverride`
-/// `IJPersistImp::Save` Version-3 path (`style.dll!sub_1000F030`).
-/// Fixture PSM records always have `bytes_to_follow >= 64`; any
-/// surplus belongs to the optional attribute / linkage tail
-/// (`bytes_to_follow - 64`), which is *not* part of the `JStyleOverride`
-/// payload itself.
-pub const JSTYLE_OVERRIDE_PAYLOAD_LEN: usize = 64;
-/// Minimum `bytes_to_follow` a `JStyleOverride` record can ship with
-/// (= the 64-byte Version-3 payload alone). Larger values are valid
-/// (fixture commonly ships 128 / 145 / 224 / 384 etc.) — the surplus
-/// is the optional attribute tail.
-pub const JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW: u32 = 64;
-/// Upper bound on `bytes_to_follow` — guards against header-noise
-/// hits. Fixture maximum observed is 384.
-pub const JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW: u32 = 4096;
-/// Coordinate-style f64 fields (`+16..23`, `+24..31`, `+32..39`,
-/// `+40..47`) must satisfy `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`
-/// to discard adversarial / out-of-range noise. The fixture-observed
-/// maximum across all 4 doubles is ~10 (rotation angle `2π`), but the
-/// limit is set generously to avoid rejecting future records that
-/// might encode larger magnitudes (e.g. world-space coordinates).
-pub const JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT: f64 = 1.0e6;
-
-/// One decoded PSM `0x0030` `JStyleOverride` record (RAD `style.dll`
-/// CLSID `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`,
-/// IDA-confirmed Version-3 IO path
-/// `style.dll!sub_1000F030`).
-///
-/// All 13 fields written by the Save / Load Version-3 path are
-/// exposed verbatim (4×u32 prefix + 4×f64 mid + 3×u32 + 2×u16). The
-/// surplus attribute tail (`bytes_to_follow > 64`) is retained as
-/// `raw_attribute_tail` for audit; its internal layout (plant tag,
-/// linkage references, `1.0` markers, etc.) is documented as
-/// hypothesis in
-/// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11 but is
-/// not part of the stable contract.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetJStyleOverrideDecoded {
-    /// Byte range covering the full PSM record (header + payload +
-    /// any attribute tail captured by `bytes_to_follow`).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always `0x0030`.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header. `>= 64`. Values above
-    /// 64 indicate an optional attribute tail.
-    pub bytes_to_follow: u32,
-    /// `oid` from the PSM header.
-    pub oid: u32,
-    /// Version-3 disk field at payload `+0..3` (host `this+22`).
-    pub field_a_u32: u32,
-    /// Version-3 disk field at payload `+4..7` (host `this+24`).
-    pub field_b_u32: u32,
-    /// Version-3 disk field at payload `+8..11` (host `this+25`).
-    pub field_c_u32: u32,
-    /// Version-3 disk field at payload `+12..15` (host `this+38`).
-    pub field_d_u32: u32,
-    /// Version-3 disk field at payload `+16..23` (host `this+26`),
-    /// f64.
-    pub field_1_f64: f64,
-    /// Version-3 disk field at payload `+24..31` (host `this+28`),
-    /// f64. **Rotation-angle candidate** — cross-fixture probe
-    /// shows values cluster around `{0, π/2, 3π/2, 2π}`.
-    pub field_2_f64: f64,
-    /// Version-3 disk field at payload `+32..39` (host `this+30`),
-    /// f64.
-    pub field_3_f64: f64,
-    /// Version-3 disk field at payload `+40..47` (host `this+34`),
-    /// f64.
-    pub field_4_f64: f64,
-    /// Version-3 disk field at payload `+48..51` (host `this+32`).
-    pub field_e_u32: u32,
-    /// Version-3 disk field at payload `+52..55` (host `this+47`).
-    pub field_f_u32: u32,
-    /// Version-3 disk field at payload `+56..59` (host `this+48`).
-    pub field_g_u32: u32,
-    /// Version-3 disk field at payload `+60..61` (host `this+36`).
-    pub field_h_u16: u16,
-    /// Version-3 disk field at payload `+62..63` (host byte 146).
-    pub field_i_u16: u16,
-    /// Raw attribute tail bytes (`bytes_to_follow - 64`). Retained
-    /// for audit only; internal layout is hypothesis pending more
-    /// fixture coverage.
-    pub raw_attribute_tail: Vec<u8>,
-}
-
-/// Decode every conservative PSM `0x0030` `JStyleOverride` record in
-/// a `Sheet*` stream's bytes (RAD `JStyleOverride`
-/// `IJPersistImp::Save` Version-3 path).
-///
-/// Walks every byte offset; at each offset, runs
-/// [`decode_jstyle_override_at`] and accepts any record that passes
-/// header + payload validation. Adversarial input is panic-safe via
-/// the per-offset `Option` boundary and bounded `Vec` allocations.
-pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
-    JStyleOverrideDecoder.scan(data)
-}
-
-/// [`PsmRecordDecoder`] adapter for the RAD `JStyleOverride` family
-/// (PSM type `0x0030`, `style.dll` Version-3 IO — **not** an arc; see
-/// the Phase 16 reclassification note on
-/// [`PSM_TYPE_CODE_JSTYLE_OVERRIDE`]).
-///
-/// Like `GLine2d`, this family uses the extended 18-byte
-/// [`PSM_RECORD_HEADER_LEN`] header (`oid` at header bytes 6..10) and
-/// carries a variable attribute tail inside `bytes_to_follow`; both
-/// deviations live on this adapter.
-pub struct JStyleOverrideDecoder;
-
-impl PsmRecordDecoder for JStyleOverrideDecoder {
-    type Record = SheetJStyleOverrideDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_JSTYLE_OVERRIDE
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-        let envelope = parse_live_psm_header(data, offset)?;
-        if envelope.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
-            return None;
-        }
-        if envelope.type_flags != 0 {
-            return None;
-        }
-        if !(JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW..=JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW)
-            .contains(&envelope.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf_usize = envelope.bytes_to_follow as usize;
-        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + btf_usize)?;
-        if record_end > data.len() {
-            return None;
-        }
-        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-        let payload_end = header_end.checked_add(JSTYLE_OVERRIDE_PAYLOAD_LEN)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        decode_jstyle_override_payload(data, offset, &envelope, header_end, payload_end, record_end)
-    }
-
-    fn advance_of(&self, record: &SheetJStyleOverrideDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Try to decode one PSM `0x0030` `JStyleOverride` record at `offset`.
-///
-/// Validation (only fields with IDA + cross-fixture probe evidence):
-///
-/// 1. PSM 14-bit type code == `0x0030` and type flags are zero.
-/// 2. `bytes_to_follow` ∈ `[JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
-///    JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW]`.
-/// 3. The record body fits in `data`.
-/// 4. All four payload f64 fields are finite and within
-///    `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`.
-///
-/// This authoritative decoder does **not** apply the historical
-/// `axis_a.y ≈ 0` constraint from the removed Phase 14 `PrimitiveArc`
-/// compatibility path, which rejected ~51% of real `JStyleOverride`
-/// records.
-///
-/// Thin wrapper over [`JStyleOverrideDecoder::decode_at`].
-pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-    JStyleOverrideDecoder.decode_at(data, offset)
-}
-
-/// Family-specific payload extraction for `JStyleOverride` (the
-/// 18-byte extended header's `oid`, the 64-byte Version-3 field
-/// block, and the raw attribute tail).
-fn decode_jstyle_override_payload(
-    data: &[u8],
-    offset: usize,
-    envelope: &PsmHeader,
-    header_end: usize,
-    payload_end: usize,
-    record_end: usize,
-) -> Option<SheetJStyleOverrideDecoded> {
-    let type_code = envelope.type_code;
-    let type_flags = envelope.type_flags;
-    let bytes_to_follow = envelope.bytes_to_follow;
-
-    let header = data.get(offset..header_end)?;
-    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
-
-    let payload = data.get(header_end..payload_end)?;
-
-    let field_a_u32 = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-    let field_b_u32 = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let field_c_u32 = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
-    let field_d_u32 = u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]);
-
-    let field_1_f64 = f64::from_le_bytes([
-        payload[16],
-        payload[17],
-        payload[18],
-        payload[19],
-        payload[20],
-        payload[21],
-        payload[22],
-        payload[23],
-    ]);
-    let field_2_f64 = f64::from_le_bytes([
-        payload[24],
-        payload[25],
-        payload[26],
-        payload[27],
-        payload[28],
-        payload[29],
-        payload[30],
-        payload[31],
-    ]);
-    let field_3_f64 = f64::from_le_bytes([
-        payload[32],
-        payload[33],
-        payload[34],
-        payload[35],
-        payload[36],
-        payload[37],
-        payload[38],
-        payload[39],
-    ]);
-    let field_4_f64 = f64::from_le_bytes([
-        payload[40],
-        payload[41],
-        payload[42],
-        payload[43],
-        payload[44],
-        payload[45],
-        payload[46],
-        payload[47],
-    ]);
-
-    if !field_1_f64.is_finite()
-        || !field_2_f64.is_finite()
-        || !field_3_f64.is_finite()
-        || !field_4_f64.is_finite()
-    {
-        return None;
-    }
-    if field_1_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_2_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_3_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-        || field_4_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
-    {
-        return None;
-    }
-
-    let field_e_u32 = u32::from_le_bytes([payload[48], payload[49], payload[50], payload[51]]);
-    let field_f_u32 = u32::from_le_bytes([payload[52], payload[53], payload[54], payload[55]]);
-    let field_g_u32 = u32::from_le_bytes([payload[56], payload[57], payload[58], payload[59]]);
-    let field_h_u16 = u16::from_le_bytes([payload[60], payload[61]]);
-    let field_i_u16 = u16::from_le_bytes([payload[62], payload[63]]);
-
-    let raw_attribute_tail = data.get(payload_end..record_end)?.to_vec();
-
-    Some(SheetJStyleOverrideDecoded {
-        byte_range: offset..record_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        oid,
-        field_a_u32,
-        field_b_u32,
-        field_c_u32,
-        field_d_u32,
-        field_1_f64,
-        field_2_f64,
-        field_3_f64,
-        field_4_f64,
-        field_e_u32,
-        field_f_u32,
-        field_g_u32,
-        field_h_u16,
-        field_i_u16,
-        raw_attribute_tail,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Phase 18: PSM 0x0010 sub-record family — audit-only decoder
-//
-// PSM type code 0x0010 is the most prevalent (638 cross-fixture hits)
-// yet-unexplained record type after the Phase 14-17 typed decoders. probe
-// evidence (`examples/probe_psm_0x0010_shape.rs`) shows highly polymorphic
-// payload shapes — sizes range from ~13 bytes to ≥99 bytes, with multiple
-// sub-kinds inside (some carry IEEE 754 doubles, others carry leading
-// discriminators such as `02 00 01 00`). They are referenced from
-// JStyleOverride `+38..41` (`referenced_oid_a`) and `+56..59`
-// (`referenced_oid_c`); see
-// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11.
-//
-// Until IDA reverse engineering confirms the class identity and the
-// sub-kind discriminator, this decoder follows the Phase 15 DependencyObject
-// audit-only template: stable 6-byte PSM header (`type_word + bytes_to_follow`,
-// **not** the 18-byte IGDS header used by Phase 14 typed primitives) +
-// raw payload + full provenance. NO sub-kind field naming, NO
-// `PidGraphicKind` emission. Sub-kind decoders will land in a future phase.
-
-/// PSM type code for the `0x0010` sub-record family (638 cross-fixture
-/// hits, polymorphic payload).
-///
-/// Validated against four Sheet-bearing fixtures via
-/// `examples/probe_psm_0x0010_shape.rs`. See
-/// `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md` §6.3
-/// for the initial categorization as "embedded sub-records / attribute
-/// fragments inside other record types".
-pub const PSM_TYPE_CODE_SUB_RECORD_0X0010: u16 = 0x0010;
-
-/// Minimum `bytes_to_follow` accepted by the conservative 0x0010 audit
-/// decoder. Cross-fixture probe baseline shows the smallest observed
-/// payload is 13 bytes; the threshold is set to 8 to leave headroom
-/// while still rejecting trivially-small noise hits.
-pub const SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW: u32 = 8;
-
-/// Upper bound on `bytes_to_follow` for 0x0010 records. Probe maximum
-/// observed across the four-fixture set is ~99 bytes; the cap leaves
-/// room for variant growth while rejecting wide-scan false positives
-/// whose `bytes_to_follow` accidentally reads as a giant value.
-pub const SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW: u32 = 100_000;
-
-/// One decoded PSM `0x0010` sub-record (audit-only).
-///
-/// This DTO exposes only the stable 6-byte PSM header and the variable
-/// payload as raw bytes. The payload structure is **highly polymorphic**
-/// (size 13..99+, multiple sub-kinds with different discriminators), so
-/// per-field naming is deferred until IDA reverse engineering confirms
-/// the class identity and sub-kind layout. The decoder is intentionally
-/// permissive: it admits every byte sequence whose header satisfies
-/// `type_code == 0x0010` and `bytes_to_follow` fits within the stream.
-/// Some hits may be embedded fragments inside larger parent records
-/// rather than standalone 0x0010 records — the audit collection
-/// preserves both, leaving sub-kind disambiguation to a future phase.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetSubRecord0x0010Decoded {
-    /// Byte range covering the full PSM record (6-byte header + payload).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always
-    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header. Equals `raw_payload.len()`
-    /// by construction.
-    pub bytes_to_follow: u32,
-    /// Raw payload bytes (length = `bytes_to_follow`). Sub-kind
-    /// discrimination and per-field decoding are deferred to a
-    /// future phase.
-    pub raw_payload: Vec<u8>,
-    /// Audit-only Phase 19 field: `payload[0..2]` as little-endian
-    /// `u16`. `None` when `raw_payload.len() < 2`.
-    ///
-    /// This is **not** a named sub-kind discriminator — Phase 19 probe
-    /// (`examples/probe_psm_0x0010_sub_kind.rs`) showed that while
-    /// `leading_word == 0x0002` accounts for ~28% of records and many
-    /// size buckets are mono-valued at this position, several large
-    /// buckets (size 31, 70, 13, 16, 43) are heterogeneous at +0 and
-    /// likely encode coordinates or OIDs in the leading bytes rather
-    /// than a sub-kind tag. The field name therefore describes only
-    /// the byte position, not any semantic role; promotion to a typed
-    /// `sub_kind` field is deferred pending IDA confirmation.
-    pub leading_word: Option<u16>,
-}
-
-/// Decode every PSM `0x0010` sub-record in a Sheet stream's bytes.
-///
-/// Walk every offset; at each offset, accept the 6-byte PSM header
-/// when `type_code == 0x0010` and `bytes_to_follow` satisfies the
-/// `[SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
-/// SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW]` envelope. After accepting a
-/// record, the scanner advances past it so non-overlapping back-to-back
-/// records are decoded individually.
-///
-/// The decoder is **conservative** and panic-free: adversarial bytes
-/// either fail validation and are skipped, or never decode at all.
-pub fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
-    SubRecord0x0010Decoder.scan(data)
-}
-
-/// Try to decode a single PSM `0x0010` sub-record starting at `offset`
-/// in `data`. Returns `None` when any validation rule from
-/// [`decode_sub_records_0x0010`] fails. Bounds-checked: passing
-/// `offset >= data.len()` or a truncated tail returns `None`.
-///
-/// Thin wrapper over [`SubRecord0x0010Decoder::decode_at`].
-pub fn decode_sub_record_0x0010_at(
-    data: &[u8],
-    offset: usize,
-) -> Option<SheetSubRecord0x0010Decoded> {
-    SubRecord0x0010Decoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for the audit-only polymorphic
-/// `0x0010` sub-record family. Validation rules are documented on
-/// [`decode_sub_records_0x0010`].
-pub struct SubRecord0x0010Decoder;
-
-impl PsmRecordDecoder for SubRecord0x0010Decoder {
-    type Record = SheetSubRecord0x0010Decoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_SUB_RECORD_0X0010
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetSubRecord0x0010Decoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-            return None;
-        }
-        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-            .contains(&header.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf = header.bytes_to_follow as usize;
-        let payload_end = header.body_start.checked_add(btf)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        let raw_payload = data.get(header.body_start..payload_end)?.to_vec();
-        let leading_word = raw_payload
-            .get(0..2)
-            .map(|slot| u16::from_le_bytes([slot[0], slot[1]]));
-        Some(SheetSubRecord0x0010Decoded {
-            byte_range: offset..payload_end,
-            type_code: header.type_code,
-            type_flags: header.type_flags,
-            bytes_to_follow: header.bytes_to_follow,
-            raw_payload,
-            leading_word,
-        })
-    }
-
-    fn advance_of(&self, record: &SheetSubRecord0x0010Decoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-// Phase 26: PSM 0x0010 attribute-fragment decoder (additive, audit-only)
-//
-// 2026-05-31 analysis proved 0x0010 records carry SmartPlant attribute
-// text (instrument tags / line numbers / nominal sizes / drawing refs /
-// annotation labels) as length-prefixed UTF-16LE after a fixed
-// `marker(4) + aux(8)` prefix. See
-// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`. This decoder
-// is strictly additive: the raw Phase 18 `decode_sub_records_0x0010`
-// path is unchanged, and no `PidGraphicKind` is emitted.
-
-/// One length-prefixed UTF-16LE string extracted from a PSM `0x0010`
-/// attribute fragment (Phase 26).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedAttributeString {
-    /// Offset (within the record payload) of the `u16` length word.
-    pub len_offset: usize,
-    /// Character count from the `u16` length prefix.
-    pub char_count: u16,
-    /// Decoded UTF-16LE text. Records whose tail is not clean UTF-16LE
-    /// are rejected wholesale, so this is always valid Unicode.
-    pub text: String,
-}
-
-/// A PSM `0x0010` record decoded as a `SmartPlant` **attribute fragment**
-/// (Phase 26).
-///
-/// Carries engineering attribute text — instrument tags, line numbers,
-/// nominal sizes, drawing references, annotation labels — as one or more
-/// length-prefixed UTF-16LE strings after a fixed `marker(4) + aux(8)`
-/// prefix. This is an **additive, audit-only** view that coexists with
-/// the raw [`SheetSubRecord0x0010Decoded`] from Phase 18 (unchanged) and
-/// emits no geometry kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SheetAttributeFragmentDecoded {
-    /// Byte range covering the full PSM record (6-byte header + payload).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always
-    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
-    pub type_code: u16,
-    /// `payload[0..4]` as little-endian `u32`. A repeating **type
-    /// marker** (frequently `0x00010002`), **not** a unique object id.
-    pub marker: u32,
-    /// `payload[4..12]` raw. 8-byte header/aux whose per-field semantics
-    /// remain pending IDA confirmation; preserved verbatim for audit.
-    pub aux: [u8; 8],
-    /// Length-prefixed UTF-16LE strings parsed from `payload[12..]`.
-    /// Non-empty by construction.
-    pub strings: Vec<DecodedAttributeString>,
-}
-
-/// Payload offset where the first length-prefixed string begins
-/// (`marker(4) + aux(8)`).
-pub const ATTRIBUTE_FRAGMENT_STRING_START: usize = 12;
-
-/// Upper bound on a single string's `u16` character count, guarding
-/// against a bogus length prefix.
-pub const ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT: u16 = 4096;
-
-/// Decode every PSM `0x0010` **attribute fragment** in a Sheet stream's
-/// bytes (Phase 26, additive + audit-only).
-///
-/// Uses the same header envelope as [`decode_sub_records_0x0010`], then
-/// parses `marker(4) + aux(8) + [u16 len + UTF-16LE]*` and keeps a record
-/// only when at least one clean, non-empty UTF-16LE string is recovered.
-/// Records whose tail is not clean length-prefixed UTF-16LE are skipped
-/// (still available via the raw Phase 18 decoder). Panic-free.
-pub fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
-    AttributeFragmentDecoder.scan(data)
-}
-
-/// Try to decode a single PSM `0x0010` attribute fragment at `offset`.
-/// Returns `None` when the header fails validation, the payload is too
-/// short for `marker(4)+aux(8)+len`, or no clean UTF-16LE string is
-/// found. Bounds-checked and panic-free.
-///
-/// Thin wrapper over [`AttributeFragmentDecoder::decode_at`].
-pub fn decode_attribute_fragment_at(
-    data: &[u8],
-    offset: usize,
-) -> Option<SheetAttributeFragmentDecoded> {
-    AttributeFragmentDecoder.decode_at(data, offset)
-}
-
-/// [`PsmRecordDecoder`] adapter for the Phase 26 attribute-fragment
-/// **view** of the `0x0010` family (audit-only, additive): same PSM
-/// envelope as [`SubRecord0x0010Decoder`], but the payload must parse
-/// as `marker(4) + aux(8) + [u16 len + UTF-16LE]*` with at least one
-/// clean non-empty string. Two adapters deliberately share one type
-/// code here — the raw Phase 18 collection and this typed view coexist
-/// by design.
-pub struct AttributeFragmentDecoder;
-
-impl PsmRecordDecoder for AttributeFragmentDecoder {
-    type Record = SheetAttributeFragmentDecoded;
-
-    fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_SUB_RECORD_0X0010
-    }
-
-    fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
-    }
-
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetAttributeFragmentDecoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-            return None;
-        }
-        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-            .contains(&header.bytes_to_follow)
-        {
-            return None;
-        }
-        let btf = header.bytes_to_follow as usize;
-        let payload_end = header.body_start.checked_add(btf)?;
-        if payload_end > data.len() {
-            return None;
-        }
-        decode_attribute_fragment_payload(data, offset, &header, payload_end)
-    }
-
-    fn advance_of(&self, record: &SheetAttributeFragmentDecoded) -> usize {
-        record
-            .byte_range
-            .end
-            .saturating_sub(record.byte_range.start)
-    }
-}
-
-/// Family-specific payload validation for attribute fragments (the
-/// `marker + aux + length-prefixed UTF-16LE strings` grammar).
-fn decode_attribute_fragment_payload(
-    data: &[u8],
-    offset: usize,
-    header: &PsmHeader,
-    payload_end: usize,
-) -> Option<SheetAttributeFragmentDecoded> {
-    let type_code = header.type_code;
-
-    let payload = data.get(header.body_start..payload_end)?;
-    if payload.len() < ATTRIBUTE_FRAGMENT_STRING_START + 2 {
-        return None;
-    }
-    let marker = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-    let mut aux = [0u8; 8];
-    aux.copy_from_slice(payload.get(4..12)?);
-
-    let mut strings = Vec::new();
-    let mut pos = ATTRIBUTE_FRAGMENT_STRING_START;
-    while pos + 2 <= payload.len() {
-        let char_count = u16::from_le_bytes([payload[pos], payload[pos + 1]]);
-        if char_count == 0 || char_count > ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT {
-            break;
-        }
-        let text_start = pos + 2;
-        let byte_len = (char_count as usize).checked_mul(2)?;
-        let text_end = text_start.checked_add(byte_len)?;
-        if text_end > payload.len() {
-            break;
-        }
-        let Some(raw) = payload.get(text_start..text_end) else {
-            break;
-        };
-        let Some(text) = decode_attribute_utf16le(raw) else {
-            break;
-        };
-        if text.chars().all(char::is_whitespace) {
-            break;
-        }
-        strings.push(DecodedAttributeString {
-            len_offset: pos,
-            char_count,
-            text,
-        });
-        pos = text_end;
-    }
-
-    if strings.is_empty() {
-        return None;
-    }
-    Some(SheetAttributeFragmentDecoded {
-        byte_range: offset..payload_end,
-        type_code,
-        marker,
-        aux,
-        strings,
-    })
-}
-
-/// Decode `bytes` as UTF-16LE, returning `None` on odd length, any
-/// unpaired surrogate, or any control character other than space/tab.
-fn decode_attribute_utf16le(bytes: &[u8]) -> Option<String> {
-    if !bytes.len().is_multiple_of(2) {
-        return None;
-    }
-    let units = bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]));
-    let mut out = String::new();
-    for unit in char::decode_utf16(units) {
-        let ch = unit.ok()?;
-        if ch.is_control() && ch != ' ' && ch != '\t' {
-            return None;
-        }
-        out.push(ch);
-    }
-    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -5466,10 +4802,19 @@ pub struct SheetIgBoundary2dDecoded {
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries).
+    /// Decoded segment groups (`segment_count` entries), every loop's in
+    /// turn when the record states more than one.
     pub segments: Vec<SheetIgBoundary2dSegment>,
-    /// Anchor point following the segment groups; inside the
-    /// segment bounding box on 20/20 fixture records.
+    /// How many of [`Self::segments`] each loop holds, in order, on a
+    /// record that states more than one loop (the `u32` at payload `+18`);
+    /// empty on a record of one loop, which is every record of the corpora
+    /// but two. The first loop is the outer edge of a fill and a loop
+    /// inside it is a hole: see [`decode_igboundaries`].
+    pub loop_segment_counts: Vec<u32>,
+    /// Anchor point following the segment groups: where the fill was
+    /// seeded. It lies inside the loop on every corpus record that carries
+    /// member references, and between the loops on the two that state two.
+    /// A linked template's records carry `(1e30, 1e30)` and no reference.
     pub anchor: (f64, f64),
     /// `u8` flag between the anchor and the member count (`1`
     /// across all fixture records; exposed verbatim, not
@@ -5488,22 +4833,45 @@ impl SheetIgBoundary2dDecoded {
     /// equality fails on 19/20 records, `1e-9` passes on 20/20), so
     /// callers should pass a small positive tolerance such as
     /// `1e-9` rather than `0.0`.
+    ///
+    /// A record of several loops is closed when each of them is.
     pub fn is_closed_loop(&self, tolerance: f64) -> bool {
         let close = |a: (f64, f64), b: (f64, f64)| {
             (a.0 - b.0).abs() <= tolerance && (a.1 - b.1).abs() <= tolerance
         };
-        if self.segments.len() < 2 {
-            return false;
+        let mut loops = 0usize;
+        for segments in self.loops() {
+            loops += 1;
+            let chained = segments.len() >= 2
+                && segments.windows(2).all(|w| close(w[0].end, w[1].start))
+                && close(segments[segments.len() - 1].end, segments[0].start);
+            if !chained {
+                return false;
+            }
         }
-        let chained = self
-            .segments
-            .windows(2)
-            .all(|w| close(w[0].end, w[1].start));
-        chained
-            && close(
-                self.segments[self.segments.len() - 1].end,
-                self.segments[0].start,
-            )
+        loops > 0
+    }
+
+    /// The segments of each loop, in order: one slice for a record of one
+    /// loop, one per loop otherwise.
+    ///
+    /// A record whose [`Self::loop_segment_counts`] do not add up to its
+    /// segments yields what they cover and then the rest as a last loop,
+    /// so no segment is ever left out of a walk.
+    pub fn loops(&self) -> impl Iterator<Item = &[SheetIgBoundary2dSegment]> {
+        let mut rest = self.segments.as_slice();
+        let mut counts = self.loop_segment_counts.iter();
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let take = counts
+                .next()
+                .map_or(rest.len(), |count| (*count as usize).min(rest.len()));
+            let (head, tail) = rest.split_at(take);
+            rest = tail;
+            Some(head)
+        })
     }
 }
 
@@ -5514,7 +4882,12 @@ impl SheetIgBoundary2dDecoded {
 /// 1. `type_code == 0x0013`; type flags are zero;
 /// 2. `sub_type_word == 0x0010` (payload offset 12), or `0x0000` — the
 ///    linked-template grammar first, then this one;
-/// 3. sub-header `u32` at payload offset 18 equals `1`;
+/// 3. the loop count — the `u32` at payload offset 18 — equals `1`; or,
+///    under sub-type `0x0000`, it is two or more, each loop a member
+///    count, two bytes and members of the linked-template vocabulary, and
+///    the anchor, flag, reference count and references after the last loop
+///    close the payload exactly (a fill with holes; rules 4–6 and 8 are
+///    this rule's own for such a record);
 /// 4. `segment_count` (payload offset 22) is in
 ///    `1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT`;
 /// 5. every member group starts with the `0x67` line tag (33 bytes) or
@@ -5527,8 +4900,8 @@ impl SheetIgBoundary2dDecoded {
 /// 8. trailer `member_count == segment_count`;
 /// 9. not all segment vertices are identical (non-degenerate).
 ///
-/// After accepting a record the scanner advances past it. Panic-free
-/// and bounds-checked: adversarial bytes simply fail validation.
+/// Read at each record the stream's chain starts. Panic-free and
+/// bounds-checked: adversarial bytes simply fail validation.
 pub fn decode_igboundaries(data: &[u8]) -> Vec<SheetIgBoundary2dDecoded> {
     IgBoundary2dDecoder.scan(data)
 }
@@ -5635,6 +5008,19 @@ fn decode_igboundary_payload(
         ) {
             return Some(record);
         }
+        // More than one loop: a fill with a hole, which neither the
+        // template grammar nor the strict one below reads.
+        if read_u32(18)? != 1 {
+            return decode_igboundary_loops_payload(
+                data,
+                offset,
+                header,
+                payload_end,
+                oid,
+                parent_ref,
+                sheet_layer_ref,
+            );
+        }
     } else if sub_type_word != 0x0010 {
         return None;
     }
@@ -5657,7 +5043,7 @@ fn decode_igboundary_payload(
     let mut pos = 28usize;
     let mut all_same = true;
     let mut first_vertex: Option<(f64, f64)> = None;
-    let in_domain = |v: f64| v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let in_domain = |v: f64| v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT;
     for _ in 0..n {
         let mut chords: Vec<((f64, f64), (f64, f64))> = Vec::new();
         let member_len = match *payload.get(pos)? {
@@ -5717,7 +5103,7 @@ fn decode_igboundary_payload(
     let anchor_x = read_f64(pos)?;
     let anchor_y = read_f64(pos + 8)?;
     for v in [anchor_x, anchor_y] {
-        if !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if !v.is_finite() || v.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
     }
@@ -5758,6 +5144,7 @@ fn decode_igboundary_payload(
         segment_count,
         sub_header_tail,
         segments,
+        loop_segment_counts: Vec::new(),
         anchor: (anchor_x, anchor_y),
         trailer_flag,
         member_refs,
@@ -5822,14 +5209,6 @@ fn decode_igboundary_template_payload(
             .get(pos..pos + 4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     };
-    let read_f64 = |pos: usize| -> Option<f64> {
-        payload
-            .get(pos..pos + 8)
-            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-    };
-    let check = |v: f64| -> Option<f64> {
-        (v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT).then_some(v)
-    };
 
     let index = read_u32(14)?;
     if read_u32(18)? != 1 {
@@ -5848,19 +5227,67 @@ fn decode_igboundary_template_payload(
     }
 
     let mut segments = Vec::new();
-    let mut pos = 28usize;
-    let mut all_same = true;
-    let mut first_vertex: Option<(f64, f64)> = None;
-    let mut push_segment = |segments: &mut Vec<SheetIgBoundary2dSegment>,
-                            tag_offset: usize,
-                            start: (f64, f64),
-                            end: (f64, f64)| {
-        let reference = *first_vertex.get_or_insert(start);
-        for vertex in [start, end] {
-            if vertex != reference {
-                all_same = false;
-            }
-        }
+    let pos = igboundary_template_members(payload, 28, member_count, members_end, &mut segments)?;
+    if pos != members_end || segments.is_empty() || igboundary_segments_coincide(&segments) {
+        return None;
+    }
+    // The 21-byte trailer carries two identical 8-byte words followed
+    // by `u32 1` and a flag byte on every corpus record; the marker is
+    // the only part worth holding a rule to.
+    if read_u32(members_end + 16)? != 1 {
+        return None;
+    }
+    let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
+    let trailer_flag = *payload.last()?;
+
+    Some(SheetIgBoundary2dDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid,
+        parent_ref,
+        sheet_layer_ref,
+        sub_type_word: 0x0000,
+        index,
+        segment_count: member_count,
+        sub_header_tail,
+        segments,
+        loop_segment_counts: Vec::new(),
+        anchor,
+        trailer_flag,
+        member_refs: Vec::new(),
+    })
+}
+
+/// Read `member_count` members of the linked-template vocabulary — `0x67`
+/// line, `0x68` point run, `0x74` arc — from `payload[pos..]`, none
+/// starting at or past `members_end`, flattening each to chords appended to
+/// `segments`. Returns the offset after the last member.
+///
+/// One loop of a boundary is one such run of members; see
+/// [`decode_igboundary_template_payload`] for the layouts.
+fn igboundary_template_members(
+    payload: &[u8],
+    mut pos: usize,
+    member_count: u32,
+    members_end: usize,
+    segments: &mut Vec<SheetIgBoundary2dSegment>,
+) -> Option<usize> {
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+    let check = |v: f64| -> Option<f64> {
+        (v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT).then_some(v)
+    };
+    let mut push_segment = |tag_offset: usize, start: (f64, f64), end: (f64, f64)| {
         segments.push(SheetIgBoundary2dSegment {
             tag_offset,
             start,
@@ -5878,7 +5305,7 @@ fn decode_igboundary_template_payload(
                 let sy = check(read_f64(pos + 9)?)?;
                 let ex = check(read_f64(pos + 17)?)?;
                 let ey = check(read_f64(pos + 25)?)?;
-                push_segment(&mut segments, pos, (sx, sy), (ex, ey));
+                push_segment(pos, (sx, sy), (ex, ey));
                 pos += 33;
             }
             IGBOUNDARY2D_POINTRUN_TAG => {
@@ -5897,7 +5324,7 @@ fn decode_igboundary_template_payload(
                         check(read_f64(pos + 7 + i * 16)?)?,
                         check(read_f64(pos + 15 + i * 16)?)?,
                     );
-                    push_segment(&mut segments, pos, prev, next);
+                    push_segment(pos, prev, next);
                     prev = next;
                 }
                 pos = run_end;
@@ -5925,7 +5352,7 @@ fn decode_igboundary_template_payload(
                 for i in 1..=chords {
                     let angle = start_ang + sweep * (i as f64 / chords as f64);
                     let next = (cx + radius * angle.cos(), cy + radius * angle.sin());
-                    push_segment(&mut segments, pos, prev, next);
+                    push_segment(pos, prev, next);
                     prev = next;
                 }
                 pos = member_end;
@@ -5933,17 +5360,129 @@ fn decode_igboundary_template_payload(
             _ => return None,
         }
     }
-    if pos != members_end || segments.is_empty() || all_same {
+    Some(pos)
+}
+
+/// Whether every vertex of `segments` is the first one: a boundary that
+/// encloses nothing.
+fn igboundary_segments_coincide(segments: &[SheetIgBoundary2dSegment]) -> bool {
+    segments.first().is_none_or(|first| {
+        segments
+            .iter()
+            .all(|segment| segment.start == first.start && segment.end == first.start)
+    })
+}
+
+/// Bytes one loop of a multi-loop boundary cannot be shorter than: its
+/// `u32` member count, the two bytes after it, and one `0x67` line.
+const IGBOUNDARY2D_MIN_LOOP_LEN: usize = 6 + 33;
+
+/// Family-specific payload validation for an `igBoundary2d` that states
+/// more than one loop: a fill with a hole in it.
+///
+/// The `u32` at payload `+18`, which every other record of the family
+/// carries as `1`, is the loop count. Each loop is what a one-loop record
+/// holds from `+22`: a `u32` member count, the two bytes `[2, 1]`, and that
+/// many members of the linked-template vocabulary
+/// ([`igboundary_template_members`]). After the last loop comes the
+/// drawing-side trailer — the anchor, a flag byte, a `u32` reference count
+/// and that many 8-byte member references — and it closes the payload
+/// exactly.
+///
+/// Read this way the trailer closes the payload of all 2 158 boundaries on
+/// the sheet chains of the 86 documents the count was taken on — the plant
+/// backup, the acceptance sheets, the share, the fixture drawings and the
+/// two template directories — whichever grammar decodes them today (a
+/// linked template's 21-byte trailer is this one with no reference, its
+/// anchor the pair `1e30`). Two of them state two loops, both in
+/// `XA-A1.igr`: an outer loop and a loop wholly inside it wound the other
+/// way, with the anchor between the two
+/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §10.6).
+///
+/// That is not every boundary in reach. The templates inside the committed
+/// `RefData~4~682.zip` keep 41 more on their sheet chains, and 20 of them
+/// — five in the logo of each of `A0-W.igr` to `A3-W.igr` — this grammar
+/// refuses: where a loop's first member tag `0x67` stands they carry
+/// `0x02` or `0x03`. No page wears those templates, so the refusal reaches
+/// no export; it is an open gap all the same (same document, §17.6).
+///
+/// The reference count is not held to the member count. One of the two
+/// names 217 lines for its 216 members; the odd one is a line 32 µm long
+/// that its outer loop steps over.
+fn decode_igboundary_loops_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+    oid: u32,
+    parent_ref: u32,
+    sheet_layer_ref: u32,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+    let index = u32_le(payload, 14)?;
+    let loop_count = usize::try_from(u32_le(payload, 18)?).ok()?;
+    // The count is bounded by the payload that has to hold the loops, not
+    // by a constant: a letter's outline runs to 162 members here.
+    if loop_count < 2 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
         return None;
     }
-    // The 21-byte trailer carries two identical 8-byte words followed
-    // by `u32 1` and a flag byte on every corpus record; the marker is
-    // the only part worth holding a rule to.
-    if read_u32(members_end + 16)? != 1 {
+    let members_end = payload
+        .len()
+        .checked_sub(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+
+    let mut segments = Vec::new();
+    let mut loop_segment_counts = Vec::with_capacity(loop_count);
+    let mut member_total = 0u32;
+    let mut sub_header_tail = [0u8; 2];
+    let mut pos = 22usize;
+    for loop_index in 0..loop_count {
+        let member_count = u32_le(payload, pos)?;
+        if member_count == 0 {
+            return None;
+        }
+        if loop_index == 0 {
+            sub_header_tail = [*payload.get(pos + 4)?, *payload.get(pos + 5)?];
+        }
+        let before = segments.len();
+        pos = igboundary_template_members(
+            payload,
+            pos.checked_add(6)?,
+            member_count,
+            members_end,
+            &mut segments,
+        )?;
+        loop_segment_counts.push(u32::try_from(segments.len() - before).ok()?);
+        member_total = member_total.checked_add(member_count)?;
+    }
+    if igboundary_segments_coincide(&segments) {
         return None;
     }
-    let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
-    let trailer_flag = *payload.last()?;
+
+    // Anchor, flag, reference count, references: to the payload's last byte.
+    let anchor = (f64_le(payload, pos)?, f64_le(payload, pos.checked_add(8)?)?);
+    for value in [anchor.0, anchor.1] {
+        if !value.is_finite() || value.abs() > COORDINATE_DOMAIN_LIMIT {
+            return None;
+        }
+    }
+    let trailer_flag = *payload.get(pos.checked_add(16)?)?;
+    let reference_count = usize::try_from(u32_le(payload, pos.checked_add(17)?)?).ok()?;
+    let references_at = pos.checked_add(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+    if references_at.checked_add(reference_count.checked_mul(8)?)? != payload.len() {
+        return None;
+    }
+    let member_refs = payload
+        .get(references_at..)?
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|entry| SheetIgBoundary2dMemberRef {
+            member_oid: u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]),
+            class_word: u16::from_le_bytes([entry[4], entry[5]]),
+            sub_word: u16::from_le_bytes([entry[6], entry[7]]),
+        })
+        .collect();
 
     Some(SheetIgBoundary2dDecoded {
         byte_range: offset..payload_end,
@@ -5955,12 +5494,13 @@ fn decode_igboundary_template_payload(
         sheet_layer_ref,
         sub_type_word: 0x0000,
         index,
-        segment_count: member_count,
+        segment_count: member_total,
         sub_header_tail,
         segments,
+        loop_segment_counts,
         anchor,
         trailer_flag,
-        member_refs: Vec::new(),
+        member_refs,
     })
 }
 
@@ -6097,7 +5637,7 @@ pub fn decode_igsym_boundary_payload(payload: &[u8]) -> Option<DecodedIgSymBound
             read_f64(at + 25)?,
         ];
         if v.iter()
-            .any(|v| !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+            .any(|v| !v.is_finite() || v.abs() > COORDINATE_DOMAIN_LIMIT)
         {
             return None;
         }
@@ -6189,6 +5729,20 @@ const IGSMARTFRAME_HEIGHT_AT: usize = 84;
 const IGSMARTFRAME_ASPECT_AT: usize = 148;
 /// Shortest payload that reaches every field above.
 const IGSMARTFRAME_MIN_PAYLOAD: usize = IGSMARTFRAME_ASPECT_AT + 8;
+/// How far the ratio at [`IGSMARTFRAME_ASPECT_AT`] may lie from the height
+/// at [`IGSMARTFRAME_HEIGHT_AT`] over the width at [`IGSMARTFRAME_WIDTH_AT`],
+/// as a fraction of that quotient.
+///
+/// The record states its extent twice, and on all 178 frames of the
+/// corpora's chains — 885 documents, the superseded copies included — the
+/// two statements agree to 5e-16
+/// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`). One part
+/// in a million leaves room for a writer that rounds and none for three
+/// doubles that merely happen to lie at these offsets. The bound is
+/// relative because such doubles are as often 1e-212 as 1e284: an absolute
+/// one in a million would pass a height of 4e-212 over a width of 0.6
+/// against a "ratio" of 7e-138, which one of the ten is.
+const IGSMARTFRAME_ASPECT_TOLERANCE: f64 = 1e-6;
 /// Payload offset of the framed content's placement: seven `f64` — a 2×2
 /// linear part, a translation in metres, and a uniform scale — laid out as
 /// RAD's 2D transform (`imagdex.dex` / `radsrvitem.dll` `sub_5644FD00`,
@@ -6253,7 +5807,9 @@ pub struct SheetIgSmartFrame2dDecoded {
     pub extent_width_m: f64,
     /// Framed extent height in metres (payload `+84`).
     pub extent_height_m: f64,
-    /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
+    /// Extent aspect ratio (payload `+148`): the height over the width,
+    /// which the decoder holds it to; `1/sqrt(2)` on an ISO A sheet, give
+    /// or take the frame's margins.
     pub aspect_ratio: f64,
     /// Where the framed content is placed in the frame (payload `+164`),
     /// when the record is long enough to carry it.
@@ -6378,6 +5934,19 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             || extent_height_m < 0.0
         {
             return None;
+        }
+        // The record states its extent twice over, and a frame's two
+        // statements agree. The three doubles of a run of bytes that is not
+        // a frame do not: this is what tells the ten "frames" a walk read
+        // off the corpora's chains after a wrong length from the 178 the
+        // chains hold. A frame of no width states nothing to hold it to.
+        if extent_width_m > 0.0 {
+            let stated_by_extent = extent_height_m / extent_width_m;
+            if (aspect_ratio - stated_by_extent).abs()
+                > IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent.abs()
+            {
+                return None;
+            }
         }
 
         let content_transform = (|| {
@@ -7311,13 +6880,16 @@ mod symbol_information_family_tests {
             PSM_TYPE_CODE_DOUBLE_VALUE,
             &double_value_payload(30, 41, 0.0609),
         );
-        let decoded = decode_double_values(&data);
+        let decoded = decode_double_values(&chain_stream(&data));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].oid, 30);
         assert_eq!(decoded[0].parent_ref, 41);
         assert_eq!(decoded[0].value, 0.0609);
         assert_eq!(decoded[0].trailing, (1, 15));
-        assert_eq!(decoded[0].byte_range, 0..data.len());
+        assert_eq!(
+            decoded[0].byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + data.len()
+        );
     }
 
     #[test]
@@ -7345,12 +6917,15 @@ mod symbol_information_family_tests {
             PSM_TYPE_CODE_VARIABLES,
             &variables_payload(153, &[190, 744, 759]),
         );
-        let decoded = decode_variables(&data);
+        let decoded = decode_variables(&chain_stream(&data));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].oid, 153);
         assert_eq!(decoded[0].members, vec![190, 744, 759]);
         assert_eq!(decoded[0].trailing, 321);
-        assert_eq!(decoded[0].byte_range, 0..data.len());
+        assert_eq!(
+            decoded[0].byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + data.len()
+        );
     }
 
     #[test]
@@ -7384,7 +6959,7 @@ mod symbol_information_family_tests {
             ],
         );
         let data = framed(PSM_TYPE_CODE_JSYMBOL_INFORMATION, &payload);
-        let decoded = decode_symbol_informations(&data);
+        let decoded = decode_symbol_informations(&chain_stream(&data));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].oid, 22);
         assert_eq!(decoded[0].flags, SYMBOL_INFORMATION_HAS_VARIABLES);
@@ -7396,7 +6971,10 @@ mod symbol_information_family_tests {
             .collect();
         assert_eq!(names, vec!["Left", "Right", "Top"]);
         assert_eq!(decoded[0].variables[2].value_ref, 33);
-        assert_eq!(decoded[0].byte_range, 0..data.len());
+        assert_eq!(
+            decoded[0].byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + data.len()
+        );
     }
 
     #[test]
@@ -7405,7 +6983,7 @@ mod symbol_information_family_tests {
             PSM_TYPE_CODE_JSYMBOL_INFORMATION,
             &symbol_information_payload(95, &[]),
         );
-        let decoded = decode_symbol_informations(&data);
+        let decoded = decode_symbol_informations(&chain_stream(&data));
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].variables.is_empty());
         assert_eq!(decoded[0].flags, 0);
@@ -7439,13 +7017,16 @@ mod symbol_information_family_tests {
     fn standard_relation_decodes_signature_operands_and_formula() {
         let payload = relation_payload(44, &[24, 33], "%>i%<i", "0E$1+0.01");
         let data = framed(PSM_TYPE_CODE_STANDARD_RELATION, &payload);
-        let decoded = decode_standard_relations(&data);
+        let decoded = decode_standard_relations(&chain_stream(&data));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].oid, 44);
         assert_eq!(decoded[0].signature, "%>i%<i");
         assert_eq!(decoded[0].operands, vec![24, 33]);
         assert_eq!(decoded[0].formula, "0E$1+0.01");
-        assert_eq!(decoded[0].byte_range, 0..data.len());
+        assert_eq!(
+            decoded[0].byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + data.len()
+        );
     }
 
     #[test]
@@ -7481,10 +7062,10 @@ mod symbol_information_family_tests {
     fn every_family_ignores_a_record_of_another_type() {
         let payload = double_value_payload(30, 41, 1.0);
         let data = framed(PSM_TYPE_CODE_IGLINE2D, &payload);
-        assert!(decode_double_values(&data).is_empty());
-        assert!(decode_variables(&data).is_empty());
-        assert!(decode_symbol_informations(&data).is_empty());
-        assert!(decode_standard_relations(&data).is_empty());
+        assert!(decode_double_value_at(&data, 0).is_none());
+        assert!(decode_variables_at(&data, 0).is_none());
+        assert!(decode_symbol_information_at(&data, 0).is_none());
+        assert!(decode_standard_relation_at(&data, 0).is_none());
     }
 
     #[test]
@@ -7494,6 +7075,10 @@ mod symbol_information_family_tests {
             &symbol_information_payload(22, &[(1.0, "Left", 30)]),
         );
         for cut in 0..full.len() {
+            assert!(decode_symbol_information_at(&full[..cut], 0).is_none());
+            assert!(decode_double_value_at(&full[..cut], 0).is_none());
+            assert!(decode_variables_at(&full[..cut], 0).is_none());
+            assert!(decode_standard_relation_at(&full[..cut], 0).is_none());
             let _ = decode_symbol_informations(&full[..cut]);
             let _ = decode_double_values(&full[..cut]);
             let _ = decode_variables(&full[..cut]);
@@ -7645,7 +7230,7 @@ fn curve_doubles<const N: usize>(payload: &[u8]) -> Option<[f64; N]> {
     let mut out = [0f64; N];
     for (slot, value) in out.iter_mut().enumerate() {
         let read = f64_le(payload, CURVE_GEOMETRY_AT + slot * 8)?;
-        if !read.is_finite() || read.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        if !read.is_finite() || read.abs() > COORDINATE_DOMAIN_LIMIT {
             return None;
         }
         *value = read;
@@ -7656,11 +7241,12 @@ fn curve_doubles<const N: usize>(payload: &[u8]) -> Option<[f64; N]> {
 /// Decode every `igCircle2d` record in a record-chain stream.
 ///
 /// Chain-gated like [`decode_iglines`]: a candidate has to start where the
-/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// stream's own chain says a record starts ([`SheetChain::walk`]), then
 /// satisfy: type code [`PSM_TYPE_CODE_IGCIRCLE2D`]; `bytes_to_follow ==
 /// 43`; three finite in-domain doubles; `radius > 0`.
 pub fn decode_igcircles(data: &[u8]) -> Vec<SheetIgCircle2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgCircle2dDecoder.decode_at(data, at))
         .collect()
@@ -7679,7 +7265,8 @@ pub fn decode_igcircle_at(data: &[u8], offset: usize) -> Option<SheetIgCircle2dD
 /// finite: the native reader stores them as absolute angles and does not
 /// normalise them, so neither does this.
 pub fn decode_igarcs(data: &[u8]) -> Vec<SheetIgArc2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgArc2dDecoder.decode_at(data, at))
         .collect()
@@ -7905,14 +7492,15 @@ pub struct SheetIgEllipticalArc2dDecoded {
 /// Decode every `igEllipticalArc2d` record in a record-chain stream.
 ///
 /// Chain-gated like [`decode_igarcs`]: a candidate has to start where the
-/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// stream's own chain says a record starts ([`SheetChain::walk`]), then
 /// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
 /// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
 /// major semi-axis; a finite `ratio > 0` (not capped at `1` -- see the
 /// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]). As for
 /// `igArc2d`, the angles only have to be finite: they are not normalised.
 pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgEllipticalArc2dDecoder.decode_at(data, at))
         .collect()
@@ -8105,7 +7693,8 @@ pub struct SheetIgEllipse2dDecoded {
 /// (not capped at `1` -- see the `2026-11-09` note above
 /// [`PSM_TYPE_CODE_IGELLIPSE2D`]).
 pub fn decode_igellipses(data: &[u8]) -> Vec<SheetIgEllipse2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgEllipse2dDecoder.decode_at(data, at))
         .collect()
@@ -8335,7 +7924,8 @@ impl SheetIgBspCurve2dDecoded {
 /// `width > 0` and `aspect > 0`; an edge count of at most
 /// `IGRECTANGLE2D_MAX_EDGES` whose list accounts for the payload exactly.
 pub fn decode_igrectangles(data: &[u8]) -> Vec<SheetIgRectangle2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgRectangle2dDecoder.decode_at(data, at))
         .collect()
@@ -8355,7 +7945,8 @@ pub fn decode_igrectangle_at(data: &[u8], offset: usize) -> Option<SheetIgRectan
 /// non-decreasing knots; and every counted field accounting for the payload
 /// exactly, trailing double and four flag bytes included.
 pub fn decode_igbspcurves(data: &[u8]) -> Vec<SheetIgBspCurve2dDecoded> {
-    sheet_record_starts(data)
+    SheetChain::walk(data)
+        .starts
         .into_iter()
         .filter_map(|at| IgBspCurve2dDecoder.decode_at(data, at))
         .collect()
@@ -8448,8 +8039,7 @@ pub struct BspCurveGeometry {
 /// fields do not account for the payload exactly. Validation rules are
 /// documented on [`decode_igbspcurves`].
 pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
-    let in_domain =
-        |value: f64| value.is_finite() && value.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
     let mut at = CURVE_GEOMETRY_AT;
     let pole_count = u32_le(payload, at)? as usize;
     if !(2..=IGBSPCURVE2D_MAX_POLES).contains(&pole_count) {
@@ -8559,6 +8149,671 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
             .byte_range
             .end
             .saturating_sub(record.byte_range.start)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-10: igComplexString2d and igGroup — the two association records
+// ---------------------------------------------------------------------------
+//
+// Two graphic classes a sheet files curves and rectangles under, neither of
+// which carries a coordinate of its own
+// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+// §2.1, §2.4):
+//
+// * `0x0021` **ComplexString** — a run of curves joined end to end. Its
+//   payload is a style id, a member count, the scale of the members' range
+//   boxes and one 14-byte entry per member: the member's oid, its range
+//   box, and a word that is `0x8000` on the `0x0019 KeyPoint Constraint`
+//   records that pin one curve's end to the next one's start and `0x0000` /
+//   `0x0005` on the curves. Every curve member of the eight sheet records
+//   the corpora hold is a live `igLine2d` or `igArc2d` of the same stream
+//   whose owner is the string's oid and whose layer and style id are the
+//   string's — so the members, which decode and emit on their own, already
+//   draw what the string draws, with the pen the string would draw it with.
+// * `0x007B` **Group** — a count, the same scale and the same 14-byte
+//   entries. The corpora hold twelve on their sheets. Eight list the two
+//   `igRectangle2d` of a border (outer frame and inner frame), whose edges
+//   are `igLine2d` records of their own. Four — one in each of `A0-W.igr`
+//   to `A3-W.igr`, templates a backup package keeps in its
+//   `RefData~4~682.zip` — list the 37 records of a logo: sixteen lines,
+//   seven arcs, four B-splines, four elliptical arcs, five boundaries and a
+//   point. In both kinds every member is a live record of the same stream
+//   whose owner is the group's oid.
+//
+// The double after the count is the unit of the range boxes: a box is in
+// `scale / 32768` m. It is `1.0` on fourteen of the twenty records and `2.0`
+// on six — `CPECCHB-SQ-A1.igr`'s outer frame, and the groups of the A0 and
+// A1 `-W` templates. Read with it, the box of every line and arc member
+// lies within 0.76 mm of the member's own extent (a template string's box
+// is grown by half its pen); read in 1/32768 m, those six are out by up to
+// 529 mm
+// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+// §16).
+//
+// Both decode so that they stop being graphic records nothing reads, and
+// both emit nothing: emitting either would draw its members twice.
+
+/// PSM type code for `ComplexString Object` (IGDS class tag `0x21 = 33`): a
+/// run of curves joined end to end.
+pub const PSM_TYPE_CODE_IGCOMPLEXSTRING2D: u16 = 0x0021;
+
+/// PSM type code for `Group implementation` (IGDS class tag `0x7B = 123`): a
+/// set of graphic objects that select and move as one.
+pub const PSM_TYPE_CODE_IGGROUP: u16 = 0x007B;
+
+/// Bytes one member entry takes in either record: `u32 oid`, four `i16` of
+/// range box, a `u16` word.
+pub const ASSOCIATION_MEMBER_LEN: usize = 14;
+
+/// Payload offset of a `ComplexString`'s member count; the entries start
+/// twelve bytes on, after the double.
+const IGCOMPLEXSTRING2D_COUNT_AT: usize = 21;
+/// Payload offset of a `ComplexString`'s first member entry.
+const IGCOMPLEXSTRING2D_MEMBERS_AT: usize = 33;
+/// Payload offset of a Group's member count.
+const IGGROUP_COUNT_AT: usize = 16;
+/// Payload offset of a Group's first member entry.
+const IGGROUP_MEMBERS_AT: usize = 28;
+
+/// The word a `ComplexString` member entry carries when the member is a
+/// constraint between two of its curves rather than a curve.
+pub const IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER: u16 = 0x8000;
+
+/// One member entry of a [`SheetIgComplexString2dDecoded`] or a
+/// [`SheetIgGroupDecoded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SheetAssociationMember {
+    /// Oid of the member record, in the same stream.
+    pub oid: u32,
+    /// The member's range box, `[min x, min y, max x, max y]`, in units of
+    /// the record's range scale over 32768 metres
+    /// ([`SheetIgComplexString2dDecoded::range_scale`],
+    /// [`SheetIgGroupDecoded::range_scale`]; [`Self::range_box_m`] reads it
+    /// in metres). Measured against the members' own geometry: a Group's
+    /// rectangle and each curve of `D04`'s string (entry word `0x0005`) read
+    /// the bare extent of the curve to within 0.041 mm — an arc's is the box
+    /// of the part it sweeps, not of its circle — while the lines of the
+    /// template strings (entry word `0x0000`) read it grown by half their
+    /// pen on every side: the first edge of `CPECCHB-SQ-A2`'s inner frame,
+    /// from x = 35.354 mm to 586.869 mm at y = 7.071 mm, reads
+    /// `[1135, 208, 19253, 255]`, which is 34.637 .. 587.555 by 6.348 ..
+    /// 7.782 mm.
+    pub range_box: [i16; 4],
+    /// The word that closes the entry. On a `ComplexString` it is
+    /// [`IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER`] for a `KeyPoint Constraint`
+    /// and `0x0000` or `0x0005` for a curve; on a Group, `0x0006` and
+    /// `0x000C` on a border's two rectangles and `0x0003` or `0x0000` on a
+    /// logo's members. What the low values mean is not decoded.
+    pub word: u16,
+}
+
+impl SheetAssociationMember {
+    /// The range box in metres, `[min x, min y, max x, max y]`, read in the
+    /// unit of the record that lists the member: `range_scale / 32768` m.
+    #[must_use]
+    pub fn range_box_m(&self, range_scale: f64) -> [f64; 4] {
+        self.range_box
+            .map(|units| f64::from(units) * range_scale / 32768.0)
+    }
+}
+
+/// One decoded `0x0021` `ComplexString` record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgComplexString2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this string sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); zero on the corpus.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`). Every curve member of every
+    /// corpus string carries the same one.
+    pub index: u32,
+    /// The three bytes between the style id and the count (payload `+18`),
+    /// verbatim: `01 06 00` on seven of the corpora's eight records and
+    /// `01 00 00` on one, oid 31 of `CPECCHB-SQ-A1.igr`. Not decoded.
+    pub head: [u8; 3],
+    /// The scale of the members' range boxes (payload `+25`, the double
+    /// after the count): a box is in units of `range_scale / 32768` m.
+    /// `1.0` on seven of the corpora's eight records and `2.0` on one, the
+    /// outer frame of `CPECCHB-SQ-A1.igr` (oid 21): its top edge runs from
+    /// x = 25 mm to 831 mm at y = 584 mm and reads
+    /// `[407, 9565, 13617, 9571]`, which is 24.84 .. 831.12 by 583.80 ..
+    /// 584.17 mm at 2/32768 m and half of each at 1/32768 m.
+    pub range_scale: f64,
+    /// The members, in on-disk order: the curves first, then the constraints
+    /// that join them.
+    pub members: Vec<SheetAssociationMember>,
+    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
+    /// sheet.
+    pub trailing: Vec<u8>,
+}
+
+impl SheetIgComplexString2dDecoded {
+    /// The members that are curves, in order.
+    pub fn curve_members(&self) -> impl Iterator<Item = &SheetAssociationMember> {
+        self.members
+            .iter()
+            .filter(|member| member.word != IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER)
+    }
+
+    /// The range box of one of this string's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &SheetAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
+}
+
+/// One decoded `0x007B` Group record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgGroupDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the group sits on (payload `+8`); zero on
+    /// the corpus — a group is on no layer of its own.
+    pub sheet_layer_ref: u32,
+    /// The `u32` at payload `+12`, verbatim; zero on the corpus.
+    pub head: u32,
+    /// The scale of the members' range boxes (payload `+20`, the double
+    /// after the count): a box is in units of `range_scale / 32768` m.
+    /// `1.0` on seven of the corpora's twelve records and `2.0` on five:
+    /// the border groups of `A0-W.igr`, `A0-W - New.igr`, `A1-W.igr` and
+    /// `A1-W - New.igr`, and the logo of `A0-W.igr`. An A0 border's outer
+    /// rectangle reads `[0, 0, 19480, 13779]`, 1189 by 841 mm at 2/32768 m;
+    /// a box in 1/32768 m ends at one metre.
+    pub range_scale: f64,
+    /// The members, in on-disk order.
+    pub members: Vec<SheetAssociationMember>,
+    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
+    /// sheet.
+    pub trailing: Vec<u8>,
+}
+
+impl SheetIgGroupDecoded {
+    /// The range box of one of this group's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &SheetAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
+}
+
+/// `count` member entries from `payload[at..]`, or `None` when the payload
+/// is too short to hold them.
+fn association_members(
+    payload: &[u8],
+    at: usize,
+    count: usize,
+) -> Option<Vec<SheetAssociationMember>> {
+    let end = at.checked_add(count.checked_mul(ASSOCIATION_MEMBER_LEN)?)?;
+    let (entries, _) = payload.get(at..end)?.as_chunks::<ASSOCIATION_MEMBER_LEN>();
+    Some(
+        entries
+            .iter()
+            .map(|entry| {
+                let i16_at = |i: usize| i16::from_le_bytes([entry[i], entry[i + 1]]);
+                SheetAssociationMember {
+                    oid: u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]),
+                    range_box: [i16_at(4), i16_at(6), i16_at(8), i16_at(10)],
+                    word: u16::from_le_bytes([entry[12], entry[13]]),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Decode every `ComplexString` record on a record-chain stream.
+///
+/// At each record the chain starts: type code
+/// [`PSM_TYPE_CODE_IGCOMPLEXSTRING2D`]; a member count of at least one whose
+/// entries the payload has room for; a finite range scale before them. The
+/// count is bounded by the payload, not by a constant: a string is as long
+/// as the record that holds it.
+pub fn decode_igcomplexstrings(data: &[u8]) -> Vec<SheetIgComplexString2dDecoded> {
+    IgComplexString2dDecoder.scan(data)
+}
+
+/// Try to decode one `ComplexString` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igcomplexstring_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetIgComplexString2dDecoded> {
+    IgComplexString2dDecoder.decode_at(data, offset)
+}
+
+/// Decode every Group record on a record-chain stream.
+///
+/// At each record the chain starts: type code [`PSM_TYPE_CODE_IGGROUP`]; a
+/// member count of at least one whose entries the payload has room for; a
+/// finite range scale before them.
+pub fn decode_iggroups(data: &[u8]) -> Vec<SheetIgGroupDecoded> {
+    IgGroupDecoder.scan(data)
+}
+
+/// Try to decode one Group record at `offset`. `None` on any validation
+/// failure; panic-free on arbitrary input.
+pub fn decode_iggroup_at(data: &[u8], offset: usize) -> Option<SheetIgGroupDecoded> {
+    IgGroupDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0021` `ComplexString`.
+pub struct IgComplexString2dDecoder;
+
+impl PsmRecordDecoder for IgComplexString2dDecoder {
+    type Record = SheetIgComplexString2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGCOMPLEXSTRING2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGCOMPLEXSTRING2D_MEMBERS_AT + ASSOCIATION_MEMBER_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgComplexString2dDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGCOMPLEXSTRING2D {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(usize::try_from(header.bytes_to_follow).ok()?)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let head = <[u8; 3]>::try_from(payload.get(CURVE_GEOMETRY_AT..IGCOMPLEXSTRING2D_COUNT_AT)?)
+            .ok()?;
+        let count = usize::try_from(u32_le(payload, IGCOMPLEXSTRING2D_COUNT_AT)?).ok()?;
+        let range_scale = f64_le(payload, IGCOMPLEXSTRING2D_COUNT_AT + 4)?;
+        if count == 0 || !range_scale.is_finite() {
+            return None;
+        }
+        let members = association_members(payload, IGCOMPLEXSTRING2D_MEMBERS_AT, count)?;
+        let trailing = payload
+            .get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
+            .to_vec();
+        Some(SheetIgComplexString2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            head,
+            range_scale,
+            members,
+            trailing,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgComplexString2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x007B` Group.
+pub struct IgGroupDecoder;
+
+impl PsmRecordDecoder for IgGroupDecoder {
+    type Record = SheetIgGroupDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGGROUP
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGGROUP_MEMBERS_AT + ASSOCIATION_MEMBER_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgGroupDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGGROUP {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(usize::try_from(header.bytes_to_follow).ok()?)?;
+        let payload = data.get(header.body_start..end)?;
+        let count = usize::try_from(u32_le(payload, IGGROUP_COUNT_AT)?).ok()?;
+        let range_scale = f64_le(payload, IGGROUP_COUNT_AT + 4)?;
+        if count == 0 || !range_scale.is_finite() {
+            return None;
+        }
+        let members = association_members(payload, IGGROUP_MEMBERS_AT, count)?;
+        let trailing = payload
+            .get(IGGROUP_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
+            .to_vec();
+        Some(SheetIgGroupDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: u32_le(payload, 0)?,
+            parent_ref: u32_le(payload, 4)?,
+            sheet_layer_ref: u32_le(payload, 8)?,
+            head: u32_le(payload, 12)?,
+            range_scale,
+            members,
+            trailing,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgGroupDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+#[cfg(test)]
+mod association_family_tests {
+    use super::*;
+
+    /// `CPECCHB-SQ-A2.igr`'s `/Sheet6 +2326`, oid 67, payload verbatim: a
+    /// string of two lines — the title block's top edge and its left edge —
+    /// and the one constraint that joins them.
+    const STRING_OF_TWO: [u8; 79] = [
+        0x43, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xf0, 0x3f, 0x44, 0x00, 0x00, 0x00, 0xb3, 0x31, 0x39, 0x0e, 0x30, 0x4b, 0x60, 0x0e,
+        0x00, 0x00, 0x45, 0x00, 0x00, 0x00, 0xb3, 0x31, 0xed, 0xff, 0xd9, 0x31, 0x60, 0x0e, 0x00,
+        0x00, 0x46, 0x00, 0x00, 0x00, 0xc6, 0x31, 0x4c, 0x0e, 0xc7, 0x31, 0x4d, 0x0e, 0x00, 0x80,
+        0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// `A01.pid`'s `/JSite204/Sheet6 +2872`, oid 311, payload verbatim: the
+    /// group of the embedded border's two rectangles.
+    const GROUP_OF_TWO: [u8; 60] = [
+        0x37, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x27, 0x01,
+        0x00, 0x00, 0x33, 0x03, 0x47, 0x01, 0xc0, 0x4a, 0x7b, 0x34, 0x0c, 0x00, 0x72, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x4c, 0xc2, 0x35, 0x06, 0x00, 0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// `CPECCHB-SQ-A1.igr`'s `/Sheet6 +8`, oid 21, payload verbatim: the
+    /// sheet's outer frame, a string of four lines and the four constraints
+    /// that close it — and the one string of the corpora whose range scale
+    /// is 2.
+    const FRAME_AT_SCALE_TWO: [u8; 149] = [
+        0x15, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x40, 0x16, 0x00, 0x00, 0x00, 0x97, 0x01, 0x5d, 0x25, 0x31, 0x35, 0x63, 0x25,
+        0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x2b, 0x35, 0xa1, 0x00, 0x31, 0x35, 0x63, 0x25, 0x00,
+        0x00, 0x18, 0x00, 0x00, 0x00, 0x97, 0x01, 0xa1, 0x00, 0x31, 0x35, 0xa7, 0x00, 0x00, 0x00,
+        0x19, 0x00, 0x00, 0x00, 0x97, 0x01, 0xa1, 0x00, 0x9d, 0x01, 0x63, 0x25, 0x00, 0x00, 0x1a,
+        0x00, 0x00, 0x00, 0x2e, 0x35, 0x5f, 0x25, 0x2f, 0x35, 0x60, 0x25, 0x00, 0x80, 0x1b, 0x00,
+        0x00, 0x00, 0x2e, 0x35, 0xa3, 0x00, 0x2f, 0x35, 0xa4, 0x00, 0x00, 0x80, 0x1c, 0x00, 0x00,
+        0x00, 0x99, 0x01, 0xa3, 0x00, 0x9a, 0x01, 0xa4, 0x00, 0x00, 0x80, 0x1d, 0x00, 0x00, 0x00,
+        0x99, 0x01, 0x5f, 0x25, 0x9a, 0x01, 0x60, 0x25, 0x00, 0x80, 0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// The first two members of that frame, payloads verbatim: `+163`,
+    /// oid 22, the top edge from (25, 584) to (831, 584) mm, and `+219`,
+    /// oid 23, the right edge from there down to (831, 10) mm.
+    const FRAME_EDGES: [[u8; 50]; 2] = [
+        [
+            0x16, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x09, 0x00, 0x00, 0x00, 0x5f, 0xba, 0x2d, 0x93, 0x98, 0x99, 0x99, 0x3f, 0x49, 0x20,
+            0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f,
+            0x49, 0x20, 0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f,
+        ],
+        [
+            0x17, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x09, 0x00, 0x00, 0x00, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f, 0x49, 0x20,
+            0x7a, 0xc1, 0x20, 0xb0, 0xe2, 0x3f, 0x6b, 0xdc, 0xab, 0x47, 0x8d, 0x97, 0xea, 0x3f,
+            0x00, 0xac, 0x4c, 0x7f, 0xe0, 0x7a, 0x84, 0x3f,
+        ],
+    ];
+
+    fn framed(type_code: u16, payload: &[u8]) -> Vec<u8> {
+        let mut record = Vec::new();
+        record.extend_from_slice(&type_code.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(payload);
+        record
+    }
+
+    #[test]
+    fn a_complex_string_lists_its_curves_and_the_constraints_between_them() {
+        let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let decoded = decode_igcomplexstrings(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let string = &decoded[0];
+        assert_eq!(
+            string.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+        assert_eq!(
+            (string.oid, string.parent_ref, string.sheet_layer_ref),
+            (67, 6, 8)
+        );
+        assert_eq!((string.sub_type_word, string.index), (0, 12));
+        assert_eq!(string.head, [0x01, 0x06, 0x00]);
+        assert_eq!(string.range_scale, 1.0);
+        assert_eq!(
+            string.members,
+            vec![
+                SheetAssociationMember {
+                    oid: 68,
+                    range_box: [12723, 3641, 19248, 3680],
+                    word: 0,
+                },
+                SheetAssociationMember {
+                    oid: 69,
+                    range_box: [12723, -19, 12761, 3680],
+                    word: 0,
+                },
+                SheetAssociationMember {
+                    oid: 70,
+                    range_box: [12742, 3660, 12743, 3661],
+                    word: IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER,
+                },
+            ]
+        );
+        assert_eq!(
+            string.curve_members().map(|m| m.oid).collect::<Vec<_>>(),
+            vec![68, 69]
+        );
+        assert_eq!(string.trailing, [0x00, 0x02, 0x00, 0x00]);
+        // The box is the member's range in `range_scale / 32768` m, and this
+        // string's scale is one: oid 68 is the line from x = 586.869 mm to
+        // 388.889 mm at y = 111.717 mm.
+        let [min_x, min_y, max_x, max_y] = string.range_box_m(&string.members[0]);
+        assert!((min_x - 0.388_889).abs() < 0.001);
+        assert!((max_x - 0.586_869).abs() < 0.001);
+        assert!((min_y - 0.111_717).abs() < 0.001 && (max_y - 0.111_717).abs() < 0.001);
+    }
+
+    /// The double after the count is the unit of the range boxes, and it is
+    /// not always one. `CPECCHB-SQ-A1.igr`'s outer frame states 2.0, and its
+    /// members' boxes are their own extent — grown by half the pen, as on
+    /// every template string — only when read in 2/32768 m. Read in
+    /// 1/32768 m each is half the size, a quarter of a sheet away.
+    #[test]
+    fn the_double_after_the_count_is_the_scale_of_the_range_boxes() {
+        let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &FRAME_AT_SCALE_TWO);
+        let string = decode_igcomplexstring_at(&record, 0).expect("the frame decodes");
+        assert_eq!((string.oid, string.index, string.members.len()), (21, 9, 8));
+        assert_eq!(string.head, [0x01, 0x06, 0x00]);
+        assert_eq!(string.range_scale, 2.0);
+        assert_eq!(
+            string.members[0],
+            SheetAssociationMember {
+                oid: 22,
+                range_box: [407, 9565, 13617, 9571],
+                word: 0,
+            }
+        );
+        assert_eq!(string.curve_members().count(), 4);
+
+        for (member, payload) in string.members.iter().zip(&FRAME_EDGES) {
+            let line = decode_igline_at(&framed(PSM_TYPE_CODE_IGLINE2D, payload), 0)
+                .expect("an edge of the frame decodes");
+            assert_eq!(
+                (line.oid, line.parent_ref, line.index),
+                (member.oid, string.oid, string.index),
+                "the member is the string's own line, with the string's pen"
+            );
+            let extent = [
+                line.start.0.min(line.end.0),
+                line.start.1.min(line.end.1),
+                line.start.0.max(line.end.0),
+                line.start.1.max(line.end.1),
+            ];
+            // In the record's own unit: the edge, grown by under 0.3 mm.
+            let stated = string.range_box_m(member);
+            for (side, (boxed, own)) in stated.iter().zip(&extent).enumerate() {
+                assert!(
+                    (boxed - own).abs() < 0.000_3,
+                    "oid {} side {side}: the box reads {boxed} m, the edge {own} m",
+                    member.oid
+                );
+            }
+            // Outward on every side: a box, not a guess that happens to land.
+            assert!(stated[0] <= extent[0] && stated[1] <= extent[1]);
+            assert!(stated[2] >= extent[2] && stated[3] >= extent[3]);
+            // In 1/32768 m the far corner is 0.2 m and more from the edge's.
+            let unit = member.range_box_m(1.0);
+            assert!(
+                (unit[2] - extent[2]).abs() > 0.2 && (unit[3] - extent[3]).abs() > 0.2,
+                "oid {}: read at scale one the box is {unit:?}, the edge {extent:?}",
+                member.oid
+            );
+        }
+        // The first edge, in millimetres.
+        let top = string.range_box_m(&string.members[0]).map(|m| m * 1000.0);
+        assert!((top[0] - 24.841).abs() < 0.001 && (top[2] - 831.116).abs() < 0.001);
+        assert!((top[1] - 583.801).abs() < 0.001 && (top[3] - 584.167).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_group_lists_its_members() {
+        let record = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        let decoded = decode_iggroups(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let group = &decoded[0];
+        assert_eq!(
+            (group.oid, group.parent_ref, group.sheet_layer_ref),
+            (311, 6, 0)
+        );
+        assert_eq!((group.head, group.range_scale), (0, 1.0));
+        assert_eq!(
+            group.members,
+            vec![
+                SheetAssociationMember {
+                    oid: 295,
+                    range_box: [819, 327, 19136, 13435],
+                    word: 0x000c,
+                },
+                SheetAssociationMember {
+                    oid: 114,
+                    range_box: [0, 0, 19464, 13762],
+                    word: 0x0006,
+                },
+            ]
+        );
+        assert_eq!(group.trailing, [0x00, 0x02, 0x00, 0x00]);
+        // `A01`'s embedded border is an A2 sheet, and at this group's scale
+        // of one the outer rectangle's box is that sheet: 594 by 420 mm.
+        let outer = group.range_box_m(&group.members[1]);
+        assert_eq!((outer[0], outer[1]), (0.0, 0.0));
+        assert!((outer[2] - 0.594).abs() < 0.000_1 && (outer[3] - 0.420).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn neither_reads_the_other_or_a_record_of_another_type() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let group = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        assert!(decode_iggroup_at(&string, 0).is_none());
+        assert!(decode_igcomplexstring_at(&group, 0).is_none());
+        let line = framed(PSM_TYPE_CODE_IGLINE2D, &STRING_OF_TWO);
+        assert!(decode_igcomplexstring_at(&line, 0).is_none());
+        assert!(decode_iggroup_at(&line, 0).is_none());
+    }
+
+    #[test]
+    fn a_count_the_payload_cannot_hold_is_refused() {
+        // Four members claimed where the payload has entries for three.
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT] = 4;
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        // No member at all is not a string.
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT] = 0;
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT] = 3;
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT] = 0;
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn a_non_finite_range_scale_is_refused() {
+        let mut payload = STRING_OF_TWO.to_vec();
+        payload[IGCOMPLEXSTRING2D_COUNT_AT + 4..IGCOMPLEXSTRING2D_COUNT_AT + 12]
+            .copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                .is_none()
+        );
+        let mut payload = GROUP_OF_TWO.to_vec();
+        payload[IGGROUP_COUNT_AT + 4..IGGROUP_COUNT_AT + 12]
+            .copy_from_slice(&f64::INFINITY.to_le_bytes());
+        assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn a_record_the_native_reader_skips_is_not_decoded() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D | 0x8000, &STRING_OF_TWO);
+        assert!(decode_igcomplexstring_at(&string, 0).is_none());
+        let group = framed(PSM_TYPE_CODE_IGGROUP | 0x8000, &GROUP_OF_TWO);
+        assert!(decode_iggroup_at(&group, 0).is_none());
+    }
+
+    #[test]
+    fn both_survive_truncation_and_noise() {
+        let string = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &STRING_OF_TWO);
+        let group = framed(PSM_TYPE_CODE_IGGROUP, &GROUP_OF_TWO);
+        for cut in 0..string.len() {
+            assert!(decode_igcomplexstring_at(&string[..cut], 0).is_none());
+            assert!(decode_igcomplexstrings(&chain_stream(&string[..cut])).is_empty());
+        }
+        for cut in 0..group.len() {
+            assert!(decode_iggroup_at(&group[..cut], 0).is_none());
+            assert!(decode_iggroups(&chain_stream(&group[..cut])).is_empty());
+        }
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igcomplexstrings(&noise);
+        let _ = decode_iggroups(&noise);
+        for at in 0..noise.len() {
+            let _ = decode_igcomplexstring_at(&noise, at);
+            let _ = decode_iggroup_at(&noise, at);
+        }
+        assert!(decode_igcomplexstrings(&[]).is_empty());
+        assert!(decode_iggroups(&[]).is_empty());
     }
 }
 
@@ -9360,7 +9615,7 @@ pub struct SheetIgDimensionDecoded {
 /// [`crate::parsers::undecoded_census::refused_record_census`] count it
 /// separately from an undecoded type code once this family is registered.
 ///
-/// After accepting a record the scanner advances past it. Panic-free and
+/// Read at each record the stream's chain starts. Panic-free and
 /// bounds-checked: adversarial bytes simply fail validation.
 pub fn decode_igdimensions(data: &[u8]) -> Vec<SheetIgDimensionDecoded> {
     IgDimensionDecoder.scan(data)
@@ -9468,7 +9723,7 @@ fn decode_igdimension_payload(
     }
 
     let value_m = read_f64(IGDIMENSION_VALUE_OFFSET)?;
-    if !value_m.is_finite() || value_m.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+    if !value_m.is_finite() || value_m.abs() > COORDINATE_DOMAIN_LIMIT {
         return None;
     }
 
@@ -9845,6 +10100,446 @@ mod tests {
         assert!(frame.page_extent_m().is_some());
     }
 
+    /// One whole `igSmartFrame2d` record: an A1 page, linked.
+    fn smart_frame_record(oid: u32) -> Vec<u8> {
+        let mut payload = vec![0u8; IGSMARTFRAME_MIN_PAYLOAD];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        payload[14..18].copy_from_slice(&0x8000_u32.to_le_bytes());
+        payload[26..30].copy_from_slice(&0x40_u32.to_le_bytes());
+        for (at, value) in [(76, 0.841_f64), (84, 0.594), (148, 0.706_302)] {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+        record
+    }
+
+    /// A frame states its extent twice over: width and height at `+76` and
+    /// `+84`, and height over width at `+148`. The three agree on every one
+    /// of the 178 frames the corpora's chains hold, to 5e-16; a record whose
+    /// third double is not the quotient of the other two is not a frame.
+    #[test]
+    fn a_frame_states_the_ratio_of_its_own_extent() {
+        let ratio_at = PSM_ENVELOPE_LEN + IGSMARTFRAME_ASPECT_AT;
+        let with_ratio = |ratio: f64| {
+            let mut record = smart_frame_record(22);
+            record[ratio_at..ratio_at + 8].copy_from_slice(&ratio.to_le_bytes());
+            record
+        };
+        // The record as built: 0.841 m by 0.594 m, the ratio typed to six
+        // places.
+        assert!(decode_smartframe_at(&smart_frame_record(22), 0).is_some());
+        assert!(decode_smartframe_at(&with_ratio(0.594 / 0.841), 0).is_some());
+        for wrong in [0.5, 0.706, 0.7064, 1.0 / 0.706_302, 0.0, -0.706_302, 1e300] {
+            assert!(
+                decode_smartframe_at(&with_ratio(wrong), 0).is_none(),
+                "a frame of 0.841 m by 0.594 m that states {wrong}"
+            );
+        }
+    }
+
+    /// What a walk that has left the record boundaries took for a frame.
+    /// A length 32 bytes too long sends the walk into the text of a label
+    /// (`A井场`'s `/Sheet6`, the record at `+12725` stating 88 bytes for
+    /// 56): the character `=` is `3D 00`, the type word of a frame, and
+    /// the four bytes after it state a payload of 262 144. The doubles at
+    /// the frame's offsets are whatever the next records hold there — here
+    /// three denormals — and until the ratio was held to the extent the
+    /// decoder took them for an empty frame. Ten of the 49 058 records such
+    /// walks read off the corpora's chains decoded so; none does now
+    /// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+    #[test]
+    fn what_a_walk_off_the_chain_took_for_a_frame_is_not_one() {
+        // Width, height and "ratio" of two of the ten: the one named above,
+        // and the one an absolute tolerance would let through — a height
+        // and a ratio both next to nothing, over a width of 0.6.
+        for (flags, width, height, ratio) in [
+            (
+                0x4C9D_3FD7_u32,
+                2.781_257_441_683_414e-309_f64,
+                5.562_684_646_279_97e-309_f64,
+                4.778_310_705_768_978e-299_f64,
+            ),
+            (
+                0xEBDE_3FD6,
+                6.121_645_546_997_917e-1,
+                3.861_592_247_633_563_3e-212,
+                6.717_881_233_056_225e-138,
+            ),
+        ] {
+            let mut payload = vec![0u8; 262_144];
+            payload[14..18].copy_from_slice(&flags.to_le_bytes());
+            for (at, value) in [
+                (IGSMARTFRAME_WIDTH_AT, width),
+                (IGSMARTFRAME_HEIGHT_AT, height),
+                (IGSMARTFRAME_ASPECT_AT, ratio),
+            ] {
+                payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            let mut record = Vec::new();
+            record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+            record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            record.extend_from_slice(&payload);
+            assert!(
+                decode_smartframe_at(&record, 0).is_none(),
+                "{width:e} by {height:e} stating {ratio:e}"
+            );
+        }
+    }
+
+    /// A family decodes the records its stream's chain starts, and nothing
+    /// else. The bytes of a whole, valid frame carried *inside* another
+    /// record's payload are that record's bytes: the native reader walks the
+    /// chain and never reads them as a record. A scan that slides a byte at a
+    /// time does — which is how the plant backup came to account for 61
+    /// frames where its 53 chains hold 51, the other ten sitting inside text
+    /// boxes, symbol placements and dependency objects wherever a field's
+    /// value was 61 (`0x3D`). See
+    /// `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    /// §3.3.
+    #[test]
+    fn a_frame_shaped_run_inside_another_record_is_not_a_frame() {
+        let inner = smart_frame_record(22);
+        let on_chain = smart_frame_record(23);
+        let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        // A chain record of another family whose payload is four bytes and
+        // then a frame's bytes, envelope and all.
+        let host_at = stream.len();
+        stream.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
+        stream.extend_from_slice(&((4 + inner.len()) as u32).to_le_bytes());
+        stream.extend_from_slice(&[0xAA; 4]);
+        let inner_at = stream.len();
+        stream.extend_from_slice(&inner);
+        let frame_at = stream.len();
+        stream.extend_from_slice(&on_chain);
+
+        assert_eq!(sheet_record_starts(&stream), vec![host_at, frame_at]);
+        // The run inside the host is a frame's shape, byte for byte, so
+        // nothing about the payload can refuse it: only the chain can.
+        assert!(decode_smartframe_at(&stream, inner_at).is_some());
+
+        let frames = decode_smartframes(&stream);
+        assert_eq!(
+            frames.iter().map(|frame| frame.oid).collect::<Vec<_>>(),
+            vec![23],
+            "only the record the chain starts is a frame"
+        );
+        assert_eq!(frames[0].byte_range, frame_at..stream.len());
+
+        // A stream whose chain stops short is read as far as the chain
+        // reads, and still never by a scan. One stray byte after the last
+        // record leaves both records on the chain, and the run inside the
+        // host as much the host's as before; the walk says where it stopped
+        // and why, and the all-or-nothing reading says the stream is not
+        // whole.
+        let mut broken = stream.clone();
+        broken.push(0);
+        assert!(sheet_record_starts(&broken).is_empty());
+        let chain = SheetChain::walk(&broken);
+        assert_eq!(chain.starts, vec![host_at, frame_at]);
+        assert_eq!((chain.end, chain.unread_bytes()), (stream.len(), 1));
+        assert_eq!(chain.stop, Some(SheetChainStop::ShortEnvelope));
+        assert_eq!(
+            decode_smartframes(&broken)
+                .iter()
+                .map(|frame| frame.oid)
+                .collect::<Vec<_>>(),
+            vec![23],
+            "the record the chain starts, and not the run inside the host"
+        );
+    }
+
+    /// Three whole records behind the header a file writes for them: two
+    /// the native reader reads and, between them, one it skips.
+    fn three_record_stream() -> (Vec<u8>, [usize; 3]) {
+        let mut records = smart_frame_record(1);
+        let second = SHEET_STREAM_HEADER_LEN + records.len();
+        let mut skipped = smart_frame_record(2);
+        skipped[1] |= 0x80;
+        records.extend_from_slice(&skipped);
+        let third = SHEET_STREAM_HEADER_LEN + records.len();
+        records.extend_from_slice(&smart_frame_record(3));
+        (
+            chain_stream(&records),
+            [SHEET_STREAM_HEADER_LEN, second, third],
+        )
+    }
+
+    #[test]
+    fn a_whole_chain_stream_is_sound() {
+        let (stream, starts) = three_record_stream();
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, starts);
+        assert_eq!(chain.live_records, 2, "the skipped record is not live");
+        assert_eq!(
+            chain.stated_records,
+            Some(2),
+            "the header counts live records"
+        );
+        assert_eq!(chain.magic, Some(SHEET_STREAM_MAGIC));
+        assert_eq!(
+            (chain.end, chain.len, chain.stop),
+            (stream.len(), stream.len(), None)
+        );
+        assert_eq!(chain.unread_bytes(), 0);
+        assert!(chain.is_sound());
+        assert_eq!(sheet_record_starts(&stream), starts);
+
+        // A stream that is its header alone, and an empty one, hold no
+        // record and have nothing wrong with them.
+        let header_only = chain_stream(&[]);
+        let chain = SheetChain::walk(&header_only);
+        assert!(chain.starts.is_empty() && chain.is_sound());
+        assert_eq!((chain.end, chain.stated_records), (8, Some(0)));
+        let chain = SheetChain::walk(&[]);
+        assert!(chain.starts.is_empty() && chain.is_sound());
+        assert_eq!((chain.end, chain.len, chain.magic), (0, 0, None));
+    }
+
+    #[test]
+    fn a_chain_that_stops_keeps_the_records_before_the_stop() {
+        let (whole, starts) = three_record_stream();
+        let [first, second, third] = starts;
+
+        // The second record states a length of zero.
+        let mut stream = whole.clone();
+        stream[second + 2..second + 6].copy_from_slice(&0u32.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first]);
+        assert_eq!(chain.stop, Some(SheetChainStop::ZeroLength));
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (second, whole.len() - second)
+        );
+        assert_eq!(chain.live_records, 1);
+        assert!(!chain.is_sound());
+        assert!(
+            !chain.count_differs(),
+            "a stop is the fault, not the count it leaves"
+        );
+        assert!(sheet_record_starts(&stream).is_empty());
+        assert_eq!(
+            decode_smartframes(&stream)
+                .iter()
+                .map(|frame| frame.oid)
+                .collect::<Vec<_>>(),
+            [1],
+            "the record before the stop decodes"
+        );
+
+        // The last record states one byte more than the stream has.
+        let mut stream = whole.clone();
+        let stated = u32::from_le_bytes([
+            stream[third + 2],
+            stream[third + 3],
+            stream[third + 4],
+            stream[third + 5],
+        ]);
+        stream[third + 2..third + 6].copy_from_slice(&(stated + 1).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::PastEnd { stated: stated + 1 })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (third, whole.len() - third)
+        );
+        assert_eq!(chain.live_records, 1);
+
+        // A length that would overflow the offset is past the end too.
+        let mut stream = whole.clone();
+        stream[third + 2..third + 6].copy_from_slice(&u32::MAX.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::PastEnd { stated: u32::MAX })
+        );
+
+        // Five stray bytes after the last record: too few for an envelope.
+        let mut stream = whole.clone();
+        stream.extend_from_slice(&[0x3D, 0, 9, 0, 0]);
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, starts);
+        assert_eq!(chain.stop, Some(SheetChainStop::ShortEnvelope));
+        assert_eq!((chain.end, chain.unread_bytes()), (whole.len(), 5));
+        assert_eq!(chain.live_records, 2);
+
+        // Shorter than a header: nothing is read, and that is said.
+        for cut in 1..SHEET_STREAM_HEADER_LEN {
+            let chain = SheetChain::walk(&whole[..cut]);
+            assert!(chain.starts.is_empty());
+            assert_eq!(chain.stop, Some(SheetChainStop::ShortHeader), "{cut} bytes");
+            assert_eq!((chain.end, chain.unread_bytes()), (0, cut));
+            assert!(!chain.is_sound());
+        }
+    }
+
+    /// A length that is wrong and still inside the stream sends the walk on
+    /// from an offset where no record starts. It stops there when the word
+    /// it finds is not one a record opens with; when the bytes there read
+    /// as a record of a class the reader has, it goes on, and a walk that
+    /// lands back on the chain reaches the stream's end with nothing but
+    /// the header's count to say so.
+    #[test]
+    fn a_chain_stops_on_a_word_no_record_opens_with() {
+        for (word, opens) in [
+            (0x0018u16, true),
+            (0x8018, true),
+            (0x0001, true),
+            (0x0118, true),
+            (0x8118, true),
+            (0x0000, false),
+            (0x8000, false),
+            (0x4018, false),
+            (0xC018, false),
+            (0x0119, false),
+            (0x00F8, false),
+            (0x80F8, false),
+            (0x3FE6, false),
+            (0xFFFF, false),
+        ] {
+            assert_eq!(psm_type_word_opens_a_record(word), opens, "0x{word:04X}");
+        }
+
+        let record = |type_word: u16, payload: &[u8]| {
+            let mut record = type_word.to_le_bytes().to_vec();
+            record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            record.extend_from_slice(payload);
+            record
+        };
+        // The first record's payload ends in four zero bytes and then
+        // twelve that read as a line record of six bytes.
+        let mut payload = vec![0x11u8; 20];
+        payload.extend_from_slice(&[0; 4]);
+        payload.extend_from_slice(&record(PSM_TYPE_CODE_IGLINE2D, &[0xAB; 6]));
+        let a = record(PSM_TYPE_CODE_IGLINE2D, &payload);
+        let b = record(PSM_TYPE_CODE_IGTEXTBOX | 0x8000, &[0x22; 9]);
+        let c = record(PSM_TYPE_CODE_IGARC2D, &[0x33; 5]);
+        let whole = chain_stream(&[a.clone(), b.clone(), c].concat());
+        let first = SHEET_STREAM_HEADER_LEN;
+        let second = first + a.len();
+        let third = second + b.len();
+        let chain = SheetChain::walk(&whole);
+        assert_eq!(chain.starts, [first, second, third]);
+        assert!(chain.is_sound());
+        let stated = payload.len() as u32;
+
+        // Sixteen bytes short: the walk goes on from the four zero bytes.
+        let mut stream = whole.clone();
+        stream[first + 2..first + 6].copy_from_slice(&(stated - 16).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        let stop = first + PSM_ENVELOPE_LEN + payload.len() - 16;
+        assert_eq!(
+            chain.starts,
+            [first],
+            "the record whose length is wrong is read"
+        );
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::NoSuchClass { type_word: 0 })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (stop, whole.len() - stop)
+        );
+        assert_eq!(chain.live_records, 1);
+        assert!(!chain.is_sound());
+        assert!(sheet_record_starts(&stream).is_empty());
+
+        // Twelve bytes short: the bytes there read as a record of a class
+        // the reader has, and it ends where the second record starts. The
+        // walk reaches the stream's end; the header's count is one short
+        // of what it read, and that is all that is wrong with it.
+        let mut stream = whole.clone();
+        stream[first + 2..first + 6].copy_from_slice(&(stated - 12).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first, second - 12, second, third]);
+        assert_eq!((chain.stop, chain.end), (None, whole.len()));
+        assert_eq!((chain.stated_records, chain.live_records), (Some(2), 3));
+        assert!(chain.count_differs() && !chain.is_sound());
+
+        // A record of the chain itself whose word no record opens with: the
+        // walk stops on it, whatever its length says.
+        let mut stream = whole.clone();
+        stream[second..second + 2]
+            .copy_from_slice(&(PSM_TYPE_CODE_IGTEXTBOX | 0x4000).to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.starts, [first]);
+        assert_eq!(
+            chain.stop,
+            Some(SheetChainStop::NoSuchClass {
+                type_word: PSM_TYPE_CODE_IGTEXTBOX | 0x4000
+            })
+        );
+        assert_eq!(
+            (chain.end, chain.unread_bytes()),
+            (second, whole.len() - second)
+        );
+    }
+
+    #[test]
+    fn a_header_that_disagrees_with_its_chain_is_not_sound() {
+        let (whole, starts) = three_record_stream();
+        let [_, _, third] = starts;
+
+        // Cut off at a record boundary: the walk reaches the new end with
+        // nothing wrong on the way, and the header still counts the record
+        // that is gone.
+        let cut = &whole[..third];
+        let chain = SheetChain::walk(cut);
+        assert_eq!((chain.stop, chain.end), (None, third));
+        assert_eq!((chain.stated_records, chain.live_records), (Some(2), 1));
+        assert!(chain.count_differs());
+        assert!(!chain.is_sound());
+        assert_eq!(
+            sheet_record_starts(cut).len(),
+            2,
+            "the all-or-nothing reading does not hold the header to the chain"
+        );
+
+        // The count alone.
+        let mut stream = whole.clone();
+        stream[4..8].copy_from_slice(&3u32.to_le_bytes());
+        let chain = SheetChain::walk(&stream);
+        assert!(chain.count_differs() && !chain.is_sound());
+        assert_eq!(chain.starts, starts, "every record is still read");
+
+        // The magic alone.
+        let mut stream = whole.clone();
+        stream[..4].copy_from_slice(b"BACK");
+        let chain = SheetChain::walk(&stream);
+        assert_eq!(chain.wrong_magic(), Some(u32::from_le_bytes(*b"BACK")));
+        assert!(!chain.count_differs() && !chain.is_sound());
+        assert_eq!(chain.starts, starts, "every record is still read");
+    }
+
+    #[test]
+    fn the_chain_walk_survives_truncation_and_noise() {
+        let (whole, _) = three_record_stream();
+        for cut in 0..=whole.len() {
+            let chain = SheetChain::walk(&whole[..cut]);
+            assert_eq!(chain.len, cut);
+            assert!(chain.end <= cut);
+            assert_eq!(chain.unread_bytes(), cut - chain.end);
+            // A cut inside a record stops; a cut on a boundary does not.
+            let on_a_boundary = cut == 0 || chain.end == cut;
+            assert_eq!(chain.stop.is_none(), on_a_boundary, "cut at {cut}");
+        }
+        let noise: Vec<u8> = (0..4096u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        for at in 0..noise.len() {
+            let chain = SheetChain::walk(&noise[at..]);
+            assert!(chain.end <= chain.len);
+            assert!(chain.starts.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    }
+
     #[test]
     fn inventory_collects_marker_field_text_and_coordinate_evidence() {
         let mut data = Vec::new();
@@ -10217,58 +10912,10 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Phase 14 Slice D: PSM GLine2d decoder tests
-    // -----------------------------------------------------------------
-
-    /// Bytes a `GLine2d` record declares after the 6-byte envelope when it
-    /// carries nothing but its own body: the 12 header bytes the envelope
-    /// does not cover (`oid` + aux) plus the 48-byte payload.
-    ///
-    /// Declaring 48 here instead would make the record claim to end 12 bytes
-    /// before its own payload does — harmless to a scan, but it is not a
-    /// record a chain walk can step over, so the fixture would no longer
-    /// model a real stream.
-    const SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW: usize =
-        PSM_RECORD_HEADER_LEN - PSM_ENVELOPE_LEN + GLINE2D_PAYLOAD_LEN;
-
-    /// Build a single synthetic PSM `GLine2d` record:
-    /// 18-byte header (type=0x3FE6, oid=`oid`) + 6×f64 `GLine2d` payload
-    /// (origin, direction, params).
-    fn build_synthetic_gline2d_record(
-        oid: u32,
-        origin: (f64, f64),
-        direction: (f64, f64),
-        param_start: f64,
-        param_end: f64,
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN);
-        // type_code (14-bit) at bits 0..14 of the LE u16, top 2 bits = 0 flags.
-        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
-        out.extend_from_slice(&type_word.to_le_bytes());
-        out.extend_from_slice(&(SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW as u32).to_le_bytes());
-        // oid
-        out.extend_from_slice(&oid.to_le_bytes());
-        // 8-byte aux (set to fixed pattern for inspection).
-        out.extend_from_slice(&[0u8; 8]);
-        // 6 doubles
-        for v in [
-            origin.0,
-            origin.1,
-            direction.0,
-            direction.1,
-            param_start,
-            param_end,
-        ] {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        out
-    }
-
     /// Wrap synthetic records into a `Sheet*` stream: the 8-byte stream
     /// header, then the records nose to tail.
     ///
-    /// [`decode_primitive_lines`] only considers offsets that are members of
+    /// A family's `scan` only considers offsets that are members of
     /// the stream's record chain, so a bare record with no stream header
     /// decodes as nothing. Tests that hand it loose bytes would pass for the
     /// wrong reason — which is the exact failure mode this gate exists to
@@ -10280,173 +10927,6 @@ mod tests {
             out.extend_from_slice(record);
         }
         out
-    }
-
-    #[test]
-    fn primitive_line_decodes_canonical_synthetic_record() {
-        // Canonical synthetic line: origin at (0,0), unit horizontal
-        // direction, params [0, 1.0]. Endpoints A=(0,0) B=(1,0).
-        let record = build_synthetic_gline2d_record(42, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        let stream = synthetic_sheet_stream(&[record]);
-        let decoded = decode_primitive_lines(&stream);
-        assert_eq!(decoded.len(), 1, "expected exactly one decoded line");
-        let line = &decoded[0];
-        assert_eq!(line.type_code, PSM_TYPE_CODE_GLINE2D);
-        assert_eq!(line.type_flags, 0);
-        assert_eq!(
-            line.bytes_to_follow as usize,
-            SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
-        );
-        assert_eq!(line.oid, 42);
-        assert_eq!(line.origin, (0.0, 0.0));
-        assert!((line.direction.0 - 1.0).abs() < 1e-12);
-        assert!(line.direction.1.abs() < 1e-12);
-        assert_eq!(line.param_start, 0.0);
-        assert_eq!(line.param_end, 1.0);
-        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
-        // byte_range covers the envelope plus everything it declares.
-        assert_eq!(
-            line.byte_range.end,
-            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
-        );
-        // Endpoint helpers.
-        assert_eq!(line.endpoint_a(), (0.0, 0.0));
-        let (bx, by) = line.endpoint_b();
-        assert!((bx - 1.0).abs() < 1e-12);
-        assert!(by.abs() < 1e-12);
-    }
-
-    #[test]
-    fn primitive_line_rejects_wrong_type_code() {
-        // Same bytes but with a non-GLine2d type code.
-        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // Overwrite type with 0x1234 (not the GLine2d type).
-        record[0] = 0x34;
-        record[1] = 0x12;
-        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
-        assert!(decoded.is_empty(), "wrong type_code must be rejected");
-    }
-
-    #[test]
-    fn primitive_line_rejects_non_unit_direction() {
-        // direction = (2.0, 0.0): length 2, not unit.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (2.0, 0.0), 0.0, 1.0);
-        assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
-            "non-unit direction vector must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_zero_direction() {
-        // direction = (0.0, 0.0): zero vector.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
-        assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
-            "zero direction vector must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_reversed_param_range() {
-        // param_start == param_end.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.0, 1.0);
-        assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
-            "param_start >= param_end must be rejected"
-        );
-        // param_start > param_end.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.5, 0.5);
-        assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
-            "reversed param range must be rejected"
-        );
-    }
-
-    #[test]
-    fn primitive_line_rejects_nan_coordinate() {
-        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // Overwrite origin.x with NaN bytes (any non-finite).
-        let nan_bytes = f64::NAN.to_le_bytes();
-        let origin_off = PSM_RECORD_HEADER_LEN;
-        record[origin_off..origin_off + 8].copy_from_slice(&nan_bytes);
-        assert!(
-            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
-            "NaN coordinate must be rejected"
-        );
-    }
-
-    /// A payload that satisfies every `GLine2d` rule is still not a record
-    /// when it sits inside another one.
-    ///
-    /// This is the corpus failure in miniature: three "records" that passed
-    /// all five payload rules while living 160 bytes inside an
-    /// `igSmartFrame2d`. Chain membership is what rejects them, so it needs
-    /// a test that fails if the gate is ever removed.
-    #[test]
-    fn primitive_line_inside_another_records_payload_is_not_a_record() {
-        let hidden = build_synthetic_gline2d_record(99, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        // One record of some other family whose payload happens to contain a
-        // perfectly well-formed GLine2d.
-        let mut host = Vec::new();
-        host.extend_from_slice(&PSM_TYPE_CODE_IGLINE2D.to_le_bytes());
-        host.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
-        host.extend_from_slice(&hidden);
-
-        let stream = synthetic_sheet_stream(&[host]);
-        assert!(
-            decode_primitive_line_at(&stream, SHEET_STREAM_HEADER_LEN + 6).is_some(),
-            "the buried bytes do satisfy every payload rule; without that the \
-             test would prove nothing"
-        );
-        assert!(
-            decode_primitive_lines(&stream).is_empty(),
-            "a payload-shaped match inside another record is not a record"
-        );
-    }
-
-    #[test]
-    fn primitive_line_decoder_is_panic_safe_on_truncated_input() {
-        // Build a complete stream, then truncate at various sizes.
-        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        let stream = synthetic_sheet_stream(&[record]);
-        for trunc_len in 0..stream.len() {
-            // Must not panic, must return empty / no decoded line.
-            let decoded = decode_primitive_lines(&stream[..trunc_len]);
-            assert!(
-                decoded.is_empty(),
-                "truncated input of length {trunc_len} must not decode anything"
-            );
-        }
-        // Empty input also fine.
-        assert!(decode_primitive_lines(&[]).is_empty());
-    }
-
-    #[test]
-    fn primitive_line_decoder_is_panic_safe_on_random_noise() {
-        // Adversarial deterministic noise: incrementing bytes.
-        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        // Just running without panic is the test; whatever it decodes
-        // is acceptable (must be `Vec`, not panic).
-        let _decoded = decode_primitive_lines(&noise);
-        // All-zeros: nothing valid.
-        assert!(decode_primitive_lines(&vec![0u8; 4096]).is_empty());
-        // All-0xFF: nothing valid (type_code = 0x3FFF != GLine2d).
-        assert!(decode_primitive_lines(&vec![0xFFu8; 4096]).is_empty());
-    }
-
-    #[test]
-    fn primitive_line_decodes_two_back_to_back_records() {
-        let data = synthetic_sheet_stream(&[
-            build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5),
-            build_synthetic_gline2d_record(8, (0.20, 0.30), (0.0, 1.0), 0.0, 0.8),
-        ]);
-        let decoded = decode_primitive_lines(&data);
-        assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].oid, 7);
-        assert_eq!(decoded[1].oid, 8);
-        // The two records must have non-overlapping byte ranges.
-        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
     }
 
     // -----------------------------------------------------------------
@@ -10594,8 +11074,7 @@ mod tests {
     }
 
     /// The chain, not a payload rule, is what tells an `igLine2d` from a
-    /// coincidence — the gate `decode_primitive_lines` has carried since
-    /// the `GLine2d` ghost family was retired.
+    /// coincidence: the gate every family decodes behind.
     #[test]
     fn igline2d_ignores_a_record_shaped_match_buried_in_another_record() {
         let hidden = build_synthetic_igline2d_record(9, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
@@ -10696,13 +11175,13 @@ mod tests {
             build_synthetic_igline2d_record(8, 100, 0x65, 2, (0.3, 0.3), (0.3, 0.5)),
         ]);
 
-        // The stream header is not a record, so the sliding scan cannot see
-        // it; on a chain of nothing but this family the two must still agree.
+        // The trait's walk and the family's own wrapper are the same walk:
+        // the stream's chain.
         let via_trait = IgLine2dDecoder.scan(&data);
         let via_free_fn = decode_iglines(&data);
         assert_eq!(
             via_trait, via_free_fn,
-            "on a clean chain of one family the gate changes nothing"
+            "the trait's scan and the free function walk the same chain"
         );
         assert_eq!(via_trait.len(), 2);
         assert_eq!(via_trait[0].oid, 7);
@@ -10774,7 +11253,7 @@ mod tests {
             2,
             &[(0.1, 0.2), (0.3, 0.4)],
         );
-        let decoded = decode_iglinestrings(&record);
+        let decoded = decode_iglinestrings(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let pl = &decoded[0];
         assert_eq!(pl.type_code, PSM_TYPE_CODE_IGLINESTRING2D);
@@ -10803,7 +11282,7 @@ mod tests {
             1,
             &[(0.0, 0.0), (0.1, 0.0), (0.1, 0.1)],
         );
-        let decoded = decode_iglinestrings(&record);
+        let decoded = decode_iglinestrings(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let pl = &decoded[0];
         assert_eq!(pl.vertex_count(), 3);
@@ -10826,7 +11305,7 @@ mod tests {
         );
         record[0] = 0x18; // make it look like igLine2d
         record[1] = 0x00;
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10843,7 +11322,7 @@ mod tests {
         );
         // Overwrite inline vc at payload offset 18 (= record offset 24).
         record[24..28].copy_from_slice(&5u32.to_le_bytes());
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10858,7 +11337,7 @@ mod tests {
             1,
             &[(0.0, 0.0), (1.0, 1.0)],
         );
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10873,7 +11352,7 @@ mod tests {
             5, // invalid: > 4 and != 6
             &[(0.0, 0.0), (1.0, 1.0)],
         );
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10888,7 +11367,7 @@ mod tests {
             6, // accepted special case
             &[(0.0, 0.0), (1.0, 1.0)],
         );
-        assert_eq!(decode_iglinestrings(&record).len(), 1);
+        assert_eq!(decode_iglinestrings(&chain_stream(&record)).len(), 1);
     }
 
     #[test]
@@ -10904,7 +11383,7 @@ mod tests {
         record.push(1); // scope
         record.extend_from_slice(&0.5f64.to_le_bytes());
         record.extend_from_slice(&0.5f64.to_le_bytes());
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10923,7 +11402,7 @@ mod tests {
             1,
             &[(0.5, 0.5), (0.5, 0.5)],
         );
-        let decoded = decode_iglinestrings(&record);
+        let decoded = decode_iglinestrings(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].total_length(), 0.0);
     }
@@ -10942,7 +11421,7 @@ mod tests {
         );
         // First vertex.x at record offset 6 + 24 = 30.
         record[30..38].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert!(decode_iglinestrings(&record).is_empty());
+        assert!(decode_iglinestring_at(&record, 0).is_none());
     }
 
     #[test]
@@ -10958,6 +11437,7 @@ mod tests {
             &[(0.0, 0.0), (1.0, 1.0)],
         );
         for trunc_len in 0..record.len() {
+            assert!(decode_iglinestring_at(&record[..trunc_len], 0).is_none());
             assert!(
                 decode_iglinestrings(&record[..trunc_len]).is_empty(),
                 "truncated input length {trunc_len} must not decode"
@@ -11002,7 +11482,7 @@ mod tests {
     #[test]
     fn igpoint2d_decodes_canonical_point() {
         let record = build_synthetic_igpoint2d_record(130, 6, 0x0010, 13, 0.1737, 0.2199);
-        let decoded = decode_igpoints(&record);
+        let decoded = decode_igpoints(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let p = &decoded[0];
         assert_eq!(p.type_code, PSM_TYPE_CODE_IGPOINT2D);
@@ -11020,14 +11500,14 @@ mod tests {
         let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
         record[0] = 0x18;
         record[1] = 0x00;
-        assert!(decode_igpoints(&record).is_empty());
+        assert!(decode_igpoint_at(&record, 0).is_none());
     }
 
     #[test]
     fn igpoint2d_rejects_wrong_bytes_to_follow() {
         let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
         record[2] = 33;
-        assert!(decode_igpoints(&record).is_empty());
+        assert!(decode_igpoint_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11035,13 +11515,14 @@ mod tests {
         let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
         // x at record offset 6 + 18 = 24
         record[24..32].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert!(decode_igpoints(&record).is_empty());
+        assert!(decode_igpoint_at(&record, 0).is_none());
     }
 
     #[test]
     fn igpoint2d_decoder_is_panic_safe_on_short_input() {
         let record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.5, 0.5);
         for trunc_len in 0..record.len() {
+            assert!(decode_igpoint_at(&record[..trunc_len], 0).is_none());
             assert!(decode_igpoints(&record[..trunc_len]).is_empty());
         }
         assert!(decode_igpoints(&[]).is_empty());
@@ -11096,7 +11577,7 @@ mod tests {
     #[test]
     fn igtextbox_decodes_canonical_ascii_text() {
         let record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
-        let decoded = decode_igtextboxes(&record);
+        let decoded = decode_igtextboxes(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let t = &decoded[0];
         assert_eq!(t.type_code, PSM_TYPE_CODE_IGTEXTBOX);
@@ -11156,7 +11637,7 @@ mod tests {
         set_tail_kind(&mut record, IGTEXTBOX_TAIL_KIND_BOX);
         set_text_box(&mut record, 8, 0.045_307, 0.003_689);
 
-        let decoded = decode_igtextboxes(&record);
+        let decoded = decode_igtextboxes(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].text, "PUMP-101");
         assert!((decoded[0].text_box_width_m - 0.045_307).abs() < 1e-9);
@@ -11168,7 +11649,7 @@ mod tests {
     #[test]
     fn igtextbox_reports_no_box_when_the_tail_states_none() {
         let plain = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
-        let decoded = decode_igtextboxes(&plain);
+        let decoded = decode_igtextboxes(&chain_stream(&plain));
         assert_eq!(decoded[0].text_box_width_m, 0.0);
         assert_eq!(decoded[0].text_box_height_m, 0.0);
 
@@ -11182,7 +11663,7 @@ mod tests {
             set_tail_kind(&mut record, IGTEXTBOX_TAIL_KIND_BOX);
             set_text_box(&mut record, 8, width, height);
 
-            let decoded = decode_igtextboxes(&record);
+            let decoded = decode_igtextboxes(&chain_stream(&record));
             assert_eq!(
                 decoded.len(),
                 1,
@@ -11221,7 +11702,7 @@ mod tests {
             let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
             set_text_direction(&mut record, 8, cos, sin);
 
-            let decoded = decode_igtextboxes(&record);
+            let decoded = decode_igtextboxes(&chain_stream(&record));
             assert_eq!(decoded.len(), 1, "({cos}, {sin}) is a direction");
             assert!(
                 (decoded[0].rotation_rad.to_degrees() - expect_deg).abs() < 1e-9,
@@ -11246,7 +11727,7 @@ mod tests {
             set_text_direction(&mut record, 8, cos, sin);
 
             assert!(
-                decode_igtextboxes(&record).is_empty(),
+                decode_igtextbox_at(&record, 0).is_none(),
                 "({cos}, {sin}) is not a direction, so the record's shape is wrong"
             );
         }
@@ -11273,7 +11754,7 @@ mod tests {
             record[2..6].copy_from_slice(&grown.to_le_bytes());
             record.extend(std::iter::repeat_n(0u8, extra));
 
-            let decoded = decode_igtextboxes(&record);
+            let decoded = decode_igtextboxes(&chain_stream(&record));
             assert_eq!(
                 decoded.len(),
                 1,
@@ -11281,9 +11762,12 @@ mod tests {
             );
             assert_eq!(decoded[0].text, "PUMP-101");
             assert_eq!(decoded[0].text_length, 8);
-            // The record still spans its whole stated length, so the scan
-            // resumes after the extra bytes rather than inside them.
-            assert_eq!(decoded[0].byte_range, 0..record.len());
+            // The record still spans its whole stated length, extra bytes
+            // included: that is where the chain steps to.
+            assert_eq!(
+                decoded[0].byte_range,
+                SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+            );
         }
     }
 
@@ -11297,7 +11781,7 @@ mod tests {
         let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
         set_consistent_count(&mut record, 400);
         assert!(
-            decode_igtextboxes(&record).is_empty(),
+            decode_igtextbox_at(&record, 0).is_none(),
             "a stated length with no room for text plus the trailing block is noise"
         );
 
@@ -11307,7 +11791,7 @@ mod tests {
         let mut record = build_synthetic_igtextbox_record("HELLO", 1, 1);
         record[6 + 30..6 + 32].copy_from_slice(&999u16.to_le_bytes());
         assert!(
-            decode_igtextboxes(&record).is_empty(),
+            decode_igtextbox_at(&record, 0).is_none(),
             "a count that disagrees with its packed twin is not believed"
         );
     }
@@ -11377,7 +11861,7 @@ mod tests {
         for (sub_type, extras) in [(1u16, (0u16, 0u16)), (3, (2, 3))] {
             let record =
                 build_igtextbox_of_sub_type(sub_type, "\u{8BBE}\u{5907}\u{4F4D}\u{53F7}", extras);
-            let decoded = decode_igtextboxes(&record);
+            let decoded = decode_igtextboxes(&chain_stream(&record));
 
             assert_eq!(decoded.len(), 1, "sub-type {sub_type} must decode");
             let t = &decoded[0];
@@ -11404,7 +11888,7 @@ mod tests {
     fn igtextbox_hands_over_the_runs_each_shape_stores() {
         let mut shape_2 = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
         shape_2[6 + 26..6 + 30].copy_from_slice(&0x42u32.to_le_bytes());
-        let decoded = decode_igtextboxes(&shape_2);
+        let decoded = decode_igtextboxes(&chain_stream(&shape_2));
         assert_eq!(decoded.len(), 1);
         assert_eq!(
             decoded[0].runs,
@@ -11426,7 +11910,7 @@ mod tests {
             shape_3[at + 2..at + 4].copy_from_slice(&selector.to_le_bytes());
             shape_3[at + 4..at + 8].copy_from_slice(&style_id.to_le_bytes());
         }
-        let decoded = decode_igtextboxes(&shape_3);
+        let decoded = decode_igtextboxes(&chain_stream(&shape_3));
         assert_eq!(decoded.len(), 1);
         assert_eq!(
             decoded[0].runs,
@@ -11450,7 +11934,7 @@ mod tests {
         );
 
         let shape_1 = build_igtextbox_of_sub_type(1, "PUMP", (0, 0));
-        let decoded = decode_igtextboxes(&shape_1);
+        let decoded = decode_igtextboxes(&chain_stream(&shape_1));
         assert_eq!(decoded.len(), 1);
         assert!(
             decoded[0].runs.is_empty(),
@@ -11465,7 +11949,7 @@ mod tests {
         record[6 + 18..6 + 20].copy_from_slice(&4u16.to_le_bytes());
 
         assert!(
-            decode_igtextboxes(&record).is_empty(),
+            decode_igtextbox_at(&record, 0).is_none(),
             "the native Load names sub-types 1, 2 and 3; a fourth is not a shape we know"
         );
     }
@@ -11473,7 +11957,7 @@ mod tests {
     #[test]
     fn igtextbox_decodes_chinese_unicode_text() {
         let record = build_synthetic_igtextbox_record("流量计", 200, 100);
-        let decoded = decode_igtextboxes(&record);
+        let decoded = decode_igtextboxes(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let t = &decoded[0];
         assert_eq!(t.text, "流量计");
@@ -11485,7 +11969,7 @@ mod tests {
         let mut record = build_synthetic_igtextbox_record("X", 1, 1);
         record[0] = 0x18;
         record[1] = 0x00;
-        assert!(decode_igtextboxes(&record).is_empty());
+        assert!(decode_igtextbox_at(&record, 0).is_none());
     }
 
     /// Set a sub-type 2 record's count in both places the format states it,
@@ -11502,7 +11986,7 @@ mod tests {
         record.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
         record.extend_from_slice(&50u32.to_le_bytes()); // way less than 68
         record.extend_from_slice(&[0u8; 50]);
-        assert!(decode_igtextboxes(&record).is_empty());
+        assert!(decode_igtextbox_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11510,13 +11994,14 @@ mod tests {
         let mut record = build_synthetic_igtextbox_record("ABC", 1, 1);
         let text_end = 6 + 32 + 3 * 2; // record header + payload header + text
         record[text_end..text_end + 8].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert!(decode_igtextboxes(&record).is_empty());
+        assert!(decode_igtextbox_at(&record, 0).is_none());
     }
 
     #[test]
     fn igtextbox_decoder_is_panic_safe_on_short_input() {
         let record = build_synthetic_igtextbox_record("X", 1, 1);
         for trunc_len in 0..record.len() {
+            assert!(decode_igtextbox_at(&record[..trunc_len], 0).is_none());
             assert!(decode_igtextboxes(&record[..trunc_len]).is_empty());
         }
         assert!(decode_igtextboxes(&[]).is_empty());
@@ -11584,7 +12069,7 @@ mod tests {
         let len = short.len();
         short[len - 8..len - 4].copy_from_slice(&125u32.to_le_bytes());
         short[len - 4..].copy_from_slice(&145u32.to_le_bytes());
-        let decoded = decode_igsymbols(&short);
+        let decoded = decode_igsymbols(&chain_stream(&short));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].definition_sheet_ref, 125);
         assert_eq!(decoded[0].definition_site_ref, 145);
@@ -11604,7 +12089,7 @@ mod tests {
         let payload_len = (long.len() - PSM_ENVELOPE_LEN) as u32;
         long[2..6].copy_from_slice(&payload_len.to_le_bytes());
         assert_eq!(payload_len, 121);
-        let decoded = decode_igsymbols(&long);
+        let decoded = decode_igsymbols(&chain_stream(&long));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].definition_sheet_ref, 93);
         assert_eq!(decoded[0].definition_site_ref, 145);
@@ -11628,7 +12113,7 @@ mod tests {
         record[tail - 8..tail - 4].copy_from_slice(&29u32.to_le_bytes());
         record[tail - 4..].copy_from_slice(&16u32.to_le_bytes());
 
-        let decoded = decode_igsymbols(&record);
+        let decoded = decode_igsymbols(&chain_stream(&record));
         assert_eq!(
             decoded.len(),
             1,
@@ -11648,7 +12133,7 @@ mod tests {
             build_synthetic_igsymbol2d_record(181, 6, 18, [1.0, 0.0, 0.0, 1.0], (1100.692, 19.0));
         record.truncate(PSM_ENVELOPE_LEN + 108);
         record[2..6].copy_from_slice(&108u32.to_le_bytes());
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11660,7 +12145,7 @@ mod tests {
             [1.0, 0.0, 0.0, 1.0], // identity transform
             (0.3, 0.4),
         );
-        let decoded = decode_igsymbols(&record);
+        let decoded = decode_igsymbols(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let s = &decoded[0];
         assert_eq!(s.type_code, PSM_TYPE_CODE_IGSYMBOL2D);
@@ -11693,7 +12178,7 @@ mod tests {
         let tag_at = PSM_ENVELOPE_LEN + 33;
         record[tag_at..tag_at + IGSYMBOL2D_MATRIX_TAG_ALT.len()]
             .copy_from_slice(&IGSYMBOL2D_MATRIX_TAG_ALT);
-        let decoded = decode_igsymbols(&record);
+        let decoded = decode_igsymbols(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let s = &decoded[0];
         assert_eq!(s.oid, 0x5C);
@@ -11711,7 +12196,7 @@ mod tests {
         // Third byte neither `0xA7` nor `0x27`: still refused, this is not
         // a wildcard match.
         record[tag_at + 2] = 0x37;
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11720,7 +12205,7 @@ mod tests {
             build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
         record[0] = 0x18;
         record[1] = 0x00;
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11729,7 +12214,7 @@ mod tests {
         record.extend_from_slice(&PSM_TYPE_CODE_IGSYMBOL2D.to_le_bytes());
         record.extend_from_slice(&100u32.to_le_bytes());
         record.extend_from_slice(&[0u8; 100]);
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11738,7 +12223,7 @@ mod tests {
             build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
         let at = PSM_ENVELOPE_LEN + SYNTHETIC_IGSYMBOL2D_MATRIX_AT;
         record[at..at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11747,7 +12232,7 @@ mod tests {
             build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
         let tag_at = PSM_ENVELOPE_LEN + 33;
         record[tag_at..tag_at + IGSYMBOL2D_MATRIX_TAG.len()].copy_from_slice(&[0xFF; 4]);
-        assert!(decode_igsymbols(&record).is_empty());
+        assert!(decode_igsymbol_at(&record, 0).is_none());
     }
 
     #[test]
@@ -11764,7 +12249,7 @@ mod tests {
         let btf = (shifted.len() - PSM_ENVELOPE_LEN) as u32;
         shifted[2..6].copy_from_slice(&btf.to_le_bytes());
 
-        let decoded = decode_igsymbols(&shifted);
+        let decoded = decode_igsymbols(&chain_stream(&shifted));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].jsite_ref, 204);
         assert_eq!(decoded[0].transform, [0.0, 1.0, -1.0, 0.0]);
@@ -11775,6 +12260,7 @@ mod tests {
     fn igsymbol2d_decoder_is_panic_safe_on_short_input() {
         let record = build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
         for trunc_len in 0..record.len() {
+            assert!(decode_igsymbol_at(&record[..trunc_len], 0).is_none());
             assert!(decode_igsymbols(&record[..trunc_len]).is_empty());
         }
         assert!(decode_igsymbols(&[]).is_empty());
@@ -11824,10 +12310,13 @@ mod tests {
         let raw_tail = shortest_dependency_tail(2);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
 
-        let decoded = decode_dependency_objects(&record);
+        let decoded = decode_dependency_objects(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let group = &decoded[0];
-        assert_eq!(group.byte_range, 0..record.len());
+        assert_eq!(
+            group.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
         assert_eq!(group.type_code, PSM_TYPE_CODE_DEPENDENCY_OBJECT);
         assert_eq!(group.type_flags, 0);
         assert_eq!(group.bytes_to_follow, 52);
@@ -11851,7 +12340,7 @@ mod tests {
             0x02BB,
             &shortest_dependency_tail(22),
         );
-        let decoded = decode_dependency_objects(&group_of_22);
+        let decoded = decode_dependency_objects(&chain_stream(&group_of_22));
         assert_eq!(
             decoded.len(),
             1,
@@ -11868,79 +12357,135 @@ mod tests {
             &shortest_dependency_tail(22),
         );
         assert!(
-            decode_dependency_objects(&too_many).is_empty(),
+            decode_dependency_object_at(&too_many, 0).is_none(),
             "23 members do not fit in 212 bytes"
         );
     }
 
+    /// A dependency object that lists no member is the same record with a
+    /// count of zero: the 16-byte head, no `(oid, 1)` entries, no flags, the
+    /// six bytes every record has before its closing block, and the block.
+    /// `A井场`'s `/Sheet6 +251219` is one — oid 46838, 36 bytes, the payload
+    /// below verbatim — and it was the one record of the 53 backup sheets a
+    /// family refused: the decoder required a count of at least one and,
+    /// from it, a payload of at least 44 bytes. `36 + 8·k` holds at `k = 0`.
+    #[test]
+    fn dependency_object_with_no_member_decodes() {
+        let payload: [u8; 36] = [
+            0xf6, 0xb6, 0x00, 0x00, // oid 46838
+            0x06, 0x00, 0x00, 0x00, // owner: the page
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
+            0x00, 0x00, // member count: none
+            0x00, 0x00, 0x03, 0x00, 0x00, 0x00, // the six bytes before the block
+            0x07, 0x00, 0x01, 0x00, 0x08, 0x00, // block: type 7, selector 1, 8 bytes
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_DEPENDENCY_OBJECT.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+
+        let decoded = decode_dependency_objects(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1, "a group of no member is still a record");
+        assert_eq!(decoded[0].oid, 46838);
+        assert_eq!(decoded[0].parent_ref, 6);
+        assert_eq!(decoded[0].group_kind_word, 0);
+        assert_eq!(decoded[0].bytes_to_follow, 36);
+        // The closing block describes itself: its length word and the bytes
+        // after it end the record.
+        let tail = &decoded[0].raw_reference_payload;
+        assert_eq!(tail.len(), 18);
+        assert_eq!(u16::from_le_bytes([tail[8], tail[9]]), 8);
+
+        // One byte short of the head, the six bytes and the shortest block,
+        // it is not this record.
+        let mut short = record[..record.len() - 2].to_vec();
+        short[2..6].copy_from_slice(&34u32.to_le_bytes());
+        assert!(decode_dependency_object_at(&short, 0).is_none());
+    }
+
+    // Each refusal below starts from a record that decodes — a group of two
+    // with room for two — so that the one thing changed is what refuses it.
+
     #[test]
     fn dependency_object_rejects_wrong_type_code() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_object_at(&record, 0).is_some());
         record[0] = 0x18;
         record[1] = 0x00;
 
-        assert!(decode_dependency_objects(&record).is_empty());
+        assert!(decode_dependency_object_at(&record, 0).is_none());
     }
 
     #[test]
     fn dependency_object_rejects_nonzero_type_flags() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         let flagged_type = PSM_TYPE_CODE_DEPENDENCY_OBJECT | 0x4000;
         record[0..2].copy_from_slice(&flagged_type.to_le_bytes());
 
-        assert!(decode_dependency_objects(&record).is_empty());
+        assert!(decode_dependency_object_at(&record, 0).is_none());
     }
 
     #[test]
     fn dependency_object_rejects_invalid_size_and_truncation() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
-        record[2..6].copy_from_slice(&43u32.to_le_bytes());
-        assert!(decode_dependency_objects(&record).is_empty());
-
+        // An odd length, with the payload grown to match so that only the
+        // parity is wrong.
+        let mut raw_tail = shortest_dependency_tail(2);
+        raw_tail.push(0x01);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
-        assert!(decode_dependency_objects(&record[..record.len() - 1]).is_empty());
+        assert_eq!(record.len(), 6 + 53);
+        assert!(decode_dependency_object_at(&record, 0).is_none());
+
+        let raw_tail = shortest_dependency_tail(2);
+        let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_object_at(&record[..record.len() - 1], 0).is_none());
+        assert!(decode_dependency_objects(&chain_stream(&record[..record.len() - 1])).is_empty());
     }
 
     #[test]
     fn dependency_object_rejects_invalid_header_fields() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
+        assert!(decode_dependency_object_at(
+            &build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail),
+            0
+        )
+        .is_some());
         assert!(
-            decode_dependency_objects(&build_synthetic_dependency_object_record(
-                0, 6, 2, 0x01A1, &raw_tail
-            ))
-            .is_empty()
+            decode_dependency_object_at(
+                &build_synthetic_dependency_object_record(0, 6, 2, 0x01A1, &raw_tail),
+                0
+            )
+            .is_none(),
+            "an oid of zero"
         );
         assert!(
-            decode_dependency_objects(&build_synthetic_dependency_object_record(
-                42, 7, 2, 0x01A1, &raw_tail
-            ))
-            .is_empty()
-        );
-        assert!(
-            decode_dependency_objects(&build_synthetic_dependency_object_record(
-                42, 6, 0, 0x01A1, &raw_tail
-            ))
-            .is_empty()
+            decode_dependency_object_at(
+                &build_synthetic_dependency_object_record(42, 7, 2, 0x01A1, &raw_tail),
+                0
+            )
+            .is_none(),
+            "an owner other than the page"
         );
     }
 
     #[test]
     fn dependency_object_rejects_nonzero_reserved_prefix() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_object_at(&record, 0).is_some());
         record[6 + 8] = 1;
 
-        assert!(decode_dependency_objects(&record).is_empty());
+        assert!(decode_dependency_object_at(&record, 0).is_none());
     }
 
     #[test]
     fn dependency_object_decoder_is_panic_safe_on_short_input() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         for trunc_len in 0..record.len() {
+            assert!(decode_dependency_object_at(&record[..trunc_len], 0).is_none());
             assert!(decode_dependency_objects(&record[..trunc_len]).is_empty());
         }
         assert!(decode_dependency_objects(&[]).is_empty());
@@ -11973,313 +12518,10 @@ mod tests {
         let mut data = first;
         data.extend_from_slice(&second);
 
-        let decoded = decode_dependency_objects(&data);
+        let decoded = decode_dependency_objects(&chain_stream(&data));
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 42);
         assert_eq!(decoded[1].oid, 43);
-    }
-
-    #[test]
-    fn primitive_line_byte_range_covers_full_record_when_attribute_tail_present() {
-        // Build a record whose bytes_to_follow covers its 12 uncovered
-        // header bytes, the 48-byte payload, and a 200-byte attribute tail.
-        const TAIL_LEN: usize = 200;
-        const BYTES_TO_FOLLOW: usize = SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW + TAIL_LEN;
-        let mut record = Vec::new();
-        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
-        record.extend_from_slice(&type_word.to_le_bytes());
-        record.extend_from_slice(&(BYTES_TO_FOLLOW as u32).to_le_bytes());
-        // oid
-        record.extend_from_slice(&123u32.to_le_bytes());
-        // 8-byte aux
-        record.extend_from_slice(&[0u8; 8]);
-        // GLine2d payload
-        for v in [0.0f64, 0.0, 1.0, 0.0, 0.0, 1.0] {
-            record.extend_from_slice(&v.to_le_bytes());
-        }
-        record.extend_from_slice(&[0xAB; TAIL_LEN]);
-
-        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
-        assert_eq!(decoded.len(), 1);
-        let line = &decoded[0];
-        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
-        // byte_range covers the envelope plus everything it declares, tail
-        // included — not just the geometry payload.
-        assert_eq!(
-            line.byte_range.end,
-            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + BYTES_TO_FOLLOW
-        );
-        assert_eq!(line.bytes_to_follow as usize, BYTES_TO_FOLLOW);
-    }
-
-    // -----------------------------------------------------------------
-    // Phase 26: PSM 0x0010 attribute-fragment decoder tests
-    // -----------------------------------------------------------------
-
-    fn build_attribute_fragment(marker: u32, aux: [u8; 8], strings: &[&str]) -> Vec<u8> {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&marker.to_le_bytes());
-        payload.extend_from_slice(&aux);
-        for s in strings {
-            let units: Vec<u16> = s.encode_utf16().collect();
-            payload.extend_from_slice(&(units.len() as u16).to_le_bytes());
-            for u in units {
-                payload.extend_from_slice(&u.to_le_bytes());
-            }
-        }
-        let mut out = Vec::new();
-        out.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(&payload);
-        out
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_single_string() {
-        let rec = build_attribute_fragment(
-            0x0001_0002,
-            [3, 0, 1, 0, 0x44, 0, 0, 0],
-            &["ODOIL020150 MM"],
-        );
-        let decoded = decode_attribute_fragments(&rec);
-        assert_eq!(decoded.len(), 1);
-        let f = &decoded[0];
-        assert_eq!(f.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-        assert_eq!(f.marker, 0x0001_0002);
-        assert_eq!(f.aux, [3, 0, 1, 0, 0x44, 0, 0, 0]);
-        assert_eq!(f.strings.len(), 1);
-        assert_eq!(f.strings[0].char_count, 14);
-        assert_eq!(f.strings[0].text, "ODOIL020150 MM");
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_cjk_string() {
-        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["设计温度"]);
-        let decoded = decode_attribute_fragments(&rec);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].strings[0].text, "设计温度");
-        assert_eq!(decoded[0].strings[0].char_count, 4);
-    }
-
-    #[test]
-    fn attribute_fragment_decodes_multiple_strings() {
-        let rec = build_attribute_fragment(1, [0; 8], &["A3", "DN80"]);
-        let decoded = decode_attribute_fragments(&rec);
-        assert_eq!(decoded.len(), 1);
-        let texts: Vec<&str> = decoded[0].strings.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(texts, vec!["A3", "DN80"]);
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_control_char_string() {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&1u32.to_le_bytes());
-        payload.extend_from_slice(&[0u8; 8]);
-        payload.extend_from_slice(&2u16.to_le_bytes());
-        // U+0001 U+0002 — control chars, must reject the whole record.
-        payload.extend_from_slice(&[0x01, 0x00, 0x02, 0x00]);
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragments(&rec).is_empty());
-    }
-
-    #[test]
-    fn attribute_fragment_skips_truncated_length_prefix() {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&1u32.to_le_bytes());
-        payload.extend_from_slice(&[0u8; 8]);
-        payload.extend_from_slice(&100u16.to_le_bytes());
-        payload.extend_from_slice(&[0x41, 0x00]); // only 1 char available, len says 100
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragments(&rec).is_empty());
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_wrong_type_code() {
-        let mut rec = build_attribute_fragment(1, [0; 8], &["A3"]);
-        rec[0] = 0x18; // igLine2d type code
-        assert!(decode_attribute_fragments(&rec).is_empty());
-    }
-
-    #[test]
-    fn attribute_fragment_rejects_too_short_payload() {
-        // payload < marker(4)+aux(8)+len(2) = 14
-        let payload = vec![0u8; 10];
-        let mut rec = Vec::new();
-        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        rec.extend_from_slice(&payload);
-        assert!(decode_attribute_fragments(&rec).is_empty());
-    }
-
-    #[test]
-    fn attribute_fragment_at_returns_some_for_valid_offset() {
-        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["DN80"]);
-        let f = decode_attribute_fragment_at(&rec, 0).expect("valid offset must decode");
-        assert_eq!(f.strings[0].text, "DN80");
-        assert_eq!(f.byte_range, 0..rec.len());
-    }
-
-    #[test]
-    fn attribute_fragment_decoder_is_panic_safe() {
-        let rec = build_attribute_fragment(
-            0x0001_0002,
-            [1, 2, 3, 4, 5, 6, 7, 8],
-            &["ODOIL020150 MM", "DN80"],
-        );
-        for trunc in 0..rec.len() {
-            let _ = decode_attribute_fragments(&rec[..trunc]);
-        }
-        let noise: Vec<u8> = (0..4096u32).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_attribute_fragments(&noise);
-        let _ = decode_attribute_fragments(&vec![0xFFu8; 2048]);
-    }
-
-    // Phase 18: PSM 0x0010 sub-record family audit-only decoder tests
-    // -----------------------------------------------------------------
-
-    fn build_synthetic_sub_record_0x0010(type_flags: u16, payload: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(6 + payload.len());
-        let type_word = PSM_TYPE_CODE_SUB_RECORD_0X0010 | ((type_flags & 0x3) << 14);
-        out.extend_from_slice(&type_word.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        out.extend_from_slice(payload);
-        out
-    }
-
-    #[test]
-    fn sub_record_0x0010_decodes_canonical_payload() {
-        let payload: Vec<u8> = (0..16u8).collect();
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&record);
-        assert_eq!(decoded.len(), 1);
-        let rec = &decoded[0];
-        assert_eq!(rec.byte_range, 0..(6 + payload.len()));
-        assert_eq!(rec.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
-        assert_eq!(rec.type_flags, 0);
-        assert_eq!(rec.bytes_to_follow as usize, payload.len());
-        assert_eq!(rec.raw_payload, payload);
-        // Phase 19: leading_word = u16::from_le_bytes([payload[0],
-        // payload[1]]) = LE(0x00, 0x01) = 0x0100.
-        assert_eq!(rec.leading_word, Some(0x0100));
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoded_at_returns_some_for_valid_offset() {
-        let payload = vec![0xAAu8; 32];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let rec = decode_sub_record_0x0010_at(&record, 0).expect("valid offset must decode");
-        assert_eq!(rec.bytes_to_follow, 32);
-        assert_eq!(rec.raw_payload.len(), 32);
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_wrong_type_code() {
-        let payload = vec![0u8; 16];
-        let mut record = build_synthetic_sub_record_0x0010(0, &payload);
-        // Flip type_code to 0x0018 (igLine2d).
-        record[0] = 0x18;
-        record[1] = 0x00;
-        assert!(decode_sub_records_0x0010(&record).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_zero_bytes_to_follow() {
-        let payload = vec![];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        // bytes_to_follow = 0 < SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW (8).
-        assert!(decode_sub_records_0x0010(&record).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_below_minimum_bytes_to_follow() {
-        // bytes_to_follow = 7 < min (8). Must build a 13-byte buffer
-        // so the header fits but payload is too small to be accepted.
-        let mut record = Vec::with_capacity(6 + 7);
-        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        record.extend_from_slice(&7u32.to_le_bytes());
-        record.extend_from_slice(&[0u8; 7]);
-        assert!(decode_sub_records_0x0010(&record).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_oversized_bytes_to_follow() {
-        // Encode a fake bytes_to_follow well above the cap; we only
-        // need the header (6 bytes) — payload bounds will reject the
-        // record anyway because data.len() is small.
-        let mut record = Vec::with_capacity(6);
-        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
-        record.extend_from_slice(&(SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW + 1).to_le_bytes());
-        let mut padded = record.clone();
-        padded.extend(std::iter::repeat_n(0u8, 16));
-        assert!(decode_sub_records_0x0010(&padded).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_rejects_truncated_payload() {
-        let payload = vec![0u8; 16];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        // Drop the last 4 payload bytes; bytes_to_follow header still
-        // says 16 but only 12 are available.
-        let truncated = &record[..record.len() - 4];
-        assert!(decode_sub_records_0x0010(truncated).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_returns_empty_for_short_or_empty_input() {
-        assert!(decode_sub_records_0x0010(&[]).is_empty());
-        // 13 bytes = exactly header (6) + min payload (8) - 1.
-        assert!(decode_sub_records_0x0010(&[0u8; 13]).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoder_is_panic_safe_on_short_input() {
-        let payload = vec![0xCCu8; 16];
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        for trunc_len in 0..record.len() {
-            // Should not panic; truncated inputs return an empty vec.
-            let _ = decode_sub_records_0x0010(&record[..trunc_len]);
-        }
-    }
-
-    #[test]
-    fn sub_record_0x0010_decoder_is_panic_safe_on_random_noise() {
-        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_sub_records_0x0010(&noise);
-        assert!(decode_sub_records_0x0010(&vec![0u8; 4096]).is_empty());
-        // All-0xFF stream never matches type_code 0x0010 (low 14 bits
-        // would be 0x3FFF, not 0x0010).
-        assert!(decode_sub_records_0x0010(&vec![0xFFu8; 4096]).is_empty());
-    }
-
-    #[test]
-    fn sub_record_0x0010_decodes_two_back_to_back_records() {
-        let payload_a = vec![0xAAu8; 16];
-        let payload_b = vec![0xBBu8; 24];
-        let mut data = build_synthetic_sub_record_0x0010(0, &payload_a);
-        data.extend_from_slice(&build_synthetic_sub_record_0x0010(0, &payload_b));
-        let decoded = decode_sub_records_0x0010(&data);
-        assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].raw_payload, payload_a);
-        assert_eq!(decoded[1].raw_payload, payload_b);
-        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
-    }
-
-    #[test]
-    fn sub_record_0x0010_preserves_type_flags() {
-        // The lower flag bit (type word 0x4000) rides through: the native
-        // reader does not test it.
-        let payload = vec![0u8; 16];
-        let record = build_synthetic_sub_record_0x0010(0b01, &payload);
-        let decoded = decode_sub_records_0x0010(&record);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].type_flags, 0b01);
-        assert_eq!(decoded[0].type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
     }
 
     #[test]
@@ -12287,11 +12529,14 @@ mod tests {
         // The upper flag bit (type word 0x8000) is the one PSMSerializeIn
         // seeks past before reading the oid; `parse_live_psm_header` turns
         // every family away from it, with or without the lower bit beside.
-        let payload = vec![0u8; 16];
-        for flags in [0b10, 0b11] {
-            let record = build_synthetic_sub_record_0x0010(flags, &payload);
+        let live = build_synthetic_igline2d_record(7, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        assert!(decode_igline_at(&live, 0).is_some());
+        for flags in [0b10u16, 0b11] {
+            let mut record = live.clone();
+            let type_word = PSM_TYPE_CODE_IGLINE2D | (flags << 14);
+            record[..2].copy_from_slice(&type_word.to_le_bytes());
             assert!(
-                decode_sub_records_0x0010(&record).is_empty(),
+                decode_igline_at(&record, 0).is_none(),
                 "flags {flags:#b} must be skipped"
             );
             let header = parse_psm_header(&record, 0).expect("envelope reads");
@@ -12354,65 +12599,6 @@ mod tests {
             }
         }
         assert_eq!(streams, 30, "every length 1-4 under every skip-bit choice");
-    }
-
-    // -----------------------------------------------------------------
-    // Phase 19: PSM 0x0010 leading_word audit field
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn sub_record_0x0010_leading_word_matches_first_two_payload_bytes_le() {
-        // Payload starts with the Phase-19-probe-confirmed dominant
-        // leading word 0x0002 (28% of cross-fixture records).
-        let mut payload = vec![0x02u8, 0x00];
-        payload.extend(std::iter::repeat_n(0xAAu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&record);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x0002));
-
-        // Same exercise with 0x0003 (the second-most-common leading
-        // word per Phase 19 probe, 3.6% of records).
-        let mut payload = vec![0x03u8, 0x00];
-        payload.extend(std::iter::repeat_n(0xBBu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&record);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x0003));
-
-        // Non-trivial byte-order check: payload starts with 0x1C 0x4E
-        // → LE u16 = 0x4E1C (one of the size-16 bucket dominant words).
-        let mut payload = vec![0x1Cu8, 0x4E];
-        payload.extend(std::iter::repeat_n(0xCCu8, 14));
-        let record = build_synthetic_sub_record_0x0010(0, &payload);
-        let decoded = decode_sub_records_0x0010(&record);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].leading_word, Some(0x4E1C));
-    }
-
-    #[test]
-    fn sub_record_0x0010_leading_word_is_none_for_sub_two_byte_payload() {
-        // The decoder enforces bytes_to_follow >= 8, so the only way
-        // to observe `leading_word == None` is to construct the DTO
-        // manually with a < 2 byte raw_payload. This tests that the
-        // schema honors that contract (and protects against a future
-        // refactor that drops the Option<>).
-        let dto = SheetSubRecord0x0010Decoded {
-            byte_range: 0..6,
-            type_code: PSM_TYPE_CODE_SUB_RECORD_0X0010,
-            type_flags: 0,
-            bytes_to_follow: 0,
-            raw_payload: Vec::new(),
-            leading_word: None,
-        };
-        assert_eq!(dto.leading_word, None);
-        let dto_one = SheetSubRecord0x0010Decoded {
-            leading_word: None,
-            raw_payload: vec![0x42],
-            bytes_to_follow: 1,
-            ..dto.clone()
-        };
-        assert_eq!(dto_one.leading_word, None);
     }
 
     // Phase 25-A spatial-distribution analysis tests.
@@ -12651,7 +12837,7 @@ mod tests {
     fn igboundary2d_decodes_canonical_closed_triangle() {
         let record = canonical_igboundary_triangle();
         assert_eq!(record.len(), 6 + 172, "3-segment record is 178 bytes");
-        let decoded = decode_igboundaries(&record);
+        let decoded = decode_igboundaries(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let b = &decoded[0];
         assert_eq!(b.type_code, PSM_TYPE_CODE_IGBOUNDARY2D);
@@ -12690,14 +12876,17 @@ mod tests {
             ]
         );
         assert!(b.is_closed_loop(1e-9));
-        assert_eq!(b.byte_range, 0..(6 + 172));
+        assert_eq!(
+            b.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + 6 + 172
+        );
     }
 
     #[test]
     fn igboundary2d_rejects_wrong_type_code() {
         let mut record = canonical_igboundary_triangle();
         record[0] = 0x18; // igLine2d type code instead
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
@@ -12705,7 +12894,7 @@ mod tests {
         let mut record = canonical_igboundary_triangle();
         record[2] = 171; // 172 -> 171 breaks `49 + 41 × n`
         record.truncate(6 + 171);
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     /// Payload `+8` names the sheet layer the boundary sits on, so
@@ -12742,21 +12931,21 @@ mod tests {
     fn igboundary2d_rejects_wrong_sub_type_word() {
         let mut record = canonical_igboundary_triangle();
         record[6 + 12] = 0x11;
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
     fn igboundary2d_rejects_wrong_sub_header_flag() {
         let mut record = canonical_igboundary_triangle();
         record[6 + 18] = 2; // u32 at +18 must equal 1
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
     fn igboundary2d_rejects_missing_segment_tag() {
         let mut record = canonical_igboundary_triangle();
         record[6 + 61] = 0x68; // second group tag corrupted
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
@@ -12764,7 +12953,7 @@ mod tests {
         let mut record = canonical_igboundary_triangle();
         // member_count u32 lives at payload +144 (pos=127 + 17).
         record[6 + 144] = 4;
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
@@ -12772,7 +12961,7 @@ mod tests {
         let mut record = canonical_igboundary_triangle();
         let nan = f64::NAN.to_le_bytes();
         record[6 + 29..6 + 37].copy_from_slice(&nan); // first segment start.x
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
@@ -12780,7 +12969,7 @@ mod tests {
         let mut record = canonical_igboundary_triangle();
         let big = 1e10f64.to_le_bytes();
         record[6 + 127..6 + 135].copy_from_slice(&big); // anchor.x
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
@@ -12794,14 +12983,14 @@ mod tests {
             p,
             &[10, 11, 12],
         );
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     #[test]
     fn igboundary2d_rejects_zero_segment_count() {
         let mut record = canonical_igboundary_triangle();
         record[6 + 22..6 + 26].copy_from_slice(&0u32.to_le_bytes());
-        assert!(decode_igboundaries(&record).is_empty());
+        assert!(decode_igboundary_at(&record, 0).is_none());
     }
 
     /// `EF井场 注采阀组工艺及自控流程图.pid` `/Sheet6 +730028`, oid 52844,
@@ -12838,7 +13027,7 @@ mod tests {
     #[test]
     fn igboundary2d_decodes_a_drawing_boundary_over_a_circle() {
         let record = ef_circle_boundary_record();
-        let decoded = decode_igboundaries(&record);
+        let decoded = decode_igboundaries(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let b = &decoded[0];
         assert_eq!(b.oid, 52844);
@@ -12891,20 +13080,20 @@ mod tests {
 
         let mut flat = ef_circle_boundary_record();
         flat[6 + 45..6 + 53].copy_from_slice(&0f64.to_le_bytes());
-        assert!(decode_igboundaries(&flat).is_empty(), "zero radius");
+        assert!(decode_igboundary_at(&flat, 0).is_none(), "zero radius");
 
         let mut longer = ef_circle_boundary_record();
         longer.push(0);
         longer[2..6].copy_from_slice(&100u32.to_le_bytes());
         assert!(
-            decode_igboundaries(&longer).is_empty(),
+            decode_igboundary_at(&longer, 0).is_none(),
             "a byte past the refs"
         );
 
         let mut other_sub = ef_circle_boundary_record();
         other_sub[6 + 12] = 0x11;
         assert!(
-            decode_igboundaries(&other_sub).is_empty(),
+            decode_igboundary_at(&other_sub, 0).is_none(),
             "sub-type 0x0011"
         );
     }
@@ -12924,7 +13113,7 @@ mod tests {
             (0.2, 0.15),
             &[10, 11, 12],
         );
-        let decoded = decode_igboundaries(&record);
+        let decoded = decode_igboundaries(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         assert!(!decoded[0].is_closed_loop(1e-9));
     }
@@ -12933,6 +13122,7 @@ mod tests {
     fn igboundary2d_decoder_is_panic_safe_on_short_input() {
         let record = canonical_igboundary_triangle();
         for trunc_len in 0..record.len() {
+            assert!(decode_igboundary_at(&record[..trunc_len], 0).is_none());
             assert!(
                 decode_igboundaries(&record[..trunc_len]).is_empty(),
                 "truncated input length {trunc_len} must not decode"
@@ -12966,12 +13156,193 @@ mod tests {
             (0.47, 0.43),
             &[521, 524, 523],
         ));
-        let decoded = decode_igboundaries(&data);
+        let decoded = decode_igboundaries(&chain_stream(&data));
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 81);
         assert_eq!(decoded[1].oid, 522);
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
         assert!(decoded[1].is_closed_loop(1e-9));
+    }
+
+    /// A boundary of two loops: an outer square of side 4 counter-clockwise
+    /// and a square hole of side 2 inside it clockwise, the anchor between
+    /// the two, and one reference per member — the layout of `XA-A1.igr`'s
+    /// two letters with a counter, in eight lines.
+    fn two_loop_boundary_payload() -> Vec<u8> {
+        let outer = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)];
+        let hole = [(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&5074u32.to_le_bytes());
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.extend_from_slice(&40u32.to_le_bytes());
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        for ring in [outer, hole] {
+            payload.extend_from_slice(&4u32.to_le_bytes());
+            payload.extend_from_slice(&[2, 1]);
+            for index in 0..4 {
+                let (from, to) = (ring[index], ring[(index + 1) % 4]);
+                payload.push(IGBOUNDARY2D_SEGMENT_TAG);
+                for value in [from.0, from.1, to.0, to.1] {
+                    payload.extend_from_slice(&f64::to_le_bytes(value));
+                }
+            }
+        }
+        for value in [0.5f64, 0.5] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(1);
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        for (index, sub_word) in [5u16, 4, 4, 4, 2, 0, 0, 0].into_iter().enumerate() {
+            payload.extend_from_slice(&(1000 + index as u32).to_le_bytes());
+            payload.extend_from_slice(&0x00CBu16.to_le_bytes());
+            payload.extend_from_slice(&sub_word.to_le_bytes());
+        }
+        payload
+    }
+
+    fn boundary_record(payload: &[u8]) -> Vec<u8> {
+        let mut out = PSM_TYPE_CODE_IGBOUNDARY2D.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn igboundary2d_decodes_a_boundary_of_two_loops() {
+        let record = boundary_record(&two_loop_boundary_payload());
+        let decoded = decode_igboundaries(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1);
+        let b = &decoded[0];
+        assert_eq!((b.oid, b.sheet_layer_ref, b.index), (5074, 8, 40));
+        assert_eq!(b.sub_type_word, 0x0000);
+        assert_eq!(b.loop_segment_counts, [4, 4]);
+        assert_eq!(b.segment_count, 8);
+        assert_eq!(b.sub_header_tail, [2, 1]);
+        assert_eq!(b.anchor, (0.5, 0.5));
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs
+                .iter()
+                .map(|reference| (
+                    reference.member_oid,
+                    reference.class_word,
+                    reference.sub_word
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (1000, 0x00CB, 5),
+                (1001, 0x00CB, 4),
+                (1002, 0x00CB, 4),
+                (1003, 0x00CB, 4),
+                (1004, 0x00CB, 2),
+                (1005, 0x00CB, 0),
+                (1006, 0x00CB, 0),
+                (1007, 0x00CB, 0),
+            ]
+        );
+        let loops: Vec<Vec<(f64, f64)>> = b
+            .loops()
+            .map(|segments| segments.iter().map(|segment| segment.start).collect())
+            .collect();
+        assert_eq!(
+            loops,
+            [
+                vec![(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)],
+                vec![(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)],
+            ]
+        );
+        // Each loop closes on its own; read as one chain the eight segments
+        // would not.
+        assert!(b.is_closed_loop(1e-9));
+        assert_eq!(
+            b.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+    }
+
+    #[test]
+    fn igboundary2d_of_two_loops_need_not_name_one_line_a_member() {
+        // `XA-A1.igr`'s oid 5076 names 217 lines for 216 members: one more
+        // reference than members still closes the payload.
+        let mut payload = two_loop_boundary_payload();
+        let count_at = payload.len() - 8 * 8 - 4;
+        payload[count_at..count_at + 4].copy_from_slice(&9u32.to_le_bytes());
+        payload.extend_from_slice(&[0xEC, 0x12, 0, 0, 0xCB, 0, 0, 0]);
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert_eq!(decoded.member_refs.len(), 9);
+        assert_eq!(decoded.segment_count, 8);
+    }
+
+    #[test]
+    fn igboundary2d_of_two_loops_must_close_its_payload() {
+        let whole = two_loop_boundary_payload();
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+        let count_at = whole.len() - 8 * 8 - 4;
+
+        // A reference count the payload does not hold, either way.
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&7u32.to_le_bytes());
+        refused("one reference too few is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&9u32.to_le_bytes());
+        refused("one reference too many is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a reference count that overflows", payload);
+
+        // Loops the payload does not hold.
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&3u32.to_le_bytes());
+        refused("three loops stated, two present", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a loop count past the payload", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&0u32.to_le_bytes());
+        refused("no loop at all", payload);
+
+        // A loop that states no member, or more than it holds.
+        let second_loop_at = 22 + 6 + 4 * 33;
+        let mut payload = whole.clone();
+        payload[second_loop_at..second_loop_at + 4].copy_from_slice(&0u32.to_le_bytes());
+        refused("the second loop is empty", payload);
+        let mut payload = whole.clone();
+        payload[second_loop_at..second_loop_at + 4].copy_from_slice(&5u32.to_le_bytes());
+        refused("the second loop states a fifth member", payload);
+
+        // A member tag the template vocabulary does not have.
+        let mut payload = whole.clone();
+        payload[second_loop_at + 6] = 0x66;
+        refused("an unknown member tag", payload);
+
+        // A coordinate or an anchor that is not a number.
+        let mut payload = whole.clone();
+        payload[29..37].copy_from_slice(&f64::NAN.to_le_bytes());
+        refused("a NaN vertex", payload);
+        let anchor_at = count_at - 1 - 16;
+        let mut payload = whole.clone();
+        payload[anchor_at..anchor_at + 8].copy_from_slice(&f64::INFINITY.to_le_bytes());
+        refused("an infinite anchor", payload);
+
+        // Every truncation, and the same bytes under the drawing-side
+        // sub-type, which states one loop only.
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0010u16.to_le_bytes());
+        refused("two loops under sub-type 0x0010", payload);
     }
 
     /// Build a linked-template (`0x0000` sub-type) `igBoundary2d` whose
@@ -13037,7 +13408,7 @@ mod tests {
         let centre = (0.394_572, 0.103_313);
         let record =
             build_template_boundary_arc_and_chord(0.172_04, 5.996_42, centre, 0.003_651, 0);
-        let decoded = decode_igboundaries(&record);
+        let decoded = decode_igboundaries(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].sub_type_word, 0x0000);
         assert!(decoded[0].is_closed_loop(1e-12));
@@ -13064,7 +13435,7 @@ mod tests {
         let centre = (0.403_232, 0.100_857);
         let record =
             build_template_boundary_arc_and_chord(4.425_17, 0.601_38, centre, 0.000_096, 1);
-        let decoded = decode_igboundaries(&record);
+        let decoded = decode_igboundaries(&chain_stream(&record));
         assert_eq!(decoded.len(), 1);
         let unwrapped: Vec<f64> = flattened_arc_angles(&decoded[0], centre)
             .into_iter()

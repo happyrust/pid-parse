@@ -28,7 +28,8 @@
 //!   pattern (`JStyleSimpleDashType` fit mode 2) is restarted on every vertex
 //!   and stretched to each straight piece the way `style.dll` lays it out
 //!   (`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`).
-//! * The A2 sheet reads 0.9819 / 210.712 mm because it is the first A2 page
+//! * The A2 sheet read 0.9819 / 210.712 mm on that date (it is pinned below at
+//!   the 0.9829 / 187.091 mm it reads today) because it is the first A2 page
 //!   this crate has ever had a reference for, and its furniture is a third
 //!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
 //!   `pid-plot/assets/template-masks.json` had no A2 entry before this round,
@@ -92,16 +93,42 @@
 //! plot. The A2 page reads 0.9881, 208.840 mm uncovered and 187.091 mm extra,
 //! with 250 of 261 labels paired: every furniture label pairs, and the eleven
 //! that miss are the ones the masked view misses.
+//!
+//! A paired label is held two ways (2026-11-10,
+//! `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`).
+//! Every lettering class of a page — in the masked view and on the whole
+//! page, whatever its size, `unknown` included — reads inside the two class
+//! thresholds, with no exception. A class mean cannot see a single label, so
+//! the labels whose anchor point lands more than 0.15 mm from the
+//! reference's or whose run is more than 0.05 mm wider or narrower are
+//! counted on the whole page and pinned: 50 over the eleven pages, each with
+//! a cause on record.
+//!
+//! A borrowed run is held to the reference's font family as well
+//! (2026-11-10). Where the face a label names cannot draw a character, the
+//! plot sets it in another: fourteen paired runs on the eleven pages, twelve
+//! `℃` after Arial Narrow digits and the A2 sheet's two `动火点`. The
+//! reference sets all fourteen in NSimSun, and so does this crate, at the
+//! reference's size — SimSun, the same family, on a machine with no NSimSun
+//! file. Each page's count of borrowed runs is pinned, and its count of them
+//! in the reference's family may only rise: it is fourteen of fourteen.
+//!
+//! Until the borrowed runs were lettered as the reference letters them
+//! (2026-11-11), the twelve `℃` were FangSong at the label's own 10.17 pt
+//! and the two `动火点` were squeezed to their 1.524 mm step: the pieces of
+//! the `℃` labels read +0.0294 body heights wide on eight pages, pinned
+//! there as the one class past the width threshold, 64 labels were past the
+//! two limits, and two of the fourteen runs were in the reference's family.
 
 use std::path::PathBuf;
 
 use pid_plot::compare::{
-    MaskRect, UnpairedReason, UnpairedStroke, compare_plots_with_model, template_masks,
-    write_overlay, write_report,
+    CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
+    compare_plots_with_model, template_masks, write_overlay, write_report,
 };
-use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::model::{PaperModel, lay_out_drawing};
-use pid_plot::read::read_plot;
+use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
+use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
+use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::write::{PlotFont, write_plot};
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
@@ -153,6 +180,16 @@ struct WholePage {
     max_extra_mm: f64,
     min_text_matched: usize,
     text_reference: usize,
+    /// Paired labels past [`LABEL_POSITION_MM`] or [`LABEL_WIDTH_MM`], an
+    /// equality: one more is a label that moved, one fewer a pin to lower.
+    text_off: usize,
+    /// Paired runs of ours set in a font family their label names no face of
+    /// — a borrowed `℃`, a borrowed `动火点` — an equality.
+    borrowed: usize,
+    /// Of [`Self::borrowed`], the runs the reference letters in the same
+    /// family ([`FAMILIES`]). It may only rise, and the pin rises with it:
+    /// fewer is a run that left the reference's family, more a pin to raise.
+    borrowed_in_family: usize,
 }
 
 /// One bridge's worth of slack above the reading, as `plot_compare.rs` holds
@@ -160,28 +197,85 @@ struct WholePage {
 /// does not.
 const EXTRA_SLACK_MM: f64 = 0.5;
 
-/// Smallest lettering class whose mean down-shift is gated, in labels.
-const CLASS_MIN_COUNT: usize = 10;
-
 /// Largest mean down-shift a lettering class may show, in body heights.
 ///
-/// Every class of ten or more labels on the eleven pages reads within
-/// ±0.026. The valve and motor `M` (`symbol/Middle`, 14–29 labels on each A0
-/// wellsite) read +0.094…+0.098 while a symbol body's ascent-measured height
-/// was stepped down as if it were a cap height; this is the gate that would
-/// have caught it.
+/// Held on every class a page has — a class of one label and `unknown` with
+/// the rest — in the masked view and on the whole page. No class on the
+/// eleven pages reads past ±0.016 (A2's `Left/Middle`, twelve labels, and its
+/// one `Left/Top` label). The valve and motor `M` (`symbol/Middle`, 14–29
+/// labels on each A0 wellsite) read +0.094…+0.098 while a symbol body's
+/// ascent-measured height was stepped down as if it were a cap height; this
+/// is the gate that would have caught it.
 const CLASS_DOWN_HEIGHTS: f64 = 0.04;
 
 /// Largest mean width difference a lettering class may show, in body heights.
 ///
-/// Every class of ten or more labels on the eleven pages reads within
-/// ±0.009 (the widest is A2's `Center/Middle`). Every `Center` class read
-/// about +0.028 while an upright two-glyph run kept its natural advance
-/// rather than the whole-pixel `lpDx` steps the plotter spaces it by, and
-/// the A2 `Left/Ascender` class read −0.320 while its 8 pt Arial line
-/// labels were lettered at the style size rather than the reference's
-/// `Tf 11.16`.
+/// Held on every class, as [`CLASS_DOWN_HEIGHTS`] is. No class reads past
+/// ±0.015, and only one past ±0.0021: the two fused valve tags left in
+/// `J K`'s `unknown`, +0.0146, which is the reader joining two labels into
+/// one run and not the lettering. A title block's two `Right/Bottom`
+/// certificate captions read +0.0149 on seven pages while a label's `Tm`
+/// carried the plotter's own stretch and not the driver's 256ths
+/// (`write/text_matrix.rs`). Every
+/// `Center` class read about +0.028 while an upright two-glyph run kept its
+/// natural advance rather than the whole-pixel `lpDx` steps the plotter
+/// spaces it by, and the A2 `Left/Ascender` class read −0.320 while its 8 pt
+/// Arial line labels were lettered at the style size rather than the
+/// reference's `Tf 11.16`. `Left/Ascender part` — the two pieces of a label
+/// such as `L=35℃`, whose `℃` the style's Arial Narrow cannot draw — read
+/// +0.0294 on the eight pages that have one while the borrowed `℃` was set
+/// at the label's own 10.17 pt instead of the reference's `Tf 9.6`; it reads
+/// −0.0003 now.
 const CLASS_ADVANCE_HEIGHTS: f64 = 0.02;
+
+/// How far a paired label's anchor point — the start of a left-anchored run,
+/// the middle of a centred one, the end of a right-anchored one — may land
+/// from the reference's before the label is counted in
+/// [`WholePage::text_off`], millimetres.
+///
+/// A class mean cannot see one label: a class of two hundred averages a
+/// label half a millimetre out down to nothing. This limit and
+/// [`LABEL_WIDTH_MM`] are the text census's
+/// (`probe_why_paired_labels_miss_the_reference`), which named a cause for
+/// each of the 64 labels then past them
+/// (`docs/analysis/2026-11-08-the-eight-text-residuals-are-the-drivers-own-placements.md`).
+/// Fourteen of the 64 were the borrowed runs — twelve `℃` 0.201 mm wide and
+/// the A2 sheet's two `动火点` 1.863 mm narrow — and came inside both limits
+/// when they were lettered as the reference letters them. Three were the
+/// air-cooler sheets' `SP:`, inside once each run of a record took its own
+/// whole-pixel start. Forty-four were the title blocks' SimSun labels at
+/// `800`, 0.05 to 0.43 mm wide or narrow while their `Tm` carried the
+/// plotter's own stretch; they are inside now that it carries the driver's
+/// 256ths (`write/text_matrix.rs`). The eleven pages come to 3: `J K`'s
+/// `1-1/2"` and `FC`, which the reader joins into one run, and the A2
+/// sheet's two boxed `仪表风管线`.
+const LABEL_POSITION_MM: f64 = 0.15;
+
+/// How much wider or narrower than the reference's a paired label's run may
+/// be before the label is counted in [`WholePage::text_off`], millimetres.
+const LABEL_WIDTH_MM: f64 = 0.05;
+
+/// The font families a plot letters in, each with the names its faces carry
+/// in a PDF.
+///
+/// A borrowed run is held to the reference's family rather than to its face.
+/// 宋体 and 新宋体 are one design — NSimSun is SimSun with a fixed-pitch
+/// Latin — so a `动火点` the reference sets in NSimSun and a machine without
+/// that file sets in SimSun is the same lettering, while a `℃` set in
+/// FangSong against the reference's NSimSun is not. A face is listed under
+/// every name it goes by:
+/// the reference's driver writes `ArialNarrow`, while this crate's writer
+/// embeds a program under its own family name, `Arial Narrow`, which is also
+/// what [`typeface_key`] calls the face a label names.
+///
+/// A name in no row fails the page that reads it, so a face new to these
+/// pages is given its family on purpose.
+const FAMILIES: [(&str, &[&str]); 4] = [
+    ("Arial", &["Arial"]),
+    ("Arial Narrow", &["Arial Narrow", "ArialNarrow"]),
+    ("FangSong", &["FangSong"]),
+    ("Song", &["SimSun", "NSimSun"]),
+];
 
 const PULSATION_DAMPER: &str = r"piping\specialty components\misc\pulsation damper.sym";
 
@@ -209,6 +303,11 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 583,
             text_reference: 583,
+            // The six were the title block's: their `Tm` now states the
+            // stretch the way the driver does (`write/text_matrix.rs`).
+            text_off: 0,
+            borrowed: 2,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -234,6 +333,14 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 813,
             text_reference: 813,
+            // Six were the title block's, as on the I sheet. The one left is
+            // `1-1/2"` beside `FC`: two labels 1.185 mm apart in height that
+            // the reader joins into one run because our page shows them one
+            // after the other, and whose joined run it measures along the
+            // slant, 0.058 mm long. The ink is where the reference's is.
+            text_off: 1,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -259,6 +366,10 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 959,
             text_reference: 959,
+            // The six were the title block's, as on the I sheet.
+            text_off: 0,
+            borrowed: 2,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -284,6 +395,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 3478.898 + EXTRA_SLACK_MM,
             min_text_matched: 155,
             text_reference: 155,
+            text_off: 0,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -309,6 +423,10 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 161,
             text_reference: 161,
+            // The six were the title block's, as on the I sheet.
+            text_off: 0,
+            borrowed: 0,
+            borrowed_in_family: 0,
         },
     },
     Pin {
@@ -334,6 +452,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 3478.694 + EXTRA_SLACK_MM,
             min_text_matched: 171,
             text_reference: 171,
+            text_off: 0,
+            borrowed: 2,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -359,6 +480,9 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 253,
             text_reference: 253,
+            text_off: 0,
+            borrowed: 2,
+            borrowed_in_family: 2,
         },
     },
     Pin {
@@ -366,7 +490,8 @@ const PINS: [Pin; 11] = [
         // no extra ink at all: see `docs/plans/2026-11-02-the-a1-stem.md`.
         // The air cooler's two fan ovals are `0x0063 igEllipse2d` records in
         // both the `.sym` and the cached body; drawing them took uncovered
-        // from 23.031 to 5.757 mm (plan §7).
+        // from 23.031 to 5.757 mm (plan §7), and fitting the signal dash to
+        // every straight piece took the rest to 0.000.
         name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
         page_mm: [841.0, 594.0],
         min_coverage: 0.9999,
@@ -389,6 +514,13 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 326,
             text_reference: 326,
+            // `SP:` was the seventh: its colon is 21 units after the label
+            // here, as the reference's is, since each run of a record starts
+            // on its own whole pixel (`write::record_run_start_px`). The six
+            // were the title block's, as on the I sheet.
+            text_off: 0,
+            borrowed: 1,
+            borrowed_in_family: 1,
         },
     },
     Pin {
@@ -416,6 +548,11 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 328,
             text_reference: 328,
+            // `SP:` was the seventh and the title block's the six, as on the
+            // A sheet.
+            text_off: 0,
+            borrowed: 1,
+            borrowed_in_family: 1,
         },
     },
     Pin {
@@ -443,12 +580,18 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 321,
             text_reference: 321,
+            // `SP:` was the seventh and the title block's the six, as on the
+            // A sheet.
+            text_off: 0,
+            borrowed: 1,
+            borrowed_in_family: 1,
         },
     },
     Pin {
         // The two `动火点` labels are the only whole-string font fallback on
-        // these sheets, both 2.5 mm and centred. Pitching that run at 1.524 mm
-        // a glyph brings both inside 1 mm. The mirrored valve's `D` pairs
+        // these sheets, both 2.5 mm and centred. Stepping that run 9 device
+        // units (1.524 mm) a glyph, each glyph at the reference's `Tf 9.6`,
+        // brings both inside 0.07 mm. The mirrored valve's `D` pairs
         // once it letters from the descender line. The other eleven stay out.
         // The template sits where the border frame places it, (0.388, 0.566)
         // mm off the origin, which pairs two more of its strokes.
@@ -481,6 +624,13 @@ const PINS: [Pin; 11] = [
             max_extra_mm: 187.091 + EXTRA_SLACK_MM,
             min_text_matched: 250,
             text_reference: 261,
+            // Two of the four were the company name's two lines, stated in
+            // the driver's 256ths now. The two left are the boxed
+            // `仪表风管线`, whose line hangs from the top of its box on the
+            // reference page: 0.212 and 0.201 mm off.
+            text_off: 2,
+            borrowed: 3,
+            borrowed_in_family: 3,
         },
     },
 ];
@@ -626,11 +776,14 @@ fn eleven_reference_plots_hold_their_readings() {
     // only after all eleven pass, so the delivery can never drift from what the
     // gate verified (see `deliver_plots`).
     let mut delivered: Vec<(&str, Vec<u8>)> = Vec::new();
+    let mut borrowed_on_all_pages = 0usize;
+    let mut in_family_on_all_pages = 0usize;
 
     for (pin, model) in PINS.iter().zip(&models) {
         let name = pin.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
-        let reference = read_plot(&reference_bytes).expect("read reference");
+        let (reference, reference_faces) =
+            read_plot_with_faces(&reference_bytes).expect("read reference");
         for axis in 0..2 {
             assert!(
                 (reference.page_mm[axis] - pin.page_mm[axis]).abs() < 1.0,
@@ -648,7 +801,7 @@ fn eleven_reference_plots_hold_their_readings() {
 
         let our_bytes = write_plot(model, &fonts).expect("write ours");
         delivered.push((name, our_bytes.clone()));
-        let ours = read_plot(&our_bytes).expect("read ours");
+        let (ours, our_faces) = read_plot_with_faces(&our_bytes).expect("read ours");
         let template = template_masks(reference.page_mm);
         let missing: Vec<MaskRect> = model
             .missing_boxes
@@ -766,25 +919,7 @@ fn eleven_reference_plots_hold_their_readings() {
             0,
             "{name} an unpaired stroke lies in a missing-symbol box"
         );
-        for class in &report.text_offsets {
-            if class.count < CLASS_MIN_COUNT || class.class == "unknown" {
-                continue;
-            }
-            assert!(
-                class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
-                "{name} {} down {:+.3} body heights over {} labels",
-                class.class,
-                class.mean_down_heights,
-                class.count
-            );
-            assert!(
-                class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
-                "{name} {} advance {:+.3} body heights over {} labels",
-                class.class,
-                class.mean_advance_heights,
-                class.count
-            );
-        }
+        assert_classes_hold(name, "masked", &report.text_offsets);
         let missing_now: Vec<&str> = model.missing_symbols.iter().map(String::as_str).collect();
         assert_eq!(
             missing_now, pin.missing_symbols,
@@ -822,7 +957,288 @@ fn eleven_reference_plots_hold_their_readings() {
             whole.text_matched,
             floor.min_text_matched
         );
+        // The furniture's lettering is in no class of the masked view at all,
+        // so the same two thresholds are held again here, where it is.
+        assert_classes_hold(name, "whole-page", &whole.text_offsets);
+        let off = labels_off(&whole, &reference);
+        assert!(
+            off.len() <= floor.text_off,
+            "{name} whole-page: {} paired labels land more than {LABEL_POSITION_MM} mm from \
+             the reference's or are more than {LABEL_WIDTH_MM} mm wider or narrower, {} are \
+             pinned; one of these is new:\n{}",
+            off.len(),
+            floor.text_off,
+            off.join("\n")
+        );
+        assert!(
+            off.len() >= floor.text_off,
+            "{name} whole-page: {} paired labels are past the label limits where {} are \
+             pinned; lower `text_off` to what is left:\n{}",
+            off.len(),
+            floor.text_off,
+            off.join("\n")
+        );
+        let borrowed = borrowed_runs(
+            name,
+            &whole,
+            model,
+            (&reference, &reference_faces),
+            (&ours, &our_faces),
+        );
+        let listed = borrowed
+            .iter()
+            .map(|run| run.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            borrowed.len(),
+            floor.borrowed,
+            "{name} whole-page: the paired runs set in a family their label does not name \
+             are not the {} pinned:\n{listed}",
+            floor.borrowed
+        );
+        let in_family = borrowed.iter().filter(|run| run.in_family).count();
+        assert!(
+            in_family >= floor.borrowed_in_family,
+            "{name} whole-page: {in_family} borrowed runs are in the reference's font family \
+             where {} are pinned; one has left it:\n{listed}",
+            floor.borrowed_in_family
+        );
+        assert!(
+            in_family <= floor.borrowed_in_family,
+            "{name} whole-page: {in_family} borrowed runs are in the reference's font family \
+             and {} are pinned; raise `borrowed_in_family` to what it reads:\n{listed}",
+            floor.borrowed_in_family
+        );
+        borrowed_on_all_pages += borrowed.len();
+        in_family_on_all_pages += in_family;
     }
+    eprintln!(
+        "borrowed runs paired on the {} pages: {borrowed_on_all_pages}, of which \
+         {in_family_on_all_pages} are in the reference's font family",
+        PINS.len()
+    );
 
     deliver_plots(&corpus, &delivered);
+}
+
+/// Hold every lettering class of one comparison to the two class thresholds.
+///
+/// No class is left out for being small or for being `unknown`: a class of
+/// one label is that label's own reading, and the thresholds are wide of
+/// every one of them.
+fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
+    for class in classes {
+        assert!(
+            class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
+            "{name} {view} {} down {:+.4} body heights over {} labels, past ±{CLASS_DOWN_HEIGHTS}",
+            class.class,
+            class.mean_down_heights,
+            class.count
+        );
+        assert!(
+            class.mean_advance_heights.abs() <= CLASS_ADVANCE_HEIGHTS,
+            "{name} {view} {} advance {:+.4} body heights over {} labels, past \
+             ±{CLASS_ADVANCE_HEIGHTS}",
+            class.class,
+            class.mean_advance_heights,
+            class.count
+        );
+    }
+}
+
+/// The paired labels of `report` past [`LABEL_POSITION_MM`] or
+/// [`LABEL_WIDTH_MM`], one line each: its class, the reference's runs, how
+/// far its anchor point is from the reference's and how much wider it is.
+///
+/// A label's anchor point is where its paper-table source says it hangs from,
+/// so a centred run that is wider than the reference's by some amount and
+/// starts half that amount early has not moved. A pair with no source is
+/// measured from its start.
+fn labels_off(report: &CompareReport, reference: &PlotInk) -> Vec<String> {
+    report
+        .text_pairs
+        .iter()
+        .filter_map(|pair| {
+            let fraction = match pair.source.as_ref().map(|source| source.anchor) {
+                Some(TextAnchor::Center) => 0.5,
+                Some(TextAnchor::Right) => 1.0,
+                Some(TextAnchor::Left) | None => 0.0,
+            };
+            let position_mm = (pair.along_mm + fraction * pair.advance_mm).hypot(pair.down_mm);
+            if position_mm <= LABEL_POSITION_MM && pair.advance_mm.abs() <= LABEL_WIDTH_MM {
+                return None;
+            }
+            let runs: Vec<&str> = pair
+                .reference_runs
+                .iter()
+                .map(|index| reference.spans[*index].text.as_str())
+                .collect();
+            Some(format!(
+                "  {} {runs:?}: {position_mm:.4} mm off, {:+.4} mm wide",
+                pair.class, pair.advance_mm
+            ))
+        })
+        .collect()
+}
+
+/// One paired run of ours set in a font family its label names no face of.
+struct BorrowedRun {
+    /// The label, what we set outside its named faces and what the reference
+    /// sets there, for a failure to list.
+    line: String,
+    /// Whether the reference letters the label outside its named faces in
+    /// the same families we do.
+    in_family: bool,
+}
+
+/// The family a font name belongs to, by [`FAMILIES`].
+fn family_of(face: &str) -> Option<&'static str> {
+    FAMILIES
+        .iter()
+        .find(|(_, faces)| faces.contains(&face))
+        .map(|(family, _)| *family)
+}
+
+/// The family of a face one of `name`'s pages reads, or a failure that says
+/// whose face it is and asks for a row.
+fn family(name: &str, whose: &str, face: &str) -> &'static str {
+    family_of(face).unwrap_or_else(|| {
+        panic!("{name}: {whose} face {face:?} is in no row of FAMILIES; give it a family")
+    })
+}
+
+/// One run set outside its label's named families: the family, the face's
+/// name on the page and what the run spells.
+type Outside<'a> = (&'static str, &'a str, &'a str);
+
+/// The runs of one side of a pair that are set in a family `named` does not
+/// hold. A run of spaces inks nothing and is not counted.
+fn outside_named<'a>(
+    name: &str,
+    whose: &str,
+    runs: &[usize],
+    (ink, faces): (&'a PlotInk, &'a [String]),
+    named: &[&'static str],
+) -> Vec<Outside<'a>> {
+    runs.iter()
+        .filter(|index| !ink.spans[**index].text.trim().is_empty())
+        .map(|index| {
+            (
+                family(name, whose, &faces[*index]),
+                faces[*index].as_str(),
+                ink.spans[*index].text.as_str(),
+            )
+        })
+        .filter(|(family, ..)| !named.contains(family))
+        .collect()
+}
+
+/// The families `runs` are set in, each once, in order.
+fn families(runs: &[Outside<'_>]) -> Vec<&'static str> {
+    let mut families: Vec<&'static str> = runs.iter().map(|(family, ..)| *family).collect();
+    families.sort_unstable();
+    families.dedup();
+    families
+}
+
+/// `runs` as a failure lists them: what each spells and the face it is in.
+fn listed(runs: &[Outside<'_>]) -> String {
+    if runs.is_empty() {
+        return "nothing outside the named faces".to_string();
+    }
+    runs.iter()
+        .map(|(_, face, text)| format!("{text:?} in {face}"))
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// The paired runs of `report` the page borrows a face for, each with
+/// whether the reference letters it in the same family.
+///
+/// A label's style names a face, and a run inside it may name another;
+/// [`typeface_key`] reads both. A run of ours set in a family none of those
+/// faces belongs to is lettered in a borrowed face, the named one being
+/// unable to draw it. That is read off the written page — the face each of
+/// its spans is set in — so the writer's rule for choosing a lender is not
+/// repeated here. The reference's side of the pair is read the same way, and
+/// the two agree when the families they set outside the label's named faces
+/// are the same: for a `℃` paired with a `℃`, ours is in the family of the
+/// reference's.
+///
+/// Only a paired run can be held against the reference, and only a pair
+/// whose label the comparison found says which faces are named. A borrowed
+/// run that pairs with nothing is therefore not in this reading: the A2
+/// sheet's `L=-5℃` and `H=-15℃` sit in the instrument cluster the `.pid`
+/// stores 16.9 mm from where the reference prints it.
+fn borrowed_runs(
+    name: &str,
+    report: &CompareReport,
+    model: &PaperModel,
+    (reference, reference_faces): (&PlotInk, &[String]),
+    (ours, our_faces): (&PlotInk, &[String]),
+) -> Vec<BorrowedRun> {
+    let mut borrowed = Vec::new();
+    for pair in &report.text_pairs {
+        let Some(source) = &pair.source else {
+            continue;
+        };
+        // `text_sources` copies a label's text and insertion point out of the
+        // model, so the label is the one that holds exactly those.
+        let (value, font, spans) = model
+            .primitives
+            .iter()
+            .find_map(|primitive| match &primitive.shape {
+                PaperShape::Text {
+                    value,
+                    origin_mm,
+                    font,
+                    spans,
+                    ..
+                } if *value == source.text && *origin_mm == source.origin_mm => {
+                    Some((value, font, spans))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name}: no label of the model is the source {:?}",
+                    source.text
+                )
+            });
+        let mut named = vec![family(
+            name,
+            "a label's",
+            typeface_key(font.as_deref(), value),
+        )];
+        for span in spans {
+            if let Some(run_font) = span.font.as_deref() {
+                named.push(family(
+                    name,
+                    "a label run's",
+                    typeface_key(Some(run_font), value),
+                ));
+            }
+        }
+        let ours_outside = outside_named(name, "our", &pair.our_runs, (ours, our_faces), &named);
+        if ours_outside.is_empty() {
+            continue;
+        }
+        let reference_outside = outside_named(
+            name,
+            "the reference's",
+            &pair.reference_runs,
+            (reference, reference_faces),
+            &named,
+        );
+        borrowed.push(BorrowedRun {
+            line: format!(
+                "  {value:?}: ours {}; the reference {}",
+                listed(&ours_outside),
+                listed(&reference_outside)
+            ),
+            in_family: families(&ours_outside) == families(&reference_outside),
+        });
+    }
+    borrowed
 }

@@ -24,8 +24,11 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::parsers::sheet_records::{decode_igtextboxes, decode_jstyle_overrides};
+use pid_parse::parsers::sheet_records::{decode_igtextboxes, PsmRecordDecoder};
+#[path = "../tests/support/retired_matchers.rs"]
+mod retired_matchers;
 use pid_parse::PidPackage;
+use retired_matchers::JStyleOverrideDecoder;
 
 // "\u{5DE5}\u{827A}..." is the gongyi fixture (Chinese file name kept
 // as escapes so this source stays pure ASCII).
@@ -68,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let bytes = raw.data.as_slice();
             let texts = decode_igtextboxes(bytes);
-            let styles = decode_jstyle_overrides(bytes);
+            let styles = JStyleOverrideDecoder.scan(bytes);
             if texts.is_empty() || styles.is_empty() {
                 continue;
             }

@@ -6,6 +6,22 @@
 
 每一步都要保持画法不变：写出的 PDF 字节、`PaperModel` 已有字段、`tests/golden/geometry/*.json` 都不许动。需求偏差 D1、D2 已于 2026-11-04 确认按推荐处理。
 
+> **实现注记（2026-11-10）。** 下面 51 个复选框一个都没有勾，这不表示没做：实施时没有回头更新这份清单。按提交标题对应，各项落在这些提交里（`main`，未逐条复核 51 个子项，带 `*` 的可选项尤其没有逐个核对）：
+>
+> | 任务 | 提交 |
+> |---|---|
+> | 1 前置检查与实施前快照（探针与 71 页的记录） | `da4870e` |
+> | 2 原因目录与账本类型 | `a3a7cd6`、`c82a169` |
+> | 3 根 crate 的发射器账 | `4f0d6cd`、`0c5d6b7` |
+> | 4 写出端判定与写出账 | `7600f8e` |
+> | 6 排版记账 | `f9786d4`、`d5bc091` |
+> | 8 汇总 | `4b56e25`、`88ba7aa`、`889a03e`、`8932ad8` |
+> | 9、10、12 基线与门禁、接上门禁与 CLI、首次基线与文档 | `4674bf4`（CLI 的账本汇总行随汇总在 `4b56e25`） |
+>
+> 5、7、11、13 是检查点，没有自己的提交。落地之后门禁又改过几处，与清单写的不同，见 `design.md` 里同日的实现注记：夹具门禁在「没比」时失败（`1c3c830`），备份门禁默认按包语料排版（`b7d5c7f`），默认选中包而没比成时失败（`0bcdc60`）。
+>
+> 现状可以这样核对：`pid-plot/src/ledger/{reason,layout,assemble,baseline}.rs` 与 `pid-plot/src/write/verdict.rs` 在库里；`docs/baselines/export-ledger-{backup,fixtures}.json` 已入库；`cargo test -p pid-plot --test export_ledger_fixtures` 与 `--test export_plant_backup` 逐页比对并通过（后者要本机有备份包）。
+
 ## Tasks
 
 - [ ] 1. 前置检查与实施前快照

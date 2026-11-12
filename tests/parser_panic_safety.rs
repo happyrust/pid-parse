@@ -15,6 +15,24 @@
 //! and three deterministic xorshift32 streams for coverage of weird
 //! mid-stream bit patterns.
 //!
+//! The record families are held twice over. Every family decodes where
+//! its stream's record chain starts a record and nowhere else, so on bytes
+//! that are not a chain a `decode_*s` call returns before a payload is
+//! looked at: the corpus above exercises the chain walk through them, not
+//! the decoders. Two things reach the decoders:
+//!
+//! * every `decode_*_at(data, offset)` entry point is called at **every**
+//!   offset of every input, one past its end and at the top of the address
+//!   space ([`AT_ENTRIES`], [`exercise_every_offset`]) — what a scan that
+//!   slid a byte at a time used to do, and what a caller with an offset of
+//!   its own can still do;
+//! * [`planted_streams`] are well-formed chains — the magic, the record
+//!   count, records end to end — whose records carry each family's type
+//!   code over lengths at and around the ones the family reads, with noise,
+//!   zeros or `0xFF` for a payload. The chain admits them, so the
+//!   `decode_*s` entry points hand garbage of the right length to every
+//!   payload decoder, counted tails included.
+//!
 //! The Oracle `exp` dump readers of `pid_parse::publish::oracle_exp` take
 //! the same corpus when the `backup-exp` feature builds them. They refuse a
 //! dump whose first table does not pin the row format, so they also get a
@@ -50,20 +68,19 @@ use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     bspcurve_geometry, collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
-    decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
-    decode_dependency_objects, decode_double_value_at, decode_double_values, decode_igarc_at,
-    decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
-    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igdimension_at,
-    decode_igdimensions, decode_igellipse_at, decode_igellipses, decode_igellipticalarc_at,
-    decode_igellipticalarcs, decode_igline_at, decode_iglines, decode_iglinestring_at,
-    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
-    decode_igrectangles, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
-    decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
-    decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
-    decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
-    decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, IgLine2dDecoder, PsmRecordDecoder,
-    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_dependency_object_at, decode_dependency_objects, decode_double_value_at,
+    decode_double_values, decode_flavor_holders, decode_igarc_at, decode_igarcs,
+    decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at, decode_igbspcurves,
+    decode_igcircle_at, decode_igcircles, decode_igcomplexstring_at, decode_igcomplexstrings,
+    decode_igdimension_at, decode_igdimensions, decode_igellipse_at, decode_igellipses,
+    decode_igellipticalarc_at, decode_igellipticalarcs, decode_iggroup_at, decode_iggroups,
+    decode_igline_at, decode_iglines, decode_iglinestring_at, decode_iglinestrings,
+    decode_igpoint_at, decode_igpoints, decode_igrectangle_at, decode_igrectangles,
+    decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
+    decode_igtextboxes, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_standard_relations, decode_symbol_information_at, decode_symbol_informations,
+    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
+    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -558,11 +575,6 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = pid_parse::parsers::sheet_layers::decode_sheet_layers(input);
     let _ = pid_parse::parsers::view_filter_sets::decode_view_filter_sets(input);
     let _ = decode_cluster_body_records(input, 0);
-    let _ = decode_cluster_body_record_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_cluster_body_record_at(input, input.len() - 1);
-        let _ = decode_cluster_body_record_at(input, input.len());
-    }
 
     let _ = parse_doc_version3(input);
     let _ = parse_doc_version2(input);
@@ -592,196 +604,72 @@ fn exercise_all_parsers(input: &[u8]) {
 
     let _ = parse_app_object(input);
 
-    // Phase 14 Slice D: PSM `GLine2d` PrimitiveLine decoder.
-    let _ = decode_primitive_lines(input);
-    let _ = decode_primitive_line_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_primitive_line_at(input, input.len() - 1);
-        let _ = decode_primitive_line_at(input, input.len());
-    }
-
-    // Phase 14 Slice J: PSM `igLine2d` decoder.
+    // The record families' stream entry points. Each walks the stream's
+    // record chain and decodes where it starts a record, so on bytes that
+    // are not a chain these return at the walk; `planted_streams` are the
+    // inputs that carry them into the payload decoders. The `decode_*_at`
+    // twins are called at every offset by `exercise_every_offset`.
     let _ = decode_iglines(input);
-    let _ = decode_igline_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igline_at(input, input.len() - 1);
-        let _ = decode_igline_at(input, input.len());
-    }
-
-    // M1 deepening seam: shared PSM envelope helper + trait-based
-    // igLine2d pilot decoder (same behavior as the wrappers above,
-    // exercised directly so the seam keeps its own panic-safety bar).
-    let _ = parse_psm_header(input, 0);
     let _ = IgLine2dDecoder.scan(input);
-    if !input.is_empty() {
-        let _ = parse_psm_header(input, input.len() - 1);
-        let _ = parse_psm_header(input, input.len());
-        let _ = IgLine2dDecoder.decode_at(input, input.len() - 1);
-    }
-    let _ = parse_psm_header(input, usize::MAX);
-
-    // Phase 14 Slice K: PSM `igLineString2d` polyline decoder.
     let _ = decode_iglinestrings(input);
-    let _ = decode_iglinestring_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_iglinestring_at(input, input.len() - 1);
-        let _ = decode_iglinestring_at(input, input.len());
-    }
-
-    // Phase 14 Slice L: PSM `igPoint2d` decoder.
     let _ = decode_igpoints(input);
-    let _ = decode_igpoint_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igpoint_at(input, input.len() - 1);
-        let _ = decode_igpoint_at(input, input.len());
-    }
-
-    // Phase 14 Slice M: PSM `igTextBox` decoder.
     let _ = decode_igtextboxes(input);
-    let _ = decode_igtextbox_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igtextbox_at(input, input.len() - 1);
-        let _ = decode_igtextbox_at(input, input.len());
-    }
-
-    // Phase 14 Slice N: PSM `igSymbol2d` decoder.
     let _ = decode_igsymbols(input);
-    let _ = decode_igsymbol_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igsymbol_at(input, input.len() - 1);
-        let _ = decode_igsymbol_at(input, input.len());
-    }
-
-    // Phase 15 Slice C: PSM `0x00FA` DependencyObject decoder.
     let _ = decode_dependency_objects(input);
-    let _ = decode_dependency_object_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_dependency_object_at(input, input.len() - 1);
-        let _ = decode_dependency_object_at(input, input.len());
-    }
-
-    // Phase 34-D: PSM `0x0013` igBoundary2d typed audit-only decoder.
     let _ = decode_igboundaries(input);
-    let _ = decode_igboundary_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igboundary_at(input, input.len() - 1);
-        let _ = decode_igboundary_at(input, input.len());
-    }
-
-    // Phase 32-J2: PSM `0x0115` igDimension / JDim. The record's own
-    // `main_len` decides where its main area ends and whether a closing
-    // word follows, and the measured-geometry slot is read at a fixed
-    // offset inside that area — so a lying length must reject the record
-    // rather than index past the payload.
+    // `0x0115` igDimension / JDim: the record's own `main_len` decides
+    // where its main area ends and whether a closing word follows, and the
+    // measured-geometry slot is read at a fixed offset inside that area —
+    // so a lying length must reject the record rather than index past the
+    // payload.
     let _ = decode_igdimensions(input);
-    let _ = decode_igdimension_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igdimension_at(input, input.len() - 1);
-        let _ = decode_igdimension_at(input, input.len());
-    }
-
     // The symbol-information / expression family (`0x00BD`, `0x00C7`,
-    // `0x00EA`, `0x006F`). All four read counted, variable-length tails --
-    // name and formula strings, member and operand lists -- so a corrupt
-    // count must reject the record rather than index past the payload.
+    // `0x00EA`, `0x006F`, `0x00ED`). All read counted, variable-length
+    // tails -- name and formula strings, member and operand lists -- so a
+    // corrupt count must reject the record rather than index past the
+    // payload.
     let _ = decode_double_values(input);
     let _ = decode_variables(input);
     let _ = decode_symbol_informations(input);
     let _ = decode_standard_relations(input);
-    let _ = decode_double_value_at(input, 0);
-    let _ = decode_variables_at(input, 0);
-    let _ = decode_symbol_information_at(input, 0);
-    let _ = decode_standard_relation_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_double_value_at(input, input.len() - 1);
-        let _ = decode_double_value_at(input, input.len());
-        let _ = decode_variables_at(input, input.len() - 1);
-        let _ = decode_variables_at(input, input.len());
-        let _ = decode_symbol_information_at(input, input.len() - 1);
-        let _ = decode_symbol_information_at(input, input.len());
-        let _ = decode_standard_relation_at(input, input.len() - 1);
-        let _ = decode_standard_relation_at(input, input.len());
-    }
-
-    // The nested-site curve family (`0x0059` igCircle2d, `0x0061` igArc2d):
-    // fixed layouts, so the risk is the trailing flag byte and the doubles
-    // running off a short payload.
+    let _ = decode_flavor_holders(input);
+    // The curve families: fixed layouts, so the risk is the trailing flag
+    // byte and the doubles running off a short payload.
     let _ = decode_igcircles(input);
     let _ = decode_igarcs(input);
-    let _ = decode_igcircle_at(input, 0);
-    let _ = decode_igarc_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igcircle_at(input, input.len() - 1);
-        let _ = decode_igcircle_at(input, input.len());
-        let _ = decode_igarc_at(input, input.len() - 1);
-        let _ = decode_igarc_at(input, input.len());
-    }
-
-    // `0x007E` igEllipticalArc2d: the same fixed-layout risk, with seven
-    // doubles ahead of the flag byte.
     let _ = decode_igellipticalarcs(input);
-    let _ = decode_igellipticalarc_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igellipticalarc_at(input, input.len() - 1);
-        let _ = decode_igellipticalarc_at(input, input.len());
-    }
-
-    // `0x0063` igEllipse2d: an arc-length payload with five doubles.
     let _ = decode_igellipses(input);
-    let _ = decode_igellipse_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_igellipse_at(input, input.len() - 1);
-        let _ = decode_igellipse_at(input, input.len());
-    }
-
     // `0x0020` igRectangle2d and `0x005D` igBspCurve2d: both read counted
     // tails -- an edge list, poles / weights / knots -- so a corrupt count
     // must reject the record rather than index past the payload.
     let _ = decode_igrectangles(input);
     let _ = decode_igbspcurves(input);
-    let _ = decode_igrectangle_at(input, 0);
-    let _ = decode_igbspcurve_at(input, 0);
     let _ = bspcurve_geometry(input);
-    if !input.is_empty() {
-        let _ = decode_igrectangle_at(input, input.len() - 1);
-        let _ = decode_igrectangle_at(input, input.len());
-        let _ = decode_igbspcurve_at(input, input.len() - 1);
-        let _ = decode_igbspcurve_at(input, input.len());
-    }
-
-    // PSM `0x003D` igSmartFrame2d decoder. The page a drawing's border
-    // record proves is read out of this, so a malformed frame must fail
-    // the record rather than the parse.
+    // `0x0021` ComplexString and `0x007B` Group: both read a member count
+    // and that many 14-byte entries, so a count the payload cannot hold
+    // must reject the record rather than index past it.
+    let _ = decode_igcomplexstrings(input);
+    let _ = decode_iggroups(input);
+    // `0x003D` igSmartFrame2d. The page a drawing's border record proves is
+    // read out of this, so a malformed frame must fail the record rather
+    // than the parse.
     let _ = decode_smartframes(input);
-    let _ = decode_smartframe_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_smartframe_at(input, input.len() - 1);
-        let _ = decode_smartframe_at(input, input.len());
-    }
+    // The four families no sheet chain holds a record of (`0x0030`,
+    // `0x0010`, and `0x3FE6`, which is no type code at all) are retired and
+    // have no entry point here: their matchers left the library for the
+    // test side (`tests/support/retired_matchers.rs`), and
+    // `every_at_entry_point_is_listed` fails if one comes back.
 
-    // Phase 16 Slice D: PSM `0x0030` JStyleOverride decoder (real
-    // RAD `style.dll` `JStyleOverride` Version-3 IO).
-    let _ = decode_jstyle_overrides(input);
-    let _ = decode_jstyle_override_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_jstyle_override_at(input, input.len() - 1);
-        let _ = decode_jstyle_override_at(input, input.len());
-    }
-
-    // Phase 18: PSM `0x0010` sub-record family audit-only decoder.
-    let _ = decode_sub_records_0x0010(input);
-    let _ = decode_sub_record_0x0010_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_sub_record_0x0010_at(input, input.len() - 1);
-        let _ = decode_sub_record_0x0010_at(input, input.len());
-    }
-
-    // Phase 26: PSM `0x0010` attribute-fragment decoder.
-    let _ = decode_attribute_fragments(input);
-    let _ = decode_attribute_fragment_at(input, 0);
-    if !input.is_empty() {
-        let _ = decode_attribute_fragment_at(input, input.len() - 1);
-        let _ = decode_attribute_fragment_at(input, input.len());
+    // The chain walk every family decodes at, its all-or-nothing reading,
+    // and the fault a stream whose framing does not hold is reported as:
+    // whatever the bytes, the walk ends inside them and the fault, when
+    // there is one, can be said.
+    let chain = SheetChain::walk(input);
+    assert!(chain.end <= input.len());
+    assert_eq!(chain.unread_bytes(), input.len() - chain.end);
+    let _ = sheet_record_starts(input);
+    if let Some(fault) = pid_parse::StreamChainFault::of_stream("/SheetX", input) {
+        assert!(fault.describe().contains("/SheetX"));
     }
 
     // Oracle `exp` dump readers: every public entry that takes the dump.
@@ -813,6 +701,201 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = coordinate_pair_spatial_analysis(&raw_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N);
 }
 
+/// One `decode_*_at(data, offset)` entry point: its name, the PSM type
+/// code its family reads (`None` for the cluster walker, which reads any),
+/// and the call.
+type AtEntry = (&'static str, Option<u16>, fn(&[u8], usize));
+
+/// Every public `decode_*_at` entry point of the byte-level parsers. A new
+/// one belongs here in the commit that adds it;
+/// `every_at_entry_point_is_listed` counts the list against the sources.
+const AT_ENTRIES: &[AtEntry] = &[
+    ("decode_cluster_body_record_at", None, |data, at| {
+        let _ = decode_cluster_body_record_at(data, at);
+    }),
+    ("decode_dependency_object_at", Some(0x00FA), |data, at| {
+        let _ = decode_dependency_object_at(data, at);
+    }),
+    ("decode_double_value_at", Some(0x00C7), |data, at| {
+        let _ = decode_double_value_at(data, at);
+    }),
+    ("decode_igarc_at", Some(0x0061), |data, at| {
+        let _ = decode_igarc_at(data, at);
+    }),
+    ("decode_igboundary_at", Some(0x0013), |data, at| {
+        let _ = decode_igboundary_at(data, at);
+    }),
+    ("decode_igbspcurve_at", Some(0x005D), |data, at| {
+        let _ = decode_igbspcurve_at(data, at);
+    }),
+    ("decode_igcircle_at", Some(0x0059), |data, at| {
+        let _ = decode_igcircle_at(data, at);
+    }),
+    ("decode_igcomplexstring_at", Some(0x0021), |data, at| {
+        let _ = decode_igcomplexstring_at(data, at);
+    }),
+    ("decode_igdimension_at", Some(0x0115), |data, at| {
+        let _ = decode_igdimension_at(data, at);
+    }),
+    ("decode_igellipse_at", Some(0x0063), |data, at| {
+        let _ = decode_igellipse_at(data, at);
+    }),
+    ("decode_igellipticalarc_at", Some(0x007E), |data, at| {
+        let _ = decode_igellipticalarc_at(data, at);
+    }),
+    ("decode_iggroup_at", Some(0x007B), |data, at| {
+        let _ = decode_iggroup_at(data, at);
+    }),
+    ("decode_igline_at", Some(0x0018), |data, at| {
+        let _ = decode_igline_at(data, at);
+        // The trait seam under the wrapper keeps its own bar.
+        let _ = IgLine2dDecoder.decode_at(data, at);
+    }),
+    ("decode_iglinestring_at", Some(0x0084), |data, at| {
+        let _ = decode_iglinestring_at(data, at);
+    }),
+    ("decode_igpoint_at", Some(0x005E), |data, at| {
+        let _ = decode_igpoint_at(data, at);
+    }),
+    ("decode_igrectangle_at", Some(0x0020), |data, at| {
+        let _ = decode_igrectangle_at(data, at);
+    }),
+    // A symbol body's boundary: the same type code as a sheet's, another
+    // payload grammar.
+    ("decode_igsym_boundary_at", Some(0x0013), |data, at| {
+        let _ = decode_igsym_boundary_at(data, at);
+    }),
+    ("decode_igsymbol_at", Some(0x00CE), |data, at| {
+        let _ = decode_igsymbol_at(data, at);
+    }),
+    ("decode_igtextbox_at", Some(0x004D), |data, at| {
+        let _ = decode_igtextbox_at(data, at);
+    }),
+    ("decode_smartframe_at", Some(0x003D), |data, at| {
+        let _ = decode_smartframe_at(data, at);
+    }),
+    ("decode_standard_relation_at", Some(0x006F), |data, at| {
+        let _ = decode_standard_relation_at(data, at);
+    }),
+    ("decode_symbol_information_at", Some(0x00BD), |data, at| {
+        let _ = decode_symbol_information_at(data, at);
+    }),
+    ("decode_variables_at", Some(0x00EA), |data, at| {
+        let _ = decode_variables_at(data, at);
+    }),
+];
+
+/// Call every `_at` entry point, and the envelope helper under them, at
+/// every offset of `input`: each byte, the end, one past it, and the two
+/// offsets at the top of the address space where `offset + 6` overflows.
+///
+/// The family decoders used to be reached at every offset by the scan that
+/// slid a byte at a time. They decode on the record chain now, so nothing
+/// but this walk hands them an offset the chain did not choose — which is
+/// what a caller holding an offset of its own does.
+fn exercise_every_offset(input: &[u8]) {
+    let offsets = (0..=input.len() + 1).chain([usize::MAX - 5, usize::MAX]);
+    for at in offsets {
+        let _ = parse_psm_header(input, at);
+        for (_, _, decode) in AT_ENTRIES {
+            decode(input, at);
+        }
+    }
+}
+
+/// The lengths a planted record states: the fixed payload sizes the
+/// families read, their neighbours, the smallest the counted families
+/// accept, and a few a count can run past.
+const PLANTED_LENGTHS: [u32; 28] = [
+    1, 4, 5, 6, 17, 18, 22, 26, 34, 42, 43, 44, 49, 50, 51, 58, 59, 60, 74, 75, 76, 90, 98, 149,
+    156, 238, 400, 1024,
+];
+
+/// What a planted record's payload is made of.
+#[derive(Clone, Copy)]
+enum Fill {
+    /// xorshift32 noise: counts and doubles of every size.
+    Noise(u32),
+    /// Zeros: empty counts, zero-length strings, zero vectors.
+    Zeros,
+    /// `0xFF`: counts of four thousand million, NaN doubles.
+    Ones,
+}
+
+/// Chain streams that reach the payload decoders.
+///
+/// One stream per type code a family reads, per fill, per pair of flag
+/// bits: the chain magic, the count of the records the native reader
+/// reads, and one record of that type code for each of
+/// [`PLANTED_LENGTHS`], end to end. The chain walks, so every
+/// `decode_*s` entry point decodes at each record, and what it finds
+/// behind the envelope is a payload of a length the family may accept and
+/// content it has to refuse or survive. A last stream of each kind is cut
+/// in the middle of a record, which leaves a chain that stops short.
+///
+/// A plant whose type word no record opens with — the `0x4000` flag, and
+/// `0x3FE6`, a type code past the native reader's class table — is not a
+/// chain: the walk stops on its first word, and the decoders are handed
+/// nothing from it.
+fn planted_streams() -> Vec<Vec<u8>> {
+    let mut codes: Vec<u16> = AT_ENTRIES.iter().filter_map(|(_, code, _)| *code).collect();
+    // The symbol-information family's fifth member and the two layer
+    // classes have no `_at` twin; their stream entry points are in
+    // `exercise_all_parsers`.
+    codes.extend([0x00ED, 0x0081, 0x0042, 0x0057, 0x0114]);
+    // No family reads `0x3FE6` — it is what a family retired on 2026-11-11
+    // took for a type code — and it is planted for what the walk makes of
+    // a type code past the class table: every such stream stops on its
+    // first word.
+    codes.push(0x3FE6);
+    codes.sort_unstable();
+    codes.dedup();
+
+    let mut out = Vec::new();
+    for (index, &code) in codes.iter().enumerate() {
+        let seed = 0x9E37_79B9u32.wrapping_mul(index as u32 + 1) | 1;
+        for fill in [Fill::Noise(seed), Fill::Zeros, Fill::Ones] {
+            for flags in [0u16, 0x4000, 0x8000] {
+                let mut state = match fill {
+                    Fill::Noise(seed) => seed,
+                    Fill::Zeros | Fill::Ones => 0,
+                };
+                let mut stream = vec![0u8; 8];
+                stream[..4].copy_from_slice(&0x6C90_F544u32.to_le_bytes());
+                for length in PLANTED_LENGTHS {
+                    stream.extend_from_slice(&(code | flags).to_le_bytes());
+                    stream.extend_from_slice(&length.to_le_bytes());
+                    for _ in 0..length {
+                        stream.push(match fill {
+                            Fill::Noise(_) => {
+                                state ^= state << 13;
+                                state ^= state >> 17;
+                                state ^= state << 5;
+                                (state & 0xFF) as u8
+                            }
+                            Fill::Zeros => 0,
+                            Fill::Ones => 0xFF,
+                        });
+                    }
+                }
+                let live = if flags & 0x8000 == 0 {
+                    PLANTED_LENGTHS.len() as u32
+                } else {
+                    0
+                };
+                stream[4..8].copy_from_slice(&live.to_le_bytes());
+                out.push(stream);
+            }
+        }
+        // The same chain cut inside its last record: the walk stops there
+        // and the records before it still decode.
+        if let Some(whole) = out.last().cloned() {
+            out.push(whole[..whole.len() - 7].to_vec());
+        }
+    }
+    out
+}
+
 #[test]
 fn parsers_do_not_panic_on_adversarial_inputs() {
     let mut corpus = adversarial_inputs();
@@ -823,7 +906,93 @@ fn parsers_do_not_panic_on_adversarial_inputs() {
         // surface as a test failure with a useful pointer to the
         // offending parser and the input shape.
         exercise_all_parsers(input);
+        exercise_every_offset(input);
     }
+}
+
+/// The streams whose chain walks: every stream entry point gets past the
+/// chain gate, and every `_at` entry point is tried at every offset of a
+/// buffer that is envelopes and payloads from end to end.
+#[test]
+fn record_decoders_do_not_panic_on_planted_chains() {
+    use pid_parse::parsers::sheet_records::{psm_type_word_opens_a_record, SheetChainStop};
+
+    let streams = planted_streams();
+    let mut reached = 0usize;
+    let mut chains = 0usize;
+    let mut refused = 0usize;
+    for stream in &streams {
+        let chain = SheetChain::walk(stream);
+        let type_word = u16::from_le_bytes([stream[8], stream[9]]);
+        if psm_type_word_opens_a_record(type_word) {
+            // The plant is a chain: this is what makes the stream entry
+            // points decode rather than return at the walk.
+            assert!(
+                chain.starts.len() >= PLANTED_LENGTHS.len() - 1,
+                "a planted stream walks {} record(s)",
+                chain.starts.len()
+            );
+            reached += chain.starts.len();
+            chains += 1;
+        } else {
+            // A word no record opens with: the walk stops on the plant's
+            // first record and nothing of it is handed on.
+            assert_eq!(
+                (chain.starts.len(), chain.stop),
+                (0, Some(SheetChainStop::NoSuchClass { type_word })),
+                "a plant of type word 0x{type_word:04X} is not a chain"
+            );
+            refused += 1;
+        }
+        exercise_all_parsers(stream);
+        exercise_every_offset(stream);
+    }
+    eprintln!(
+        "{} planted stream(s): {chains} chain(s) hand the decoders {reached} record(s), \
+         {refused} stop on their first word",
+        streams.len()
+    );
+    assert!(
+        chains >= 160 && reached >= chains * (PLANTED_LENGTHS.len() - 1) && refused >= 80,
+        "{} planted stream(s): {chains} chain(s), {reached} record(s), {refused} refused",
+        streams.len()
+    );
+}
+
+/// The list above is every `decode_*_at` the parsers export: the sources
+/// are read for `pub fn …_at(`, so an entry point added without a row here
+/// fails this rather than going unexercised.
+#[test]
+fn every_at_entry_point_is_listed() {
+    let mut exported: Vec<String> = Vec::new();
+    let parsers = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/parsers");
+    let mut files: Vec<_> = std::fs::read_dir(&parsers)
+        .unwrap_or_else(|error| panic!("{}: {error}", parsers.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect();
+    files.sort();
+    for file in files {
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+        for line in text.lines() {
+            let Some(rest) = line.strip_prefix("pub fn ") else {
+                continue;
+            };
+            let name = rest.split('(').next().unwrap_or_default();
+            if name.ends_with("_at") {
+                exported.push(name.to_string());
+            }
+        }
+    }
+    exported.sort();
+    let mut listed: Vec<&str> = AT_ENTRIES.iter().map(|(name, _, _)| *name).collect();
+    listed.sort_unstable();
+    assert_eq!(
+        listed, exported,
+        "AT_ENTRIES against the `pub fn …_at(` of src/parsers"
+    );
 }
 
 /// Truncation sweep: for every adversarial input, also feed each
@@ -845,6 +1014,29 @@ fn parsers_do_not_panic_on_truncated_inputs() {
         let max_k = input.len().min(TRUNCATION_SWEEP_LIMIT);
         for k in 0..=max_k {
             exercise_all_parsers(&input[..k]);
+            exercise_every_offset(&input[..k]);
+        }
+    }
+    // A planted chain cut at every length: each record in turn is the one
+    // the stream ends inside, at each of its bytes.
+    for stream in planted_streams().iter().step_by(31) {
+        for k in 0..=stream.len() {
+            let cut = &stream[..k];
+            let starts = SheetChain::walk(cut).starts;
+            // The record the cut falls in, and the one before it.
+            for &at in starts.iter().rev().take(2) {
+                for (_, _, decode) in AT_ENTRIES {
+                    decode(cut, at);
+                }
+            }
+            if let Some(&last) = starts.last() {
+                // And where the next record would have started.
+                let _ = parse_psm_header(cut, last);
+                let next = SheetChain::walk(cut).end;
+                for (_, _, decode) in AT_ENTRIES {
+                    decode(cut, next);
+                }
+            }
         }
     }
 }

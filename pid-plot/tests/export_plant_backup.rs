@@ -15,7 +15,9 @@
 //!   clipped there; the writer clips an overhang the way a printer does, and
 //!   the count is what keeps the reading from drifting to two or to none (the
 //!   rule is [`PaperModel::primitives_past_the_edge`]; why a text is not judged
-//!   by its origin is stated at `beyond_the_sheet` in `model.rs`);
+//!   by its origin is stated at `beyond_the_sheet` in `model.rs`). Which label
+//!   it is and where it starts are pinned too ([`PAST_THE_PAGE`]), so another
+//!   run of that sheet cannot take its place unnoticed;
 //! - no label reaches the writer with a line break in it — the writer has no
 //!   face for `U+000D`, and one such label took the whole page down;
 //! - no placement falls back to a placeholder box: a symbol the `.sym`
@@ -43,11 +45,23 @@
 //!   number rather than a silence, and the first sheet to wear one fails here
 //!   until what it is held to has been looked at ([`TEMPLATE_SHEETS`],
 //!   [`BARE_SHEETS`]);
+//! - which fifteen sheets' frames place the template off the page's origin,
+//!   and by how much ([`FRAME_OFFSET_SHEETS`]) — every per-template pin is
+//!   taken with that offset removed, so this is the only place it is read;
+//! - every one of those 64 placements names a file no library carries and is
+//!   drawn from the body the `.igr` caches ([`TEMPLATE_NAME_GAPS`]);
+//! - each sheet's template is read from the kind of source its corpus calls
+//!   for — disk when a template directory of the corpus holds a file of that
+//!   name, a `RefData~*.zip` otherwise — which is all 50 from the archive in
+//!   a package and all 50 from disk in a share, held sheet by sheet;
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
-//!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
-//!   fix each page is 492–856 KiB (the lightest is `D03`, which has no object
-//!   of its own and carries its template alone), before it 6.6–7.1 MiB;
+//!   none — and weighs what a subset-embedded page weighs: each page is
+//!   313–676 KiB (the lightest is `D03`, which has no object of its own and
+//!   carries its template alone). A subset used to carry the whole face's
+//!   vertical metrics, its signature and its hinting tool's private table,
+//!   and each page was 642–1006 KiB; with the bitmap strike as well, before
+//!   the `EBDT` fix, 6.6–7.1 MiB;
 //! - `D04`'s own `igSymbol2d` placements reach the page: `test/U01/D04.pid`
 //!   writes its placement matrix tag's third byte `0x27` rather than the
 //!   corpus-wide `0xA7`, and a drawing with 0 decoded `igSymbol2d` and 5
@@ -63,22 +77,56 @@
 //!
 //! # Two corpora, two variables
 //!
-//! Where the templates and the faces are read from depends on the corpus, and
-//! the two kinds of corpus need different variables:
+//! The drawings are laid out against a corpus — where their templates, their
+//! symbols and their faces are read from — and a corpus is one of two kinds:
 //!
-//! - **A share**, the default (`D:\work\cad\PID自研软件验证`): templates come
-//!   from `<share>/Ref/Template Files`, faces from `<share>/fonts`. Naming
-//!   `PID_PARSE_SELF_CHECK_DIR` is all it takes.
-//! - **A backup package** (`D:\work\cad\pid-test-data`, or the copy at
-//!   `D:\work\plant-code\cad\pid-test-data`): the `.igr` templates come out of
-//!   the package's own `RefData~4~682.zip`, which also holds `A0-W - New.igr`
-//!   and `A1-W - New.igr` — a share's `Ref/Template Files` holds the five
-//!   `CPE*` files and neither of those two. A backup writes no `fonts/` into
-//!   its package: the first directory has none, so the share's faces have to
-//!   be named a second time, while the second keeps a `fonts/` beside its
-//!   archives and needs no second variable. Setting both suits either, and
-//!   with no face in reach the gate refuses to pass rather than reporting the
-//!   written-page pins unread:
+//! - **A backup package** (`D:\work\plant-code\cad\pid-test-data`, or the copy
+//!   at `D:\work\cad\pid-test-data`): the `.igr` templates come out of the
+//!   package's own `RefData~4~682.zip`, which also holds `A0-W - New.igr` and
+//!   `A1-W - New.igr`.
+//! - **A share** (`D:\work\cad\PID自研软件验证`): templates come from
+//!   `<share>/Ref/Template Files`, which holds the five `CPE*` files and
+//!   neither of those two, and faces from `<share>/fonts`.
+//!
+//! `PID_PARSE_SELF_CHECK_DIR` names the corpus, and a run that sets it reads
+//! that directory, whichever kind it is. A run that leaves it unset reads the
+//! package the backup was shelled out of, when the `backup-plant-data` it
+//! found sits in one — the directory above it holds `RefData~*.zip` — and the
+//! share otherwise ([`corpus_for`]). The first line a run prints names the
+//! corpus and says which of the three it was ([`describe_sources`]).
+//!
+//! A package in reach is the default because the corpus decides what the
+//! ledger gate at the end compares. Its baseline,
+//! `docs/baselines/export-ledger-backup.json`, names a package's
+//! `RefData~*.zip` archives as the sources of its symbols and templates, so
+//! only a package run has its 53 pages' counts compared with it, page by page.
+//! A share reads both from directories; the gate then reports
+//! `count comparison skipped` — which a passing run shows only under
+//! `--nocapture` — and passes on the unattributed and cross-check rules alone.
+//! That is what the ledger's requirement 13.7 asks for counts taken from
+//! another corpus, and it holds for any corpus a run names. A package picked
+//! by default is held to more: it was picked so that its pages are compared,
+//! so a default run whose symbol or template sources are not the baseline's
+//! fails for having compared nothing rather than passing on the skip. Where
+//! the default is the package, then, a share is a corpus a run asks for by
+//! name:
+//!
+//! ```text
+//! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\PID自研软件验证 \
+//!   cargo test -p pid-plot --test export_plant_backup --locked
+//! ```
+//!
+//! Every other pin in this file holds in either corpus.
+//!
+//! The second variable is for the faces. A backup writes no `fonts/` into its
+//! package: `D:\work\plant-code\cad\pid-test-data` keeps one beside its
+//! archives, `D:\work\cad\pid-test-data` does not. `PID_PLOT_FONTS` is a
+//! `;`-separated list like `PATH`, read before `<corpus>/fonts` and the
+//! repository's `test-file/fonts` (see [`pid_plot::fonts::font_dirs`]). A
+//! package picked by default is searched for `<share>/fonts` after those, so
+//! on a machine that has the share the default takes no variable at all
+//! ([`face_dirs`]). A named corpus is searched as named, so a package named
+//! without a `fonts/` of its own takes both variables:
 //!
 //! ```text
 //! PID_PARSE_SELF_CHECK_DIR=D:\work\cad\pid-test-data \
@@ -86,18 +134,13 @@
 //!   cargo test -p pid-plot --test export_plant_backup --locked
 //! ```
 //!
-//! `PID_PLOT_FONTS` is a `;`-separated list like `PATH`, read before
-//! `<corpus>/fonts` and the repository's `test-file/fonts` (see
-//! [`pid_plot::fonts::font_dirs`]). `PID_TEST_DATA_DIR` is an optional third
-//! root: it is one of the places `backup-plant-data` is looked for, beside the
-//! corpus and the two `pid-test-data` paths listed in [`backup_dir`].
+//! With no face in reach the gate refuses to pass rather than reporting the
+//! written-page pins unread ([`require_faces`]).
 //!
-//! The corpus also decides what the ledger gate at the end compares. Its
-//! baseline, `docs/baselines/export-ledger-backup.json`, names a package's
-//! `RefData~*.zip` archives as the sources of its symbols and templates, so
-//! only a package run has its 53 pages' counts compared with it. A share reads
-//! both from directories, and the gate then reports the count comparison as
-//! skipped while still holding the unattributed and cross-check rules.
+//! `PID_TEST_DATA_DIR` is an optional third root: it is one of the places
+//! `backup-plant-data` is looked for, beside the named corpus — the share,
+//! when none is named — and the two `pid-test-data` paths listed in
+//! [`backup_dir`].
 //!
 //! # What the 53 sheets exercise
 //!
@@ -134,17 +177,20 @@ use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
 use pid_plot::ledger::baseline::{GateInput, LedgerCorpus, descriptor_for, run_gate};
 use pid_plot::model::{
-    PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
+    PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource,
+    border_template_places, lay_out_drawing,
 };
 use pid_plot::read::read_plot;
 use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_ledger, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
-fn corpus_dir() -> PathBuf {
-    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
-        || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
-        PathBuf::from,
-    )
+fn share_dir() -> PathBuf {
+    PathBuf::from(r"D:\work\cad\PID自研软件验证")
+}
+
+/// The corpus `PID_PARSE_SELF_CHECK_DIR` names, when the run names one.
+fn named_corpus() -> Option<PathBuf> {
+    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map(PathBuf::from)
 }
 
 /// Where the shelled-out plant backup sits, if this machine has one.
@@ -152,18 +198,108 @@ fn corpus_dir() -> PathBuf {
 /// The extraction is a local artifact, not a repository fixture, so the gate
 /// looks beside the corpus and then in the backup package itself. `None`
 /// soft-skips the test, which is what CI sees.
+///
+/// "Beside the corpus" is beside the one the run names, or beside the share
+/// when it names none. The corpus an unnamed run ends up reading is not a root
+/// here: [`corpus_for`] picks it from where this function found the backup.
 fn backup_dir() -> Option<PathBuf> {
     let mut roots = Vec::new();
     if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
         roots.push(PathBuf::from(dir));
     }
-    roots.push(corpus_dir());
+    roots.push(named_corpus().unwrap_or_else(share_dir));
     roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
     roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
     roots
         .into_iter()
         .map(|root| root.join("backup-plant-data"))
         .find(|candidate| candidate.is_dir())
+}
+
+/// Why a run lays the backup out against the corpus it does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CorpusOrigin {
+    /// `PID_PARSE_SELF_CHECK_DIR` names it.
+    Named,
+    /// No corpus is named and the backup sits in a package: the directory
+    /// above `backup-plant-data` holds the package's `RefData~*.zip`.
+    Package,
+    /// No corpus is named and no `RefData~*.zip` sits beside the backup, so
+    /// the share is read.
+    Share,
+}
+
+impl CorpusOrigin {
+    /// The reason in the words a run prints.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Named => "named by PID_PARSE_SELF_CHECK_DIR",
+            Self::Package => {
+                "the backup package, by default: PID_PARSE_SELF_CHECK_DIR is unset and \
+                 backup-plant-data sits in it, beside its RefData~*.zip"
+            }
+            Self::Share => {
+                "the share, by default: PID_PARSE_SELF_CHECK_DIR is unset and no \
+                 RefData~*.zip sits beside backup-plant-data"
+            }
+        }
+    }
+}
+
+/// The corpus a run lays the backup out against, and why it is that one.
+struct Corpus {
+    dir: PathBuf,
+    origin: CorpusOrigin,
+}
+
+/// The corpus the drawings under `backup` are laid out against.
+///
+/// A run that names one gets it, whichever kind it is. A run that names none
+/// gets the package the backup was shelled out of, when `backup` sits in one:
+/// the directory above it then holds the package's `RefData~*.zip`, and that
+/// is the corpus the ledger baseline was taken from — the only one whose 53
+/// pages have their counts compared with it. Left to the share, an unnamed run
+/// would lay every page out, skip that comparison and pass, and say so only
+/// under `--nocapture`. The share is what an unnamed run reads when the
+/// extraction sits anywhere else.
+fn corpus_for(backup: &Path) -> Corpus {
+    if let Some(dir) = named_corpus() {
+        return Corpus {
+            dir,
+            origin: CorpusOrigin::Named,
+        };
+    }
+    match backup.parent() {
+        Some(package) if !pid_parse::refdata_archive::refdata_archives(package).is_empty() => {
+            Corpus {
+                dir: package.to_path_buf(),
+                origin: CorpusOrigin::Package,
+            }
+        }
+        _ => Corpus {
+            dir: share_dir(),
+            origin: CorpusOrigin::Share,
+        },
+    }
+}
+
+/// The directories the faces are looked for in, in search order.
+///
+/// [`font_dirs`] lists `PID_PLOT_FONTS`, then `<corpus>/fonts`, then the
+/// repository's `test-file/fonts`. A package picked by default is searched for
+/// the share's `fonts` after those: a backup writes no faces into its package,
+/// so one that keeps none beside its archives would have the default refuse to
+/// run until a second variable was set. The share's directory is listed
+/// whether or not it is there, so a run that finds no face names it among the
+/// places it looked. A named corpus is searched as named, and
+/// [`require_faces`] says what to set when that finds nothing.
+fn face_dirs(corpus: &Corpus) -> Vec<PathBuf> {
+    let mut dirs = font_dirs(Some(&corpus.dir));
+    let beside = share_dir().join("fonts");
+    if corpus.origin == CorpusOrigin::Package && !dirs.contains(&beside) {
+        dirs.push(beside);
+    }
+    dirs
 }
 
 /// One primitive, named so a reader can find it: a label by its text and
@@ -822,6 +958,95 @@ const COMPARED_LABEL_CELLS: usize = 175;
 /// sheets: `37 + 0 + 27`.
 const TEMPLATE_SYMBOL_PLACEMENTS: usize = 64;
 
+/// Template placements whose stored name no symbol library answers, summed
+/// over every sheet wearing a template: every one of the
+/// [`TEMPLATE_SYMBOL_PLACEMENTS`].
+///
+/// A title block's `BLFH.sym`, `HQZ.sym` and `A$C40D91A4B.sym` are stored
+/// under absolute paths on the authoring machine, which no library is filed
+/// by, so each is drawn from the body the `.igr` caches and its ledger entry
+/// carries a `name_gap`. The number is the same in a package and in a share:
+/// neither library has a file under those paths. A placement a library starts
+/// answering leaves this count without touching the placement total, and the
+/// failure names the sheet and the symbol.
+const TEMPLATE_NAME_GAPS: usize = 64;
+
+/// The sheets whose border frame places the template off the page's origin,
+/// by their path under the backup directory, with that offset in millimetres
+/// (`BorderTemplate::offset_mm`).
+///
+/// A frame lands its template at `s·p + t − lo` (`FramePlacement` in
+/// `model.rs`), and on 35 of the 50 templated sheets `t − lo` is zero to the
+/// micrometre. On these fifteen it is not, so the sign-off column and the
+/// title block sit that far from where the template's own coordinates put
+/// them: all nine `CPECCHB-SQ-A2` sheets at (0.388, 0.566) mm — which is
+/// where the reference plot of `轻烃分离器I` inks its furniture — the three
+/// `CPECCHB-SQ-A1` sheets that state a page (`N井场`, `O井场`, `P井场`), `A井场`
+/// on `CPE-SQ-A0`, and the two `凝析油稳定塔` sheets on `CPE-SQ-A1`.
+///
+/// Every per-template pin above is taken with the offset removed, so nothing
+/// else in this file notices a sheet whose offset changed or went away.
+/// Listed with the value rather than counted: a sheet that gains an offset
+/// while another loses one leaves the count at fifteen.
+const FRAME_OFFSET_SHEETS: [(&str, [f64; 2]); 15] = [
+    (
+        "00/00/A井场 注采阀组工艺及自控流程图.pid",
+        [0.152593, 0.152593],
+    ),
+    (
+        "00/00/N井场 注采阀组工艺及自控流程图.pid",
+        [1.297400, 1.553387],
+    ),
+    (
+        "00/00/O井场 注采阀组工艺及自控流程图.pid",
+        [0.150015, 0.399965],
+    ),
+    (
+        "00/00/P井场 注采阀组工艺及自控流程图.pid",
+        [0.150015, 0.399965],
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(1200td)工艺及自控流程图.pid",
+        [1.042526, 1.042526],
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(600td)工艺及自控流程图.pid",
+        [0.768634, 0.768634],
+    ),
+    (
+        "00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid",
+        [0.388407, 0.565648],
+    ),
+    (
+        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+        [0.388407, 0.565648],
+    ),
+    (
+        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
+        [0.388407, 0.565648],
+    ),
+    ("test/U01/D01.pid", [0.388407, 0.565648]),
+    ("test/U01/D03.pid", [0.388407, 0.565648]),
+    ("test/U01/D04.pid", [0.388407, 0.565648]),
+    ("test/U01/D06.pid", [0.388407, 0.565648]),
+    ("test/U01/D07.pid", [0.388407, 0.565648]),
+    ("test/U01/TESTDWG-0002TP03-01.pid", [0.388407, 0.565648]),
+];
+
+/// The smallest frame offset, on either axis, that counts as one, in
+/// millimetres. A frame that states zero reads back as zero, so anything a
+/// micrometre or more from it is a stated offset.
+const FRAME_OFFSET_FLOOR_MM: f64 = 0.001;
+
+/// The one label that reaches past its page: the sheet it is on, its
+/// characters and its insertion point in paper millimetres.
+///
+/// `N井场`'s sideways pipeline tag starts 0.208 mm under the bottom edge, so
+/// its first glyph is clipped there and the other nineteen are on the sheet.
+/// The count alone would be satisfied by any one primitive on that sheet.
+const PAST_THE_PAGE: (&str, &str, [f64; 2]) =
+    ("N井场", "15-TD-4101416-B2-EH40", [259.113810, -0.207788]);
+
 /// How far a pinned placement point may drift before the gate speaks, in
 /// millimetres.
 ///
@@ -1092,26 +1317,71 @@ fn label_differences(measured: &[Label], pinned: &[Label]) -> String {
     lines.join("\n")
 }
 
-/// The corpus this run is reading, one line per source.
+/// Where the frame offsets a run measured part from [`FRAME_OFFSET_SHEETS`],
+/// one line per sheet: a sheet whose frame states an offset the table lacks,
+/// one whose offset is another value than the table's, and one the table
+/// names whose frame states none. Empty when the two agree.
+///
+/// A value agrees within [`PLACEMENT_SLACK_MM`]: an offset comes out of the
+/// same metre-to-millimetre conversion as a placement point.
+fn frame_offset_differences(measured: &[(String, [f64; 2])]) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for (sheet, offset) in measured {
+        match FRAME_OFFSET_SHEETS
+            .iter()
+            .find(|(pinned, _)| *pinned == sheet.as_str())
+        {
+            None => lines.push(format!(
+                "    {sheet}: its frame states an offset of ({:.6}, {:.6}) mm and it is not \
+                 in FRAME_OFFSET_SHEETS",
+                offset[0], offset[1]
+            )),
+            Some((_, pinned)) => {
+                if (0..2).any(|axis| (offset[axis] - pinned[axis]).abs() >= PLACEMENT_SLACK_MM) {
+                    lines.push(format!(
+                        "    {sheet}: its frame states an offset of ({:.6}, {:.6}) mm, \
+                         ({:.6}, {:.6}) mm pinned",
+                        offset[0], offset[1], pinned[0], pinned[1]
+                    ));
+                }
+            }
+        }
+    }
+    for (sheet, pinned) in &FRAME_OFFSET_SHEETS {
+        if !measured.iter().any(|(found, _)| found == sheet) {
+            lines.push(format!(
+                "    {sheet}: is pinned at ({:.6}, {:.6}) mm and its frame states no offset",
+                pinned[0], pinned[1]
+            ));
+        }
+    }
+    lines
+}
+
+/// What this run is reading: the corpus and why it is that one, the backup,
+/// and the face directories that are present, in search order.
 ///
 /// A passing gate has to say what it read. The archive-template run — the
 /// corpus pointed at a backup package instead of the share — once took 85 s and
 /// reported ok while touching no pin at all, and nothing in its output would
 /// have said which corpus that `ok` was about.
-fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathBuf]) -> String {
-    let origin = if std::env::var_os("PID_PARSE_SELF_CHECK_DIR").is_some() {
-        "PID_PARSE_SELF_CHECK_DIR"
-    } else {
-        "built-in default"
-    };
+///
+/// The corpus carries its reason because the reason is what a reader needs
+/// when the ledger gate at the end skips its count comparison: a named share
+/// asked for that, a share read for want of a package beside the backup did
+/// not, and under a package the skip means its sources are not the
+/// baseline's, which the gate's own report itemizes — and which fails the
+/// run when the package was the default pick.
+fn describe_sources(corpus: &Corpus, backup: &Path, drawings: usize, dirs: &[PathBuf]) -> String {
     let faces: Vec<String> = dirs
         .iter()
         .filter(|dir| dir.is_dir())
         .map(|dir| dir.display().to_string())
         .collect();
     format!(
-        "corpus {} ({origin}); backup {} ({drawings} drawings); faces {}",
-        corpus.display(),
+        "corpus {} ({}); backup {} ({drawings} drawings); faces {}",
+        corpus.dir.display(),
+        corpus.origin.reason(),
         backup.display(),
         if faces.is_empty() {
             "none present".to_string()
@@ -1132,10 +1402,17 @@ fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathB
 /// and this used to be an `eprintln!` and a `return`, which the harness
 /// reports as a pass. It did, for one run.
 ///
+/// `dirs` is [`face_dirs`]' list, so the message names every place that was
+/// looked in, in the order it was looked in, and what it says to do next goes
+/// by how the corpus was picked: a package picked by default has already been
+/// searched for the share's `fonts`, a named one has not. Naming the share as
+/// the corpus is not among the remedies — it would bring its faces, and it
+/// would also take the 53 pages out of the ledger gate's count comparison.
+///
 /// The two configurations, and the command each one takes, are in this file's
 /// module docs under `Two corpora, two variables`; the panic repeats the
 /// section's name so the message points there too.
-fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
+fn require_faces(corpus: &Corpus, dirs: &[PathBuf], drawings: usize) {
     if dirs.iter().any(|dir| dir.is_dir()) {
         return;
     }
@@ -1144,16 +1421,31 @@ fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
         .map(|dir| dir.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
+    let remedy = match corpus.origin {
+        CorpusOrigin::Named => {
+            "a named corpus is searched as named, and a backup package carries no `fonts/` \
+             of its own; set PID_PLOT_FONTS to a directory holding the faces (the share's \
+             `fonts`), or leave PID_PARSE_SELF_CHECK_DIR unset, which searches the share's \
+             as well"
+        }
+        CorpusOrigin::Package => {
+            "this package keeps no `fonts/` beside its archives, and the share's, searched \
+             last, is absent too; set PID_PLOT_FONTS to a directory holding the faces"
+        }
+        CorpusOrigin::Share => {
+            "the share keeps no `fonts/`; set PID_PLOT_FONTS to a directory holding the faces"
+        }
+    };
     panic!(
         "no font directory is present, so the written-page pins were not read for {drawings} \
          drawings: each PDF's page, its weight, its ink and its lettering, and the \
          {DERIVED_PAGES}-sheet measured-page ratchet.\n  \
-         searched: {searched}\n  \
-         corpus: {} — a backup package carries no `fonts/`; set PID_PLOT_FONTS to the \
-         share's fonts, or point PID_PARSE_SELF_CHECK_DIR at the share.\n  \
+         searched, in order: {searched}\n  \
+         corpus: {} ({}) — {remedy}.\n  \
          both variables, and the command for each corpus, are in this file's module \
          docs under `Two corpora, two variables`",
-        corpus.display()
+        corpus.dir.display(),
+        corpus.origin.reason()
     );
 }
 
@@ -1170,11 +1462,11 @@ fn every_backup_drawing_exports_a_readable_page() {
         "TEMPLATE_SHEETS has to count the sheets of every template TEMPLATE_PLACEMENTS pins, \
          row for row"
     );
-    let corpus = corpus_dir();
     let Some(backup) = backup_dir() else {
         eprintln!("skipping the backup export; no backup-plant-data directory is present");
         return;
     };
+    let corpus = corpus_for(&backup);
     let mut drawings = Vec::new();
     collect_pids(&backup, &mut drawings);
     if drawings.is_empty() {
@@ -1190,13 +1482,13 @@ fn every_backup_drawing_exports_a_readable_page() {
         drawings.len(),
         backup.display()
     );
-    let dirs = font_dirs(Some(&corpus));
+    let dirs = face_dirs(&corpus);
     let sources = describe_sources(&corpus, &backup, drawings.len(), &dirs);
     eprintln!("{sources}");
 
     let mut models: Vec<(PathBuf, PaperModel)> = Vec::new();
     for path in &drawings {
-        let model = lay_out_drawing(path, &corpus)
+        let model = lay_out_drawing(path, &corpus.dir)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         models.push((path.clone(), model));
     }
@@ -1210,8 +1502,16 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut templated = 0usize;
     let mut placements = 0usize;
     let mut gap_named = 0usize;
+    // The placements whose stored name a library did answer, as
+    // `<sheet>: <symbol>`: what a count short of `TEMPLATE_NAME_GAPS` is made
+    // of.
+    let mut name_answered: Vec<String> = Vec::new();
     let mut templated_from_archive = 0usize;
-    let mut offset_sheets = 0usize;
+    // The sheets whose template was read from the other kind of source than
+    // the corpus's own template directories call for, one line each.
+    let mut off_source: Vec<String> = Vec::new();
+    // The sheets whose frame states an offset, by page key, with the offset.
+    let mut frame_offsets: Vec<(String, [f64; 2])> = Vec::new();
     // What each template placed, as the first sheet wearing it drew it, and how
     // many sheets wore it. Keyed by the template's own file name, because a
     // placement is the template's and not the sheet's.
@@ -1250,7 +1550,8 @@ fn every_backup_drawing_exports_a_readable_page() {
             continue;
         };
         templated += 1;
-        if from_archive(&template.path) {
+        let archived = from_archive(&template.path);
+        if archived {
             templated_from_archive += 1;
         }
         let Some((file, extent, primitives, wanted, wanted_labels)) = TEMPLATE_PLACEMENTS
@@ -1263,6 +1564,31 @@ fn every_backup_drawing_exports_a_readable_page() {
             );
         };
         *worn.entry(*file).or_insert(0) += 1;
+        // Which kind of source a sheet's template came from is the corpus's to
+        // decide, and it decides it one way: template directories are read
+        // before archives, so a template comes out of a `RefData~*.zip`
+        // exactly when no template directory of the corpus holds a file of
+        // its name. A share keeps all five files under `Ref/Template Files`
+        // and has no archive, so every sheet reads from disk; a package keeps
+        // them in `RefData~4~682.zip` alone, so every sheet reads from it.
+        // The two runs print opposite counts for that reason, and each is
+        // held to its own corpus here, sheet by sheet.
+        let directories = border_template_places(path, &corpus.dir).directories;
+        let on_disk = directories.iter().any(|dir| dir.join(file).is_file());
+        if archived == on_disk {
+            off_source.push(format!(
+                "    {}: {file} was read from {} ({}), and {}",
+                page_key(path, &backup),
+                if archived { "an archive" } else { "disk" },
+                template.path,
+                if on_disk {
+                    "a template directory of the corpus holds a file of that name, which is \
+                     read first"
+                } else {
+                    "no template directory of the corpus holds a file of that name"
+                }
+            ));
+        }
         for axis in 0..2 {
             assert!(
                 (template.extent_mm[axis] - extent[axis]).abs() < TEMPLATE_EXTENT_SLACK_MM,
@@ -1285,8 +1611,8 @@ fn every_backup_drawing_exports_a_readable_page() {
         // the template's own coordinates, so the per-template pins hold
         // whichever frame offset a sheet states.
         let offset = template.offset_mm;
-        if offset.iter().any(|v| v.abs() > 0.001) {
-            offset_sheets += 1;
+        if offset.iter().any(|v| v.abs() > FRAME_OFFSET_FLOOR_MM) {
+            frame_offsets.push((page_key(path, &backup), offset));
         }
         let Some([ink_min, ink_max]) = furniture_extent_mm(model) else {
             panic!(
@@ -1365,6 +1691,12 @@ fn every_backup_drawing_exports_a_readable_page() {
             );
             if symbol.name_gap.is_some() {
                 gap_named += 1;
+            } else {
+                name_answered.push(format!(
+                    "{}: {}",
+                    page_key(path, &backup),
+                    leaf_name(&symbol.key)
+                ));
             }
             drawn.push((
                 leaf_name(&symbol.key),
@@ -1439,7 +1771,10 @@ fn every_backup_drawing_exports_a_readable_page() {
             labels.len()
         );
     }
-    eprintln!("  {offset_sheets} of {templated} templated sheets wear a frame offset");
+    eprintln!(
+        "  {} of {templated} templated sheets wear a frame offset",
+        frame_offsets.len()
+    );
     eprintln!(
         "  {} sheets wear no template: {}",
         bare.len(),
@@ -1508,6 +1843,39 @@ fn every_backup_drawing_exports_a_readable_page() {
              {TEMPLATE_SYMBOL_PLACEMENTS} pinned in TEMPLATE_SYMBOL_PLACEMENTS"
         ));
     }
+    if gap_named != TEMPLATE_NAME_GAPS {
+        off_pin.push(format!(
+            "  {gap_named} of the {placements} symbols the templates place name a file no \
+             library carries, {TEMPLATE_NAME_GAPS} pinned in TEMPLATE_NAME_GAPS; the \
+             placements a library answered: {}",
+            if name_answered.is_empty() {
+                "none".to_string()
+            } else {
+                name_answered.join(", ")
+            }
+        ));
+    }
+    let offset_differences = frame_offset_differences(&frame_offsets);
+    if !offset_differences.is_empty() {
+        off_pin.push(format!(
+            "  {} sheet(s) wear a frame offset, {} pinned in FRAME_OFFSET_SHEETS; the sheets \
+             that differ:",
+            frame_offsets.len(),
+            FRAME_OFFSET_SHEETS.len()
+        ));
+        off_pin.extend(offset_differences);
+    }
+    if !off_source.is_empty() {
+        off_pin.push(format!(
+            "  {} of the {templated} templated sheets read their template from the other \
+             kind of source than the corpus {} calls for ({} from disk, \
+             {templated_from_archive} from RefData archives):",
+            off_source.len(),
+            corpus.dir.display(),
+            templated - templated_from_archive
+        ));
+        off_pin.extend(off_source);
+    }
     assert!(
         off_pin.is_empty(),
         "the account of which sheet wears which template left its pins in {} place(s):\n{}\n\
@@ -1538,6 +1906,9 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut condensed = 0usize;
     let mut smallest_condense = 1.0f64;
     let mut past_the_edge: Vec<String> = Vec::new();
+    // The labels among them, as the sheet, the characters and the insertion
+    // point: what `PAST_THE_PAGE` is held against.
+    let mut labels_past_the_edge: Vec<(String, String, [f64; 2])> = Vec::new();
     let mut ledger_pages: Vec<(String, ExportLedger)> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
@@ -1552,6 +1923,12 @@ fn every_backup_drawing_exports_a_readable_page() {
         );
         for primitive in model.primitives_past_the_edge(EDGE_SLACK_MM) {
             past_the_edge.push(format!("{sheet}: {}", describe(primitive)));
+            if let PaperShape::Text {
+                origin_mm, value, ..
+            } = &primitive.shape
+            {
+                labels_past_the_edge.push((sheet.clone(), value.trim().to_string(), *origin_mm));
+            }
         }
         for primitive in &model.primitives {
             if let PaperShape::Text { value, .. } = &primitive.shape {
@@ -1690,6 +2067,25 @@ fn every_backup_drawing_exports_a_readable_page() {
         "the primitive past a page is not the sideways run in `N井场`: {}",
         past_the_edge[0]
     );
+    // Which primitive it is, and where: the sheet's name alone would be
+    // satisfied by any other run of that sheet sliding over the edge in this
+    // one's place.
+    let (pinned_sheet, pinned_text, pinned_origin) = PAST_THE_PAGE;
+    let is_the_pinned_run = labels_past_the_edge
+        .first()
+        .is_some_and(|(sheet, text, origin)| {
+            sheet.contains(pinned_sheet)
+                && text == pinned_text
+                && (0..2)
+                    .all(|axis| (origin[axis] - pinned_origin[axis]).abs() < PLACEMENT_SLACK_MM)
+        });
+    assert!(
+        is_the_pinned_run,
+        "the primitive past a page is {}; pinned in PAST_THE_PAGE is the label {pinned_text:?} \
+         of `{pinned_sheet}` at ({:.6}, {:.6}) mm (labels measured past a page: \
+         {labels_past_the_edge:?})",
+        past_the_edge[0], pinned_origin[0], pinned_origin[1]
+    );
     eprintln!("past the page: {}", past_the_edge[0]);
     // Lettering the sheet cannot hold even at half width loses its tail to
     // the page clip. The writer used to do that silently, so no one could tell
@@ -1700,6 +2096,14 @@ fn every_backup_drawing_exports_a_readable_page() {
          (deepest {deepest_clip_mm:.3} mm past the edge); \
          {CLIPPED_AT_CONDENSATION_FLOOR} were when this ratchet was set"
     );
+    // The depth is the count's other half: with no run clipped there is no
+    // clip to be deep, so a depth on its own is a writer that cut a run and
+    // did not count it.
+    assert!(
+        clipped_at_floor > 0 || deepest_clip_mm == 0.0,
+        "no run is counted as clipped at the condensation floor, and the deepest clip is \
+         {deepest_clip_mm:.6} mm past the edge rather than 0"
+    );
     eprintln!(
         "clipped at the condensation floor: {clipped_at_floor} run(s), deepest {deepest_clip_mm:.3} mm past the edge"
     );
@@ -1707,19 +2111,38 @@ fn every_backup_drawing_exports_a_readable_page() {
         condensed, CONDENSED_RUNS,
         "{condensed} run(s) were condensed to stay on the page (smallest scale          {smallest_condense:.3}); {CONDENSED_RUNS} did when this ratchet was set"
     );
+    // The scale is the count's other half in the same way: with no run
+    // condensed, every run is drawn at the width the drawing set it.
+    assert!(
+        condensed > 0 || smallest_condense == 1.0,
+        "no run is counted as condensed, and the smallest scale a run was drawn at is \
+         {smallest_condense:.6} rather than 1"
+    );
     eprintln!("condensed to fit: {condensed} run(s), smallest scale {smallest_condense:.3}");
+    // Which faces a run embeds is the machine's to say as much as the
+    // drawings': a face only a formatting run names is optional, and a lender
+    // is whichever of the two this machine has. The ledger gate below is told
+    // the list and skips its two font marks when it is not the baseline's, so
+    // it is printed by name here and not pinned.
+    let mut embedded: Vec<&str> = prepared.iter().map(|face| face.key.as_str()).collect();
+    embedded.sort_unstable();
     eprintln!(
-        "{} backup drawings exported, {} of them on a measured page, {} faces embedded",
+        "{} backup drawings exported, {} of them on a measured page, {} faces embedded ({})",
         models.len(),
         derived,
-        prepared.len()
+        prepared.len(),
+        embedded.join(", ")
     );
 
-    // The ledger gate over the whole package. Its baseline is taken from this
-    // very corpus (see the module docs' `Two corpora, two variables`), so a
-    // page whose account moved fails here rather than on the next release. The
-    // faces are named, so a machine that embeds a different set of typefaces
-    // is told that rather than made to look like a regression.
+    // The ledger gate over the whole package. Its baseline is taken from a
+    // package corpus — the one an unnamed run reads when the backup sits in a
+    // package (see the module docs' `Two corpora, two variables`) — so a page
+    // whose account moved fails here rather than on the next release. Under a
+    // share the counts are not comparable, and the gate passes on the
+    // unattributed and cross-check rules alone; its report says which of the
+    // two this run got. The faces are named, so a machine that embeds a
+    // different set of typefaces is told that rather than made to look like a
+    // regression.
     ledger_pages.sort_by(|left, right| left.0.cmp(&right.0));
     let ledgers: Vec<&pid_plot::ledger::LayoutLedger> =
         models.iter().map(|(_, model)| &model.ledger).collect();
@@ -1739,11 +2162,37 @@ fn every_backup_drawing_exports_a_readable_page() {
         failures: Vec::new(),
         breaches: Vec::new(),
         update,
-        hint: "备份基线取法：PID_PARSE_SELF_CHECK_DIR 指向含 RefData~*.zip 的包目录、PID_PLOT_FONTS 给出字型，再跑 cargo test -p pid-plot --test export_plant_backup（详见 docs/baselines/README.md）",
+        hint: "备份基线取法：在包语料下排版（基线文件头把包内 RefData~*.zip 记作模板与符号来源），\
+               只有这时 53 页才逐页比对。不设 PID_PARSE_SELF_CHECK_DIR 时，backup-plant-data \
+               的上一级目录带 RefData~*.zip 就默认用它；也可把该变量显式指向包目录，包里没有 \
+               fonts 时另用 PID_PLOT_FONTS 给出字型。显式指向共享语料则按需求 13.7 跳过计数\
+               比对，只查未归因与核对。命令：cargo test -p pid-plot --test export_plant_backup\
+               （详见 docs/baselines/README.md）",
     });
     let rendered = report.render();
     eprintln!("{rendered}");
     assert!(report.passed(), "{rendered}");
+    // Whether the counts were compared at all is the one thing `passed` does
+    // not say, and the two kinds of run differ in it by design. A corpus a
+    // run names is read as named: a share's counts are not the baseline's, so
+    // requirement 13.7 skips the comparison and the pass above rests on the
+    // unattributed and cross-check rules. A package picked by default is
+    // picked so that its pages are compared, so a default run whose symbol or
+    // template sources are not the baseline's has compared nothing and says
+    // so here instead of passing. A run that rewrites the baseline compares
+    // nothing either, by its own choice.
+    if corpus.origin == CorpusOrigin::Package && !update {
+        assert!(
+            report.counts_compared(),
+            "the backup was laid out against the package it sits in ({}), picked by default \
+             so that its {} pages are compared with the ledger baseline, and no count was \
+             compared:\n{rendered}\n\
+             if this package is not the one the baseline was taken from, name the corpus in \
+             PID_PARSE_SELF_CHECK_DIR: a named corpus runs without the comparison",
+            corpus.dir.display(),
+            models.len()
+        );
+    }
 }
 
 /// Whether two accounts agree once the two marks that need a typeface are

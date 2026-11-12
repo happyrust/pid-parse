@@ -67,8 +67,8 @@ pub const NATIVE_GRAPHIC_TYPE_CODES: [u16; 20] = [
 /// `model::sheet_families` asserts this list stays in sync with the family
 /// registry.
 pub const DECODED_TYPE_CODES: [u16; 16] = [
-    0x3FE6, 0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0030, 0x0010, 0x0020,
-    0x005D, 0x0115, 0x0061, 0x0059,
+    0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0020, 0x005D, 0x0115, 0x0061,
+    0x0059, 0x0021, 0x007B, 0x007E,
 ];
 
 /// True when `SmartPlant`'s native graphic predicate accepts `type_code`,
@@ -340,10 +340,16 @@ fn unclaimed_counts(
     counts
 }
 
-/// Where the census finds a record: the stream's own chain from its 8-byte
-/// header when that chain walks the stream exactly
-/// ([`crate::parsers::sheet_records::sheet_record_starts`]), and the
-/// chain-validated greedy walk only when it does not.
+/// Where the census finds a record: on a chain stream — one that opens
+/// with the chain magic — the records its own chain reads from the 8-byte
+/// header on ([`crate::parsers::sheet_records::SheetChain::walk`]), which
+/// are the records the families decode at; on anything else, a bare run of
+/// records with no header, the chain-validated greedy walk.
+///
+/// A chain stream whose walk stops before the stream's end is counted as
+/// far as the walk reads. What follows the stop is not searched for
+/// records: it is reported whole, as bytes left unread
+/// ([`crate::model::StreamChainFault`]), which is all that is known of it.
 ///
 /// The greedy walk starts at byte 0 and slides a byte at a time, so on a
 /// stream that does walk it can only see records the chain does not have.
@@ -358,9 +364,12 @@ fn unclaimed_counts(
 /// skipped census
 /// (`docs/analysis/2026-11-07-every-undrawn-record-of-the-plant-backup-is-inkless.md`).
 fn census_record_starts(data: &[u8]) -> Vec<usize> {
-    let chain = crate::parsers::sheet_records::sheet_record_starts(data);
-    if !chain.is_empty() {
-        return chain;
+    let chain = crate::parsers::sheet_records::SheetChain::walk(data);
+    let is_chain_stream = chain.magic == Some(crate::parsers::sheet_records::SHEET_STREAM_MAGIC);
+    // Bytes with no header are taken for a chain only when they walk as one
+    // from end to end, as they always were.
+    if is_chain_stream || (chain.stop.is_none() && !chain.starts.is_empty()) {
+        return chain.starts;
     }
     let mut starts = Vec::new();
     let mut off = 0usize;
@@ -537,12 +546,16 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_style_record_is_counted_but_not_graphic() {
-        // A refused JStyleOverride costs the drawing styling, not strokes.
-        // Same predicate as the undecoded half, so one warn rule serves both.
+    fn a_style_record_no_family_reads_is_counted_but_not_graphic() {
+        // A JStyleOverride on a chain costs the drawing styling, not
+        // strokes. The sheet family that read `0x0030` is retired, so such
+        // a record has no decoder and lands in the undecoded half rather
+        // than the refused one. Same predicate in both, so one warn rule
+        // serves either.
         let data = record(0x0030, 64);
 
-        let census = refused_record_census(&data, &[]);
+        assert!(refused_record_census(&data, &[]).is_empty());
+        let census = undecoded_type_code_census(&data, &[]);
 
         assert_eq!(census.len(), 1);
         assert!(!census[0].is_graphic);

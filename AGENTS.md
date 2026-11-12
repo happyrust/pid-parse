@@ -61,24 +61,36 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/publish_diff_accepted_baseline.rs` | Reads `docs/baselines/publish-diff-accepted.json` and classifies every line a `--diff-against` run prints as registered / disappeared / unregistered: A01, I井场, and six `验收数据` drawings (J K / L M井场, 轻烃分离器I, 空冷器A/B/C) each in `.pid`-alone and `--oracle-exp` mode, plus each figure's `FluidSystem` line against the per-`DocUID` bound in `FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES` | `test-file/…/A01` + `D:\work\cad\PID自研软件验证` + `PID_ACCEPTANCE_CORPUS` (default `D:\work\cad\pid-test-data\验收数据`) + `PID_TEST_DATA_DIR` (default `D:\work\cad\pid-test-data`, for `Export.dmp` / `RefData~4~804.zip`) (soft-skips absent) |
 | `tests/publish_completeness.rs` | How much of each reference the export states (census: `examples/probe_how_much_of_a_reference_does_a_publish_state.rs`; the counting is `publish::completeness::measure`, which reads the two documents and never the exclusion list): the `<Container>` attributes, objects, interface elements, non-empty values, empty attributes and relations a run states, each out of all the reference carries, pinned per drawing and mode. A denominator is the reference's own count, pinned exactly, and the denominators must add up to the attributes counted off the reference's text; a numerator may only rise (a fall fails, and a rise fails until the pin is raised to it); values stated differently and interface elements the reference's block lacks may only fall. DWG-0202GP06-01 in three modes from committed fixtures, with no soft-skip branch: `.pid` alone states 78 / 108 objects, 164 / 747 interface elements, 71 / 236 values and 81 / 133 relations, with its dump 102 / 332 / 99 / 127, the package directory 100 / 328 / 58 / 123. The seven acceptance drawings whose backup is the reference's own revision (I井场, J K / L M井场, 轻烃分离器I, 空冷器A/B/C) in `.pid`-alone and `--oracle-exp` mode: with the dump every object and relation, 56.5–58.1 % of the interface elements, 49.6–51.8 % of the values and none of the empty attributes | `test-file/**` for DWG-0202GP06-01; `PID_ACCEPTANCE_CORPUS` (default `验收数据`) + `PID_TEST_DATA_DIR` for the seven (a case prints the directory it did not find and skips) |
 | `src/backup/datamap.rs::tests::the_committed_map_*` (five unit tests) | What the data map holds beyond `MapEnumToEnum` (census: `examples/probe_where_the_data_map_says_a_published_value_comes_from.rs`, which joins the map to reference documents and, given a dump, to the table and column its own data dictionary names). Read out of the committed package's `RefData~4~804.zip` — the 3 678 496-byte `SPPIDDataMap.xml`, SHA-256 `248c6a3b…06794548`, the same entry in all three packages: 31 item types, 1 818 attributes and 12 087 rels under 18 `DefUID`s, each count pinned; the class each item type is published as (three as none, `Pipeline` as two); the mappings `pid_load::published_attribute` rests on (`Vessel` / `Exchanger` `Description` → `LongMaterialDescription`, `EquipmentOther` → `LongMaterialDescription3`, the four `Name` → `Description`, the `Description` of mechanical equipment and of a note → nothing); the 17 spellings of `ProcessPropertyCriteria` with their counts; and what is not one attribute to one property of the item's own class (57 `PipeRun` rels that name `PIDProcessPoint`, 48 `DuctRun` rels with an `EndEdgeDef`, one attribute with two targets, ten `ToolOID`s shared by two attributes). No publish stage reads the class and property maps yet | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip` (committed; no soft-skip branch; feature `backup-exp`, on by default) |
-| `tests/plant_backup_census.rs` | What the 53-sheet plant backup leaves off its pages (census: `examples/probe_which_records_reach_no_page.rs`): the parser's sheet census over all 53 drawings pinned by type code (undecoded `0x0019`×5 + `0x0021`×1 on `D04`, refused `0x00FA`×1 on `A井场`, 1549 records the native reader skips) — read on each stream's own chain, so no phantom code out of the stream header — and `EF井场`'s hand-drawn dot (oid 52844, a `0x73` circle member) projecting as a 26-point fill ring | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR` or either `pid-test-data` (soft-skips when absent) |
-| `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
-| `tests/parse_real_files.rs::jstyle_override_decoder_emits_audit_records_with_provenance` | Phase 16 JStyleOverride (PSM 0x0030) cross-fixture | `test-file/*.pid` |
+| `tests/plant_backup_census.rs` | What the 53-sheet plant backup leaves off its pages (census: `examples/probe_which_records_reach_no_page.rs`): the parser's sheet census over all 53 drawings pinned by type code (undecoded: the five `0x0019` `KeyPoint Constraint`s of `D04`'s one `ComplexString`, which the native graphic predicate does not take for drawable; refused: none; 1549 records the native reader skips; 51 `igSmartFrame2d`; one `ComplexString` of six curves and five constraints, no Group; not one record of `0x0010` / `0x0030` on a sheet chain) — read on each stream's own chain, so no phantom code out of the stream header — and `EF井场`'s hand-drawn dot (oid 52844, a `0x73` circle member) projecting as a 26-point fill ring. A run that held the pins prints one `plant backup census: …` line with what it read; one that skipped prints `skipping:` instead | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR` or either `pid-test-data` (soft-skips when absent) |
+| `tests/parse_real_files.rs::a_sheet_chain_holds_no_gline2d_and_the_old_hits_were_a_page_frames_ratio` | No chain of five fixtures holds a record of type `0x3FE6`, no registry row reads it, and a chain walk stops on that word: the `GLine2d` family was retired on 2026-11-11. The three hits the Phase 14 byte-sliding scan counted (`DWG-0201` 2, `A01` 1) are re-found at every offset with the family's matcher, which lives on the test side, and each is held to what it was: 160 bytes into an `igSmartFrame2d`, on the top two bytes of the aspect ratio that record states at payload `+148` (its height over its width: `1/√2` on an ISO A sheet, give or take the frame's margins) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::a_sheet_chain_holds_no_jstyle_override_and_the_old_hits_were_block_length_words`, `::a_sheet_chain_holds_no_0x0010_record_and_the_old_hits_were_sub_type_words`, `::the_old_attribute_fragments_were_the_inside_of_text_boxes_and_placements` | No sheet chain of four fixtures holds a record of type `0x0030` or `0x0010`, and no registry row reads either: the three families that used to be found by sliding a decoder over the stream were retired on 2026-11-11. Their matchers are kept for this, on the test side (`tests/support/retired_matchers.rs`) — the hits those scans returned are re-found at every offset and each is held to what it was: 98 "`JStyleOverride`" on the length word of the block a `DependencyObject` ends with, 582 "`0x0010` sub-records" on a graphic record's own sub-type word and style id (`+12` / `+14`, all but one), 84 "attribute fragments" inside an `igTextBox` (77, each the text the box's own decoder reads) or an `igSymbol2d` (7) | `test-file/*.pid` |
+| `tests/retired_matchers.rs` (with `tests/support/retired_matchers.rs`) | The matchers of the four retired families (`GLine2d`, `JStyleOverride` on a sheet, `SubRecord0x0010`, `AttributeFragment`) live on the test side: the library exports none of them, since each reads untrusted bytes and matches nothing a file holds. The support file is the code as it left `sheet_records.rs`; a test includes it with `#[path = "support/retired_matchers.rs"]`, a probe with `#[path = "../tests/support/retired_matchers.rs"]`. This test file holds the matchers' own rules, the 34 unit tests they had in the library — what each accepts and refuses at an offset, and that a chain hands a `0x3FE6` record or one flagged `0x4000` to no matcher | inline bytes; runs in CI |
 | `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglinestrings_decoder_emits_decoded_polylines_with_provenance` | Phase 14 Slice K igLineString2d (PSM 0x0084) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igpoints_decoder_emits_decoded_points_with_provenance` | Phase 14 Slice L igPoint2d (PSM 0x005E) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igtextboxes_decoder_emits_decoded_texts_with_provenance` | Phase 14 Slice M igTextBox (PSM 0x004D) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
-| `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
+| `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
+| `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
+| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. (On every corpus in reach that holds as well since the page frame is held to the ratio of its own extent: ten of 49 058 such records decoded as `igSmartFrame2d` before, none now — `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`, which is too slow for a test.) A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned) | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
+| `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 10 条共 17 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，这两条失败、其余 15 条通过（第一份原先读成 359 条记录的完好流，一个字都不说） | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
+| `tests/publish_chain_faults.rs` | `pid_publish_xml` says when a record chain of a `.pid` it publishes does not hold, for a single `.pid` and for each drawing of a backup package. The publish reader takes a stream's records all or nothing, so a copy of `DWG-0201GP06-01.pid` with one length of `/Sheet6` set to zero publishes 0 of 102 label values where the drawing publishes 92: the copy exits 0 with exactly one `warning:` naming the file, the stream, `stops at +16994 of 29594 bytes`, the 12 600 bytes unread and what the stream cost — the 120 attribute rows, text boxes, dependency objects and symbol placements the chain read before the stop — and the line is the library's sentence (`PublishChainFault::describe`) from the one read that makes the drawing (`read_publish_from_pid`). A `/StyleCluster` whose chain stops is said too, as costing the XML nothing the chain read, and the data and meta XML are the intact drawing's byte for byte. A copy whose `DrawingNo` row is in the stopped stream exits 1 with the warning ahead of the error. A header count one too many is said and the stream is still read. A package of two drawings, one damaged, publishes both, exits 0 and prints one warning led by the zip and the entry (`BackupPublishReport::chain_faults`); `_Index.json` and the coverage reports keep their keys and list no fault | `test-file/DWG-0201GP06-01.pid`, `test-file/D06.pid` (committed; runs in CI) |
+| `tests/boundary_loops.rs` | A boundary of two loops fills the area between them. `XA-A1.igr`'s oids 5074 and 5076 — outer loops of 104 and 162 lines, counters of 77 and 54 — decode with their loops, anchor and member references, and each reaches the sheet as one fill ring whose area is the outer loop's less the counter's, with the record's anchor inside it and a point of the counter outside | `test-file/Ref/Template Files/XA-A1.igr` (committed; runs in CI) |
+| `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default. And the other direction byte: the four `-W` templates of the committed `RefData~4~682.zip` each keep four arcs and four B-splines in their logo; on `A1-W.igr` the arcs are the top cap, the bottom cap and two left-side pieces of one ellipse, clockwise, each on the ends of the logo's lines, the caps turning 106.26° on the far side of their chord | `test-file/export-test/publish-data/A01/A01.pid` (soft-skips when absent), `test-file/Ref/Template Files/XA-A1.igr` and `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` (committed; absent is a failure) |
+| `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
+| `tests/render_gap_census.rs` | A sheet record that does not reach the drawing is named. Per fixture, the refused and the undecoded graphic records are pinned in records — none of either on any fixture — every refused record has a warning, the lines a retired rule refused are counted, and the records the native reader skips are counted apart. The two documents that last carried a refusal, `A井场` of the plant backup and the committed `XA-A1.igr`, are pinned to none, in the prose and in the structured list alike; with no document left to read a refusal's wording on, that is held on synthetic rows in `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`, `a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`) | `test-file/*.pid`, `XA-A1.igr` (committed); the backup sheet where present |
+| `tests/parser_panic_safety.rs` | No byte-level parser entry point panics. An adversarial corpus and its truncations go through every stream entry point. Every `decode_*_at(data, offset)` — the 23 of `AT_ENTRIES`, which `every_at_entry_point_is_listed` checks against the sources, so that the four retired matchers cannot come back into `src/parsers` unlisted — is called at every offset of every input, one past its end and where `offset + 6` overflows. And because a family decodes only where a record chain starts a record, 270 planted streams (the magic, the record count, one record of each family's type code for each of 28 lengths, filled with noise, zeros or `0xFF`) carry the stream entry points past the chain into every payload decoder: 182 of them are chains and hand the decoders 5 070 records of the right length and the wrong content; the other 88 carry a type word no record opens with (the `0x4000` flag, and `0x3FE6`, planted for being past the class table) and are held to stopping on their first word. The Oracle `exp` dump readers of `publish::oracle_exp` are in the same file (feature `backup-exp`, on by default): the seven entries that take a dump's bytes go through the shared corpus, and because they refuse a dump whose first table does not pin the row format, `exp_dump_readers_do_not_panic_on_a_damaged_dump` starts from a small dump every reader gets through and damages it one place at a time — every prefix through every entry, every byte and 16-bit word of the binary headers and rows, the punctuation of the `INSERT` lines — running the projections of each damaged dump that still reads | inline bytes; runs in CI |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports its whole page: laid out from the committed sources the ledger gate states, each of the seven wears the border template `FIXTURE_TEMPLATES` names (a drawing with no row fails rather than passing unframed), the writer's `mismatches` is empty, `cross_check` finds nothing (8.6 included, with real faces), and the PDF reads back with exactly the ink segments the model strokes and the characters it letters, the template's among them. None names a symbol no library carries — the 熊安 fixture's own `Xa …` symbols and its `XA-A1.igr` are committed under `test-file/Ref` | every `test-file/**/*.pid`; faces from `PID_PLOT_FONTS` or the share's `fonts` (the export soft-skips without a font directory; the walk and the template table still assert) |
-| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, exactly one primitive past its page (the sideways `N井场` run whose first glyph is clipped), known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen). Which template each sheet wears is pinned exactly — `CPE-SQ-A0/A1/A2` on 8/22/7 sheets, `CPECCHB-SQ-A1/A2` on 4/9, the two `W` templates on **0** (so their 50 pinned label cells are held against no page until a sheet wears one), three bare sheets by name — with the 175 label cells and 64 template placements the run holds against a page. **Also carries the export-ledger gate** for this corpus: each page's `ExportLedger` is assembled from the same `PaperModel` and write result, `cross_check` must find nothing, the face-free account must match the written one except for the two font marks, and every page is compared against `docs/baselines/export-ledger-backup.json` (suspect counts may only fall, intentional counts are pinned exactly) | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, exactly one primitive past its page (the sideways `N井场` run whose first glyph is clipped), known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen). Which template each sheet wears is pinned exactly — `CPE-SQ-A0/A1/A2` on 8/22/7 sheets, `CPECCHB-SQ-A1/A2` on 4/9, the two `W` templates on **0** (so their 50 pinned label cells are held against no page until a sheet wears one), three bare sheets by name — with the 175 label cells and 64 template placements the run holds against a page. The readings a run used to print without asserting are pinned as well: the 15 sheets whose frame places the template off the page origin, by page key with the offset in millimetres (`FRAME_OFFSET_SHEETS` — all nine `CPECCHB-SQ-A2` sheets at (0.388407, 0.565648), `N井场`/`O井场`/`P井场`, `A井场` and the two `凝析油稳定塔` sheets); all 64 template placements naming a file no library carries (`TEMPLATE_NAME_GAPS`); which label is past its page and where it starts (`PAST_THE_PAGE`: `15-TD-4101416-B2-EH40` at (259.113810, −0.207788) mm); and each sheet's template coming from the kind of source its corpus calls for — disk exactly when a template directory of the corpus holds a file of that name, a `RefData~*.zip` otherwise, which is 0 disk / 50 archive in the package and 50 disk / 0 archive in the share, held sheet by sheet rather than as two totals. A failure names the measured value, the pin and the sheets that differ. The typefaces a run embeds are printed by name and deliberately not pinned (which faces a machine has is its own business; the ledger gate skips its two font marks when they are not the baseline's). **Also carries the export-ledger gate** for this corpus: each page's `ExportLedger` is assembled from the same `PaperModel` and write result, `cross_check` must find nothing, the face-free account must match the written one except for the two font marks, and every page is compared against `docs/baselines/export-ledger-backup.json` (suspect counts may only fall, intentional counts are pinned exactly). That comparison needs the layout to read a backup package, so a package in reach is the default: with `PID_PARSE_SELF_CHECK_DIR` unset the corpus is the directory above the `backup-plant-data` the gate found whenever that directory holds `RefData~*.zip`, and the share otherwise. A run that names a corpus reads it, and a named share skips the count comparison (requirement 13.7) and passes on the unattributed and cross-check rules alone. A package picked by default is held to more: if its symbol or template sources are not the baseline's the comparison is skipped all the same, and the test then **fails** for having compared nothing (the baseline's symbol sources include this machine's gitignored `test-file/symbols-full`, so a checkout without that directory has to name its corpus). The first line a run prints names the corpus and says why it was picked | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the named corpus (the share when none is named), or either `pid-test-data` (soft-skips when absent); faces from `PID_PLOT_FONTS`, the corpus's `fonts`, `test-file/fonts`, then the share's `fonts` for a package picked by default (no face directory at all fails rather than skips) |
 | `pid-plot/tests/export_ledger_fixtures.rs` | 7 张仓库夹具的出图记账门禁：每页 `assemble` 后五层（解析 / 排版 / 符号体 / 写出 / 段）未归因全为 0，`cross_check`（8.1–8.5 与 8.7；8.6 要字体，由 `export_every_fixture` 与 `export_plant_backup` 在写出的页上执行）无不符，同一页排两遍、两次序列化逐字节相同，序列化结果与语料描述头不含本机目录、任意盘符路径或 UNC 路径（原样与 JSON 转义两种写法都查），最后与 `docs/baselines/export-ledger-fixtures.json` 逐页比对（可疑项只许降、有意项精确钉）；语料描述与基线不同时**失败**，不跳过比对（`GateReport::counts_compared()`）。**没有字体需求，也没有任何软跳过分支**：7 张夹具、`test-file/symbols`、`test-file/Ref/Symbols`、`test-file/Ref/Template Files` 与 `test-file/backup-test/*_p/RefData~*.zip` 全部已入库，所以本机与 CI 都真跑。`UPDATE_EXPORT_LEDGER=1` 重写基线（可疑项会升高则拒绝写入） | 全部在仓库内（`test-file/**`），CI 上真跑 |
-| `pid-plot/tests/cli_pid_plot.rs` | `pid_plot`（实际用来导出 PDF 的程序）作为进程起起来的 8 个用例：缺参数退出码 2 并打印 usage；图纸不存在退出码 1、不写 PDF；命令行上给的 corpus 不是目录时退出码 2、点名该路径、不写 PDF；没给 corpus 而回退目录不存在时只在 stderr 警告、照常导出；`test-file/D06.pid` 以 `test-file` 为 corpus 导出后，stdout 首行（图元数、页幅、字节数）等于库内同一排版与盘上文件，PDF 读回有墨有字，账本汇总未归因为 0。子进程读的四个环境变量逐例显式设定 | `test-file/D06.pid` + `CPECCHB-SQ-A2.igr`（入库）；导出要字体，没有字体目录时那一条软跳过，其余 7 条到处都断言 |
+| `pid-plot/tests/cli_pid_plot.rs` | `pid_plot`（实际用来导出 PDF 的程序）作为进程起起来的 10 个用例：缺参数退出码 2 并打印 usage；图纸不存在退出码 1、不写 PDF；命令行上给的 corpus 不是目录时退出码 2、点名该路径、不写 PDF；没给 corpus 而回退目录不存在时只在 stderr 警告（警告要说出它「不是目录」）、照常导出；corpus 是目录、却够不到图纸点名的模板时（`D06.pid` 配一个空 corpus），退出码与写出的页不变，stderr 恰好一行 `warning:`，点名图纸、模板名（`PaperModel::missing_templates` 的每个词干，印成 `<词干>*.igr`）与 `border_template_places` 报的每个模板目录；没点名模板的图（`A01.pid`）配同样的空 corpus 一行警告都没有；`test-file/D06.pid` 以 `test-file` 为 corpus 导出后，stdout 首行（图元数、页幅、字节数）等于库内同一排版与盘上文件，PDF 读回有墨有字，账本汇总未归因为 0。子进程读的四个环境变量逐例显式设定 | `test-file/D06.pid` + `CPECCHB-SQ-A2.igr`、`test-file/export-test/publish-data/A01/A01.pid`（入库）；导出要字体，没有字体目录时 D06 导出那一条软跳过，其余 9 条到处都断言（两条模板用例没有字体时断言退出码 1 与 stderr，警告在要字体之前打印） |
+| `pid-plot/src/write.rs::an_acceptance_sheet_letters_alone_as_it_does_among_the_eleven` | 借字的字型与同批图纸无关：验收语料的每张图单张备字（`pid_plot` 的做法）与全部图一起备字（验收门禁的做法），逐条标签比写出器发出的 `Tf` / `Tj`，每段文字的字型都相同；A2 图 `轻烃分离器I` 那两处点名 Arial Narrow 的「动火点」钉为整条借 NSimSun（字体目录里没有 `nsimsun.ttf` 时是 SimSun）。规则是 `fonts::BORROW_ORDER`，所有标签同一张六个字型的次序：NSimSun、SimSun、FangSong、Arial、Arial Narrow、SimSun-ExtB——原厂参考图里借来的字全是新宋体，所以它排第一，没有这个文件的机器退到同族的宋体；出借字型按整个字库判定，不看这次备字切出的子集，六个都画不了的字单张、成批以同一条错误拒绝（点名字符与标签）。调用方自带的字型（`pid_plot` 用 `PID_PLOT_CJK_FONT` 嵌入、名字为空的那个）排在这张次序之后。借来的字怎么画另有一处，`pid-plot/src/write/borrowed.rs`，只管参考图有样本的那一类：图纸自己的、正排、点名 Arial Narrow、落在 24 个设备单位的字格上（字高 2.469 / 2.5 mm）、没有声明字宽、只有一种样式的标签，借来的是整条标签或末尾单独一个字。这一类照参考图画——`Tf 9.6`（20 个设备单位，即 GDI 给 Arial Narrow 在这个字格上的字符高度）、不做横向缩放、整条借字每个字按 Arial Narrow 的 `?` 走 9 个单位，全宽的字因此相叠，与参考图一样；末尾单独借一个字的标签（`L=35℃`）参考图逐字写在整设备单位上，所以借来的字之前的那一段逐字落在自己的步进上（一个 `TJ`，最后一个字后面也带调整量），`℃` 站在前一个数字的步进上而不是它的自然宽度之后——验收 11 页配上的 12 条逐字与参考图相差不到 0.005 个单位；样本够不到的标签（别的字型、别的字格、旋转、模板家具、声明了字宽、借来的字后面还有点名字型的字）照旧用所在那一段的字号与出借字型自己的字宽，见 `docs/analysis/2026-11-11-a-borrowed-glyph-is-set-at-the-named-fonts-character-height.md`。借字次序另有 17 条不依赖语料的库内用例（`fonts.rs` 9 条、`write.rs` 8 条），其中 15 条用 pdfcraft 自带的 Inter 造字型，在没有授权字体的机器上钉住单张与成批同字型、同批的图让别的字型的子集也装着被借的字时写出器照样按次序问（把 `lenders()` 改回按字型表次序，库内有 7 条失败，其中 5 条不依赖语料）、没有 NSimSun 时备字与写出都退到 SimSun、整条借字不被切开、点名字型画不了的空白字符（`动　火　点` 的 U+3000）照借而标签末尾的空白不借、run 的字型缺文件、run 点名别的标签自有字型、前面的出借字型都画不了的字单张与成批借同一个字型（没有字型能画则同一条错误）、调用方自带的字型不论在表里排第几都最后才问九种情形。参考图的画法另有 4 条不依赖语料的用例：样本那一类读回 20 个单位的字身与 9 个单位的步进、借来的末字之前的每个字各落在自己的步进上（`the_glyphs_before_a_borrowed_last_glyph_each_stand_on_their_step`）、样本够不到的八种标签保持所在那一段的字号、NSimSun 在参考字型表里与 SimSun 是同一组读数；读真字体的 `a_centred_borrowed_han_run_steps_back_by_the_reference_pitch` 从写出的 PDF 读回出借字型、20 个单位的字身与 38 个单位的 run 长 | `PID_ACCEPTANCE_CORPUS`（默认 `验收数据`）加共享语料的 `fonts`（语料里一张 `.pid` 都没有、或缺三个字型之一，则打印原因并软跳过；语料里有图却没有 A2 那张则**失败**，不带着没读的钉值通过）；那 21 条单测只用 pdfcraft 内嵌的 Inter 或不用字型，没有软跳过分支，造出的字体目录名带进程号、用例结束即删 |
+| `pid-plot/src/write/escapement.rs`、`pid-plot/src/write/text_matrix.rs`、`pid-plot/src/write/script_runs.rs` 与 `write.rs` 里的十二条用例 | 文字对象怎么写进 PDF：转角、记录的分段、文字矩阵、按文字种类切对象四条规则，各条的见证写在各条里。**转角**：出图程序把标签的转角以整十分之一度交给 GDI（`render.dll` 填 `LOGFONT.lfEscapement` 时就近取整），所以离正排或直角不到 0.05° 的标签就排在正排或直角上，`Tm` 写整数（`1 0 0 1`、`0 1.012 -1.012 0`）；别的转角原样保留，不归到十分之一度。备份 10 条、夹具 1 条离正排 9e-8～2e-4 弧度的标签因此是正排的字，不再按旋转的字放大 0.8%～1.2%；`escapement.rs` 的 5 条与 `write.rs` 的 `a_label_a_hair_off_level_is_lettered_level` 等 3 条钉住。取就近而不是截断的见证：11 张参考图上 45 条旋转标签在模型里比直角少 1e-13 弧度，参考图全部写在直角上。**记录的分段**：记录里的每一段按它自己声明的字高量宽、定步进（`a_run_at_a_height_of_its_own_is_spaced_as_a_label_of_that_height`）；「每一段各自从整像素起笔」只用在各段同一种样式的记录上，那是 `SP:` 见证的一类，各段换字型或换字高的记录（夹具的 10 条管线号）后一段接在前一段的终点上（`only_a_record_in_one_style_starts_each_run_on_a_pixel_of_its_own`），这一类没有参考图，见 `docs/analysis/2026-11-11-nine-fixture-pipeline-labels-follow-the-record-run-rule-unwitnessed.md`。**文字矩阵**：旋转的或样式写了字宽的标签，`Tm` 写驱动的定点值——`L = trunc(across × 1250000)`、`Q = L div 256`、每项 `trunc(e × 1250000 / Q)`，印 `n/256` 三位小数——所以宋体 800‰ 在 30 单位字格上是 `0.797` 而不是 `0.8`，旋转的 Arial 是 `0 1.012 -1.012 0`；`the_fourteen_matrices_of_the_reference_plots_are_reproduced` 把 11 张参考图上全部 14 个非平凡矩阵当表钉住（宋体九档、旋转的宋体、Arial 的 `M`、旋转的 Arial 与 Arial Narrow）。矩阵按字体算，不按标签算（`write.rs::SetFont`）：一条标签里借来的字、记录里点名别的字型或别的字高的段各有自己的 `Tm`，从前一段的终点起笔；正排不压窄的标签每个字体都是 `1 0 0 1`，所以参考图见证过的借字那一类不受影响，受影响的只有夹具上 33 个文字对象（没有见证，`a_lent_piece_of_a_turned_label_is_set_under_its_own_fonts_matrix` 等三条钉规则照此执行）。**按文字种类切对象**：一个字串在拉丁字母、汉字、全角字符之间换类的地方切开，每段一个文字对象，从「字串起点 + 前面各字的整像素步进」起笔、字距按本段的字算；`a_string_is_cut_where_the_reference_plots_cut_it` 钉参考图的切法（`DWG-0100` \| `集05-37`、`I` \| `井场` \| `（2` \| `口井` \| `）`、A2 证书行的五段），`a_run_starts_on_the_steps_before_it_and_is_spaced_by_its_own_glyphs` 钉证书行的起点 134 / 238 与 `Tc` −0.494 / −0.288。`write.rs` 的十二条从 `show_text` 写出的算符读回 `Tm`、`Td`、`Tc`、`TJ`。规则的搜索与常数扫描在 `tools/driver_text_matrix.py`，读内容流的工具在 `tools/pdf_text_objects.py`；见 `docs/analysis/2026-11-11-the-driver-states-a-font-transform-in-256ths.md` 与 `…-a-string-is-one-text-object-for-each-script-run.md` | 不需要语料：字型的设计数（宋体 256 / 256 / 128，Arial 2048 / 2288 / 904，Arial Narrow 2048 / 2319 / 741）写在用例里，`write.rs` 的用例用 pdfcraft 自带的 Inter 或拿它造的字型；没有软跳过分支 |
 | `pid-plot/tests/border_template.rs` | A0/A1/A2 sheets draw the frame, title block and sign-off column their linked `.igr` carries: both frames and 12 furniture labels on the `CPE-SQ` pages with the company name and `会 签 专 业` read back, and the A2 CCHB case on its own 35.354/7.071 mm insets, 116 strokes and 36 cells; a page with no same-size template draws none (pinned by `model.rs`'s extent unit test, no longer by an A2 negative) | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` + `CPECCHB-SQ-A2.igr` (soft-skips when absent) |
 | `pid-plot/tests/style_witness.rs` | The plant backup draws only style vocabulary a reference plot has exercised: the eleven acceptance pages' 10 pen widths / 2 dash patterns / 4 faces / 3 templates are pinned, every unexercised entry is pinned with its drawing-vs-furniture split (3 of the 4 unexercised widths are `CPECCHB-SQ-A1` furniture, `0.5000 mm` is also `D04`'s own ink, the 2 unexercised dash patterns are the drawing's own ink), and the four widths the open band boundaries cannot settle are pinned — `0.3000 mm` inside `(0.25, 0.35)`, `0.5000 mm` inside `(0.35, 0.70)`, `0.7500 mm` and `0.7999 mm` inside `(0.70, 1.06)` | `PID_ACCEPTANCE_CORPUS` (default `验收数据`; no fallback to the five-sheet corpus) and `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 | `pid-plot/tests/refdata_archive_corpus.rs` | A backup package supplies its own reference data: the named `.igr` comes out of its `RefData~4~682.zip`, a symbol body resolves from `~681.zip` with no directory root at all, and the same drawings — copied to a directory with no `Ref` and no archive in reach — draw nothing | `test-file/backup-test/DWG-0202GP06-01_p` + the repo's `test-file/*.pid` |
-| `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm（只剩 `/Sheet6` 划线端头），见计划 §7.1。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
+| `pid-plot/tests/reference_plots_acceptance.rs` | 11 张带原厂参考图的图纸（A0×3 / A1×4 / A2×1 与原先 5 张同目录）：页幅、coverage 下限、extra 上限、参考标签数、pen 一致数与不符上限、缺符号名单；另钉 A0/A1/A2 三张纸的掩膜矩形（A2 左列 ≤ 36 mm、不吞工艺接续）。A1 三张的 8.210 mm 已归零（单记号改为不早于段中点：16.09 mm 竖管 5.08 → 8.05，参考 8.04 / 8.07）；箱体下沿那圈「波形管束」是 `.sym` 与缓存体都有的两条 `0x0063 igEllipse2d` 风机椭圆，解码后 `uncovered` 23.031 → 5.757 mm，见计划 §7.1；剩下的 `/Sheet6` 划线端头在信号线虚线按每段直线重排之后也归零（`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`），现在除 A2 那张外的十页 coverage 1.000000、uncovered 0.000 mm、extra 0.000 mm。配上的标签管两层：两条字符类阈值（平均下移 ±0.04、平均宽差 ±0.02 字高）管每一个类——不论条数、`unknown` 也算——掩膜视图与整页视图都查，没有例外：原先唯一超限、钉在读数上的 `Left/Ascender part`（以 `℃` 结尾的标签被切开的两段，8 页，+0.0294）在借来的 `℃` 照参考图用 `Tf 9.6` 画之后读 −0.0003（`℃` 之前的字逐字落在步进上之后是 +0.00003），例外名单已经删掉；锚点偏离参考超过 0.15 mm 或 run 比参考宽窄超过 0.05 mm 的标签按页钉条数（`WholePage::text_off`，11 页合计 3：文字普查的 64 条里，14 条借来的 run 照参考图画之后回到界内，三张空冷器图的 `SP:` 在记录里的每一段各自从整像素起笔之后回到界内，44 条标题栏里压窄的宋体在 `Tm` 照出图驱动写成 256 分之几之后回到界内——`write/text_matrix.rs`，规则复现参考图全部 14 个非平凡的文字矩阵；剩下的 3 条是 J K 页上被读图并成一个 run 的 `1-1/2"` 与 `FC`，和 A2 页两条带盒的 `仪表风管线`），多一条少一条都失败并逐条列出。一对 run 属于哪个类由 `compare.rs` 的来源查找决定：从标签自己的锚点量、按整条 run 链拼出的文字找、被切开的一段认它那一行拼出的标签（类名带 ` part`），见 `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`。借来的 run 另按字型族与参考比（`WholePage::borrowed` / `borrowed_in_family`）：标签点名的字型画不了的字，两页各自换别的字型写；凡配上对的这种 run，从两份 PDF 读回各自的字体名（`read::read_plot_with_faces`，不重复写出器的借字规则），按测试里的明文表 `FAMILIES` 归族——宋体、新宋体一族，仿宋一族——看我方与参考是否同族。11 页合计 14 条——12 条 `℃` 与 A2 图两处 `动火点`——现在 14 条全部同族：我方与参考都是 NSimSun `Tf 9.6`（字体目录里没有 `nsimsun.ttf` 时我方是同族的 SimSun）；2026-11-11 之前 12 条 `℃` 是 FangSong、只有两处 `动火点` 同族。每页的条数精确钉，同族数只许升——少了失败，多了要求把钉值提上去；读到表里没有的字体名直接失败。A2 图被拖动的仪表簇里另有两条借来的 `℃`（`L=-5℃`、`H=-15℃`）与参考配不上对，不在这个读数里。11 页全部过钉之后，这道门把刚验过的字节统一写到 `<corpus>\plot\<name>.pdf`（11 张交付）并写 `BUILD.txt`（HEAD / plot_src / written_unix / pages）；任一页未过钉则一张都不写，`PID_ACCEPTANCE_DELIVER=0` 关闭落盘（第二个检出跑同一语料时用） | `D:\work\cad\pid-test-data\验收数据`（soft-skips when absent） |
 | `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364` | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
@@ -86,6 +98,21 @@ That file cannot be produced from the committed package: its `Export.dmp` is an 
 MTF backup an MDF can be stripped from, so those 14 cases (4 in `publish_dwg_generated_parity`, 5 in
 `publish_dwg_mirror`, 2 in `publish_meta_parity`, 3 in `publish_rel_parity`) have never run. The DWG
 reference is exercised through the Oracle line instead, by the three cases in `tests/publish_from_pid.rs`.
+
+### 排字规则由谁守
+
+文字怎么写进 PDF——转角、文字矩阵、按文字种类切对象、记录的分段、借字的字型与步进——由两处守：`pid-plot`
+的库内用例（`write.rs`、`write/*.rs`、`fonts.rs` 的 `#[cfg(test)]`），和验收门禁
+`pid-plot/tests/reference_plots_acceptance.rs`（每页的 `text_off`、两条字符类阈值、借字的字型族）。
+**按墨读的门禁 `pid-plot/tests/reference_plots_ink.rs` 不读文字的位置，不守这些规则**：它过了不说明排字没坏。
+
+2026-11-11 的独立审查在 `1ad2df8` 上做过 30 种故意改坏（审查报告不在仓库里）：库内用例拦住 28 种，剩下的
+两种一种是等价改动、一种是语料里没有的情形；拿去过两道门禁的 11 种里，验收门禁拦住 10 种（漏掉的是
+「`Tc` 不按 256 分之几重述」，效果不到 0.02 mm，库内用例拦住了），按墨读的门禁 11 种全部放过。
+
+验收门禁在 CI 上软跳过（语料不在仓库里，见下一节），所以 **CI 上守排字规则的只有库内用例**。改文字的
+写法时：新规则要有不依赖语料的库内用例（先红后绿），并在有语料的机器上跑验收门禁
+（`PID_ACCEPTANCE_DELIVER=0` 不动交付目录）；逐字形核对参考图用 `tools/pdf_text_objects.py`。
 
 ### CI 覆盖：pid-plot 的测试文件哪些真跑、哪些软跳过
 
@@ -105,7 +132,7 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 
 | 测试文件 | 定论 | 判定依据（stderr 原文或断言实际执行） |
 |---|---|---|
-| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, 4162420 bytes (3.97 MiB)`。干净检出里 7.28 s 通过 |
+| `paper_model_golden.rs` | **真跑** | 无任何 `skipping` 行；7 行 `… matches its golden` 逐张打印，末行 `paper model golden: 7 fixtures, <字节数> bytes (<MiB>)`——量这张表时是 `4162420 bytes (3.97 MiB)`，金样每重写一次这个数就变，见下面「金样可行性」。干净检出里 7.28 s 通过 |
 | `refdata_archive_corpus.rs` | **真跑** | 4 个用例全 `ok`（0.77 s）；夹具 `test-file/backup-test/DWG-0202GP06-01_p` 已入库，`backup_dir()` 返回 `Some`，`skipping the archive corpus` 一次都没出现 |
 | `border_template.rs` | **混合（真跑 A2 与 A01，A0/A1 软跳过）** | 4 个用例全 `ok`，但只有 `an_a2_sheet_draws_its_linked_a2_template`（`D06.pid` + `CPECCHB-SQ-A2.igr`）与 `the_a01_sheets_embedded_frame_draws_the_a2_template_it_states`（`export-test/publish-data/A01/A01.pid` + `CPE-SQ-A2.igr`）的建模段真跑——两者的夹具都在仓库里。A0/A1 两条各打印一行 `skipping border template; C:\nonexistent-pid-corpus\I井场 注采阀组工艺及自控流程图.pid is absent` 与 `skipping border template; C:\nonexistent-pid-corpus\集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent`，因为 `corpus_dir()` 指向不存在的目录。两条 A2 用例的渲染段也打印 `skipping the page render; no font directory is present`，但建模段已过钉 |
 | `paper_model.rs` | **软跳过** | `skipping paper models; C:\nonexistent-pid-corpus is absent`；该门读 `PID_PARSE_SELF_CHECK_DIR` 下的五张图，仓库里没有 |
@@ -118,9 +145,9 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 | `write_five_drawings.rs` | **混合** | 4 个用例 `ok`；3 条纯单测（`an_inserted_space_span_is_not_a_placed_run` / `a_glued_inch_mark_still_covers_both_placed_runs` / `a_missing_placed_run_is_reported`）真跑，落盘那一条打印 `skipping rendered plots; … .pid is absent` |
 | `compare_five_drawings.rs` | **软跳过** | 只有一个用例 `five_drawings_write_compare_reports`，参考图不在时打 `skipping plot compare; …I井场 … .pdf is absent`。原来的 `survey_margin_text_once` 没有断言，已搬成示例 `probe_margin_text_survey`，`skip survey` 这一行不再存在 |
 | `template_symbol_gap.rs` | **软跳过** | `skipping template symbol gap; …集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid is absent` |
-| `export_plant_backup.rs` | **软跳过（需临时打掉 `export_plant_backup.rs:161-162` 的两个硬编码绝对根才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None`，两条用例各打印一行 `skipping the D04 refusal pin; no backup-plant-data directory is present` 与 `skipping the backup export; no backup-plant-data directory is present` 并 `ok`。本机模拟时这两个根恰好存在（语料在这台机器上），于是 `d04_igsymbol2d_refused_count_is_zero` 真跑并**失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1453`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，模板与 `Ref` 都读不到。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，行为才与 Linux runner 一致。`style_witness.rs:114-115` 有同样的两个绝对根，同样处理后软跳过 |
-| `export_ledger_fixtures.rs` | **真跑** | 无任何 `skipping` 行；7 行 `<page>: 未发现可归属缺陷` 逐页打印，末行 `export-ledger: 7 页全部通过（可疑项 12 个，未归因 0）`。全部输入都在仓库内（`test-file/**`），`write_ledger` 不读字型，所以干净检出与 CI 上同样真跑。`docs/baselines/export-ledger-fixtures.json` 已入库，因此不带 `UPDATE_EXPORT_LEDGER` 时直接比对。语料描述与基线不同时这道门现在失败，不再跳过比对后照样通过 |
-| `cli_pid_plot.rs` | **混合（7 条真跑，D06 导出软跳过）** | 没有字体目录时 `d06_exports_the_page_the_library_lays_out` 打 `skipping the D06 export; no font directory is present (searched …)`；其余 7 条不需要字体。两条回退目录的用例在没有字体时断言退出码 1（过了 corpus 检查、停在第一个缺的字型上） |
+| `export_plant_backup.rs` | **软跳过（需临时打掉 `export_plant_backup.rs:208-209` 的两个硬编码绝对根才等价）** | `backup_dir()` 在 `PID_TEST_DATA_DIR` 之后还硬编码了 `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 两个绝对根。在 Linux runner 上这两个路径不存在，`backup_dir()` 返回 `None`，两条用例各打印一行 `skipping the D04 refusal pin; no backup-plant-data directory is present` 与 `skipping the backup export; no backup-plant-data directory is present` 并 `ok`。本机模拟时这两个根恰好存在（语料在这台机器上），于是两条用例都真跑：`d04_igsymbol2d_refused_count_is_zero` 通过（它只解析 `D04`，不读语料），`every_backup_drawing_exports_a_readable_page` **失败**：`0 sheets drew furniture; 50 did when this ratchet was set`（`export_plant_backup.rs:1785`）——因为 `PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录，点了名的语料以它为准，模板与 `Ref` 都读不到（2026-11-10 在本机只设这一个变量重跑过，结果如此）。不设该变量时本机默认选中备份包，这道门真跑并逐页比 53 页的账本基线；默认选中包而一页都没比成（语料描述与基线不同）时它现在失败。把这两个绝对根从 `backup_dir()` 里去掉（不提交，仅用于模拟）后，行为才与 Linux runner 一致。`style_witness.rs:114-115` 有同样的两个绝对根，同样处理后软跳过 |
+| `export_ledger_fixtures.rs` | **真跑** | 无任何 `skipping` 行；7 行 `<page>: 未发现可归属缺陷` 逐页打印，末行 `export-ledger: 7 页全部通过（可疑项 0 个，未归因 0）`（量这张表时是 12 个；2026-11-10 起夹具与备份两本账的可疑项都是 0）。全部输入都在仓库内（`test-file/**`），`write_ledger` 不读字型，所以干净检出与 CI 上同样真跑。`docs/baselines/export-ledger-fixtures.json` 已入库，因此不带 `UPDATE_EXPORT_LEDGER` 时直接比对。语料描述与基线不同时这道门现在失败，不再跳过比对后照样通过 |
+| `cli_pid_plot.rs` | **混合（16 条真跑，D06 导出软跳过）** | 没有字体目录时 `d06_exports_the_page_the_library_lays_out` 打 `skipping the D06 export; no font directory is present (searched …)`；其余 16 条不需要字体（2026-11-11 加的三条——流头记录数、两条「长度错而未越界」——没有在无字体的环境里重量，照同一个函数推的）。两条回退目录的用例、两条模板用例与七条断链用例在没有字体时断言退出码 1（过了 corpus 检查、停在第一个缺的字型上），各打一行 `<case>: no font directory is present (searched …), so the run can only get as far as the first missing face`；模板那条与三条断链的照样断言 stderr 上的 `warning:`，断链的四条另断言页面模型与账本（都不要字体） |
 
 **结论**：**真跑 3 个 + 混合 5 个 + 软跳过 8 个 = 16 个**测试文件。
 
@@ -131,18 +158,23 @@ CI 日志里 `skipping` 命中 0 次——按 CI 日志反推会得出「全部�
 真跑三条纯单测（落盘那条跳过）、`reference_plots_acceptance` 真跑
 `only_the_surveyed_sheets_carry_furniture_masks`（`eleven_reference_plots`
 跳过）、`export_every_fixture` 真跑走查与模板表两条断言（导出段跳过）、
-`cli_pid_plot` 真跑 7 条不需要字体的用例（D06 导出跳过）。其余 8 个文件在 CI 上
+`cli_pid_plot` 真跑 16 条不需要字体的用例（D06 导出跳过）。其余 8 个文件在 CI 上
 一条出图断言都不执行，因为它们读的语料（验收数据、备份语料、字体）都不在仓库里。
 
 **2026-11-10 改过、没有在干净检出里重测的四行**：`cli_pid_plot`、
 `export_every_fixture`、`compare_five_drawings` 与 `export_ledger_fixtures`
 是照代码和本机「藏起字体目录」的模拟更新的，不是按上面的方法量的。下次动 CI
-覆盖面时连同整张表重测。
+覆盖面时连同整张表重测。`cli_pid_plot` 那一行当天是 9 条，是同一天加了两条模板用例
+之后在本机量的：`PID_PARSE_SELF_CHECK_DIR` 指向不存在的目录（本机没有
+`test-file/fonts`，字体搜索因此落空），10 条全过，stderr 上四行
+`no font directory is present` 加一行 `skipping the D06 export`。2026-11-11 加了
+四条断链用例之后用同一个办法重量：14 条全过，八行 `<case>: no font directory is
+present` 加一行 `skipping the D06 export`，表里的 13 条出自这一次。
 
 **金样可行性（S8.1）**：`cargo run -q -p pid-plot --example
 probe_paper_model_golden_size` 量了 7 张夹具的 `PaperModel` 序列化。每张各建两次
 模型并各序列化一次，7 张全部逐字节相同（`unstable 0`），所以没有 `HashMap`
-迭代顺序、没有时间戳、没有绝对路径漂移。逐张字节数：
+迭代顺序、没有时间戳、没有绝对路径漂移。逐张字节数（S8.1 当时的读数）：
 
 | 夹具 | 字节 | 图元 |
 |---|---:|---:|
@@ -159,6 +191,13 @@ probe_paper_model_golden_size` 量了 7 张夹具的 `PaperModel` 序列化。�
 见 `paper_model_golden.rs` 的模块注释：`library` 用声明的相对标签，
 `template.path` 与 `template.symbols[].key` 归一化到 `<repo>`；`.pid` 自己存下的
 作者机绝对路径原样保留（那是源字节，跨平台一致）。
+
+上面那张表是定下「上金样」时的读数，不随金样重写而改；现值不要从这里抄，
+`paper_model_golden` 每次运行的末行会打印。此后它动过的记录：2026-11-11
+（`parse-100` 线，`8640d51`）`XA-A1.igr` 上多画出两条椭圆弧和两个带孔的填充、
+23 条 B 样条得了自己的笔，只有 `gongyi-guandao-1` 变了——图元 5 478 → 5 482，
+2 907 733 → 2 945 007 字节——那条线上七份合计 4 199 694 字节（4.01 MiB），仍在
+5 MB 上限之内。
 
 **浮点必须量化到 1 µm，这一条是 CI 教出来的。** 第一次推送（`5c8c3da`）在
 `test (stable)` 上红了：`publish-a01` 的 `primitives[167].shape.end_angle` 在
@@ -187,14 +226,16 @@ Soft-skips when `test-file/D06.pid` is absent.
 `src/parsers/sheet_records.rs` ships typed PSM-record decoders for the
 SmartPlant `Sheet*` stream record families; the authoritative list is
 the `SHEET_RECORD_FAMILIES` registry in `src/model/sheet_families.rs`
-(17 rows today: the eight below plus `igArc2d`, `igCircle2d`,
-`igRectangle2d`, `igBspCurve2d`, `igDimension2d`, `SmartFrame`,
-attribute fragments, and the audit-only `0x00FA`/`0x0010` rows).
+(16 rows: eleven of the thirteen below plus `igBspCurve2d`,
+`igRectangle2d`, `igDimension`, `igSmartFrame2d` and `DependencyObject`.
+Four rows were retired on 2026-11-11 — `GLine2d`, `JStyleOverride`,
+`SubRecord0x0010`, `AttributeFragment` — for decoding nothing on any
+chain; see the caveats).
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
-| D-E | `0x3FE6` | `decode_primitive_lines` | `SheetPrimitiveLineDecoded` | `GLine2d` (SmartPlant ext.) |
-| Phase 16 D | `0x0030` | `decode_jstyle_overrides` | `SheetJStyleOverrideDecoded` | `JStyleOverride` (RAD `style.dll`, **not** an arc) |
+| D-E | `0x3FE6` | — (retired; the matcher is on the test side) | — | `GLine2d` (**not** a record family: `0x3FE6` is not a type code, and what the scan matched was the top two bytes of a page frame's aspect ratio) |
+| Phase 16 D | `0x0030` | — (retired; the matcher is on the test side) | — | `JStyleOverride` (RAD `style.dll`, **not** an arc; no sheet chain holds one — the class's records are in `StyleCluster`) |
 | J | `0x0018` | `decode_iglines` | `SheetIgLine2dDecoded` | `igLine2d` (IGDS standard) |
 | K | `0x0084` | `decode_iglinestrings` | `SheetIgLineString2dDecoded` | `igLineString2d` (IGDS standard) |
 | L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
@@ -202,47 +243,93 @@ attribute fragments, and the audit-only `0x00FA`/`0x0010` rows).
 | N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
 | — | `0x0061` | `decode_igarcs` | `DecodedIgArc2dRecord` | `igArc2d` (IGDS standard; emits `Arc`) |
 | — | `0x0059` | `decode_igcircles` | `DecodedIgCircle2dRecord` | `igCircle2d` (IGDS standard; emits `Circle`) |
-| 34-D | `0x0013` | `decode_igboundaries` | `SheetIgBoundary2dDecoded` | `igBoundary2d` (IGDS standard; fully-typed **audit-only** association, no geometry emission) |
+| 34-D | `0x0013` | `decode_igboundaries` | `SheetIgBoundary2dDecoded` | `igBoundary2d` (IGDS standard; a fill — one closed `Polyline` ring per record, to be filled, not stroked) |
+| — | `0x007E` | `decode_igellipticalarcs` | `DecodedIgEllipticalArc2dRecord` | `igEllipticalArc2d` (IGDS standard; emits a sampled `Polyline`) |
+| — | `0x0021` | `decode_igcomplexstrings` | `DecodedIgComplexString2dRecord` | `ComplexString` (an association, audit-only: its curves are its member records) |
+| — | `0x007B` | `decode_iggroups` | `DecodedIgGroupRecord` | Group (an association, audit-only: its members draw themselves) |
 
-Cross-fixture decoded geometry spans the GLine2d / igLine2d /
-polyline / point / text / symbol families (Phase 16 reclassified
-`0x0030` records as non-geometry `JStyleOverride`; Phase 17 removed
-the legacy `PrimitiveArc` compatibility surface).
+Cross-fixture decoded geometry spans the igLine2d / polyline /
+point / text / symbol families (Phase 16 reclassified `0x0030`
+records as non-geometry `JStyleOverride`; Phase 17 removed the legacy
+`PrimitiveArc` compatibility surface; the `GLine2d` lines Phase 14
+counted beside them were never records).
 All decoders are panic-safe (validated via
 `tests/parser_panic_safety.rs` adversarial matrix) and bounds-checked.
 
 Decoded records flow through `streams/cluster.rs` →
-`model::SheetGeometry::decoded_{primitive_lines, jstyle_overrides,
-iglines, iglinestrings, igpoints, igtextboxes, igsymbols, igarcs,
-igcircles, igboundaries, …}` → `geometry::build_normalized_geometry`
+`model::SheetGeometry::decoded_{iglines, iglinestrings, igpoints,
+igtextboxes, igsymbols, igarcs, igcircles, igboundaries, …}` →
+`geometry::build_normalized_geometry`
 to emit `PidGraphicEntity { confidence: Decoded, kind: Line | Arc |
 Circle | Polyline | Point | Text | SymbolInstance, source:
 PidGraphicProvenance { stream_path, byte_range, record_kind,
 graphic_oid, note } }`. The `note` carries the byte-level evidence
-chain. (`decoded_igboundaries` stops at the `SheetGeometry` layer —
-see the `0x0013` caveat below.)
+chain. (A decoded `igBoundary2d` is emitted as the fill ring of its
+loops — see the `0x0013` caveat below.)
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
-class tags directly as PSM type codes for standard primitives.
-SmartPlant extends with `GLine2d` (`0x3FE6`), but the bulk of
-geometry is standard IGDS records using IGDS class tags as PSM type
-codes. This unlocked Slices J–N without needing `radsrvitem.dll`
-decompilation.
+class tags directly as PSM type codes for standard primitives. All of
+a sheet's geometry is standard IGDS records using IGDS class tags as
+PSM type codes — the "`GLine2d` (`0x3FE6`)" SmartPlant extension
+Phase 14 set beside them does not exist, see the caveats. This
+unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
 
 **Caveats**:
+- `0x3FE6` is **not a type code**, and `GLine2d` is not a record
+  family. The native reader's class table has a slot for each code
+  from `0x0000` to `0x0118` and nothing past it; a chain walk stops
+  on a word past it. No chain of any stream of the corpora holds a
+  record that states `0x3FE6`. What Phase 14 decoded — three "lines"
+  across four fixtures, thirteen hits across all the corpora and
+  their archives — was found
+  by sliding a decoder over the stream a byte at a time: an
+  `igSmartFrame2d` states its height over its width at payload
+  `+148`, on an ISO A sheet that is `1/√2` give or take the frame's
+  margins, every `f64` from 0.6875 up to 0.71875 has `E6 3F` for its
+  top two bytes, and the bytes a page frame keeps behind them
+  sometimes pass for a unit vector and an ordered pair. Every hit
+  sits 160 bytes into a page frame. Gated on the
+  record chain from 2026-08-10 (`e5ef8fb`) the family decoded nothing
+  on any corpus; once the walk took the class table for its tripwire
+  it could decode nothing on any stream. **The family is retired
+  (2026-11-11)**: no registry row, no `SheetGeometry` field, no model
+  DTO, no emitter, no `decode_primitive_lines`, and no
+  `decode_primitive_line_at` in the library: the matcher lives in
+  `tests/support/retired_matchers.rs`, for the tests that re-find
+  the old hits. `GLine2d` is a real class of the vendor's geometry
+  library (`GLine2d::Validate`, the six-double parametric layout);
+  it is not a class the reader serializes a record of. See
+  `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`
+  and
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §18.
 - `0x0030` is `JStyleOverride`, **not** `GArc2d`: the Phase 14 arc
   interpretation was a misidentification. Phase 16 IDA evidence
   (`radsrvitem.dll` type-code mapper → CLSID in `style.dll`) proved
   the JStyleOverride identity; Phase 17 removed the `PrimitiveArc`
   compatibility decoder. Never re-introduce an arc reading for
-  `0x0030` (the real IGDS arc is `0x0061 igArc2d`, currently
-  uncovered). The record also used to emit an `Inferred`
-  `PidGraphicKind::Annotation` whose anchor came from reading payload
-  `+0..15` as two `f64`; `style.dll`'s own version-3 serializer makes
-  four separate four-byte reads there, so that anchor is withdrawn and
-  the record now surfaces as `ProbeOnly`
-  `PidGraphicKind::Unknown` — present because its byte provenance is
-  sound, positionless because no reading of those bytes is. See
+  `0x0030` (the real IGDS arc is `0x0061 igArc2d`). **No `Sheet*`
+  chain holds a record of this type.** The class's records are in
+  `StyleCluster` — 3 253 across the corpora, every payload the 90
+  bytes of `style.dll`'s version-3 layout — and
+  `style_link::DocumentStyleTable` reads them there, on that stream's
+  own chain. What the Sheet family returned (13 671 hits across the
+  corpora) was the length word of the block every `DependencyObject`
+  ends with: a 48-byte block spells its length `30 00`, a scan that
+  slid a byte at a time read that as a type word, and each "record"
+  ran on past its host's end. Since the families decode on the record
+  chain the family decoded nothing on any sheet, and the `ProbeOnly`
+  `PidGraphicKind::Unknown` entity each hit surfaced as is gone (the
+  `Inferred` `Annotation` before it had been withdrawn in August, when
+  `style.dll`'s serializer showed payload `+0..15` to be four separate
+  four-byte reads). **The sheet family is retired (2026-11-11)**: no
+  registry row, no `SheetGeometry` field, no emitter, no
+  `decode_jstyle_overrides`, and since the matcher left the library
+  no `decode_jstyle_override_at` either: it lives in
+  `tests/support/retired_matchers.rs`, for the tests and probes that
+  re-find the old hits. See
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §12 and
   `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
 - `0x00FA` is `DependencyObject` (`imagdex.dex`), **not**
   `GraphicGroup`: Phase 15 named it on record shape alone, and the two
@@ -266,7 +353,16 @@ decompilation.
   cloud). See
   `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
   `igRectangle2d`
-  (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows.
+  (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows,
+  and so does `igEllipticalArc2d` (`0x007E`) since 2026-11-10: a sheet's
+  own chain can hold both curve families. `XA-A1.igr`'s `/Sheet6`
+  carries 23 `igBspCurve2d` (the bowls of its wordmark) and two
+  sheet-level `igEllipticalArc2d`, direction byte 1; `A0-W.igr` to
+  `A3-W.igr`, inside the committed `RefData~4~682.zip`, carry four of
+  each in their logo, the arcs with direction byte 0 (no page wears a
+  `-W` template; `tests/elliptical_arcs.rs` holds both); both families
+  emit a sampled `Polyline`, and both take their pen from the style id
+  at `+14` through `style_link::line_styles_for_document`.
   In the test-file corpus the remaining members (12 circles, 12 arcs,
   3 rectangles, one BspCurve) still live in the `PSMcluster0` streams
   of nested `JSite` storages, each sitting on a sheet layer; those are
@@ -295,31 +391,179 @@ decompilation.
   (`aux_hi == 8` is the `Default` layer). The `igBoundary2d` copy of
   that rule is gone as of 2026-08-27; the field is now
   `sheet_layer_ref` and is never validated.
-- `0x0013 igBoundary2d` (Phase 34-D) is a fully-typed **association**
+- `0x0013 igBoundary2d` (Phase 34-D) is a fully-typed **fill**
   record: `segment_count` groups of `0x67 tag + 4×f64` re-list the
   geometry of the `igLine2d` records named by its trailer member
-  references (60/60 forward matches cross-fixture), plus an anchor
-  point inside the segment bbox. `decode_igboundaries` exposes every
-  byte (`SheetGeometry::decoded_igboundaries`, `closed_loop` flag,
-  byte-audit `Decoded`) but deliberately emits **no**
-  `PidGraphicKind` — a closed-polyline emission would double-count
-  the member lines. See
-  `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
-- `0x0010` (638 probe scan hits, 582 decoded after advancing) is a
-  polymorphic sub-record family. Phase 18 ships it as an audit-only
-  typed collection (`SheetGeometry::decoded_sub_records_0x0010`) on
-  the Phase 15 `0x00FA` template: stable 6-byte PSM header + raw
-  payload + full provenance, no sub-kind field naming, no
-  `PidGraphicKind` emission. Referenced from JStyleOverride
-  `+38..41` / `+56..59`. Sub-kind discrimination deferred to a
-  follow-up phase pending IDA confirmation of the real RAD class.
-  Phase 19 adds one audit-only field `leading_word: Option<u16>` =
-  `payload[0..2]` as LE u16. Cross-fixture distribution
-  `0x0002 = 164 (28%) / 0x0003 = 21 / 0x0001 = 18`; ~30 size buckets
-  are 100% mono-valued at `+0`, but size 31 (182 records) / 70 / 13 /
-  16 / 43 are heterogeneous at `+0` and need a different
-  discriminator strategy (deferred). Field name describes byte
-  position only — **not** a semantic `sub_kind`.
+  references (60/60 forward matches cross-fixture), followed by an
+  anchor point. `decode_igboundaries` exposes every byte
+  (`SheetGeometry::decoded_igboundaries`, `closed_loop` flag,
+  byte-audit `Decoded`). The `u32` at payload `+18` is the **number
+  of loops** (`loop_segment_counts`, `loops()`): one on 2 156 of the
+  2 158 boundaries on the sheet chains of the 86 documents that count
+  was taken on (the plant backup, the acceptance sheets, the share, the
+  fixture drawings, the two template directories), two on
+  `XA-A1.igr`'s oids 5074 and 5076, whose second loop is the counter
+  of a logo letter. The anchor is the point the fill was seeded at:
+  inside the loop on every one-loop record of those documents that
+  carries member references, between the two loops on those two. Not
+  among the 86: the templates inside the committed
+  `RefData~4~682.zip`, whose sheet chains keep 41 more — the 20 in
+  the logos of `A0-W.igr` to `A3-W.igr` are refused by this grammar
+  (no page wears them), and the 21 of `CPECCHBA2.igr` and
+  `qsmcqtaz13A2.igr` decode with an anchor that is not inside their
+  ring. The family emits — it was audit-only until the fills
+  turned out to have a consumer — one closed `Polyline` per record,
+  to be filled rather than stroked, because the member lines already
+  stroke the outline. A fill with a hole is still one ring: every
+  area is walked counter-clockwise and every hole clockwise, joined
+  by a crossing walked both ways (`boundary_fill_ring`), so it paints
+  the same under the even-odd rule the vendor's plots fill with
+  (`f*`) and by winding number. See
+  `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`,
+  `docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md` and
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §10.6.
+- `0x0010` is **not a record family**. No chain of any stream in the
+  corpora — sheet, cluster or style — holds a record of this type
+  code. The Phase 18 "polymorphic sub-record family", the Phase 19
+  `leading_word` distribution and the Phase 26 attribute fragments
+  were all found by sliding a decoder over a `Sheet*` stream a byte at
+  a time, and what that matched is a graphic record's own sub-header:
+  every graphic record's payload opens `oid, owner, layer` and then a
+  `u16` sub-type word at `+12`, which is `0x0010` on most drawing-side
+  records, followed at `+14` by the record's style id. Read as an
+  envelope that is type `0x0010` with `bytes_to_follow` = the style
+  id. Of 66 214 such hits across the corpora 65 543 sit exactly on a
+  host's `+12` and claim the host's style id as their length, and
+  12 498 of the 12 531 "attribute fragments" are the text of the
+  `igTextBox` they sit in, which that family decodes anyway. Since the
+  families decode on the record chain the two decoded nothing on any
+  sheet, and **both are retired (2026-11-11)**: no registry rows, no
+  `SheetGeometry::decoded_sub_records_0x0010` /
+  `decoded_attribute_fragments`, no emitters, no stream entry points.
+  What they could still do was make a record of whatever a walk read
+  off the chain after a wrong length — a sub-type word `0x0010` passes
+  for a type word — and they were the only families that would. The
+  two matchers are no longer in the library either; they read at any
+  offset from `tests/support/retired_matchers.rs`, which is how
+  `examples/probe_what_the_chainless_families_matched.rs` and three
+  tests of `parse_real_files.rs` re-find the old hits. Nothing was
+  ever reverse-engineered for this
+  code: "referenced from JStyleOverride `+38..41` / `+56..59`" was one
+  phantom pointing at another. See
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §3 and §12.
+- **Every family decodes on the stream's own record chain, and
+  nowhere else.** A `Sheet*` stream — and a symbol cache's
+  `JSite*/PSMcluster0` — is an 8-byte header (the magic `0x6C90F544`,
+  then the number of records the native reader reads) and records end
+  to end. `SheetChain::walk` reads that framing, and
+  `PsmRecordDecoder::scan` and every `decode_*s(data)` decode at the
+  offsets it yields. A `decode_*s` call on a bare run of records with
+  no header in front therefore decodes nothing; `decode_*_at(data,
+  offset)` still reads at any offset. The scan that slid a byte at a
+  time accepted byte patterns inside other records: the three families
+  above, whole, and 13 `igSmartFrame2d`.
+- **A chain that does not hold is read as far as it holds, and
+  reported.** When the walk stops before the stream's end — a length
+  of zero, a length past the end, fewer than six bytes left, a stream
+  shorter than its header, a type word no record opens with — the
+  records the chain read before the stop decode as on any stream and
+  nothing after it is read. The walk is not picked up
+  again: the first offset from which a chain walks to the stream's end
+  lies inside the record for 21 214 of 173 982 corpus records, and for
+  743 even when the header's count is held too
+  (`examples/probe_can_a_stopped_chain_be_picked_up_again.rs`). A
+  header whose magic or live-record count disagrees with a chain that
+  does reach the end is reported the same way; the count is what gives
+  away a stream cut off at a record boundary. The report is a
+  `StreamChainFault` in `PidDocument::chain_faults` and
+  `NormalizedPidGeometry::chain_faults`, one sentence in the
+  geometry's `warnings` naming the stream, the stop offset and the
+  bytes left unread, one suspect `sheet_stream_without_geometry` item
+  in the export ledger, and one `warning:` line on `pid_plot`'s
+  stderr; the exit code does not change. A stop ahead of the sheet's
+  one live border frame also costs the page it states: the drawing is
+  then laid out as a sheet with no frame is. No stream of any corpus
+  raises a fault (`tests/sheet_chain_faults.rs`). The style tables
+  (`StyleCluster`, the document's and each cache's) are held the same
+  way since 2026-11-11, and a table is built from the records that
+  walk read (`DocumentStyleTable::from_stylecluster_bytes` walks
+  `SheetChain::walk`; it had a walk of its own with no tripwire, which
+  read past the stop a warning named). A `.sym` body carries the
+  faults of its file (`SymbolGeometry::chain_faults`; `pid-plot` does
+  not read that yet). `sheet_record_starts` keeps the all-or-nothing
+  reading for the publish line's row reader and the semantic join,
+  which read nothing from such a stream. `pid_publish_xml` says so on
+  stderr, for a `.pid` and for each drawing of a backup package: one
+  read gives the drawing and the faults
+  (`pid_load::read_publish_from_reader`), and each line says how many
+  records of the kinds the publish reader keeps the chain read before
+  the stop — none, for a style table, whose stop costs the XML
+  nothing (`tests/publish_chain_faults.rs`). `_Index.json` and
+  `_Coverage.json` do not carry the faults.
+- **A length that is wrong and still inside the stream** sends the
+  walk on from an offset where no record starts, so "the records the
+  chain read" are the file's only as far as the lengths were right.
+  The walk stops on a type word no record opens with
+  (`psm_type_word_opens_a_record`, `SheetChainStop::NoSuchClass`): a
+  type code past the native reader's class table (`radsrvitem.dll`
+  keeps 281 slots, `0x0000`–`0x0118`, `0x00F8` empty), the `0x4000`
+  bit (`PSMSerializeIn` reports it as a stream offset mismatch), or
+  type code zero. No record of the 499 289 on the corpora's chain
+  streams fails it. Changing one length by ±1 … ±64 on every record
+  of the corpora's sheets, 620 049 of 2 106 074 changes used to read a
+  record from where none starts and 41 read as a sound chain; now
+  35 074 and none, and on 98.3% the stop is the first offset past the
+  changed record. The rule is the class table's, not the list of codes
+  the corpora carry: that list catches more and would stop a sound
+  drawing at its first `igBalloon`. A walk that lands back on the
+  chain and reaches the end is given away by the header's count alone,
+  and that fault names no place. The class table was read from one
+  build, `radsrvitem.dll` 9.0.0.143 (its slots are not in CLSID order;
+  what ends it is what follows slot `0x0118`, three doubles and
+  pointers): a later build with a class past `0x0118` would write
+  records the walk stops on, loudly.
+- **What a walk reads off the chain, no family decodes.** A walk that
+  has left the record boundaries can still land on a word the class
+  table has: `0x003D`, a page frame's type word, is also the character
+  `=` in a label's text. Of 49 058 records such walks read off the
+  corpora's chains (3 337 379 single-length changes, 885 documents),
+  ten decoded as `igSmartFrame2d` until 2026-11-11 — payloads of
+  65 536 bytes and more, doubles that are denormals. A frame states
+  its extent twice, width and height at `+76` / `+84` and height over
+  width at `+148`, and the decoder now refuses one whose stated ratio
+  is more than a millionth (relative) from that quotient: all 178
+  frames of the corpora's chains agree to 5e-16, none of the ten does.
+  `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs` is
+  the measurement; `tests/sheet_chain_faults.rs` pins the same on the
+  committed streams on every run.
+- `0x0021 ComplexString` and `0x007B Group` are **associations**: a
+  member count, a double, and one 14-byte entry per member (oid, range
+  box, a word). Neither states a coordinate and neither emits: each
+  member is a live record of the same chain that names the association
+  as its owner and draws through its own family. The double is the
+  unit of the members' range boxes, `range_scale` (`head_double`
+  until 2026-11-11): a box is in `range_scale / 32768` m — 1.0 on
+  fourteen of the corpora's twenty records, 2.0 on six
+  (`CPECCHB-SQ-A1.igr`'s outer frame, five groups of the A0 / A1 `-W`
+  templates). A `ComplexString`'s curve members are `igLine2d` /
+  `igArc2d` with its layer and style id, joined by `0x0019 KeyPoint
+  Constraint` members, which have no decoder and need none; a Group
+  lists the two `igRectangle2d` of a border or, in `A0-W.igr` to
+  `A3-W.igr`, the 37 records of a logo. That a string prints its
+  members and nothing else has a vendor plot behind it for three
+  strings: the A2 acceptance sheet wears `CPECCHB-SQ-A2.igr`, whose
+  frame and title-block borders are `ComplexString`s of four, three
+  and two lines, and the vendor's plot draws each member once, in one
+  pen width, with no other ink, fill or text within 0.4 mm of it
+  (`pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is.rs`).
+  A string whose members are arcs — `D04`'s, the one the census pins —
+  has no plot of its own. See
+  `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+  §10.4 and §16, and
+  `docs/analysis/2026-11-11-what-the-plant-backup-census-pins-and-why-none-of-it-draws.md`
+  §2.
 
 Phase 14 milestones are tracked in
 `goals/phase14-sppid-sheet-geometry/progress.jsonl`. See
@@ -335,11 +579,14 @@ landed as M1/M2 of the 2026-07-18 master plan):
 - **L4 decode seam — `PsmRecordDecoder`** (`src/parsers/sheet_records.rs`):
   implement the trait on a unit struct (`type_code` /
   `min_record_len` / `decode_at` / `advance_of`); the shared default
-  `scan()` owns the walk+advance loop and `parse_psm_header` owns the
-  6-byte envelope. Only family-specific payload validation lives in
-  your `decode_<type>_payload`. Add thin `decode_<type>s` /
-  `decode_<type>_at` wrappers for API symmetry, and register both in
-  `tests/parser_panic_safety.rs`.
+  `scan()` decodes at each record the stream's own chain starts
+  (`SheetChain::walk`), never at an offset inside another record, and
+  `parse_psm_header` owns the 6-byte envelope. Only family-specific
+  payload validation lives in your `decode_<type>_payload`. Add thin
+  `decode_<type>s` / `decode_<type>_at` wrappers for API symmetry, and
+  register both in `tests/parser_panic_safety.rs`: the stream entry
+  point in `exercise_all_parsers`, the `_at` in `AT_ENTRIES`, whose
+  type code also plants the chains that reach your payload decoder.
 - **L6 emission seam — `GeometryEmitter`** (`src/geometry.rs`):
   implement `emit(sheet, out)` and register in the `EMITTERS` table.
   Audit-only families register an explicit **no-op** emitter (policy
@@ -383,6 +630,96 @@ own reach across the run (its widest local y plus 0.25 mm) rather than a fixed
 mark count leaves the reference's or a centre drifts past 0.20 mm. The corpus
 reads 134 runs, 0 count mismatches, 0.19 mm worst.
 
+Four probes carry the evidence for reading a sheet by its record chain.
+`probe_which_decoded_records_start_off_the_chain` lists, per family, the
+decoded records that start where their stream's chain starts none: 92 405
+before the families decoded on the chain, none since.
+`probe_what_the_chainless_families_matched` says what three of those families
+(`SubRecord0x0010`, `AttributeFragment`, `JStyleOverride`) had been decoding: it
+walks every stream that opens with the cluster magic and tallies where records
+of `0x0030` and `0x0010` really live (3 253 of `0x0030`, all in `StyleCluster`;
+none of `0x0010`), then repeats the old sliding walk through the three
+matchers — included from `tests/support/retired_matchers.rs`, where they have
+lived since the library stopped exporting them — and files each hit under the
+chain record it sits in; it exits non-zero if a sheet chain holds a record of
+either code, or a hit turns up that its host does not account for.
+`probe_can_a_stopped_chain_be_picked_up_again` takes each record of each intact
+sheet stream in turn for the one a walk stops on and searches on from its
+envelope for the first offset from which a chain walks exactly to the stream's
+end: of 173 982 records the search lands inside the record on 21 214, and still
+on 743 when the picked-up chain has to add up to the header's record count —
+which is why a broken chain is read as far as it holds and no further. It reads
+the compound files itself, not through the parser.
+`probe_what_the_byte_audit_no_longer_claims` measures what `--byte-audit` stopped
+marking consumed when four families lost the hits a sliding scan had found off
+the chain: over the 53 backup sheets, coverage of the sheet streams went from
+99.24% to 98.65% (68 552 bytes on 33 streams; `A井场`'s `/Sheet6` from 99.0% to
+97.9%), and every one of those bytes lies in a superseded copy of a record —
+`0x8000` in the type word — which the native reader skips and no family decodes.
+
+`probe_what_passes_for_a_page_frame_off_the_chain` asks what a walk that has
+left the record boundaries takes for an `igSmartFrame2d`. It changes one length
+by ±1 … ±64 on every record of every distinct chain stream of the corpora and
+their archives (885 documents, 3 337 379 changes), and of the 49 058 records the
+walks read off the chain it finds ten that were frames by the decoder's rules
+before 2026-11-11 and none the decoder takes now; beside them it reads the 178
+real frames for their payload lengths (228, 234, 238, 246) and for the ratio
+each states against its own height over its width. It exits non-zero if a
+record read off the chain decodes as a frame, a live frame is refused, or a
+frame's ratio is not that quotient. Run it with `--release`: about three
+minutes.
+
+`pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is`
+reads the vendor's plot of the A2 acceptance sheet along each curve member of
+the three `ComplexString`s its template holds: the member's length against the
+vendor ink that runs along it and the pen widths of that ink, the vendor ink in
+the corridor that ours covers and does not, the fill outlines and text there,
+and — for the frame, whose lines `read_plot` leaves out of both pages as sheet
+edges — the strokes `read_plot_pens` lists. It reads each member drawn once
+and nothing else in the corridors.
+
+`pid-plot/examples/probe_export_bytes_unchanged` records 71 pages — the 53
+backup sheets, the 7 fixtures, the 11 reference sheets — and compares two
+recordings (`record <label>`, `compare <a> <b>`, `show <label>`; a label or the
+path of a recording). With no variable set each batch is laid out the way its
+own gate lays it out: the backup against the package it was shelled out of, the
+fixtures against `test-file`, so that each wears its committed template, the
+reference sheets against the acceptance corpus. A page keeps its PDF's hash and
+the model's taken apart four ways — geometry, ink, provenance, facts — hashed
+with the checkout root written `<repo>`, so recordings made in two worktrees
+compare directly and `compare` names each page that differs and which part of
+it moved. That is how a merge is checked: record each side, record the merged
+tree, read off the pages that moved.
+`pid-plot/examples/probe_what_the_ledger_baselines_hold` sums the two committed
+ledger baselines by reason, layer and domain, and needs no corpus.
+
+`pid-plot/examples/probe_does_a_sheet_letter_alone_as_in_a_batch` asks whether
+a sheet letters every label in the same faces when its faces are prepared for
+it alone (what `pid_plot` does) and when they are prepared for all the drawings
+it is given (what a gate does). It writes each page both ways and reads every
+run's face back off the PDF — `Tf` by the font's `BaseFont`, `Tj` by its
+`ToUnicode` — so it repeats none of the writer's rule, and exits non-zero when
+a label differs. The five runs its module docs list read 76 sheets and none
+differing.
+
+`pid-plot/examples/probe_which_label_a_paired_run_is_read_against` prints, for
+the eleven acceptance sheets, what the acceptance gate's two lettering checks
+rest on: each pair the comparison read as a piece of a label (a ` part` class)
+or found no label for (`unknown`) with the paper-table label it was read
+against, each label past the 0.15 mm / 0.05 mm limits the gate counts as
+`WholePage::text_off`, every lettering class with its means, whole page and
+masked, and each pair the two pages set in different faces, with both faces
+and body sizes. It reads 24 pieces, 12 pairs with no label, 3 labels past the
+limits and no pair in different faces: the fourteen borrowed runs the gate
+counts as `WholePage::borrowed` are NSimSun at 3.387 mm on both pages. Until
+2026-11-11 ours were FangSong or SimSun at 3.588 mm and 64 labels were past
+the limits; the three `SP:` of the air-cooler sheets left the count when each
+run of a record took its own whole-pixel start, and the 44 condensed SimSun
+labels of the title blocks when a label's `Tm` took the scales the PDF driver
+writes (`pid-plot/src/write/text_matrix.rs`). A machine with no
+`nsimsun.ttf` borrows SimSun instead, so there the probe would list those
+fourteen again, SimSun against NSimSun (not run on such a machine).
+
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
 and it disappears once the answer lands. When the numbers do turn
@@ -396,7 +733,7 @@ only the root directory, so keep scratch there out of commits by hand.
 ```bash
 cargo test                                        # 1000+ tests (851 unit + 91 integration, 2 DWG-gated skipped)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
-cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
+cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (37 tests)
 ```
 
 Give every extra checkout of this repo (a `git worktree`, a scratch
@@ -414,6 +751,14 @@ keeps every checkout's intermediate artifacts and test executables in
 one directory under `CARGO_HOME\targets` regardless — the sharing above,
 with no variable that opts out. Run the toolchain's own cargo there,
 `rustup run nightly cargo …`, which honours `CARGO_TARGET_DIR`.
+
+A `pid-plot` test that needs files of its own makes them in a `ScratchDir`
+(`pid-plot/src/scratch.rs`; the integration tests include the same file by
+path): a directory under the temporary directory named
+`pid-plot-<name>-<process id>-<count>`, removed when the guard is dropped —
+when the test ends, passed or failed. A whole `cargo test -p pid-plot` leaves
+no `pid-plot-*` entry in `TEMP` (it left eight a run before 2026-11-11), so
+do not join a fixed name onto `std::env::temp_dir()` in a new test.
 
 ## Pre-commit gates (CI mirrors these)
 
@@ -450,11 +795,25 @@ The gate is **ratchet-down only**:
   git history.
 - Raising the baseline is almost never the right answer; treat it
   as a temporary crutch only.
+- The script fails when `cargo rustdoc` itself exits non-zero, whatever
+  the count. The crate denies `rustdoc::broken_intra_doc_links` and
+  `rustdoc::private_intra_doc_links`, so a link in public
+  documentation to a private item stops rustdoc before the crate is
+  documented — and the count of what it had printed by then, zero,
+  used to pass. Name a private item in plain code, `` `name` ``, not as
+  a link. Where the `cargo` on `PATH` is the fork that ignores
+  `CARGO_TARGET_DIR` (see Common commands), put the toolchain's own
+  `bin` first on `PATH` for the script: `rustup run stable bash …`
+  does not reorder a Git Bash `PATH`.
 
 See `.github/scripts/check-missing-docs.sh` for the exact command
 (`cargo rustdoc --lib --locked -- -W missing-docs` + grep count).
 
-- `--workspace` makes the vendored `oxidized-mdf` crate a hard gate.
+- `--workspace` does not reach the vendored `oxidized-mdf` crate's own
+  tests: the root `Cargo.toml` lists `vendor/oxidized-mdf` under
+  `[workspace] exclude`, so the commands above only compile it as a
+  dependency of `pid-parse`. Run its unit tests on their own, from its
+  directory: `cd vendor/oxidized-mdf && cargo test --lib`.
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
   errors; keep local output clean by the same bar.
 
@@ -508,7 +867,11 @@ single squash-merge:
 5. **Smoke-test guard.** `tests/parser_panic_safety.rs` walks
    every public byte-level parser entry against an adversarial
    corpus on every CI run; new entry points must be added there
-   in the same PR that introduces them.
+   in the same PR that introduces them. A `decode_*_at(data,
+   offset)` goes into its `AT_ENTRIES` table, which is called at
+   every offset and checked against the sources; a record family's
+   payload decoder is reached through the planted chains, which
+   take their type codes from the same table.
 
 ### Where to look for the next target
 

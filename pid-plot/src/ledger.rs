@@ -10,17 +10,34 @@
 //!
 //! # Five layers, five conservation equations
 //!
+//! A page has two domains — the drawing's own records and the border
+//! template's — and each domain's account ([`DomainAccount`]) is five layers,
+//! each with an equation of its own:
+//!
 //! ```text
-//! parse     record  -> entity      total = entities + Σ A.1 reasons
-//! layout    entity  -> primitive   total = on_page  + Σ A.2 reasons
-//! body      body item -> primitive total = produced + Σ A.3 reasons
-//! write     primitive -> segment   total = written  + Σ A.5 reasons
-//! page      template / sheet size / cross-checks
+//! parse      a record family in one stream  decoded  = emitted  + out_of_range + shape_rejected + unattributed
+//! entity     an entity of the geometry      total    = on_page  + Σ dropped + unattributed
+//! body       a symbol body's primitive      total    = produced + Σ dropped + unattributed
+//! primitive  a page primitive               laid_out = on_page  + Σ dropped + unattributed
+//! segment    a stroke of a primitive        total    = written  + Σ dropped + unattributed
 //! ```
+//!
+//! The parse layer's equation is the emitters' own, summed over every record
+//! family and Sheet stream; beside it the layer lists the records that never
+//! became entities, by appendix A.1's reasons. An entity's `dropped` is the
+//! layout layer's reason (A.2) or, when it laid primitives out and none
+//! reached the page, the first of theirs. A body's is A.3's. A primitive's
+//! holds `off_sheet` — the primitives the final `retain` removed (A.4) — with
+//! the writer's codes (A.5), counted once. A segment's is A.5's three
+//! `segment_*` codes.
 //!
 //! Each layer carries an `unattributed` remainder. It has to be zero: a
 //! non-zero remainder is a batch of things that neither reached the page nor
 //! earned a name, which is exactly the gap the ledger exists to expose.
+//!
+//! What a page states about itself — where its size came from, the template
+//! it wears, a template it names that no file answers — is a sixth account,
+//! [`PageAccount`]. It has reasons (A.8) and no equation, so no remainder.
 //!
 //! # Not to be confused with `ExportBundleConfidenceLedger`
 //!

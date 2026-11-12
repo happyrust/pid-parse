@@ -1,0 +1,1099 @@
+//! The eleven reference plots, compared as ink.
+//!
+//! `reference_plots_acceptance` compares paint with paint: its reader keeps
+//! no colour, so a rule stroked in the paper's white counts as a rule, and it
+//! reads ten of the eleven pages at coverage 1.000000 while their title
+//! blocks print no rules at all
+//! (`docs/analysis/2026-11-10-the-acceptance-gate-reads-paint-not-ink.md`).
+//! This gate reads the same eleven pages for what prints. Both pages go
+//! through [`PageInk::read`], and every page is held to:
+//!
+//! * the comparison of the two pages' **ink** — coverage, uncovered reference
+//!   ink, extra ink, label pairing — with the surveyed furniture masked and
+//!   on the whole page, and the pen pairing (which reads no mask);
+//! * **colour**: of the strokes and labels the two pages share, how many
+//!   print alike and how many one page inks where the other only paints the
+//!   paper ([`stroke_colours`], [`label_colours`]), and whether the two pages
+//!   ink in the same colours at all;
+//! * the **strokes along the sheet** the reader leaves out of both pages —
+//!   the frame lines — paired by place and held to their widths
+//!   ([`sheet_edges`]);
+//! * the **page**: how far our sheet is from the reference's paper, with no
+//!   allowance beyond what the reference states its own size to;
+//! * the **line ends**: how much of our ink is stroked with another cap or
+//!   another join than the reference's stroke at the same place
+//!   ([`ends_apart`]).
+//!
+//! # How a page is pinned
+//!
+//! A page that prints as its reference does reads the same on every line
+//! above: coverage 1.000000, nothing uncovered, nothing extra, every label
+//! paired, no pen apart, no colour apart, no edge apart, the same sheet, the
+//! same ends. So a sheet's entry in [`SHEETS`] states only what is the
+//! page's own — how many labels its reference letters, how many strokes pair
+//! — and every reading that falls short of that is one line of its
+//! `defects`, with the value it reads and why: not fixed yet, waiting on data
+//! from the site, or not settled. The goal is a table with no such line.
+//!
+//! Every reading is an equality. One that gets worse fails; one that gets
+//! better fails too, until its pin is tightened or its defect line is taken
+//! out, so each step forward is a line of history.
+//!
+//! # Running it
+//!
+//! ```text
+//! cargo test -p pid-plot --test reference_plots_ink -- --nocapture
+//! ```
+//!
+//! The corpus is `PID_ACCEPTANCE_CORPUS`, default
+//! `D:\work\cad\pid-test-data\验收数据`; when its first reference plot is
+//! absent the gate says so and passes, as the acceptance gate does. It
+//! writes nothing into the corpus, ever. `PID_INK_GATE_OUT=<dir>` makes it
+//! write the table it prints to `<dir>/reference-plots-ink.txt`.
+
+use std::fmt::Write as _;
+use std::path::PathBuf;
+
+use pid_plot::compare::{CompareReport, MaskRect, compare_plots_with_model, template_masks};
+use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours};
+use pid_plot::model::{PaperModel, lay_out_drawing};
+use pid_plot::read::SheetEdge;
+use pid_plot::write::{PlotFont, write_plot};
+
+/// One number a page is held to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Field {
+    /// Our sheet's width less the reference paper's, millimetres.
+    PageWidthApart,
+    /// Our sheet's height less the reference paper's, millimetres.
+    PageHeightApart,
+    /// Coverage of the reference's ink outside the masks.
+    MaskedCoverage,
+    /// Reference ink outside the masks no ink of ours covers, millimetres.
+    MaskedUncovered,
+    /// Our ink outside the masks on no ink of the reference's, millimetres.
+    MaskedExtra,
+    /// Labels the reference letters outside the masks.
+    MaskedLabels,
+    /// Of those, the ones the two pages pair.
+    MaskedLabelsPaired,
+    /// Runs we letter outside the masks that pair with none of the
+    /// reference's.
+    MaskedLabelsAlone,
+    /// Coverage of all the reference's ink.
+    WholeCoverage,
+    /// Reference ink no ink of ours covers, millimetres.
+    WholeUncovered,
+    /// Our ink on no ink of the reference's, millimetres.
+    WholeExtra,
+    /// Labels the reference letters.
+    WholeLabels,
+    /// Of those, the ones the two pages pair.
+    WholeLabelsPaired,
+    /// Runs we letter that pair with none of the reference's.
+    WholeLabelsAlone,
+    /// Inked strokes of ours the reference prints with the same pen.
+    PenAgreed,
+    /// Inked strokes of ours the reference prints with another pen.
+    PenDiffered,
+    /// Inked strokes of ours with no inked stroke of the reference's.
+    PenUnpaired,
+    /// Strokes the two pages share and print in the same colour.
+    StrokesSameColour,
+    /// Strokes the two pages share, inked on one and paper on the other.
+    StrokesOtherColour,
+    /// Labels the two pages share and letter in the same colour.
+    LabelsSameColour,
+    /// Labels the two pages share, inked on one and paper on the other.
+    LabelsOtherColour,
+    /// The characters of the labels both pages letter in ink, as the
+    /// reference letters them.
+    GlyphsSameColour,
+    /// Colours one page inks in and the other does not.
+    InkColoursApart,
+    /// Inked strokes along the sheet on the reference.
+    SheetEdges,
+    /// Strokes along the sheet one page lacks or the two print at different
+    /// widths.
+    SheetEdgesApart,
+    /// Our ink on a reference stroke that ends or turns its corners another
+    /// way than ours, millimetres.
+    EndsOther,
+}
+
+/// Which way a reading gets better.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Better {
+    /// More is better.
+    Up,
+    /// Less is better.
+    Down,
+    /// Nearer zero is better.
+    TowardZero,
+    /// Neither: the number is the page's own, and a change is a change.
+    Neither,
+}
+
+impl Field {
+    const ALL: [Self; 26] = [
+        Self::PageWidthApart,
+        Self::PageHeightApart,
+        Self::MaskedCoverage,
+        Self::MaskedUncovered,
+        Self::MaskedExtra,
+        Self::MaskedLabels,
+        Self::MaskedLabelsPaired,
+        Self::MaskedLabelsAlone,
+        Self::WholeCoverage,
+        Self::WholeUncovered,
+        Self::WholeExtra,
+        Self::WholeLabels,
+        Self::WholeLabelsPaired,
+        Self::WholeLabelsAlone,
+        Self::PenAgreed,
+        Self::PenDiffered,
+        Self::PenUnpaired,
+        Self::StrokesSameColour,
+        Self::StrokesOtherColour,
+        Self::LabelsSameColour,
+        Self::LabelsOtherColour,
+        Self::GlyphsSameColour,
+        Self::InkColoursApart,
+        Self::SheetEdges,
+        Self::SheetEdgesApart,
+        Self::EndsOther,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::PageWidthApart => "page width apart (mm)",
+            Self::PageHeightApart => "page height apart (mm)",
+            Self::MaskedCoverage => "masked coverage",
+            Self::MaskedUncovered => "masked uncovered (mm)",
+            Self::MaskedExtra => "masked extra (mm)",
+            Self::MaskedLabels => "masked reference labels",
+            Self::MaskedLabelsPaired => "masked labels paired",
+            Self::MaskedLabelsAlone => "masked runs of ours with no partner",
+            Self::WholeCoverage => "whole-page coverage",
+            Self::WholeUncovered => "whole-page uncovered (mm)",
+            Self::WholeExtra => "whole-page extra (mm)",
+            Self::WholeLabels => "whole-page reference labels",
+            Self::WholeLabelsPaired => "whole-page labels paired",
+            Self::WholeLabelsAlone => "whole-page runs of ours with no partner",
+            Self::PenAgreed => "pen agreed",
+            Self::PenDiffered => "pen differed",
+            Self::PenUnpaired => "pen unpaired",
+            Self::StrokesSameColour => "strokes of the same colour",
+            Self::StrokesOtherColour => "strokes of another colour",
+            Self::LabelsSameColour => "labels of the same colour",
+            Self::LabelsOtherColour => "labels of another colour",
+            Self::GlyphsSameColour => "characters lettered in ink on both pages",
+            Self::InkColoursApart => "ink colours apart",
+            Self::SheetEdges => "reference sheet edges",
+            Self::SheetEdgesApart => "sheet edges apart",
+            Self::EndsOther => "our ink under other ends than the reference's (mm)",
+        }
+    }
+
+    fn better(self) -> Better {
+        match self {
+            Self::PageWidthApart | Self::PageHeightApart => Better::TowardZero,
+            Self::MaskedCoverage
+            | Self::WholeCoverage
+            | Self::MaskedLabelsPaired
+            | Self::WholeLabelsPaired
+            | Self::PenAgreed
+            | Self::StrokesSameColour
+            | Self::LabelsSameColour
+            | Self::GlyphsSameColour => Better::Up,
+            Self::MaskedUncovered
+            | Self::MaskedExtra
+            | Self::MaskedLabelsAlone
+            | Self::WholeUncovered
+            | Self::WholeExtra
+            | Self::WholeLabelsAlone
+            | Self::PenDiffered
+            | Self::PenUnpaired
+            | Self::StrokesOtherColour
+            | Self::LabelsOtherColour
+            | Self::InkColoursApart
+            | Self::SheetEdgesApart
+            | Self::EndsOther => Better::Down,
+            Self::MaskedLabels | Self::WholeLabels | Self::SheetEdges => Better::Neither,
+        }
+    }
+
+    /// How far a reading may sit from its pin and still be the pin: half of
+    /// the last place a pin is stated to, and for the page the 0.002 mm the
+    /// reference states its own paper to (an A1 sheet's `MediaBox` is
+    /// 840.9986 × 593.9991 mm).
+    fn slack(self) -> f64 {
+        match self {
+            Self::PageWidthApart | Self::PageHeightApart => 0.002,
+            Self::MaskedCoverage | Self::WholeCoverage => 0.000_000_5,
+            Self::MaskedUncovered
+            | Self::MaskedExtra
+            | Self::WholeUncovered
+            | Self::WholeExtra
+            | Self::EndsOther => 0.000_5,
+            _ => 0.0,
+        }
+    }
+
+    fn show(self, value: f64) -> String {
+        // A length that sums to nothing can come out as `-0.0`.
+        let value = if value == 0.0 { 0.0 } else { value };
+        match self {
+            Self::MaskedCoverage | Self::WholeCoverage => format!("{value:.6}"),
+            Self::PageWidthApart
+            | Self::PageHeightApart
+            | Self::MaskedUncovered
+            | Self::MaskedExtra
+            | Self::WholeUncovered
+            | Self::WholeExtra
+            | Self::EndsOther => format!("{value:.3}"),
+            _ => format!("{value:.0}"),
+        }
+    }
+}
+
+/// Why a reading is not what a page that prints as its reference reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cause {
+    /// A defect of ours whose fix is known and not landed.
+    NotFixed,
+    /// The difference is in the source data: the reference was plotted from
+    /// a state of the drawing we do not hold, and the page can only read as
+    /// its reference does once the site supplies it.
+    SiteData,
+    /// Which of the two pages is right is not settled: the data on hand
+    /// explains neither, and the site has been asked.
+    Undetermined,
+}
+
+impl Cause {
+    fn name(self) -> &'static str {
+        match self {
+            Self::NotFixed => "not fixed yet",
+            Self::SiteData => "needs data from the site",
+            Self::Undetermined => "not settled",
+        }
+    }
+}
+
+/// One reading a page is known to miss, pinned where it reads.
+struct Defect {
+    field: Field,
+    /// What the field reads today.
+    reads: f64,
+    cause: Cause,
+    /// What it is.
+    what: &'static str,
+}
+
+/// One reference sheet: what is its own, and what it is known to miss.
+struct Sheet {
+    name: &'static str,
+    /// Labels the reference letters outside the masks, then on the whole
+    /// page.
+    labels: [usize; 2],
+    /// Inked strokes of ours the reference prints with the same pen.
+    pen_agreed: usize,
+    /// Strokes, then labels, the two pages share and print in the same
+    /// colour, then the characters of the labels both letter in ink.
+    same_colour: [usize; 3],
+    /// Inked strokes along the sheet on the reference.
+    sheet_edges: usize,
+    defects: &'static [Defect],
+}
+
+impl Sheet {
+    /// What a page that prints as its reference reads for `field`.
+    fn ideal(&self, field: Field) -> f64 {
+        match field {
+            Field::MaskedCoverage | Field::WholeCoverage => 1.0,
+            Field::MaskedLabels | Field::MaskedLabelsPaired => self.labels[0] as f64,
+            Field::WholeLabels | Field::WholeLabelsPaired => self.labels[1] as f64,
+            Field::PenAgreed => self.pen_agreed as f64,
+            Field::StrokesSameColour => self.same_colour[0] as f64,
+            Field::LabelsSameColour => self.same_colour[1] as f64,
+            Field::GlyphsSameColour => self.same_colour[2] as f64,
+            Field::SheetEdges => self.sheet_edges as f64,
+            Field::PageWidthApart
+            | Field::PageHeightApart
+            | Field::MaskedUncovered
+            | Field::MaskedExtra
+            | Field::MaskedLabelsAlone
+            | Field::WholeUncovered
+            | Field::WholeExtra
+            | Field::WholeLabelsAlone
+            | Field::PenDiffered
+            | Field::PenUnpaired
+            | Field::StrokesOtherColour
+            | Field::LabelsOtherColour
+            | Field::InkColoursApart
+            | Field::SheetEdgesApart
+            | Field::EndsOther => 0.0,
+        }
+    }
+
+    fn defect(&self, field: Field) -> Option<&Defect> {
+        self.defects.iter().find(|defect| defect.field == field)
+    }
+
+    /// What `field` is pinned at: its defect line when it has one.
+    fn pinned(&self, field: Field) -> f64 {
+        self.defect(field)
+            .map_or_else(|| self.ideal(field), |defect| defect.reads)
+    }
+}
+
+/// The one-unit rules of `I井场`'s border template.
+const VALVE_FIRST: &str = "the border template's one-unit rules, butt-ended on our page and \
+                           round-ended on the reference: the reference draws one valve of the \
+                           drawing (`Ball Valve Type 4`, oid 38159) before its template, so \
+                           `1 j 1 J` is already stated when the template is stroked. Neither the \
+                           record's place in the stream, its oid nor its layer puts that valve \
+                           first";
+
+/// The one-unit rules the A2 template strokes before its frame on our page.
+const TEMPLATE_ORDER: &str = "one-unit rules of the `CPECCHB-SQ-A2` template that our page strokes \
+                              before the template's 1.4141 mm frame and the reference after it: \
+                              the reference strokes the frame second, straight after the sheet \
+                              outline, and the order it draws a template's records in is not \
+                              decoded";
+
+/// The border two reference plots do not print.
+const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing links and the \
+                           reference plot carries none; nothing on hand says whether the \
+                           drawing lost its frame after the copy we hold or the plot left the \
+                           template out";
+
+/// The A2 sheet's instrument loop and its two pipeline strings.
+const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
+                              reference was plotted from a later state of the drawing than \
+                              either copy of the `.pid`, the published XML and the backup's \
+                              database, which all agree with what we draw";
+
+/// The A2 sheet's page.
+const A2_PAGE: &str = "the sheet states 594.33 × 420.57 mm and is written at that size; the \
+                       reference prints it on 594 × 420 mm paper";
+
+const SHEETS: [Sheet; 11] = [
+    Sheet {
+        name: "I井场 注采阀组工艺及自控流程图",
+        labels: [546, 583],
+        pen_agreed: 9334,
+        same_colour: [9370, 583, 3520],
+        sheet_edges: 8,
+        defects: &[Defect {
+            field: Field::EndsOther,
+            reads: 11350.393,
+            cause: Cause::Undetermined,
+            what: VALVE_FIRST,
+        }],
+    },
+    Sheet {
+        name: "J K井场 注采阀组工艺及自控流程图",
+        labels: [775, 813],
+        pen_agreed: 14661,
+        same_colour: [14709, 813, 4922],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "L M井场 注采阀组工艺及自控流程图",
+        labels: [921, 959],
+        pen_agreed: 17812,
+        same_colour: [17866, 959, 5846],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+        labels: [151, 155],
+        pen_agreed: 1272,
+        same_colour: [1278, 155, 1279],
+        sheet_edges: 0,
+        defects: &[
+            Defect {
+                field: Field::WholeExtra,
+                reads: 3478.925,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::WholeLabelsAlone,
+                reads: 34.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::PenUnpaired,
+                reads: 286.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::SheetEdgesApart,
+                reads: 8.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+        ],
+    },
+    Sheet {
+        name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
+        labels: [123, 161],
+        pen_agreed: 1419,
+        same_colour: [1425, 161, 1136],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
+        labels: [167, 171],
+        pen_agreed: 1691,
+        same_colour: [1695, 171, 1189],
+        sheet_edges: 0,
+        defects: &[
+            Defect {
+                field: Field::WholeExtra,
+                reads: 3478.683,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::WholeLabelsAlone,
+                reads: 34.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::PenUnpaired,
+                reads: 286.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+            Defect {
+                field: Field::SheetEdgesApart,
+                reads: 8.0,
+                cause: Cause::Undetermined,
+                what: BARE_BORDER,
+            },
+        ],
+    },
+    Sheet {
+        name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
+        labels: [249, 253],
+        pen_agreed: 3192,
+        same_colour: [3196, 253, 1672],
+        sheet_edges: 0,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
+        labels: [288, 326],
+        pen_agreed: 3394,
+        same_colour: [3404, 326, 2144],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
+        labels: [290, 328],
+        pen_agreed: 3401,
+        same_colour: [3411, 328, 2172],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
+        labels: [283, 321],
+        pen_agreed: 3268,
+        same_colour: [3278, 321, 2127],
+        sheet_edges: 8,
+        defects: &[],
+    },
+    Sheet {
+        name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+        labels: [225, 261],
+        pen_agreed: 2802,
+        same_colour: [2806, 250, 1321],
+        sheet_edges: 6,
+        defects: &[
+            Defect {
+                field: Field::PageWidthApart,
+                reads: 0.329,
+                cause: Cause::NotFixed,
+                what: A2_PAGE,
+            },
+            Defect {
+                field: Field::PageHeightApart,
+                reads: 0.566,
+                cause: Cause::NotFixed,
+                what: A2_PAGE,
+            },
+            Defect {
+                field: Field::MaskedCoverage,
+                reads: 0.983088,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::MaskedUncovered,
+                reads: 206.766,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::MaskedExtra,
+                reads: 186.595,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::MaskedLabelsPaired,
+                reads: 214.0,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::MaskedLabelsAlone,
+                reads: 11.0,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::WholeCoverage,
+                reads: 0.988264,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::WholeUncovered,
+                reads: 206.935,
+                cause: Cause::SiteData,
+                what: "the later revision's loop, and 0.169 mm that is the stub the plotter \
+                       adds to the left sheet edge, which the reader leaves out with the edge \
+                       on our page",
+            },
+            Defect {
+                field: Field::WholeExtra,
+                reads: 186.595,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::WholeLabelsPaired,
+                reads: 250.0,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::WholeLabelsAlone,
+                reads: 11.0,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::PenUnpaired,
+                reads: 100.0,
+                cause: Cause::SiteData,
+                what: LATER_REVISION,
+            },
+            Defect {
+                field: Field::SheetEdgesApart,
+                reads: 3.0,
+                cause: Cause::NotFixed,
+                what: "the top sheet edge and the right one, which we stroke twice, lie off the \
+                       reference's 594 × 420 mm paper",
+            },
+            Defect {
+                field: Field::EndsOther,
+                reads: 2156.858,
+                cause: Cause::Undetermined,
+                what: TEMPLATE_ORDER,
+            },
+        ],
+    },
+];
+
+/// Font directories for this corpus, plus the self-check corpus's own set,
+/// as `reference_plots_acceptance` searches them.
+fn font_search_dirs(corpus: &std::path::Path) -> Vec<PathBuf> {
+    let mut dirs = font_dirs(Some(corpus));
+    let beside = PathBuf::from("D:/work/cad/PID自研软件验证/fonts");
+    if beside.is_dir() {
+        dirs.push(beside);
+    }
+    dirs
+}
+
+fn corpus_dir() -> PathBuf {
+    std::env::var_os("PID_ACCEPTANCE_CORPUS").map_or_else(
+        || PathBuf::from(r"D:\work\cad\pid-test-data\验收数据"),
+        PathBuf::from,
+    )
+}
+
+fn uncovered_mm(report: &CompareReport) -> f64 {
+    report.reference_length_mm - report.covered_length_mm
+}
+
+/// What one page reads: a value for each field, in [`Field::ALL`]'s order,
+/// and what stands behind the colour, edge and end readings, for the table.
+struct PageReading {
+    values: Vec<f64>,
+    notes: Vec<String>,
+}
+
+fn read_page(
+    sheet: &Sheet,
+    model: &PaperModel,
+    reference_pdf: &[u8],
+    our_pdf: &[u8],
+) -> PageReading {
+    let name = sheet.name;
+    let reference = PageInk::read(reference_pdf).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let ours = PageInk::read(our_pdf).unwrap_or_else(|e| panic!("{name}: ours: {e}"));
+    let template = template_masks(reference.ink.page_mm);
+    let missing: Vec<MaskRect> = model
+        .missing_boxes
+        .iter()
+        .map(|missing| MaskRect {
+            label: missing.path.clone(),
+            min_mm: missing.min_mm,
+            max_mm: missing.max_mm,
+        })
+        .collect();
+    let masked = compare_plots_with_model(&reference.ink, &ours.ink, &template, &missing, model);
+    let whole = compare_plots_with_model(&reference.ink, &ours.ink, &[], &missing, model);
+    assert!(
+        whole.fit.within_threshold,
+        "{name}: fit outside threshold: {:?}",
+        whole.fit
+    );
+    let strokes = stroke_colours(&reference, &ours, &whole);
+    let labels = label_colours(&reference, &ours, &whole);
+    let edges = sheet_edges(&reference.pens, &ours.pens, &whole.fit);
+    let ends = ends_apart(&reference.pens, &ours.pens, &whole.fit);
+    let colours_apart = reference
+        .pens
+        .inks
+        .iter()
+        .filter(|ink| !ours.pens.inks.iter().any(|other| other.rgba == ink.rgba))
+        .count()
+        + ours
+            .pens
+            .inks
+            .iter()
+            .filter(|ink| {
+                !reference
+                    .pens
+                    .inks
+                    .iter()
+                    .any(|other| other.rgba == ink.rgba)
+            })
+            .count();
+    let mut notes = vec![
+        format!(
+            "strokes: {} ink on ink, {} paper on paper, {} ink on reference paper, {} paper on \
+             reference ink; alone: {} ink, {} paper",
+            strokes.ink_on_ink,
+            strokes.paper_on_paper,
+            strokes.ink_on_paper,
+            strokes.paper_on_ink,
+            strokes.ink_alone,
+            strokes.paper_alone
+        ),
+        format!(
+            "labels: {} ink on ink ({} characters), {} paper on paper, {} ink on reference \
+             paper, {} paper on reference ink; runs in the paper's colour: reference {}, ours {}",
+            labels.ink_on_ink,
+            labels.glyphs_ink_on_ink,
+            labels.paper_on_paper,
+            labels.ink_on_paper,
+            labels.paper_on_ink,
+            labels.paper_runs[0],
+            labels.paper_runs[1]
+        ),
+    ];
+    for (side, pens) in [("reference", &reference.pens), ("ours", &ours.pens)] {
+        let inks: Vec<String> = pens
+            .inks
+            .iter()
+            .map(|ink| {
+                format!(
+                    "{:?} on {} path(s) and {} glyph(s)",
+                    ink.rgba, ink.paths, ink.glyphs
+                )
+            })
+            .collect();
+        let ends: Vec<String> = pens
+            .ends
+            .iter()
+            .map(|ends| {
+                format!(
+                    "{:?}/{:?} {} path(s) {:.3} mm",
+                    ends.cap, ends.join, ends.paths, ends.length_mm
+                )
+            })
+            .collect();
+        notes.push(format!(
+            "{side}: inks {}; ends {}",
+            inks.join(", "),
+            ends.join(", ")
+        ));
+    }
+    let pairs: Vec<String> = ends
+        .apart
+        .iter()
+        .map(|pair| {
+            format!(
+                "{:?}/{:?} on the reference's {:?}/{:?} {:.3} mm",
+                pair.ours.0, pair.ours.1, pair.reference.0, pair.reference.1, pair.length_mm
+            )
+        })
+        .collect();
+    notes.push(format!(
+        "ends, our ink by the reference's stroke at its place: {:.3} mm the same cap and join, \
+         {:.3} mm another ({}), {:.3} mm with no reference stroke",
+        ends.same_mm,
+        ends.other_mm,
+        if pairs.is_empty() {
+            "none".to_string()
+        } else {
+            pairs.join(", ")
+        },
+        ends.alone_mm
+    ));
+    notes.push(format!(
+        "sheet edges: reference {}, ours {}, {} the same",
+        edges.reference, edges.ours, edges.same
+    ));
+    let place = |edge: &SheetEdge| {
+        format!(
+            "({:.3}, {:.3})–({:.3}, {:.3}) {:.3} mm wide",
+            edge.start_mm[0], edge.start_mm[1], edge.end_mm[0], edge.end_mm[1], edge.width_mm
+        )
+    };
+    for pair in &edges.other_width {
+        notes.push(format!(
+            "sheet edge at another width: ours {}, the reference's {:.3} mm",
+            place(&pair.ours),
+            pair.reference_width_mm
+        ));
+    }
+    for edge in &edges.ours_only {
+        notes.push(format!("sheet edge of ours alone: {}", place(edge)));
+    }
+    for edge in &edges.reference_only {
+        notes.push(format!(
+            "sheet edge of the reference's alone: {}",
+            place(edge)
+        ));
+    }
+    let values = Field::ALL
+        .iter()
+        .map(|field| match field {
+            Field::PageWidthApart => ours.ink.page_mm[0] - reference.ink.page_mm[0],
+            Field::PageHeightApart => ours.ink.page_mm[1] - reference.ink.page_mm[1],
+            Field::MaskedCoverage => masked.coverage,
+            Field::MaskedUncovered => uncovered_mm(&masked),
+            Field::MaskedExtra => masked.extra_length_mm,
+            Field::MaskedLabels => masked.text_reference as f64,
+            Field::MaskedLabelsAlone => masked.unmatched_our_text.len() as f64,
+            Field::MaskedLabelsPaired => masked.text_matched as f64,
+            Field::WholeCoverage => whole.coverage,
+            Field::WholeUncovered => uncovered_mm(&whole),
+            Field::WholeExtra => whole.extra_length_mm,
+            Field::WholeLabels => whole.text_reference as f64,
+            Field::WholeLabelsAlone => whole.unmatched_our_text.len() as f64,
+            Field::WholeLabelsPaired => whole.text_matched as f64,
+            Field::PenAgreed => whole.pen.agreed as f64,
+            Field::PenDiffered => whole.pen.differed as f64,
+            Field::PenUnpaired => whole.pen.unpaired as f64,
+            Field::StrokesSameColour => strokes.same() as f64,
+            Field::StrokesOtherColour => strokes.other() as f64,
+            Field::LabelsSameColour => labels.same() as f64,
+            Field::LabelsOtherColour => labels.other() as f64,
+            Field::GlyphsSameColour => labels.glyphs_ink_on_ink as f64,
+            Field::InkColoursApart => colours_apart as f64,
+            Field::SheetEdges => edges.reference as f64,
+            Field::SheetEdgesApart => edges.apart() as f64,
+            Field::EndsOther => ends.other_mm,
+        })
+        .collect();
+    PageReading { values, notes }
+}
+
+/// Hold one page's readings to its pins; every reading that is not its pin
+/// is one line of the result.
+fn hold(sheet: &Sheet, readings: &[f64]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (field, reads) in Field::ALL.iter().zip(readings) {
+        let pinned = sheet.pinned(*field);
+        let ideal = sheet.ideal(*field);
+        if let Some(defect) = sheet.defect(*field) {
+            assert!(
+                (defect.reads - ideal).abs() > field.slack(),
+                "{}: the defect line for {} is pinned at {}, which is what a page with no \
+                 defect reads; take the line out",
+                sheet.name,
+                field.name(),
+                field.show(defect.reads)
+            );
+        }
+        if (reads - pinned).abs() <= field.slack() {
+            continue;
+        }
+        let better = match field.better() {
+            Better::Up => Some(*reads > pinned),
+            Better::Down => Some(*reads < pinned),
+            Better::TowardZero => Some(reads.abs() < pinned.abs()),
+            Better::Neither => None,
+        };
+        let verdict = match (better, sheet.defect(*field)) {
+            (Some(true), Some(_)) if (reads - ideal).abs() <= field.slack() => {
+                "better, and what a page with no defect reads: take its defect line out".to_string()
+            }
+            (Some(true), Some(_)) => {
+                "better: tighten the defect line to what it reads now".to_string()
+            }
+            (Some(true), None) => "better: raise the sheet's pin to what it reads now".to_string(),
+            (Some(false), Some(defect)) => format!(
+                "worse than the known defect ({}: {})",
+                defect.cause.name(),
+                defect.what
+            ),
+            (Some(false), None) => "worse: a page with no known defect here".to_string(),
+            (None, _) => "moved: this number is the page's own".to_string(),
+        };
+        lines.push(format!(
+            "{}: {} reads {}, pinned {} — {verdict}",
+            sheet.name,
+            field.name(),
+            field.show(*reads),
+            field.show(pinned)
+        ));
+    }
+    lines
+}
+
+/// One page's readings as the table prints them.
+fn table(sheet: &Sheet, reading: &PageReading) -> String {
+    let readings = &reading.values;
+    let get = |field: Field| {
+        let at = Field::ALL
+            .iter()
+            .position(|other| *other == field)
+            .expect("every field is in ALL");
+        field.show(readings[at])
+    };
+    let mut out = String::new();
+    let _ = writeln!(out, "== {}", sheet.name);
+    let _ = writeln!(
+        out,
+        "   page apart ({}, {}) mm; ink colours apart {}",
+        get(Field::PageWidthApart),
+        get(Field::PageHeightApart),
+        get(Field::InkColoursApart)
+    );
+    let _ = writeln!(
+        out,
+        "   masked  coverage {}  uncovered {} mm  extra {} mm  labels {} paired of {}, {} run(s) \
+         of ours alone",
+        get(Field::MaskedCoverage),
+        get(Field::MaskedUncovered),
+        get(Field::MaskedExtra),
+        get(Field::MaskedLabelsPaired),
+        get(Field::MaskedLabels),
+        get(Field::MaskedLabelsAlone)
+    );
+    let _ = writeln!(
+        out,
+        "   whole   coverage {}  uncovered {} mm  extra {} mm  labels {} paired of {}, {} run(s) \
+         of ours alone",
+        get(Field::WholeCoverage),
+        get(Field::WholeUncovered),
+        get(Field::WholeExtra),
+        get(Field::WholeLabelsPaired),
+        get(Field::WholeLabels),
+        get(Field::WholeLabelsAlone)
+    );
+    let _ = writeln!(
+        out,
+        "   pen {} agree / {} differ / {} unpaired; colour: strokes {} same / {} other, labels \
+         {} same / {} other",
+        get(Field::PenAgreed),
+        get(Field::PenDiffered),
+        get(Field::PenUnpaired),
+        get(Field::StrokesSameColour),
+        get(Field::StrokesOtherColour),
+        get(Field::LabelsSameColour),
+        get(Field::LabelsOtherColour)
+    );
+    let _ = writeln!(
+        out,
+        "   sheet edges {} on the reference, {} apart; ends: {} mm of our ink under other ends \
+         than the reference's stroke there",
+        get(Field::SheetEdges),
+        get(Field::SheetEdgesApart),
+        get(Field::EndsOther)
+    );
+    let _ = writeln!(
+        out,
+        "   pins: labels: [{}, {}], pen_agreed: {}, same_colour: [{}, {}, {}], sheet_edges: {}",
+        get(Field::MaskedLabels),
+        get(Field::WholeLabels),
+        get(Field::PenAgreed),
+        get(Field::StrokesSameColour),
+        get(Field::LabelsSameColour),
+        get(Field::GlyphsSameColour),
+        get(Field::SheetEdges)
+    );
+    for note in &reading.notes {
+        let _ = writeln!(out, "   {note}");
+    }
+    for defect in sheet.defects {
+        let _ = writeln!(
+            out,
+            "   known defect [{}] {} = {}: {}",
+            defect.cause.name(),
+            defect.field.name(),
+            defect.field.show(defect.reads),
+            defect.what
+        );
+    }
+    // Every reading short of what a page with no defect reads, as the line
+    // it takes in the sheet's `defects`: what a change to a pin is copied
+    // from.
+    for (field, reads) in Field::ALL.iter().zip(readings) {
+        if field.better() != Better::Neither
+            && !matches!(
+                field,
+                Field::PenAgreed
+                    | Field::StrokesSameColour
+                    | Field::LabelsSameColour
+                    | Field::GlyphsSameColour
+            )
+            && (reads - sheet.ideal(*field)).abs() > field.slack()
+        {
+            let _ = writeln!(
+                out,
+                "   short of a clean page: {} reads {} (Field::{field:?})",
+                field.name(),
+                field.show(*reads)
+            );
+        }
+    }
+    out
+}
+
+/// A sheet's pins are its own numbers, its defects each name one field once,
+/// and the three causes are all the table knows.
+#[test]
+fn every_known_defect_is_one_reading_with_a_cause() {
+    let mut by_cause = [0usize; 3];
+    for sheet in &SHEETS {
+        for (index, defect) in sheet.defects.iter().enumerate() {
+            assert!(
+                !sheet.defects[..index]
+                    .iter()
+                    .any(|other| other.field == defect.field),
+                "{}: two defect lines for {}",
+                sheet.name,
+                defect.field.name()
+            );
+            assert!(
+                !defect.what.trim().is_empty(),
+                "{}: a defect line for {} says nothing",
+                sheet.name,
+                defect.field.name()
+            );
+            assert!(
+                defect.field.better() != Better::Neither,
+                "{}: {} is the page's own number, not a reading to miss",
+                sheet.name,
+                defect.field.name()
+            );
+            by_cause[match defect.cause {
+                Cause::NotFixed => 0,
+                Cause::SiteData => 1,
+                Cause::Undetermined => 2,
+            }] += 1;
+        }
+    }
+    eprintln!(
+        "known defects: {} not fixed yet, {} needing data from the site, {} not settled",
+        by_cause[0], by_cause[1], by_cause[2]
+    );
+}
+
+#[test]
+fn eleven_reference_plots_print_the_ink_their_pins_say() {
+    let corpus = corpus_dir();
+    let first_reference = corpus.join(format!("{}.pdf", SHEETS[0].name));
+    if !first_reference.is_file() {
+        eprintln!(
+            "skipping the ink gate; {} is absent",
+            first_reference.display()
+        );
+        return;
+    }
+    let models: Vec<PaperModel> = SHEETS
+        .iter()
+        .map(|sheet| {
+            let path = corpus.join(format!("{}.pid", sheet.name));
+            lay_out_drawing(&path, &corpus)
+                .unwrap_or_else(|error| panic!("{}: layout: {error}", sheet.name))
+        })
+        .collect();
+    let dirs = font_search_dirs(&corpus);
+    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
+
+    let mut printed = String::new();
+    let mut failures: Vec<String> = Vec::new();
+    for (sheet, model) in SHEETS.iter().zip(&models) {
+        let reference_pdf = std::fs::read(corpus.join(format!("{}.pdf", sheet.name)))
+            .unwrap_or_else(|error| panic!("{}: reference: {error}", sheet.name));
+        let our_pdf = write_plot(model, &fonts)
+            .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name));
+        let reading = read_page(sheet, model, &reference_pdf, &our_pdf);
+        let page = table(sheet, &reading);
+        eprint!("{page}");
+        printed.push_str(&page);
+        failures.extend(hold(sheet, &reading.values));
+    }
+    let known: usize = SHEETS.iter().map(|sheet| sheet.defects.len()).sum();
+    let summary = format!(
+        "ink gate: {} page(s), {} known defect line(s), {} reading(s) off their pins\n",
+        SHEETS.len(),
+        known,
+        failures.len()
+    );
+    eprint!("{summary}");
+    printed.push_str(&summary);
+    if let Some(dir) = std::env::var_os("PID_INK_GATE_OUT") {
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).expect("create PID_INK_GATE_OUT");
+        std::fs::write(dir.join("reference-plots-ink.txt"), printed.as_bytes())
+            .expect("write the ink gate's table");
+    }
+    assert!(
+        failures.is_empty(),
+        "{} reading(s) are not what they are pinned at:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}

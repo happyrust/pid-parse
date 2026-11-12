@@ -31,7 +31,9 @@ use super::oracle_exp::{
     attach_oracle_ports, backup_path_key, backup_uid_key, plant_group_path, read_plant_groups,
     BackupDrawing, ExpTables, PlantGroup,
 };
-use super::pid_load::{load_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats};
+use super::pid_load::{
+    read_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats, PublishChainFault,
+};
 use super::pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
 use crate::backup::{scan_backup_folder, BackupFolderScan, ExportDumpFormat, PlantDataFile};
 
@@ -69,6 +71,42 @@ pub struct BackupPublishReport {
     pub shells: usize,
     /// 门禁的逐图结论；没给参考目录时为 `None`。
     pub gate: Option<PackageGateReport>,
+    /// Chain streams of the package's drawings whose record chain does not
+    /// hold, in the order the drawings were read. The publish reader takes
+    /// a stream's records all or nothing, so each of these is a drawing
+    /// whose delivery may be short of what that stream holds while it
+    /// counts as written; `_Index.json` and the coverage reports do not
+    /// list them, and a caller that delivers the package says them, as
+    /// `pid_publish_xml` does. Always empty for a SQL Server package,
+    /// whose drawings are read from the database and not from the `.pid`.
+    pub chain_faults: Vec<PackageChainFault>,
+}
+
+/// A chain stream of one drawing of a backup package whose record chain
+/// does not hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageChainFault {
+    /// File name of the `PlantData` zip the drawing is in.
+    pub zip_file: String,
+    /// The drawing's entry in that zip.
+    pub zip_entry: String,
+    /// The stream, what is wrong with its framing, and what the publish
+    /// reader made of it.
+    pub fault: PublishChainFault,
+}
+
+impl PackageChainFault {
+    /// The drawing — zip and entry, as `_Index.json` names a problem's —
+    /// and the fault in one sentence ([`PublishChainFault::describe`]).
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!(
+            "{} {}: {}",
+            self.zip_file,
+            self.zip_entry,
+            self.fault.describe()
+        )
+    }
 }
 
 /// 一次整包发布里 `--diff-against` 的逐图结论。
@@ -202,6 +240,7 @@ pub fn publish_backup_package(
         .iter()
         .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
         .collect();
+    let mut chain_faults: Vec<PackageChainFault> = Vec::new();
     let mut gate = reference_dir.map(PackageGate::new);
 
     for plant in &scan.plant_data {
@@ -236,6 +275,7 @@ pub fn publish_backup_package(
                 written_names: &mut written_names,
                 drawings: &mut drawings,
                 problems: &mut problems,
+                chain_faults: &mut chain_faults,
                 gate: gate.as_mut(),
             },
         ) {
@@ -313,6 +353,7 @@ pub fn publish_backup_package(
         pid_entries,
         shells,
         gate,
+        chain_faults,
     })
 }
 
@@ -378,6 +419,8 @@ struct PublishTally<'a> {
     written_names: &'a mut HashSet<String>,
     drawings: &'a mut Vec<Value>,
     problems: &'a mut Vec<String>,
+    /// Not `problems`: that list is written into `_Index.json`.
+    chain_faults: &'a mut Vec<PackageChainFault>,
     gate: Option<&'a mut PackageGate>,
 }
 
@@ -453,7 +496,26 @@ fn publish_one(
     tally: &mut PublishTally<'_>,
 ) {
     let stem = entry_stem(zip_entry);
-    let loaded_drawing = load_publish_from_reader(std::io::Cursor::new(bytes), &stem);
+    // One read: the drawing, and the chain streams of it that do not hold.
+    // Those are kept whatever becomes of the drawing below — a stream that
+    // stops short is often why it has no `DrawingNo` or publishes little.
+    let loaded_drawing = match read_publish_from_reader(std::io::Cursor::new(bytes), &stem) {
+        Ok(read) => {
+            tally
+                .chain_faults
+                .extend(
+                    read.chain_faults
+                        .into_iter()
+                        .map(|fault| PackageChainFault {
+                            zip_file: plant.file_name.clone(),
+                            zip_entry: zip_entry.to_string(),
+                            fault,
+                        }),
+                );
+            read.drawing
+        }
+        Err(error) => Err(error),
+    };
     let mut uid_from = "DrawingNo";
     let mut drawing = match loaded_drawing {
         Ok(mut drawing) => {
@@ -1230,6 +1292,9 @@ fn publish_mtf_package(
         pid_entries,
         shells: 0,
         gate: gate.map(|gate| gate.report),
+        // The drawings of this branch come out of the database: no `.pid`
+        // is inflated, so no chain is walked.
+        chain_faults: Vec::new(),
     })
 }
 

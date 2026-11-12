@@ -48,14 +48,28 @@ fn collect_pids(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Records no decoder claims, by type code, over every sheet stream of the
-/// 53 drawings: `D04`'s one `ComplexString` — an association whose six
-/// stroke members draw on their own — and the five `KeyPoint Constraint`s
-/// it lists beside them.
-const UNDECODED: &[(u16, usize)] = &[(0x0019, 5), (0x0021, 1)];
+/// 53 drawings: the five `KeyPoint Constraint`s of `D04`'s one
+/// `ComplexString`. A constraint is not a graphic object — the native
+/// graphic predicate turns its type code away — and what it constrains, one
+/// curve's end to the next one's start, the curves' own coordinates already
+/// state.
+///
+/// The `ComplexString` itself (`0x0021`, one record) was on this list until
+/// the family decoded.
+const UNDECODED: &[(u16, usize)] = &[(0x0019, 5)];
 
-/// Records a decoder refused: one `DependencyObject` on `A井场` (36 bytes,
-/// no member). The family draws nothing whether it decodes or not.
-const REFUSED: &[(u16, usize)] = &[(0x00FA, 1)];
+/// The `ComplexString` records on the 53 drawings' sheets, as `(drawing,
+/// oid, curve members, members)`: `D04`'s `/Sheet6` oid 62, a closed run of
+/// four arcs and two lines — 2.6 mm by 7.0 mm at (161.6, 213.5) mm — with
+/// the five constraints that join them.
+const COMPLEX_STRINGS: &[(&str, u32, usize, usize)] = &[("D04", 62, 6, 11)];
+
+/// Records a decoder refused: none.
+///
+/// There was one, a `DependencyObject` on `A井场` (`/Sheet6 +251219`, oid
+/// 46838) that lists no member: 36 bytes of the family's own grammar, which
+/// the decoder turned away for requiring a count of at least one.
+const REFUSED: &[(u16, usize)] = &[];
 
 /// Records the native reader seeks past (`0x8000` in the type word). 23 of
 /// them were hidden under census-walk phantoms until the census read the
@@ -70,6 +84,18 @@ const SKIPPED: &[(u16, usize)] = &[
     (0x00CE, 98),
     (0x00FA, 370),
 ];
+
+/// `igSmartFrame2d` records on the 53 drawings' sheet chains: one page frame
+/// on each of 49 sheets, two on `Q井场`, none on the three sheets that hold no
+/// border.
+///
+/// The parser used to report 61. The other ten started inside a text box, a
+/// symbol placement or a dependency object, wherever a field's value was 61
+/// (`3D 00 00 00`, the family's type code) and what followed read as a
+/// length — each claiming 65 to 394 KiB of the stream. See
+/// `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+/// §3.3.
+const SMART_FRAMES: usize = 51;
 
 /// The census the parser keeps for the backup's sheet streams is the one the
 /// probe measures on their chains, and `EF井场`'s dot fills.
@@ -92,14 +118,69 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
     let mut refused_boundaries = Vec::new();
     let mut ef_ring = None;
+    let mut smart_frames = 0usize;
+    // Records of the two type codes no sheet chain carries (`0x0010`,
+    // `0x0030`), counted on the chains themselves: the three families that
+    // used to read them are retired.
+    let mut chainless = 0usize;
+    let mut complex_strings: Vec<(String, u32, usize, usize)> = Vec::new();
+    let mut groups = 0usize;
     for path in &pids {
-        let doc = PidParser::new()
-            .parse_file(path)
+        let package = PidParser::new()
+            .parse_package(path)
             .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
+        let doc = &package.parsed;
         for sheet in &doc.sheet_streams {
+            if let Some(raw) = package.streams.get(&sheet.path) {
+                use pid_parse::parsers::sheet_records::{parse_psm_header, SheetChain};
+                chainless += SheetChain::walk(&raw.data)
+                    .starts
+                    .iter()
+                    .filter(|&&at| {
+                        parse_psm_header(&raw.data, at).is_some_and(|header| {
+                            header.type_code == 0x0010 || header.type_code == 0x0030
+                        })
+                    })
+                    .count();
+            }
             let Some(geometry) = sheet.geometry.as_ref() else {
                 continue;
             };
+            smart_frames += geometry.decoded_igsmartframes.len();
+            groups += geometry.decoded_iggroups.len();
+            for string in &geometry.decoded_igcomplexstrings {
+                // A string states no coordinate; each curve it lists is a
+                // line or an arc of this sheet that names it as its owner,
+                // on its layer, in its style.
+                for oid in string.curve_oids() {
+                    let line = geometry
+                        .decoded_iglines
+                        .iter()
+                        .find(|line| line.oid == oid)
+                        .map(|line| (line.parent_ref, line.sheet_layer_ref, line.index));
+                    let arc = geometry
+                        .decoded_igarcs
+                        .iter()
+                        .find(|arc| arc.oid == oid)
+                        .map(|arc| (arc.parent_ref, arc.sheet_layer_ref, arc.index));
+                    assert_eq!(
+                        line.or(arc),
+                        Some((string.oid, string.sheet_layer_ref, string.index)),
+                        "{} {}: curve member {oid} of the ComplexString oid {}",
+                        path.display(),
+                        sheet.path,
+                        string.oid
+                    );
+                }
+                complex_strings.push((
+                    path.file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    string.oid,
+                    string.curve_oids().count(),
+                    string.members.len(),
+                ));
+            }
             for row in &geometry.undecoded_type_codes {
                 *undecoded.entry(row.type_code).or_default() += row.count;
             }
@@ -117,7 +198,7 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
             .file_stem()
             .is_some_and(|stem| stem.to_string_lossy().starts_with("EF井场"))
         {
-            let geometry = build_normalized_geometry(&doc);
+            let geometry = build_normalized_geometry(doc);
             ef_ring = geometry.entities.iter().find_map(|entity| {
                 let PidGraphicKind::Polyline { points, closed } = &entity.kind else {
                     return None;
@@ -143,6 +224,25 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
         "refused records by type code"
     );
     assert_eq!(
+        complex_strings,
+        COMPLEX_STRINGS
+            .iter()
+            .map(|&(drawing, oid, curves, members)| (drawing.to_string(), oid, curves, members))
+            .collect::<Vec<_>>(),
+        "ComplexString records on the sheets' chains"
+    );
+    // The members that are not curves are the constraints the census counts:
+    // nothing else on the 53 sheets goes undecoded.
+    assert_eq!(
+        complex_strings
+            .iter()
+            .map(|(_, _, curves, members)| members - curves)
+            .sum::<usize>(),
+        undecoded.get(&0x0019).copied().unwrap_or(0),
+        "a ComplexString's constraint members against the undecoded KeyPoint Constraints"
+    );
+    assert_eq!(groups, 0, "Group records on the sheets' chains");
+    assert_eq!(
         skipped,
         SKIPPED.iter().copied().collect(),
         "records the native reader skips, by type code"
@@ -150,6 +250,29 @@ fn the_backup_census_is_its_chains_and_the_ef_dot_fills() {
     assert!(
         refused_boundaries.is_empty(),
         "igBoundary2d refused on {refused_boundaries:?}"
+    );
+    assert_eq!(
+        smart_frames, SMART_FRAMES,
+        "igSmartFrame2d records on the sheets' chains"
+    );
+    // 72 010 before a family read the chain: 51 692 "0x0010 sub-records",
+    // 9 626 "attribute fragments" and 10 649 "JStyleOverride", none of which
+    // started a record.
+    assert_eq!(
+        chainless, 0,
+        "records of 0x0010 / 0x0030 on the chains of the backup's sheets"
+    );
+    // What was held, in the log: a run that skipped prints the line above
+    // and not this one.
+    eprintln!(
+        "plant backup census: {} drawings under {}; undecoded {undecoded:?}, refused {refused:?}, \
+         {} native-skipped over {} type codes, {smart_frames} igSmartFrame2d, {chainless} of \
+         0x0010 / 0x0030, {} ComplexString, {groups} Group",
+        pids.len(),
+        backup.display(),
+        skipped.values().sum::<usize>(),
+        skipped.len(),
+        complex_strings.len()
     );
     let Some((points, closed)) = ef_ring else {
         panic!("EF井场's oid 52844 projects no boundary ring");

@@ -30,25 +30,22 @@ pub struct SheetGeometry {
     /// geometry coordinates.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub object_geometry_hints: Vec<SheetObjectGeometryHint>,
-    /// PSM-decoded `GLine2d` primitive line records emitted by
-    /// [`crate::parsers::sheet_records::decode_primitive_lines`]
-    /// for this sheet's raw stream bytes. Each entry is a stable
-    /// model-shaped projection of the parser-level
-    /// `SheetPrimitiveLineDecoded` DTO with full provenance
-    /// (`byte_range` + PSM `type_code` + parametric geometry).
-    /// Producing
-    /// [`crate::geometry::PidGeometryConfidence::Decoded`]
-    /// `PidGraphicKind::Line` entities is the responsibility of
-    /// [`crate::geometry::build_normalized_geometry`], which
-    /// converts these records on-demand.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord>,
     /// PSM-decoded `igLine2d` records (PSM type `0x0018`, IGDS
     /// class tag `0x18`) — Intergraph Sigma's standard 2D line
     /// primitive, emitted by
-    /// [`crate::parsers::sheet_records::decode_iglines`]. By far
-    /// the most common line representation in real `SmartPlant`
-    /// fixtures (Phase 14 Slice J).
+    /// [`crate::parsers::sheet_records::decode_iglines`]: the line
+    /// representation of every `SmartPlant` fixture (Phase 14 Slice J).
+    /// Each entry is a model-shaped projection of the parser-level DTO
+    /// with its provenance; producing
+    /// [`crate::geometry::PidGeometryConfidence::Decoded`]
+    /// `PidGraphicKind::Line` entities from them is
+    /// [`crate::geometry::build_normalized_geometry`]'s part.
+    ///
+    /// A `decoded_primitive_lines` field stood ahead of this one until
+    /// 2026-11-11, for `GLine2d` (`0x3FE6`). No chain holds a record of
+    /// that type code — it is not one the native reader has a class for —
+    /// and the field was empty on every document from 2026-08-10 on; a
+    /// document serialized before or since has no such key.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_iglines: Vec<DecodedIgLine2dRecord>,
     /// PSM-decoded `igLineString2d` records (PSM type `0x0084`,
@@ -137,37 +134,6 @@ pub struct SheetGeometry {
     /// template rather than in this drawing.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igsmartframes: Vec<DecodedIgSmartFrame2dRecord>,
-    /// PSM-decoded `JStyleOverride` records (PSM type `0x0030`,
-    /// RAD `style.dll` CLSID `{47FCC338-...}`) emitted by
-    /// [`crate::parsers::sheet_records::decode_jstyle_overrides`].
-    /// Authoritative PSM `0x0030` collection. Phase 17 removed the
-    /// historical Phase 14 `PrimitiveArc` compatibility field; new
-    /// consumers should use this field for `0x0030` records. See
-    /// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord>,
-    /// Audit-only PSM `0x0010` sub-record records emitted by
-    /// [`crate::parsers::sheet_records::decode_sub_records_0x0010`]
-    /// (Phase 18). The 6-byte PSM header is exposed verbatim and the
-    /// variable payload is preserved as raw bytes; no sub-kind
-    /// discrimination is attempted because IDA reverse engineering
-    /// has not yet pinned the real class identity. Some entries may
-    /// be embedded fragments inside larger parent records rather than
-    /// standalone 0x0010 records. These records intentionally do not
-    /// produce normalized geometry entities.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record>,
-    /// Phase 26 additive, audit-only attribute-fragment view of PSM
-    /// `0x0010` records, emitted by
-    /// [`crate::parsers::sheet_records::decode_attribute_fragments`].
-    /// Decodes the `marker(4) + aux(8) + [u16 len + UTF-16LE]*`
-    /// structure to extract `SmartPlant` attribute text (instrument tags,
-    /// line numbers, nominal sizes, drawing references, annotation
-    /// labels). Coexists with [`Self::decoded_sub_records_0x0010`] (raw,
-    /// unchanged) and produces no normalized geometry entity. See
-    /// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_attribute_fragments: Vec<DecodedAttributeFragment>,
     /// PSM `0x0020` `igRectangle2d` records emitted by
     /// [`crate::parsers::sheet_records::decode_igrectangles`].
     ///
@@ -192,6 +158,49 @@ pub struct SheetGeometry {
     /// (`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igdimensions: Vec<DecodedIgDimensionRecord>,
+    /// PSM `0x0021` `ComplexString` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igcomplexstrings`]: a run of
+    /// curves joined end to end.
+    ///
+    /// Audit only. A string states no coordinate: it lists its curves by
+    /// oid, and each is an `igLine2d` or `igArc2d` of the same stream that
+    /// names the string as its owner, sits on its layer and carries its
+    /// style id — so the members, decoded and emitted on their own, draw
+    /// what the string draws
+    /// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+    /// §10.4).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igcomplexstrings: Vec<DecodedIgComplexString2dRecord>,
+    /// PSM `0x007B` Group records emitted by
+    /// [`crate::parsers::sheet_records::decode_iggroups`]: graphic objects
+    /// that select and move as one.
+    ///
+    /// Audit only: a group states no coordinate, and every member it lists
+    /// is a record of the same stream that names the group as its owner.
+    /// The corpora's groups are the two `igRectangle2d` of a border, whose
+    /// strokes are the `igLine2d` edges those list in turn, or — in the four
+    /// `-W` templates of a backup's reference data — the lines, arcs,
+    /// B-splines, elliptical arcs, boundaries and point of a logo, each of
+    /// which decodes and emits on its own.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_iggroups: Vec<DecodedIgGroupRecord>,
+    /// PSM `0x007E` `igEllipticalArc2d` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igellipticalarcs`]: a leaf
+    /// curve nothing else draws, emitted as the polyline
+    /// [`crate::bspline::sample`] makes of the exact rational B-spline
+    /// [`crate::bspline::elliptical_arc_directed`] builds from it -- the
+    /// curve a cached symbol body draws for the same record.
+    ///
+    /// Five border templates carry any on their own chain. `XA-A1.igr` has
+    /// two half ellipses, which close the counters of an outlined letter
+    /// and run counter-clockwise (direction byte 1). `A0-W.igr` to
+    /// `A3-W.igr`, inside the committed `RefData~4~682.zip`, have four
+    /// each: one ellipse's top and bottom caps and two short pieces of its
+    /// left side, the ring of a logo, all clockwise (direction byte 0). No
+    /// drawing of the corpora carries one at sheet level, and no page
+    /// wears a `-W` template.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igellipticalarcs: Vec<super::DecodedIgEllipticalArc2dRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
@@ -410,87 +419,6 @@ impl From<crate::parsers::sheet_records::SheetSpatialAnalysisReport> for Decoded
                 .map(DecodedSpatialCluster::from)
                 .collect(),
         }
-    }
-}
-
-/// Stable, model-shaped DTO that mirrors
-/// [`crate::parsers::sheet_records::SheetPrimitiveLineDecoded`].
-///
-/// The parser-level DTO uses [`std::ops::Range<usize>`] for byte
-/// ranges, but the model surface keeps `byte_start` / `byte_end`
-/// as explicit `usize`s to stay aligned with the rest of the
-/// stable `Sheet*` DTO family (and to keep `JsonSchema` output
-/// compact). Conversion is via
-/// [`From<crate::parsers::sheet_records::SheetPrimitiveLineDecoded>`].
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct DecodedPrimitiveLineRecord {
-    /// Inclusive byte-range start covering the **full** PSM record
-    /// (header + 48-byte `GLine2d` payload + any trailing attribute
-    /// bytes captured by `bytes_to_follow`).
-    pub byte_start: usize,
-    /// Exclusive byte-range end (`byte_start + 6 + bytes_to_follow`).
-    pub byte_end: usize,
-    /// PSM 14-bit type code from the record header. Always
-    /// `0x3FE6` (the `GLine2d` PSM type code) for records this
-    /// decoder emits.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` field from the PSM header.
-    pub bytes_to_follow: u32,
-    /// `oid` field from the PSM header (`SmartPlant`'s object identifier).
-    pub oid: u32,
-    /// Local-space origin `x`. `point(t) = origin + t * direction`.
-    pub origin_x: f64,
-    /// Local-space origin `y`.
-    pub origin_y: f64,
-    /// Unit direction vector `x` component.
-    pub direction_x: f64,
-    /// Unit direction vector `y` component.
-    pub direction_y: f64,
-    /// Parameter range start `t`. `param_start < param_end` is
-    /// guaranteed at decode time.
-    pub param_start: f64,
-    /// Parameter range end `t`.
-    pub param_end: f64,
-}
-
-impl From<crate::parsers::sheet_records::SheetPrimitiveLineDecoded> for DecodedPrimitiveLineRecord {
-    fn from(d: crate::parsers::sheet_records::SheetPrimitiveLineDecoded) -> Self {
-        Self {
-            byte_start: d.byte_range.start,
-            byte_end: d.byte_range.end,
-            type_code: d.type_code,
-            type_flags: d.type_flags,
-            bytes_to_follow: d.bytes_to_follow,
-            oid: d.oid,
-            origin_x: d.origin.0,
-            origin_y: d.origin.1,
-            direction_x: d.direction.0,
-            direction_y: d.direction.1,
-            param_start: d.param_start,
-            param_end: d.param_end,
-        }
-    }
-}
-
-impl DecodedPrimitiveLineRecord {
-    /// Cartesian endpoint A computed from the parametric form
-    /// (`origin + param_start * direction`).
-    pub fn endpoint_a(&self) -> (f64, f64) {
-        (
-            self.origin_x + self.param_start * self.direction_x,
-            self.origin_y + self.param_start * self.direction_y,
-        )
-    }
-
-    /// Cartesian endpoint B computed from the parametric form
-    /// (`origin + param_end * direction`).
-    pub fn endpoint_b(&self) -> (f64, f64) {
-        (
-            self.origin_x + self.param_end * self.direction_x,
-            self.origin_y + self.param_end * self.direction_y,
-        )
     }
 }
 
@@ -1076,6 +1004,148 @@ impl From<crate::parsers::sheet_records::SheetIgRectangle2dDecoded> for DecodedI
     }
 }
 
+/// One member entry of a [`DecodedIgComplexString2dRecord`] or a
+/// [`DecodedIgGroupRecord`], mirroring
+/// [`crate::parsers::sheet_records::SheetAssociationMember`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedAssociationMember {
+    /// Oid of the member record, in the same stream.
+    pub oid: u32,
+    /// The member's range box, `[min x, min y, max x, max y]`, in units of
+    /// the listing record's `range_scale` over 32768 metres.
+    pub range_box: [i16; 4],
+    /// The word that closes the entry: `0x8000` on a `ComplexString`'s
+    /// `KeyPoint Constraint` members, a small value otherwise.
+    pub word: u16,
+}
+
+impl DecodedAssociationMember {
+    /// The range box in metres, `[min x, min y, max x, max y]`, read in the
+    /// unit of the record that lists the member: `range_scale / 32768` m.
+    #[must_use]
+    pub fn range_box_m(&self, range_scale: f64) -> [f64; 4] {
+        self.range_box
+            .map(|units| f64::from(units) * range_scale / 32768.0)
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetAssociationMember> for DecodedAssociationMember {
+    fn from(m: crate::parsers::sheet_records::SheetAssociationMember) -> Self {
+        Self {
+            oid: m.oid,
+            range_box: m.range_box,
+            word: m.word,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgComplexString2dDecoded`] -- PSM
+/// type `0x0021` `ComplexString`, a run of curves joined end to end.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgComplexString2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this string sits on.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / style reference; every curve member carries the same one.
+    pub index: u32,
+    /// The scale of the members' range boxes: a box is in units of
+    /// `range_scale / 32768` m. `1.0` or `2.0` on the corpora.
+    pub range_scale: f64,
+    /// The members, in on-disk order: the curves, then the constraints that
+    /// join them.
+    pub members: Vec<DecodedAssociationMember>,
+}
+
+impl DecodedIgComplexString2dRecord {
+    /// The range box of one of this string's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &DecodedAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
+
+    /// Oids of the members that are curves, in order.
+    pub fn curve_oids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.members
+            .iter()
+            .filter(|member| {
+                member.word != crate::parsers::sheet_records::IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER
+            })
+            .map(|member| member.oid)
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetIgComplexString2dDecoded>
+    for DecodedIgComplexString2dRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetIgComplexString2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            range_scale: d.range_scale,
+            members: d.members.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgGroupDecoded`] -- PSM type
+/// `0x007B` Group, graphic objects that select and move as one.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgGroupRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the group sits on; zero on the corpus.
+    pub sheet_layer_ref: u32,
+    /// The scale of the members' range boxes: a box is in units of
+    /// `range_scale / 32768` m. `1.0` or `2.0` on the corpora.
+    pub range_scale: f64,
+    /// The members, in on-disk order.
+    pub members: Vec<DecodedAssociationMember>,
+}
+
+impl DecodedIgGroupRecord {
+    /// The range box of one of this group's members, in metres.
+    #[must_use]
+    pub fn range_box_m(&self, member: &DecodedAssociationMember) -> [f64; 4] {
+        member.range_box_m(self.range_scale)
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetIgGroupDecoded> for DecodedIgGroupRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgGroupDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            range_scale: d.range_scale,
+            members: d.members.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 /// Stable model-shaped DTO mirroring
 /// [`crate::parsers::sheet_records::SheetIgBspCurve2dDecoded`] -- PSM type
 /// `0x005D` `igBspCurve2d` (`imagdex.dex`).
@@ -1342,10 +1412,18 @@ pub struct DecodedIgBoundary2dRecord {
     /// Sub-header bytes at payload offsets 26–27 (`[2, 1]` across
     /// all fixture records; exposed verbatim).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries).
+    /// Decoded segment groups (`segment_count` entries), every loop's in
+    /// turn when the record states more than one.
     pub segments: Vec<DecodedIgBoundary2dSegment>,
-    /// Anchor X following the segment groups (inside the segment
-    /// bounding box on all fixture records).
+    /// How many of [`Self::segments`] each loop holds, in order, on a
+    /// record that states more than one loop; empty on a record of one
+    /// loop. The first loop is the outer edge of a fill and a loop inside
+    /// it is a hole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_segment_counts: Vec<u32>,
+    /// Anchor X following the segment groups: where the fill was seeded
+    /// (inside the loop on every record that carries member references;
+    /// `1e30` on a linked template's, which carry none).
     pub anchor_x: f64,
     /// Anchor Y following the segment groups.
     pub anchor_y: f64,
@@ -1358,6 +1436,27 @@ pub struct DecodedIgBoundary2dRecord {
     /// onto the first start within `1e-9` per axis (20/20 fixture
     /// records are closed).
     pub closed_loop: bool,
+}
+
+impl DecodedIgBoundary2dRecord {
+    /// The segments of each loop, in order: one slice for a record of one
+    /// loop, one per loop otherwise. Counts that do not add up to the
+    /// segments yield what they cover and then the rest as a last loop.
+    pub fn loops(&self) -> impl Iterator<Item = &[DecodedIgBoundary2dSegment]> {
+        let mut rest = self.segments.as_slice();
+        let mut counts = self.loop_segment_counts.iter();
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let take = counts
+                .next()
+                .map_or(rest.len(), |count| (*count as usize).min(rest.len()));
+            let (head, tail) = rest.split_at(take);
+            rest = tail;
+            Some(head)
+        })
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIgBoundary2dRecord {
@@ -1387,6 +1486,7 @@ impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIg
                     end_y: s.end.1,
                 })
                 .collect(),
+            loop_segment_counts: d.loop_segment_counts,
             anchor_x: d.anchor.0,
             anchor_y: d.anchor.1,
             trailer_flag: d.trailer_flag,
@@ -1550,208 +1650,251 @@ impl DecodedIgSmartFrame2dRecord {
     }
 }
 
-/// Audit-only model-shaped DTO mirroring
-/// [`crate::parsers::sheet_records::SheetSubRecord0x0010Decoded`] —
-/// PSM type `0x0010` sub-record family (Phase 18 audit collection).
-///
-/// Only the stable 6-byte PSM header (`type_code`, `type_flags`,
-/// `bytes_to_follow`) and the variable payload are exposed; the
-/// payload's sub-kind discriminator and per-field semantics are
-/// deferred until IDA reverse engineering confirms the class identity.
-/// **Unlike Phase 14 typed primitives**, this DTO has no `oid` field
-/// because `0x0010` records use the 6-byte PSM header convention
-/// (no fixed `oid` slot), mirroring Phase 15
-/// [`DecodedDependencyObjectRecord`].
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct DecodedSubRecord0x0010Record {
-    /// Inclusive byte-range start covering the full PSM record
-    /// (6-byte header + payload).
-    pub byte_start: usize,
-    /// Exclusive byte-range end.
-    pub byte_end: usize,
-    /// PSM 14-bit type code. Always `0x0010`.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word.
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header. Equals
-    /// `raw_payload.len()` by construction.
-    pub bytes_to_follow: u32,
-    /// Raw payload bytes (length = `bytes_to_follow`). Sub-kind
-    /// discrimination and per-field decoding are deferred to a
-    /// future phase.
-    pub raw_payload: Vec<u8>,
-    /// Audit-only Phase 19 field: `payload[0..2]` as little-endian
-    /// `u16`; `None` when `raw_payload.len() < 2`.
-    ///
-    /// Mirrors
-    /// [`crate::parsers::sheet_records::SheetSubRecord0x0010Decoded::leading_word`].
-    /// This is **not** a named sub-kind discriminator; the field name
-    /// describes only the byte position. Promotion to a typed
-    /// `sub_kind` field is deferred pending IDA confirmation.
-    #[serde(default)]
-    pub leading_word: Option<u16>,
+/// Why a chain stream's record walk stopped before the stream's end.
+/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamChainStopReason {
+    /// The stream is shorter than the eight-byte header a chain stream
+    /// opens with.
+    ShortHeader,
+    /// Fewer than six bytes are left at the stop: too few for a record's
+    /// envelope.
+    ShortEnvelope,
+    /// The record at the stop states a length of zero.
+    ZeroLength,
+    /// The record at the stop states more bytes than the stream has left.
+    PastEnd,
+    /// The word at the stop is not one a record opens with
+    /// ([`crate::parsers::sheet_records::psm_type_word_opens_a_record`]):
+    /// the walk has left the record boundaries by here.
+    NoSuchClass,
 }
 
-impl From<crate::parsers::sheet_records::SheetSubRecord0x0010Decoded>
-    for DecodedSubRecord0x0010Record
-{
-    fn from(d: crate::parsers::sheet_records::SheetSubRecord0x0010Decoded) -> Self {
-        Self {
-            byte_start: d.byte_range.start,
-            byte_end: d.byte_range.end,
-            type_code: d.type_code,
-            type_flags: d.type_flags,
-            bytes_to_follow: d.bytes_to_follow,
-            raw_payload: d.raw_payload,
-            leading_word: d.leading_word,
+/// Where a chain stream's record walk stopped, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamChainStop {
+    /// Offset of the first byte the walk did not read as a record.
+    pub offset: usize,
+    /// Why it stopped there.
+    pub reason: StreamChainStopReason,
+    /// The length the record at the stop states, when the stop is a record
+    /// stating a length the stream does not hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_len: Option<u32>,
+    /// The type word at the stop, when the stop is a word no record opens
+    /// with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_word: Option<u16>,
+    /// Offset of the last record the walk read before the stop, when it
+    /// read one. The stop is where that record's stated length ends, so
+    /// when the stop is not a record's start this record's length is the
+    /// first thing in doubt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_record_offset: Option<usize>,
+}
+
+/// A chain stream — a `Sheet*` stream, a symbol cache's `PSMcluster0`, or a
+/// style table (`StyleCluster`) — whose own framing does not hold, as
+/// [`crate::parsers::sheet_records::SheetChain`] read it.
+///
+/// Three things can be wrong, alone or together: the stream does not open
+/// with the chain magic; the walk from record to record stops before the
+/// stream's end; the walk reaches the end and holds a different number of
+/// live records than the header states (a stream cut off at a record
+/// boundary reads like that, and nothing else about it does).
+///
+/// The records the chain read before a stop are decoded as on any stream,
+/// and no record family decodes anything from the stop on: what the stream
+/// draws is then what the file holds less what the stop hid, and this is
+/// where a reader finds out. [`crate::build_normalized_geometry`] says each
+/// fault in a warning, and keeps the list in
+/// [`crate::NormalizedPidGeometry::chain_faults`].
+///
+/// What a fault says is what the chain read, which is the file's records
+/// only as far as the lengths it followed were right. A stop on a word no
+/// record opens with ([`StreamChainStopReason::NoSuchClass`]) is the walk
+/// finding that out: the last record it read
+/// ([`StreamChainStop::last_record_offset`]) states a length that ends
+/// where no record starts — on the corpora's sheets that record is the one
+/// whose length is wrong for 98.3% of single-length changes, and one
+/// record later for the rest. A fault with no stop and a count that
+/// differs places nothing: the walk reached the stream's end, records are
+/// missing or were read from where none starts, and
+/// [`Self::unread_bytes`] being zero does not mean no byte was lost.
+///
+/// One record a stop can hide decides more than its own ink: the sheet's
+/// border frame, which states the page and where the drawing sits on it.
+/// A drawing re-saved several times keeps its live frame after the
+/// superseded copies — `DWG-0201GP06-01.pid` as the last record of the
+/// stream — so a chain that stops short of it is projected as a drawing
+/// with no frame is: the page from the template's name, if it names a
+/// size, and no frame placement.
+///
+/// The heuristic probes — text runs, coordinate pairs, endpoint records —
+/// are not chain readers and still scan the whole stream; what they find is
+/// `ProbeOnly` and inferred evidence, as on any stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamChainFault {
+    /// Path of the stream.
+    pub stream_path: String,
+    /// The stream's length in bytes.
+    pub stream_len: usize,
+    /// The stream's first word, when it is not the magic a chain stream
+    /// opens with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrong_magic: Option<u32>,
+    /// Where the record walk stopped, when it stopped before the stream's
+    /// end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<StreamChainStop>,
+    /// Bytes from the stop to the stream's end, which the walk did not
+    /// reach and no record family decodes; zero when the walk reached the
+    /// end.
+    pub unread_bytes: usize,
+    /// Records the chain read. They are decoded as on any stream.
+    pub records_read: usize,
+    /// Of those, the ones the native reader reads: no `0x8000` in the type
+    /// word.
+    pub live_records_read: usize,
+    /// The live-record count the stream's header states, when the stream is
+    /// long enough to have a header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stated_records: Option<u32>,
+}
+
+impl StreamChainFault {
+    /// What is wrong with the chain stream at `stream_path`, or `None` when
+    /// it is sound ([`crate::parsers::sheet_records::SheetChain::is_sound`]).
+    #[must_use]
+    pub fn of(
+        stream_path: &str,
+        chain: &crate::parsers::sheet_records::SheetChain,
+    ) -> Option<Self> {
+        use crate::parsers::sheet_records::SheetChainStop;
+        if chain.is_sound() {
+            return None;
         }
+        let stop = chain.stop.map(|stop| {
+            let (reason, record_len, type_word) = match stop {
+                SheetChainStop::ShortHeader => (StreamChainStopReason::ShortHeader, None, None),
+                SheetChainStop::ShortEnvelope => (StreamChainStopReason::ShortEnvelope, None, None),
+                SheetChainStop::ZeroLength => (StreamChainStopReason::ZeroLength, Some(0), None),
+                SheetChainStop::PastEnd { stated } => {
+                    (StreamChainStopReason::PastEnd, Some(stated), None)
+                }
+                SheetChainStop::NoSuchClass { type_word } => {
+                    (StreamChainStopReason::NoSuchClass, None, Some(type_word))
+                }
+            };
+            StreamChainStop {
+                offset: chain.end,
+                reason,
+                record_len,
+                type_word,
+                last_record_offset: chain.starts.last().copied(),
+            }
+        });
+        Some(Self {
+            stream_path: stream_path.to_string(),
+            stream_len: chain.len,
+            wrong_magic: chain.wrong_magic(),
+            stop,
+            unread_bytes: chain.unread_bytes(),
+            records_read: chain.starts.len(),
+            live_records_read: chain.live_records,
+            stated_records: chain.stated_records,
+        })
     }
-}
 
-/// One length-prefixed UTF-16LE string from a PSM `0x0010` attribute
-/// fragment (Phase 26). Model-shaped mirror of
-/// [`crate::parsers::sheet_records::DecodedAttributeString`].
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct DecodedAttributeStringRecord {
-    /// Offset of the `u16` length word within the record payload.
-    pub len_offset: usize,
-    /// Character count from the `u16` length prefix.
-    pub char_count: u16,
-    /// Decoded UTF-16LE text.
-    pub text: String,
-}
-
-/// Stable, model-shaped DTO that mirrors
-/// [`crate::parsers::sheet_records::SheetAttributeFragmentDecoded`] —
-/// the Phase 26 additive, audit-only attribute-fragment view of PSM
-/// `0x0010` records.
-///
-/// Carries `SmartPlant` attribute text as length-prefixed UTF-16LE strings
-/// after a fixed `marker(4) + aux(8)` prefix. Coexists with
-/// [`DecodedSubRecord0x0010Record`] (raw) and emits no geometry kind.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct DecodedAttributeFragment {
-    /// Inclusive byte-range start (6-byte header + payload).
-    pub byte_start: usize,
-    /// Exclusive byte-range end.
-    pub byte_end: usize,
-    /// PSM 14-bit type code. Always `0x0010`.
-    pub type_code: u16,
-    /// `payload[0..4]` little-endian `u32` — a repeating type marker
-    /// (often `0x00010002`), not a unique object id.
-    pub marker: u32,
-    /// `payload[4..12]` raw aux bytes (length 8); per-field semantics
-    /// pending IDA confirmation.
-    pub aux: Vec<u8>,
-    /// Length-prefixed UTF-16LE strings parsed from `payload[12..]`.
-    pub strings: Vec<DecodedAttributeStringRecord>,
-}
-
-impl From<crate::parsers::sheet_records::SheetAttributeFragmentDecoded>
-    for DecodedAttributeFragment
-{
-    fn from(d: crate::parsers::sheet_records::SheetAttributeFragmentDecoded) -> Self {
-        Self {
-            byte_start: d.byte_range.start,
-            byte_end: d.byte_range.end,
-            type_code: d.type_code,
-            marker: d.marker,
-            aux: d.aux.to_vec(),
-            strings: d
-                .strings
-                .into_iter()
-                .map(|s| DecodedAttributeStringRecord {
-                    len_offset: s.len_offset,
-                    char_count: s.char_count,
-                    text: s.text,
-                })
-                .collect(),
-        }
+    /// [`Self::of`], straight from a stream's bytes.
+    #[must_use]
+    pub fn of_stream(stream_path: &str, data: &[u8]) -> Option<Self> {
+        Self::of(
+            stream_path,
+            &crate::parsers::sheet_records::SheetChain::walk(data),
+        )
     }
-}
 
-/// Stable, model-shaped DTO that mirrors
-/// [`crate::parsers::sheet_records::SheetJStyleOverrideDecoded`] —
-/// PSM type `0x0030` (RAD `JStyleOverride` class, `style.dll` CLSID
-/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`) Version-3 IO record.
-///
-/// Phase 16 Slice D DTO with field names that match the
-/// authoritative `style.dll!sub_1000F030` IO sequence.
-/// See `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md` for
-/// the byte-level evidence chain.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct DecodedJStyleOverrideRecord {
-    /// Inclusive byte-range start covering the full PSM record.
-    pub byte_start: usize,
-    /// Exclusive byte-range end.
-    pub byte_end: usize,
-    /// PSM 14-bit type code. Always `0x0030`.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word.
-    pub type_flags: u16,
-    /// `bytes_to_follow` from the PSM header (`>= 64`).
-    pub bytes_to_follow: u32,
-    /// `oid` from the PSM header.
-    pub oid: u32,
-    /// Version-3 disk field at payload `+0..3`.
-    pub field_a_u32: u32,
-    /// Version-3 disk field at payload `+4..7`.
-    pub field_b_u32: u32,
-    /// Version-3 disk field at payload `+8..11`.
-    pub field_c_u32: u32,
-    /// Version-3 disk field at payload `+12..15`.
-    pub field_d_u32: u32,
-    /// Version-3 disk field at payload `+16..23` (f64).
-    pub field_1_f64: f64,
-    /// Version-3 disk field at payload `+24..31` (f64).
-    /// Cross-fixture probe shows values cluster around
-    /// `{0, π/2, 3π/2, 2π}` — rotation-angle candidate.
-    pub field_2_f64: f64,
-    /// Version-3 disk field at payload `+32..39` (f64).
-    pub field_3_f64: f64,
-    /// Version-3 disk field at payload `+40..47` (f64).
-    pub field_4_f64: f64,
-    /// Version-3 disk field at payload `+48..51`.
-    pub field_e_u32: u32,
-    /// Version-3 disk field at payload `+52..55`.
-    pub field_f_u32: u32,
-    /// Version-3 disk field at payload `+56..59`.
-    pub field_g_u32: u32,
-    /// Version-3 disk field at payload `+60..61`.
-    pub field_h_u16: u16,
-    /// Version-3 disk field at payload `+62..63`.
-    pub field_i_u16: u16,
-    /// Optional attribute / linkage tail (`bytes_to_follow - 64`
-    /// bytes). Audit-only; internal layout is hypothesis.
-    pub raw_attribute_tail: Vec<u8>,
-}
+    /// Whether the header's live-record count differs from what the walk
+    /// read. On a walk that stopped short it usually does, and the stop is
+    /// the reason; on one that reached the stream's end it is the fault.
+    #[must_use]
+    pub fn count_differs(&self) -> bool {
+        self.stated_records
+            .is_some_and(|stated| usize::try_from(stated).ok() != Some(self.live_records_read))
+    }
 
-impl From<crate::parsers::sheet_records::SheetJStyleOverrideDecoded>
-    for DecodedJStyleOverrideRecord
-{
-    fn from(d: crate::parsers::sheet_records::SheetJStyleOverrideDecoded) -> Self {
-        Self {
-            byte_start: d.byte_range.start,
-            byte_end: d.byte_range.end,
-            type_code: d.type_code,
-            type_flags: d.type_flags,
-            bytes_to_follow: d.bytes_to_follow,
-            oid: d.oid,
-            field_a_u32: d.field_a_u32,
-            field_b_u32: d.field_b_u32,
-            field_c_u32: d.field_c_u32,
-            field_d_u32: d.field_d_u32,
-            field_1_f64: d.field_1_f64,
-            field_2_f64: d.field_2_f64,
-            field_3_f64: d.field_3_f64,
-            field_4_f64: d.field_4_f64,
-            field_e_u32: d.field_e_u32,
-            field_f_u32: d.field_f_u32,
-            field_g_u32: d.field_g_u32,
-            field_h_u16: d.field_h_u16,
-            field_i_u16: d.field_i_u16,
-            raw_attribute_tail: d.raw_attribute_tail,
+    /// The fault in one sentence, naming the stream and, when the walk
+    /// stopped short, the offset it stopped at and the bytes left unread.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(found) = self.wrong_magic {
+            parts.push(format!(
+                "the stream opens with 0x{found:08X}, not the chain magic 0x{:08X}",
+                crate::parsers::sheet_records::SHEET_STREAM_MAGIC
+            ));
         }
+        match &self.stop {
+            Some(stop) => {
+                let why = match stop.reason {
+                    StreamChainStopReason::ShortHeader => {
+                        "the stream is shorter than the 8-byte header a chain opens with"
+                            .to_string()
+                    }
+                    StreamChainStopReason::ShortEnvelope => format!(
+                        "{} byte(s) are left, fewer than the 6 of a record's envelope",
+                        self.unread_bytes
+                    ),
+                    StreamChainStopReason::ZeroLength => {
+                        "a record states a length of zero".to_string()
+                    }
+                    StreamChainStopReason::PastEnd => format!(
+                        "a record states {} byte(s) of payload and {} are left",
+                        stop.record_len.unwrap_or_default(),
+                        self.unread_bytes.saturating_sub(6)
+                    ),
+                    StreamChainStopReason::NoSuchClass => format!(
+                        "the type word 0x{:04X} is not one a record opens with",
+                        stop.type_word.unwrap_or_default()
+                    ),
+                };
+                // The record whose stated length ends at the stop. When
+                // the stop is not a record's start, its length is where to
+                // look first.
+                let last = stop
+                    .last_record_offset
+                    .map(|at| format!(", the last of them at +{at}"))
+                    .unwrap_or_default();
+                parts.push(format!(
+                    "it stops at +{} of {} bytes, where {why}: the chain read {} record(s) \
+                     before the stop{last}, and the {} byte(s) from it on are not read",
+                    stop.offset, self.stream_len, self.records_read, self.unread_bytes
+                ));
+                if let Some(stated) = self.stated_records {
+                    parts.push(format!(
+                        "the stream's header states {stated} live record(s) and the chain read \
+                         {} before the stop",
+                        self.live_records_read
+                    ));
+                }
+            }
+            None => {
+                if let Some(stated) = self.stated_records.filter(|_| self.count_differs()) {
+                    parts.push(format!(
+                        "it runs to the stream's end with {} live record(s) where the header \
+                         states {stated}, and nothing in it says where they differ",
+                        self.live_records_read
+                    ));
+                }
+            }
+        }
+        format!(
+            "the record chain of {} does not hold: {}; what the stream draws may be incomplete",
+            self.stream_path,
+            parts.join("; ")
+        )
     }
 }
 

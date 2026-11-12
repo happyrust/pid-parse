@@ -78,13 +78,15 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
         decode_igellipse_at, decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at,
         decode_igrectangle_at, decode_igsym_boundary_at, decode_igtextbox_at, jsheet_oids,
-        sheet_record_starts,
+        SheetChain,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
         ..JSiteNestedGeometry::default()
     };
-    for at in sheet_record_starts(data) {
+    // What the chain reads before it stops, if it stops: the caller names
+    // a cache whose chain does not hold (`PidDocument::chain_faults`).
+    for at in SheetChain::walk(data).starts {
         if let Some(circle) = decode_igcircle_at(data, at) {
             out.circles.push(circle.into());
         } else if let Some(arc) = decode_igarc_at(data, at) {
@@ -209,6 +211,9 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             if !curves.is_empty() {
                 site.nested_geometry = Some(curves);
             }
+            if let Some(fault) = crate::model::StreamChainFault::of_stream(&cluster_path, &data) {
+                doc.chain_faults.push(fault);
+            }
         }
 
         // The storage's own style table. Its ids are the `index` every
@@ -228,6 +233,11 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
                 site.stroke_styles = resolve_stroke_styles(nested, &table);
             }
             doc.style_tables.insert(base.clone(), table);
+            // A cache's style table read short of its end, like the
+            // document's own (`streams/cluster.rs`).
+            if let Some(fault) = crate::model::StreamChainFault::of_stream(&cluster_path, &data) {
+                doc.chain_faults.push(fault);
+            }
         }
 
         if options.keep_unknown_streams {
