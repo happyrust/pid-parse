@@ -82,7 +82,7 @@ pub use layout::{
     FrameRefused, LayoutLedger, LedgerRecorder, PageInstead, PageSources, PageWithoutTheFrame,
     PaperBesideAName, PaperRefused, ParseCounts, ParseRecord, PlacementAccount, PlacementLayout,
     SheetRectangle, Site, SourceKind, SourceName, SymbolChainFault, TemplateTrace,
-    TextNormalization, UnplacedRecords, UnplacedWhy, micrometres,
+    TemplateWithoutTheFrame, TextNormalization, UnplacedRecords, UnplacedWhy, micrometres,
 };
 pub use reason::{
     Asymmetry, DomainPair, DropReason, LedgerDomain, PartialMark, PlacementSource, ReasonLayer,

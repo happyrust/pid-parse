@@ -380,9 +380,16 @@ pub enum DropReason {
     /// frame that fails it states no page and places nothing, and the
     /// sheet is laid out as one with no frame is: the page is the paper
     /// its sheet states, or the size its template's name states, or
-    /// neither, and the drawing's ink and its border template lie where
-    /// they do without the frame's offsets. The page looks like a finished
-    /// export and is not the one the drawing states.
+    /// neither — or, where another border frame of the drawing still
+    /// states its sheet, the page that one lays out. What is on that page
+    /// depends on the drawing, because a border template is picked for the
+    /// frame's rectangle: the template may be drawn without the frame's
+    /// offsets, a third of a millimetre from where the drawing states it,
+    /// or not be drawn at all, and a sheet with no ink of its own is then
+    /// a blank page. Which of these the page is, is recorded with the item
+    /// (`FrameRefused::template`, `FrameRefused::primitives`) from what
+    /// was laid out. The page looks like a finished export and is not the
+    /// one the drawing states.
     ///
     /// Counted once a refused frame record of the drawing's own sheet that
     /// could have stated a page — embedded or linked, as far as its flag

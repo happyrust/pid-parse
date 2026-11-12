@@ -137,14 +137,60 @@ pub struct LayoutLedger {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_for_want_of_a_paper: Option<PageInstead>,
     /// The border frames of the drawing's own sheets that the frame rule
-    /// refuses, each with why and with what the page is without it: the
-    /// sheet is then laid out as one with no frame. Each is one suspect
+    /// refuses, each with why and with what the page is without it — its
+    /// size, whether a border template is laid out and, where none is, why,
+    /// and whether anything is drawn at all: the sheet is then laid out as
+    /// one with no frame. Each is one suspect
     /// [`DropReason::PageFrameRefused`] of the page account, beside the
     /// refused record its stream's parse account counts, and `pid_plot`
     /// says it ([`Self::page_warnings`]). Empty on every page of every
     /// corpus this crate is tested on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames_refused: Vec<FrameRefused>,
+}
+
+/// What a page that is laid out without a border frame of its drawing's
+/// own sheet draws of the drawing's border template, and why it draws
+/// none where it draws none.
+///
+/// A template is picked for a sheet: the rectangle a border frame of the
+/// drawing states; failing that the size the template's name states; and
+/// failing both, for a drawing that names its template, the smallest
+/// standard sheet that the lines and curves of the drawing's own which are
+/// plotted fit — its labels and symbol placements do not count. A drawing
+/// that names a template wears only one it names, and one that names none
+/// is given the template of its frame's rectangle. So a frame that is
+/// refused can take the template with it. On the 68 border frames of the
+/// 71 drawings on hand, each refused in a copy of its own (2026-11-12): 57
+/// copies draw their template where they did or within the frame's offsets
+/// of it, seven draw none because none is the size their lines fit, one
+/// because nothing but the frame picked it, one draws nothing at all — the
+/// drawing has no ink of its own to pick a template by — and of the two
+/// frames of a drawing that states two, one leaves the page to the other
+/// with its template and one without.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateWithoutTheFrame {
+    /// A border template is laid out.
+    Drawn,
+    /// One was sought and none was found.
+    NotFound {
+        /// The sheet it was sought for, `[width, height]` in micrometres.
+        sheet_um: [u64; 2],
+        /// Whether that sheet is one nothing states: the smallest standard
+        /// sheet the drawing's own plotted lines and curves fit, taken for
+        /// want of a frame's rectangle and of a size in the template's
+        /// name.
+        fitted: bool,
+    },
+    /// None was sought: the drawing names no template, and only a frame's
+    /// rectangle picks one for a drawing that names none.
+    NotNamed,
+    /// None was sought: the drawing names one, neither a frame nor the
+    /// name states the sheet to pick it for, and the drawing's own plotted
+    /// lines and curves fit no standard sheet — it has none, or they reach
+    /// past the largest.
+    NoSheet,
 }
 
 /// What a page is when a border frame of its drawing is refused.
@@ -180,6 +226,12 @@ pub struct FrameRefused {
     /// That page's `[width, height]` in micrometres, when it has a size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_um: Option<[u64; 2]>,
+    /// What the page draws of the drawing's border template.
+    pub template: TemplateWithoutTheFrame,
+    /// How many primitives the page holds, the template's among them. None
+    /// is a blank page, or — where nothing states a size either — no page
+    /// at all.
+    pub primitives: u64,
 }
 
 /// The rectangle a drawing has for its sheet beside the paper: what a page
@@ -471,10 +523,129 @@ impl LayoutLedger {
         self.unplaced = unplaced;
     }
 
+    /// What a page laid out without a border frame of its drawing's own
+    /// sheet says of that frame: the stream, the record, why it is refused,
+    /// and what the layout made of the page without it, each clause read
+    /// off what was laid out ([`FrameRefused`]) rather than supposed.
+    ///
+    /// What the page is: the paper the sheet states, the size its
+    /// template's name states, a size fitted to what is drawn — or, where
+    /// another border frame of the drawing still states its sheet, the
+    /// page that one lays out. Then the border template: where one is laid
+    /// out on a sheet with no frame, that it and the drawing's ink lie
+    /// where they do without the frame's offsets; where none is, that none
+    /// is drawn and why ([`TemplateWithoutTheFrame`]) — a frame that is
+    /// refused can take the template with it. Last, a page that holds no
+    /// primitive is said to draw nothing.
+    fn frame_refused_warning(&self, refused: &FrameRefused) -> String {
+        let oid = refused
+            .oid
+            .map_or_else(String::new, |oid| format!(", oid {oid}"));
+        let size = refused
+            .page_um
+            .map_or_else(String::new, |um| format!(", {}", sides_mm(um)));
+        let blank = refused.primitives == 0;
+        // Why no border template is drawn, where none is.
+        let no_template = match refused.template {
+            TemplateWithoutTheFrame::Drawn => None,
+            TemplateWithoutTheFrame::NotFound { sheet_um, fitted } => Some(format!(
+                "a template was sought for a sheet of {}{} and none was found",
+                sides_mm(sheet_um),
+                if fitted {
+                    ", the smallest standard sheet the drawing's own lines and curves fit,"
+                } else {
+                    ""
+                }
+            )),
+            TemplateWithoutTheFrame::NotNamed => Some(
+                "the drawing names none, and only a frame's rectangle picks one for a drawing \
+                 that names none"
+                    .to_string(),
+            ),
+            TemplateWithoutTheFrame::NoSheet => Some(
+                "the one the drawing names is sought for the sheet a frame or its name states \
+                 and, failing both, for the smallest standard sheet the drawing's own lines \
+                 and curves fit, and there is none: it plots no line or curve of its own, or \
+                 they reach past the largest standard sheet"
+                    .to_string(),
+            ),
+        };
+        // The page of a sheet laid out with no frame; `None` where another
+        // frame lays it out.
+        let page = match refused.page {
+            PageWithoutTheFrame::AnotherFrame => None,
+            PageWithoutTheFrame::Paper => {
+                let named = self
+                    .paper_unlike_the_name
+                    .map_or_else(String::new, |beside| {
+                        format!(
+                            ", which is not the size its template's name states, {}",
+                            sides_mm(beside.named_um)
+                        )
+                    });
+                Some(format!(
+                    "the page is the paper its sheet states{size}{named}"
+                ))
+            }
+            PageWithoutTheFrame::TemplateName => Some(format!(
+                "the page is the size its template's name states{size}"
+            )),
+            PageWithoutTheFrame::Unstated if blank => Some(
+                "no paper and no template name states its page, and nothing is drawn to fit \
+                 one to"
+                    .to_string(),
+            ),
+            PageWithoutTheFrame::Unstated => Some(
+                "no paper and no template name states its page, which is fitted to what is \
+                 drawn"
+                    .to_string(),
+            ),
+        };
+        // A page with a size and nothing on it; one with neither has said
+        // so already.
+        let nothing_drawn = if blank && refused.page != PageWithoutTheFrame::Unstated {
+            "; nothing is drawn on the page"
+        } else {
+            ""
+        };
+        let laid_out = match page {
+            None => {
+                let template = no_template.map_or_else(String::new, |why| {
+                    format!(", and no border template is drawn: {why}")
+                });
+                format!(
+                    "another border frame of the drawing states its sheet{size}, and the page \
+                     is laid out by that one{template}{nothing_drawn}"
+                )
+            }
+            Some(page) => {
+                let placed = match no_template {
+                    None => "nothing is placed by the frame: the drawing's ink and its border \
+                             template lie where they do without the frame's offsets"
+                        .to_string(),
+                    Some(why) if blank => {
+                        format!("no border template is drawn: {why}{nothing_drawn}")
+                    }
+                    Some(why) => format!(
+                        "no border template is drawn: {why}; the drawing's ink lies where it \
+                         does without the frame's offsets"
+                    ),
+                };
+                format!("the sheet is laid out as one with no frame: {page}, and {placed}")
+            }
+        };
+        format!(
+            "the border frame of {}, the record at +{}{oid}, is refused: {}; {laid_out}",
+            refused.stream, refused.record, refused.why
+        )
+    }
+
     /// What is to be said of the page itself. One sentence for each border
     /// frame of the drawing's own sheet that the frame rule refuses: the
-    /// stream, the record, why it is refused, and what the page is laid
-    /// out by without it. One sentence when the paper
+    /// stream, the record, why it is refused, and what the page is without
+    /// it — what it is laid out by, whether its border template is drawn
+    /// and, where none is, why, and whether anything is drawn at all. One
+    /// sentence when the paper
     /// the sheet states was refused for not being the border frame's, with
     /// the paper, the frame's rectangle and that the page is the frame's.
     /// One sentence when no frame was read and the paper is not the size
@@ -487,51 +658,10 @@ impl LayoutLedger {
     /// of every corpus this crate is tested on.
     #[must_use]
     pub fn page_warnings(&self) -> Vec<String> {
-        let frames = self.frames_refused.iter().map(|refused| {
-            let oid = refused
-                .oid
-                .map_or_else(String::new, |oid| format!(", oid {oid}"));
-            let size = refused
-                .page_um
-                .map_or_else(String::new, |um| format!(", {}", sides_mm(um)));
-            let laid_out = match refused.page {
-                PageWithoutTheFrame::AnotherFrame => format!(
-                    "another border frame of the drawing states its sheet{size}, and the page \
-                     is laid out by that one"
-                ),
-                page => {
-                    let page = match page {
-                        PageWithoutTheFrame::Paper => {
-                            let named = self.paper_unlike_the_name.map_or_else(
-                                String::new,
-                                |beside| {
-                                    format!(
-                                        ", which is not the size its template's name states, {}",
-                                        sides_mm(beside.named_um)
-                                    )
-                                },
-                            );
-                            format!("the page is the paper its sheet states{size}{named}")
-                        }
-                        PageWithoutTheFrame::TemplateName => {
-                            format!("the page is the size its template's name states{size}")
-                        }
-                        _ => "no paper and no template name states its page, which is \
-                              fitted to what is drawn"
-                            .to_string(),
-                    };
-                    format!(
-                        "the sheet is laid out as one with no frame: {page}, and nothing is \
-                         placed by the frame: the drawing's ink and its border template lie \
-                         where they do without the frame's offsets"
-                    )
-                }
-            };
-            format!(
-                "the border frame of {}, the record at +{}{oid}, is refused: {}; {laid_out}",
-                refused.stream, refused.record, refused.why
-            )
-        });
+        let frames = self
+            .frames_refused
+            .iter()
+            .map(|refused| self.frame_refused_warning(refused));
         let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
         let refused = self.paper_refused.iter().map(|refused| {
             format!(
@@ -2336,6 +2466,143 @@ mod tests {
         );
         // Nothing to say of a page that is its paper.
         assert!(LayoutLedger::default().page_warnings().is_empty());
+    }
+
+    /// What every sentence of a refused border frame opens with here: the
+    /// one live frame of `D06.pid`'s sheet, its ratio three parts in a
+    /// million off.
+    const FRAME_REFUSED: &str = "the border frame of /Sheet6, the record at +8, oid 22, is \
+                                 refused: it states a ratio of 0.707634561 where its height \
+                                 over its width, 0.420566 m over 0.594328 m, is 0.707632438; ";
+
+    /// That frame as the layout files it, with what the page is without it.
+    fn frame_refused(
+        page: PageWithoutTheFrame,
+        page_um: Option<[u64; 2]>,
+        template: TemplateWithoutTheFrame,
+        primitives: u64,
+    ) -> FrameRefused {
+        FrameRefused {
+            stream: "/Sheet6".to_string(),
+            record: 8,
+            oid: Some(22),
+            why: "it states a ratio of 0.707634561 where its height over its width, 0.420566 m \
+                  over 0.594328 m, is 0.707632438"
+                .to_string(),
+            page,
+            page_um,
+            template,
+            primitives,
+        }
+    }
+
+    /// The one sentence a page with `refused` says of itself, less its
+    /// opening.
+    fn said_of(refused: FrameRefused) -> String {
+        let ledger = LayoutLedger {
+            frames_refused: vec![refused],
+            ..LayoutLedger::default()
+        };
+        let said = ledger.page_warnings();
+        assert_eq!(said.len(), 1, "{said:#?}");
+        said[0]
+            .strip_prefix(FRAME_REFUSED)
+            .unwrap_or_else(|| panic!("the sentence opens otherwise: {}", said[0]))
+            .to_string()
+    }
+
+    /// A refused border frame can take the border template with it, and
+    /// the sentence says what the page that was laid out draws: a template
+    /// is picked for the frame's rectangle, and without one for the size
+    /// its name states or the sheet the drawing's lines fit. The five
+    /// pages are the ones the drawings on hand lay out when the frame of
+    /// each is refused in a copy: `D06` keeps its template; a `收球筒`
+    /// sheet's lines fit a sheet no template of its family is the size
+    /// of; a template may be sought for a stated sheet and not be there;
+    /// `A01` names none; `D03` has no ink of its own and is a blank page.
+    /// Until 2026-11-12 every one of them was told "its border template
+    /// lie[s] where [it does] without the frame's offsets".
+    #[test]
+    fn a_refused_frame_says_what_its_page_draws_of_the_border_template() {
+        const PAPER: &str = "the sheet is laid out as one with no frame: the page is the paper \
+                             its sheet states, 594.000 x 420.000 mm, and ";
+        const INK: &str = "; the drawing's ink lies where it does without the frame's offsets";
+        let a2 = Some([594_000, 420_000]);
+        for (template, primitives, says) in [
+            (
+                TemplateWithoutTheFrame::Drawn,
+                156,
+                "nothing is placed by the frame: the drawing's ink and its border template lie \
+                 where they do without the frame's offsets"
+                    .to_string(),
+            ),
+            (
+                TemplateWithoutTheFrame::NotFound {
+                    sheet_um: [420_000, 297_000],
+                    fitted: true,
+                },
+                607,
+                format!(
+                    "no border template is drawn: a template was sought for a sheet of 420.000 x \
+                     297.000 mm, the smallest standard sheet the drawing's own lines and curves \
+                     fit, and none was found{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NotFound {
+                    sheet_um: [594_000, 420_000],
+                    fitted: false,
+                },
+                239,
+                format!(
+                    "no border template is drawn: a template was sought for a sheet of 594.000 x \
+                     420.000 mm and none was found{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NotNamed,
+                112,
+                format!(
+                    "no border template is drawn: the drawing names none, and only a frame's \
+                     rectangle picks one for a drawing that names none{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NoSheet,
+                0,
+                "no border template is drawn: the one the drawing names is sought for the sheet \
+                 a frame or its name states and, failing both, for the smallest standard sheet \
+                 the drawing's own lines and curves fit, and there is none: it plots no line or \
+                 curve of its own, or they reach past the largest standard sheet; nothing is \
+                 drawn on the page"
+                    .to_string(),
+            ),
+        ] {
+            let said = said_of(frame_refused(
+                PageWithoutTheFrame::Paper,
+                a2,
+                template,
+                primitives,
+            ));
+            assert_eq!(said, format!("{PAPER}{says}"), "{template:?}");
+            // Each claim, by what the page holds.
+            let drawn = template == TemplateWithoutTheFrame::Drawn;
+            assert_eq!(
+                said.contains("its border template lie where they do"),
+                drawn,
+                "{said}"
+            );
+            assert_eq!(
+                said.contains("no border template is drawn"),
+                !drawn,
+                "{said}"
+            );
+            assert_eq!(
+                said.contains("nothing is drawn on the page"),
+                primitives == 0,
+                "{said}"
+            );
+        }
     }
 
     /// A symbol file with a chain that does not hold, drawn from: one item

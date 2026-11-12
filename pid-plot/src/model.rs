@@ -1429,6 +1429,11 @@ pub fn lay_out_with_symbol_roots(
         recorder.template_search(&trace);
         found.map(|furniture| (page, furniture))
     });
+    // What a page laid out without a refused border frame is told about its
+    // template: whether the drawing names one, and whether the sheet one was
+    // sought for is a sheet something states or the one its strokes fit.
+    let names_a_template = !linked_prefixes.is_empty();
+    let sought_for_a_fitted_sheet = frame_mm.is_none();
     if furniture_page.is_some() && furniture.is_none() {
         // A page that named a template and got none is missing furniture, not
         // a page that never asked for any: report the name that went
@@ -1688,6 +1693,18 @@ pub fn lay_out_with_symbol_roots(
     // nested storage is no page of the drawing's, and one whose flag words
     // read as empty or as linked inside the drawing states none when it
     // decodes; those stay with the refused records of their streams.
+    //
+    // What the page is without the frame is read off what was laid out, not
+    // supposed: a template is picked for the frame's rectangle, so a frame
+    // that is refused can take the template with it — and with it everything
+    // on a sheet that has no ink of its own.
+    let template_on_the_page = template_without_the_frame(
+        template.is_some(),
+        furniture_page,
+        sought_for_a_fitted_sheet,
+        names_a_template,
+    );
+    let primitives_on_the_page = u64::try_from(primitives.len()).unwrap_or(u64::MAX);
     let page_without_the_frame = match (sheet_rectangle, stated_paper, frame_mm) {
         (crate::ledger::SheetRectangle::Frame, ..) => {
             crate::ledger::PageWithoutTheFrame::AnotherFrame
@@ -1707,6 +1724,8 @@ pub fn lay_out_with_symbol_roots(
             why: frame.refused.why.describe(),
             page: page_without_the_frame,
             page_um: page_mm.map(|page| page.map(crate::ledger::micrometres)),
+            template: template_on_the_page,
+            primitives: primitives_on_the_page,
         })
         .collect();
     // What the sheets' lists place nowhere is painted all the same, and
@@ -1731,6 +1750,36 @@ pub fn lay_out_with_symbol_roots(
         symbols_referenced: placements.referenced.len(),
         ledger,
     })
+}
+
+/// What a page laid out without a refused border frame draws of the
+/// drawing's border template, from what the layout did: whether a template
+/// was laid out; the sheet one was sought for, when one was sought; whether
+/// that sheet is the one the drawing's own lines and curves fit rather than
+/// one a frame or the template's name states; and whether the drawing names
+/// a template at all.
+///
+/// A template that is laid out is that, however it was found. One sought
+/// and not found is said with the sheet it was sought for. None is sought
+/// for a drawing that names no template unless a frame gives a rectangle,
+/// nor for one that names a template when nothing states a sheet and its
+/// own lines and curves fit none.
+fn template_without_the_frame(
+    laid_out: bool,
+    sought_for_mm: Option<[f64; 2]>,
+    fitted: bool,
+    names_a_template: bool,
+) -> crate::ledger::TemplateWithoutTheFrame {
+    use crate::ledger::TemplateWithoutTheFrame as Template;
+    match (laid_out, sought_for_mm) {
+        (true, _) => Template::Drawn,
+        (false, Some(sheet)) => Template::NotFound {
+            sheet_um: sheet.map(crate::ledger::micrometres),
+            fitted,
+        },
+        (false, None) if names_a_template => Template::NoSheet,
+        (false, None) => Template::NotNamed,
+    }
 }
 
 /// How far a side of a border frame's rectangle may lie from the same side
@@ -9002,8 +9051,9 @@ mod tests {
             }
             DropReason::PageFrameRefused => {
                 // A page laid out without its drawing's border frame, which
-                // the frame rule refused: nothing is left undrawn, and the
-                // page account files the record once, with why.
+                // the frame rule refused: the one stroke is drawn, and the
+                // page account files the record once, with why. The model
+                // carries no border template and its drawing names none.
                 let mut model = one_stroke_model(
                     write_primitive(
                         PaperShape::Line {
@@ -9023,6 +9073,8 @@ mod tests {
                         .to_string(),
                     page: crate::ledger::PageWithoutTheFrame::Paper,
                     page_um: Some([594_000, 420_000]),
+                    template: crate::ledger::TemplateWithoutTheFrame::NotNamed,
+                    primitives: 1,
                 }];
                 let write = crate::write::write_ledger(&model).expect("the page writes");
                 let assembled = ExportLedger::assemble(&model, &write);
@@ -9042,9 +9094,10 @@ mod tests {
                         "the border frame of /Sheet6, the record at +2048, oid 22, is refused: it \
                       states a width of 0 m and a height of 0.42 m, and a frame's sides are \
                       lengths above zero; the sheet is laid out as one with no frame: the page \
-                      is the paper its sheet states, 594.000 x 420.000 mm, and nothing is \
-                      placed by the frame: the drawing's ink and its border template lie \
-                      where they do without the frame's offsets"
+                      is the paper its sheet states, 594.000 x 420.000 mm, and no border \
+                      template is drawn: the drawing names none, and only a frame's rectangle \
+                      picks one for a drawing that names none; the drawing's ink lies where it \
+                      does without the frame's offsets"
                     ]
                 );
                 *assembled
@@ -9650,5 +9703,64 @@ mod tests {
                 Ok(())
             })
             .expect("the body conservation equation holds");
+    }
+
+    /// What a page laid out without a refused frame is told of its border
+    /// template is read off four facts of the layout, and each outcome has
+    /// its own: a template laid out; one sought for a sheet and not found —
+    /// the sheet a frame or a name states, or the one the drawing's lines
+    /// fit; none sought because the drawing names none; none sought
+    /// because nothing gives a sheet to seek the named one for.
+    #[test]
+    fn what_a_page_without_its_frame_draws_of_the_template_is_read_off_the_layout() {
+        use crate::ledger::TemplateWithoutTheFrame as Template;
+        let a2 = Some([594.0, 420.0]);
+        let a3 = Some([420.0, 297.0]);
+        for (laid_out, sought_for, fitted, names, is) in [
+            // Laid out, whatever it was sought for and by.
+            (true, a2, true, true, Template::Drawn),
+            (true, a2, false, false, Template::Drawn),
+            // Sought for the sheet the drawing's lines fit, and not found.
+            (
+                false,
+                a3,
+                true,
+                true,
+                Template::NotFound {
+                    sheet_um: [420_000, 297_000],
+                    fitted: true,
+                },
+            ),
+            // Sought for a sheet a name or another frame states.
+            (
+                false,
+                a2,
+                false,
+                true,
+                Template::NotFound {
+                    sheet_um: [594_000, 420_000],
+                    fitted: false,
+                },
+            ),
+            (
+                false,
+                Some([689.6, 554.302]),
+                false,
+                false,
+                Template::NotFound {
+                    sheet_um: [689_600, 554_302],
+                    fitted: false,
+                },
+            ),
+            // Not sought.
+            (false, None, true, false, Template::NotNamed),
+            (false, None, true, true, Template::NoSheet),
+        ] {
+            assert_eq!(
+                super::template_without_the_frame(laid_out, sought_for, fitted, names),
+                is,
+                "laid out {laid_out}, sought for {sought_for:?}, fitted {fitted}, names one {names}"
+            );
+        }
     }
 }

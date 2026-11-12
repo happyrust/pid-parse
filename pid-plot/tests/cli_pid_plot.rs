@@ -55,6 +55,18 @@
 //! to one warning that says the file is the border template's, and the
 //! account to one suspect item among the template's.
 //!
+//! A border frame of the drawing's own sheet that the frame rule refuses is
+//! held to one warning that says what the page laid out without it is and
+//! what it draws: the page's size and where it was read, and the border
+//! template — drawn without the frame's offsets, or not drawn and why. A
+//! frame that is refused can take the template with it, so the sentence is
+//! read off what was laid out, and the cases are the pages the fixtures
+//! come to: `D06` keeps the template its link names; `A01`, which names
+//! none, loses the template only its frame's rectangle picked; `D06` cut
+//! down to its frame, a sheet with no ink of its own, is a blank page; and
+//! against a corpus with no template, `D06`'s is sought for the sheet its
+//! lines fit and `DWG-0202GP06-01`'s for the size its name states.
+//!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
 //! wherever a font directory is present and says why it did not where none is;
@@ -79,7 +91,8 @@ use std::process::Command;
 
 use pid_plot::fonts::font_dirs;
 use pid_plot::ledger::{
-    DomainAccount, DropReason, ExportLedger, LedgerDomain, PlacementSource, Tier, UnplacedWhy,
+    DomainAccount, DropReason, ExportLedger, LedgerDomain, PlacementSource,
+    TemplateWithoutTheFrame, Tier, UnplacedWhy,
 };
 use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, border_template_places, lay_out_drawing,
@@ -3338,7 +3351,7 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
     );
 }
 
-/// What to change in the one live border frame of `D06.pid`'s sheet.
+/// What to change in the one live border frame of a drawing's sheet.
 #[derive(Clone, Copy, Debug)]
 enum BorderFrame {
     /// The ratio the record states, three parts in a million off its height
@@ -3349,77 +3362,103 @@ enum BorderFrame {
     NoWidth,
 }
 
-/// A copy of `D06.pid` whose one live border frame states something else.
+/// A copy of a drawing whose one live border frame of a sheet states
+/// something else.
 struct AnotherBorderFrame {
     /// The copy.
     path: PathBuf,
-    /// Where the frame's record starts in `/Sheet6`.
+    /// Where the frame's record starts in its stream.
     record: usize,
     /// The record's oid.
     oid: u32,
+    /// The width, the height and the ratio the drawing's record states.
+    stated: [f64; 3],
     /// The width, the height and the ratio the copy's record states.
     states: [f64; 3],
 }
 
-/// A copy of `D06.pid` whose `/Sheet6` differs in eight bytes of its one
-/// live `igSmartFrame2d` record and in nothing else.
-///
-/// The record states its extent at payload `+76` / `+84` and the height
-/// over the width at `+148`. The copy is checked against that: the three
-/// doubles read back as D06's 594.328 mm by 420.566 mm and their own ratio
+/// What the `igSmartFrame2d` record at `record` of `data` states, read
+/// where the record keeps it — its oid at payload `+0`, its extent at
+/// `+76` / `+84` and the height over the width at `+148` — with `change`
+/// written into it: the oid, the three doubles as they were, and as they
+/// are. The three are held to being a width, a height and their own ratio
 /// before one of them is overwritten.
-fn d06_with_another_border_frame(case: &str, change: BorderFrame) -> AnotherBorderFrame {
+fn restate_the_frame(
+    data: &mut [u8],
+    record: usize,
+    change: Option<BorderFrame>,
+) -> (u32, [f64; 3], [f64; 3]) {
+    let payload = record + 6;
+    let double = |data: &[u8], at: usize| {
+        f64::from_le_bytes(data[at..at + 8].try_into().expect("eight bytes"))
+    };
+    let stated = [
+        double(data, payload + 76),
+        double(data, payload + 84),
+        double(data, payload + 148),
+    ];
+    let [width, height, ratio] = stated;
+    assert!(
+        width > 0.0 && height > 0.0 && (ratio - height / width).abs() < 1e-12,
+        "the frame at +{record} states, where the record keeps it: {width} by {height}, ratio \
+         {ratio}"
+    );
+    let oid = u32::from_le_bytes(data[payload..payload + 4].try_into().expect("four bytes"));
+    let states = match change {
+        None => stated,
+        Some(BorderFrame::RatioOff) => [width, height, ratio * (1.0 + 3e-6)],
+        Some(BorderFrame::NoWidth) => [0.0, height, ratio],
+    };
+    for (at, value) in [76, 84, 148].into_iter().zip(states) {
+        data[payload + at..payload + at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    (oid, stated, states)
+}
+
+/// A copy of `source` whose stream `sheet` differs in eight bytes of its
+/// one live `igSmartFrame2d` record and in nothing else.
+///
+/// The record is found on the stream's own chain, and what it states is
+/// read back before it is changed ([`restate_the_frame`]).
+fn with_another_border_frame(
+    source: &Path,
+    sheet: &str,
+    case: &str,
+    change: BorderFrame,
+) -> AnotherBorderFrame {
     use pid_parse::parsers::sheet_records::{SheetChain, parse_psm_header};
     use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
-    const SHEET: &str = "/Sheet6";
-    let source = d06();
     let package = pid_parse::PidParser::new()
-        .parse_package(&source)
+        .parse_package(source)
         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
-    let mut sheet = package
-        .get_stream(SHEET)
-        .unwrap_or_else(|| panic!("{} has no {SHEET}", source.display()))
+    let mut data = package
+        .get_stream(sheet)
+        .unwrap_or_else(|| panic!("{} has no {sheet}", source.display()))
         .data
         .clone();
-    let frames: Vec<usize> = SheetChain::walk(&sheet)
+    let frames: Vec<usize> = SheetChain::walk(&data)
         .starts
         .into_iter()
         .filter(|&at| {
-            parse_psm_header(&sheet, at)
+            parse_psm_header(&data, at)
                 .is_some_and(|header| header.type_code == 0x003D && !header.native_reader_skips())
         })
         .collect();
-    assert_eq!(frames.len(), 1, "D06's sheet holds one live border frame");
+    assert_eq!(
+        frames.len(),
+        1,
+        "{sheet} of {} holds one live border frame",
+        source.display()
+    );
     let record = frames[0];
-    let payload = record + 6;
-    let double = |sheet: &[u8], at: usize| {
-        f64::from_le_bytes(sheet[at..at + 8].try_into().expect("eight bytes"))
-    };
-    let (width, height, ratio) = (
-        double(&sheet, payload + 76),
-        double(&sheet, payload + 84),
-        double(&sheet, payload + 148),
-    );
-    assert!(
-        (width - 0.594_327_89).abs() < 1e-9
-            && (height - 0.420_565_694).abs() < 1e-9
-            && (ratio - height / width).abs() < 1e-12,
-        "the frame D06 states, where the record keeps it: {width} by {height}, ratio {ratio}"
-    );
-    let oid = u32::from_le_bytes(sheet[payload..payload + 4].try_into().expect("four bytes"));
-    let states = match change {
-        BorderFrame::RatioOff => [width, height, ratio * (1.0 + 3e-6)],
-        BorderFrame::NoWidth => [0.0, height, ratio],
-    };
-    for (at, value) in [76, 84, 148].into_iter().zip(states) {
-        sheet[payload + at..payload + at + 8].copy_from_slice(&value.to_le_bytes());
-    }
-    let path = scratch(case).join("D06.pid");
+    let (oid, stated, states) = restate_the_frame(&mut data, record, Some(change));
+    let name = source.file_name().expect("a drawing has a name");
+    let path = scratch(case).join(name);
     let plan = WritePlan {
         stream_replacements: vec![StreamReplacement {
-            path: SHEET.to_string(),
-            new_data: sheet,
+            path: sheet.to_string(),
+            new_data: data,
         }],
         ..WritePlan::default()
     };
@@ -3429,12 +3468,59 @@ fn d06_with_another_border_frame(case: &str, change: BorderFrame) -> AnotherBord
         path,
         record,
         oid,
+        stated,
         states,
     }
 }
 
+/// A copy of `D06.pid` whose `/Sheet6` differs in eight bytes of its one
+/// live `igSmartFrame2d` record and in nothing else: the frame the drawing
+/// states is 594.328 mm by 420.566 mm.
+fn d06_with_another_border_frame(case: &str, change: BorderFrame) -> AnotherBorderFrame {
+    let copy = with_another_border_frame(&d06(), "/Sheet6", case, change);
+    let [width, height, _] = copy.stated;
+    assert!(
+        (width - 0.594_327_89).abs() < 1e-9 && (height - 0.420_565_694).abs() < 1e-9,
+        "the frame D06 states: {width} by {height}"
+    );
+    copy
+}
+
+/// The account of a page laid out from `path`, held to conservation and to
+/// the counts the code keeps.
+fn account_of(model: &PaperModel, path: &Path) -> ExportLedger {
+    let write = write_ledger(model).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let account = ExportLedger::assemble(model, &write);
+    assert!(
+        account.conservation_breaches().is_empty(),
+        "{}: {:?}",
+        path.display(),
+        account.conservation_breaches()
+    );
+    let doc = pid_parse::PidParser::new()
+        .parse_file(path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let mismatches = account.cross_check(model, None, Some(&geometry));
+    assert!(
+        mismatches.is_empty(),
+        "{}: the account disagrees with the counts the code keeps: {mismatches:#?}",
+        path.display()
+    );
+    account
+}
+
+/// The primitives of a page that its border template drew.
+fn furniture_of(model: &PaperModel) -> usize {
+    model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+        .count()
+}
+
 /// A drawing whose own border frame the frame rule refuses says so, and
-/// says what its page was laid out by.
+/// says what its page was laid out by and what it draws.
 ///
 /// A frame record is taken for a frame only when the ratio it states is
 /// the height over the width it states, and the two are lengths
@@ -3443,16 +3529,21 @@ fn d06_with_another_border_frame(case: &str, change: BorderFrame) -> AnotherBord
 /// rule — a ratio written wrong, a width of zero — is refused the same
 /// way, and the drawing is then laid out as a sheet with no frame is: the
 /// page is the paper its sheet states (or the size its template's name
-/// states, or neither), and nothing is placed by the frame, so the
-/// drawing's ink and the border template sit where they do without the
-/// frame's offsets. The page looks like a finished export, a third of a
-/// millimetre off.
+/// states, or neither), and nothing is placed by the frame. What that
+/// leaves on the page depends on the drawing, because a border template is
+/// picked for the frame's rectangle. `D06` names its template and its
+/// strokes fit the template's sheet, so the template is found all the same
+/// and the page looks like a finished export, a third of a millimetre off
+/// — this case. A drawing that names none loses its template with its
+/// frame (`A01`, the case after the next two), and one with no ink of its
+/// own is a blank page.
 ///
 /// So the program says it in one warning — the drawing, the stream, the
-/// record, why it is refused, and what the page is — and the page's
-/// account files one suspect item of the page's own, beside the refused
-/// record the parse layer counts. The exit code is the committed
-/// drawing's, and the committed drawing says nothing.
+/// record, why it is refused, what the page is, and what became of the
+/// border template — and the page's account files one suspect item of the
+/// page's own, beside the refused record the parse layer counts. The exit
+/// code is the committed drawing's, and the committed drawing says
+/// nothing.
 fn export_with_a_border_frame_that_is_refused(
     case: &str,
     change: BorderFrame,
@@ -3465,6 +3556,7 @@ fn export_with_a_border_frame_that_is_refused(
         record,
         oid,
         states,
+        ..
     } = d06_with_another_border_frame(case, change);
     let sound = lay_out_drawing(&committed, &corpus)
         .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
@@ -3504,32 +3596,59 @@ fn export_with_a_border_frame_that_is_refused(
         model.missing_templates, sound.missing_templates,
         "{case}: the border template is found as on the committed drawing"
     );
+    // The border template is laid out all the same — the drawing names it
+    // and its strokes fit the template's sheet — whole, and without the
+    // offsets the frame gave it.
+    let laid_out = |model: &PaperModel| {
+        model
+            .template
+            .as_ref()
+            .map(|template| (template.path.clone(), template.primitives))
+    };
+    assert!(
+        laid_out(&sound)
+            .is_some_and(|(path, primitives)| path.ends_with(TEMPLATE) && primitives == 116),
+        "the committed drawing's template: {:?}",
+        laid_out(&sound)
+    );
+    assert_eq!(laid_out(&model), laid_out(&sound), "{case}: the template");
+    assert_eq!(
+        furniture_of(&model),
+        furniture_of(&sound),
+        "{case}: the template's primitives on the page"
+    );
+    let offset = |model: &PaperModel| model.template.as_ref().map(|template| template.offset_mm);
+    assert!(
+        offset(&sound)
+            .is_some_and(|[x, y]| (x - 0.388_407).abs() < 1e-6 && (y - 0.565_648).abs() < 1e-6),
+        "where the frame puts the committed drawing's template: {:?}",
+        offset(&sound)
+    );
+    assert_eq!(
+        offset(&model),
+        Some([0.0, 0.0]),
+        "{case}: the template without the frame's offsets"
+    );
+    // What the layout recorded of the page, which the sentence is read off:
+    // a template laid out, and every primitive of the page.
+    let recorded: Vec<_> = model
+        .ledger
+        .frames_refused
+        .iter()
+        .map(|refused| (refused.template, refused.primitives))
+        .collect();
+    assert_eq!(
+        recorded,
+        [(
+            TemplateWithoutTheFrame::Drawn,
+            u64::try_from(model.primitives.len()).expect("a count")
+        )],
+        "{case}: what the layout recorded of the page"
+    );
 
     // The account: conservation and the cross-check hold; the page files
     // one item of its own, and the parse layer the refused record.
-    let account = |model: &PaperModel, path: &Path| {
-        let write =
-            write_ledger(model).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let account = ExportLedger::assemble(model, &write);
-        assert!(
-            account.conservation_breaches().is_empty(),
-            "{}: {:?}",
-            path.display(),
-            account.conservation_breaches()
-        );
-        let doc = pid_parse::PidParser::new()
-            .parse_file(path)
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let geometry = pid_parse::build_normalized_geometry(&doc);
-        let mismatches = account.cross_check(model, None, Some(&geometry));
-        assert!(
-            mismatches.is_empty(),
-            "{}: the account disagrees with the counts the code keeps: {mismatches:#?}",
-            path.display()
-        );
-        account
-    };
-    let (ledger, sound_ledger) = (account(&model, &drawing), account(&sound, &committed));
+    let (ledger, sound_ledger) = (account_of(&model, &drawing), account_of(&sound, &committed));
     assert!(
         sound_ledger.page.dropped.is_empty(),
         "the committed page files nothing of its own: {:?}",
@@ -3569,7 +3688,7 @@ fn export_with_a_border_frame_that_is_refused(
     );
 
     // The program: one warning, with the drawing, the stream, the record,
-    // why it is refused and what the page is.
+    // why it is refused, what the page is and what it draws.
     let said = export_against_the_fixtures(case, &drawing, "refused.pdf");
     let warned = warnings(&said.stderr);
     assert_eq!(
@@ -3585,12 +3704,19 @@ fn export_with_a_border_frame_that_is_refused(
         format!("is refused: {}", why(states)),
         "the sheet is laid out as one with no frame".to_string(),
         "the page is the paper its sheet states, 594.000 x 420.000 mm".to_string(),
+        "nothing is placed by the frame: the drawing's ink and its border template lie where \
+         they do without the frame's offsets"
+            .to_string(),
     ] {
         assert!(
             line.contains(&needle),
             "{case}: the warning does not say {needle:?}\n{said}"
         );
     }
+    assert!(
+        !line.contains("no border template is drawn") && !line.contains("nothing is drawn"),
+        "{case}: the template is drawn, and so is the drawing\n{said}"
+    );
 
     // The committed drawing: not a word, and nothing filed.
     let silent = export_against_the_fixtures(&format!("{case}-committed"), &committed, "d06.pdf");
@@ -3630,4 +3756,532 @@ fn a_border_frame_of_no_width_is_refused_and_said() {
             )
         },
     );
+}
+
+/// The frame of `A01.pid`'s own sheet, `/Sheet6`: an embedded frame of
+/// 594.001 mm by 420.001 mm, the one frame on hand that links no template.
+const A01_SHEET: &str = "/Sheet6";
+
+/// The border template the fixtures hold for a sheet of that rectangle,
+/// which the committed `A01.pid` wears.
+const A01_TEMPLATE: &str = "CPE-SQ-A2.igr";
+
+/// A refused border frame takes the border template with it where nothing
+/// but the frame picked the template, and the warning says so.
+///
+/// `A01.pid` names no template: its frame embeds its content, and the page
+/// wears `CPE-SQ-A2.igr` because that is the template of the frame's
+/// rectangle. With the frame refused the layout has no rectangle to pick a
+/// template for and no name to look one up by, so it looks for none: the
+/// page is the paper, with the drawing's own ink and none of the 175
+/// primitives of the title block and the frame. Nothing else says so —
+/// `PaperModel::missing_templates` lists the templates a drawing names and
+/// does not find, and this drawing names none.
+///
+/// Until 2026-11-12 the warning ended, on every drawing, "the drawing's ink
+/// and its border template lie where they do without the frame's offsets":
+/// true of `D06`, whose template is found by its name, and not of this
+/// page, which has no border template. The sentence is now read off what
+/// was laid out.
+#[test]
+fn a_refused_frame_that_alone_picked_the_border_template_takes_it_and_says_so() {
+    let case = "frame-a01-embedded";
+    let corpus = fixtures();
+    let committed = a01();
+    let AnotherBorderFrame {
+        path: drawing,
+        record,
+        oid,
+        stated: [width, height, _],
+        states: [_, _, ratio],
+    } = with_another_border_frame(&committed, A01_SHEET, case, BorderFrame::RatioOff);
+    assert!(
+        (width - 0.594_001).abs() < 1e-6 && (height - 0.420_001).abs() < 1e-6,
+        "the frame A01 states: {width} by {height}"
+    );
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+
+    // The committed drawing: the template of its frame's rectangle, 175
+    // primitives of it, and no template named.
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert!(
+        sound
+            .template
+            .as_ref()
+            .is_some_and(|template| template.path.ends_with(A01_TEMPLATE)),
+        "the committed drawing's template: {:?}",
+        sound.template.as_ref().map(|template| &template.path)
+    );
+    assert_eq!(
+        (furniture_of(&sound), sound.primitives.len()),
+        (175, 279),
+        "the committed page: its template's primitives, and all of them"
+    );
+    assert!(sound.missing_templates.is_empty());
+
+    // The copy: the paper for a page, no rectangle, and no border template
+    // — not one primitive of it — with nothing listed as named and not
+    // found, since nothing is named.
+    assert_eq!(
+        model.page_mm,
+        Some([594.0, 420.0]),
+        "{case}: the page is the paper"
+    );
+    assert_eq!(model.frame_mm, None, "{case}: no frame gave a rectangle");
+    assert!(
+        model.template.is_none(),
+        "{case}: no border template is laid out: {:?}",
+        model.template.as_ref().map(|template| &template.path)
+    );
+    assert_eq!(furniture_of(&model), 0, "{case}: the template's primitives");
+    assert!(
+        model.missing_templates.is_empty(),
+        "{case}: the drawing names no template to miss: {:?}",
+        model.missing_templates
+    );
+    assert!(
+        !model.primitives.is_empty(),
+        "{case}: the drawing's own ink is on the page"
+    );
+    // What the layout recorded of the page, which the sentence is read off:
+    // no template sought, the drawing naming none, and every primitive of
+    // the page.
+    let recorded: Vec<_> = model
+        .ledger
+        .frames_refused
+        .iter()
+        .map(|refused| (refused.template, refused.primitives))
+        .collect();
+    assert_eq!(
+        recorded,
+        [(
+            TemplateWithoutTheFrame::NotNamed,
+            u64::try_from(model.primitives.len()).expect("a count")
+        )],
+        "{case}: what the layout recorded of the page"
+    );
+
+    // The account: the refused record and the page laid out without it,
+    // and nothing else — no template is counted as missing.
+    let (ledger, sound_ledger) = (account_of(&model, &drawing), account_of(&sound, &committed));
+    let page: Vec<(&str, u64)> = ledger
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(
+        page,
+        [("page_frame_refused", 1)],
+        "{case}: the page's own items"
+    );
+    let mut expected = suspects(&sound_ledger);
+    *expected.entry("record_refused").or_insert(0) += 1;
+    *expected.entry("page_frame_refused").or_insert(0) += 1;
+    assert_eq!(suspects(&ledger), expected, "{case}: the suspects");
+
+    // The program: one warning, and what it says of the border template is
+    // what the page holds.
+    let said = export_against_the_fixtures(case, &drawing, "refused.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(warned.len(), 1, "{case}: exactly one warning\n{said}");
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        format!("the border frame of {A01_SHEET}, the record at +{record}, oid {oid}"),
+        format!(
+            "is refused: it states a ratio of {ratio:.9} where its height over its width, \
+             {height:.6} m over {width:.6} m, is {:.9}",
+            height / width
+        ),
+        "the sheet is laid out as one with no frame".to_string(),
+        "the page is the paper its sheet states, 594.000 x 420.000 mm".to_string(),
+        "no border template is drawn: the drawing names none, and only a frame's rectangle \
+         picks one for a drawing that names none"
+            .to_string(),
+        "the drawing's ink lies where it does without the frame's offsets".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "{case}: the warning does not say {needle:?}\n{said}"
+        );
+    }
+    assert!(
+        !line.contains("its border template lie") && !line.contains("nothing is drawn"),
+        "{case}: the page has no border template, and it has the drawing's ink\n{said}"
+    );
+    assert_eq!(
+        line,
+        format!(
+            "warning: {}: {}",
+            drawing.display(),
+            model.ledger.page_warnings().join(" | ")
+        ),
+        "{case}: the line is the library's one sentence of the page"
+    );
+
+    // The committed drawing: not a word.
+    let silent = export_against_the_fixtures(&format!("{case}-committed"), &committed, "a01.pdf");
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "the committed drawing drew a warning\n{silent}"
+    );
+    assert!(sound.ledger.page_warnings().is_empty());
+}
+
+/// A copy of `D06.pid` whose `/Sheet6` is its border frame and nothing
+/// else: the stream's header, counting one record, and the frame's record
+/// — the first of the stream — with `change` written into it, if any.
+///
+/// Every record of `D06` that draws is in that stream, so the copy is a
+/// sheet with a frame, a border template and no ink of its own: what `D03`
+/// of the plant backup is, made of a drawing the repository holds.
+fn d06_with_nothing_but_its_border_frame(
+    case: &str,
+    change: Option<BorderFrame>,
+) -> AnotherBorderFrame {
+    use pid_parse::parsers::sheet_records::{SheetChain, parse_psm_header};
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    const SHEET: &str = "/Sheet6";
+    let source = d06();
+    let package = pid_parse::PidParser::new()
+        .parse_package(&source)
+        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+    let sheet = package
+        .get_stream(SHEET)
+        .unwrap_or_else(|| panic!("{} has no {SHEET}", source.display()))
+        .data
+        .clone();
+    let starts = SheetChain::walk(&sheet).starts;
+    assert!(starts.len() > 1, "D06's sheet holds more than its frame");
+    let record = starts[0];
+    assert!(
+        parse_psm_header(&sheet, record)
+            .is_some_and(|header| header.type_code == 0x003D && !header.native_reader_skips()),
+        "the first record of D06's sheet is its live border frame"
+    );
+    let mut data = sheet[..starts[1]].to_vec();
+    data[4..8].copy_from_slice(&1u32.to_le_bytes());
+    let (oid, stated, states) = restate_the_frame(&mut data, record, change);
+    let path = scratch(case).join("D06.pid");
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: SHEET.to_string(),
+            new_data: data,
+        }],
+        ..WritePlan::default()
+    };
+    PidWriter::write_to(&package, &plan, &path)
+        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    AnotherBorderFrame {
+        path,
+        record,
+        oid,
+        stated,
+        states,
+    }
+}
+
+/// A sheet with no ink of its own loses everything with its border frame:
+/// the page is blank, and the warning says so.
+///
+/// A drawing that names its template and states no sheet any other way is
+/// given the template of the smallest standard sheet its own lines and
+/// curves fit. One that draws no line of its own has no such sheet, so no
+/// template is sought: with the frame refused the page is the paper and
+/// nothing is on it — the 116 primitives of the frame and the title block
+/// were everything the sheet had. `D03` of the plant backup is such a
+/// sheet; this is `D06` cut down to its border frame, which lays out the
+/// same 116 primitives while the frame holds and none when it is refused.
+///
+/// Nothing but the frame's own sentence can say it — no template is listed
+/// as named and not found, because none was sought — and until 2026-11-12
+/// that sentence said of this page that "the drawing's ink and its border
+/// template lie where they do". A blank page needs no typeface, so the
+/// program writes it on every machine.
+#[test]
+fn a_refused_frame_of_a_sheet_with_no_ink_of_its_own_leaves_a_blank_page_and_says_so() {
+    let case = "frame-blank";
+    let corpus = fixtures();
+    // The control: the same sheet with its frame as the drawing states it.
+    let framed = d06_with_nothing_but_its_border_frame(&format!("{case}-framed"), None);
+    let sound = lay_out_drawing(&framed.path, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", framed.path.display()));
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert!(
+        sound
+            .template
+            .as_ref()
+            .is_some_and(|template| template.path.ends_with(TEMPLATE)),
+        "the framed sheet's template: {:?}",
+        sound.template.as_ref().map(|template| &template.path)
+    );
+    assert_eq!(
+        (furniture_of(&sound), sound.primitives.len()),
+        (116, 116),
+        "the framed sheet: its template, and nothing of the drawing's own"
+    );
+    assert!(sound.ledger.page_warnings().is_empty());
+
+    let AnotherBorderFrame {
+        path: drawing,
+        record,
+        oid,
+        ..
+    } = d06_with_nothing_but_its_border_frame(case, Some(BorderFrame::RatioOff));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert_eq!(
+        model.page_mm,
+        Some([594.0, 420.0]),
+        "{case}: the page is the paper"
+    );
+    assert_eq!(model.frame_mm, None, "{case}: no frame gave a rectangle");
+    assert!(
+        model.template.is_none(),
+        "{case}: no border template is laid out: {:?}",
+        model.template.as_ref().map(|template| &template.path)
+    );
+    assert!(
+        model.primitives.is_empty(),
+        "{case}: nothing is drawn: {} primitive(s)",
+        model.primitives.len()
+    );
+    assert!(
+        model.missing_templates.is_empty(),
+        "{case}: no template was sought, so none is listed as not found: {:?}",
+        model.missing_templates
+    );
+    let recorded: Vec<_> = model
+        .ledger
+        .frames_refused
+        .iter()
+        .map(|refused| (refused.template, refused.primitives))
+        .collect();
+    assert_eq!(
+        recorded,
+        [(TemplateWithoutTheFrame::NoSheet, 0)],
+        "{case}: what the layout recorded of the page"
+    );
+
+    // The account balances on a page with nothing on it; what it files
+    // more than the framed sheet's is the refused record and the page.
+    let (ledger, sound_ledger) = (
+        account_of(&model, &drawing),
+        account_of(&sound, &framed.path),
+    );
+    let page: Vec<(&str, u64)> = ledger
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(
+        page,
+        [("page_frame_refused", 1)],
+        "{case}: the page's own items"
+    );
+    let mut expected = suspects(&sound_ledger);
+    *expected.entry("record_refused").or_insert(0) += 1;
+    *expected.entry("page_frame_refused").or_insert(0) += 1;
+    assert_eq!(suspects(&ledger), expected, "{case}: the suspects");
+
+    // The program writes the blank page, with no typeface named, and says
+    // in one warning that it is blank.
+    let out = unwritten(&scratch(case), "blank.pdf");
+    let said = run(pid_plot().arg(&drawing).arg(&out).arg(&corpus));
+    assert_eq!(
+        said.code,
+        Some(0),
+        "{case}: a page with no text asks for no typeface\n{said}"
+    );
+    let pdf =
+        std::fs::read(&out).unwrap_or_else(|error| panic!("{}: {error}\n{said}", out.display()));
+    assert_eq!(
+        said.stdout.lines().next(),
+        Some(page_line(&model, pdf.len()).as_str()),
+        "{case}: the page the program reports\n{said}"
+    );
+    assert!(
+        said.stdout
+            .starts_with("primitives 0 segments_written_page_mm 594.00 420.00 bytes "),
+        "{case}: no primitive, on the paper\n{said}"
+    );
+    let ink =
+        read_plot(&pdf).unwrap_or_else(|error| panic!("{}: read back: {error}", out.display()));
+    assert!(
+        ink.segments.is_empty() && ink.spans.is_empty(),
+        "{case}: the page carries {} segment(s) and {} span(s)",
+        ink.segments.len(),
+        ink.spans.len()
+    );
+    let warned = warnings(&said.stderr);
+    assert_eq!(warned.len(), 1, "{case}: exactly one warning\n{said}");
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        format!("the border frame of /Sheet6, the record at +{record}, oid {oid}"),
+        "the sheet is laid out as one with no frame".to_string(),
+        "the page is the paper its sheet states, 594.000 x 420.000 mm".to_string(),
+        "no border template is drawn: the one the drawing names is sought for the sheet a frame \
+         or its name states and, failing both, for the smallest standard sheet the drawing's \
+         own lines and curves fit, and there is none: it plots no line or curve of its own, or \
+         they reach past the largest standard sheet"
+            .to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "{case}: the warning does not say {needle:?}\n{said}"
+        );
+    }
+    assert!(
+        line.ends_with("; nothing is drawn on the page"),
+        "{case}: the warning does not end by saying the page is blank\n{said}"
+    );
+    assert!(
+        !line.contains("its border template lie") && !line.contains("the drawing's ink lies"),
+        "{case}: nothing lies anywhere on a blank page\n{said}"
+    );
+
+    // The framed sheet: not a word.
+    let silent = export_against_the_fixtures(&format!("{case}-framed"), &framed.path, "framed.pdf");
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "the framed sheet drew a warning\n{silent}"
+    );
+}
+
+/// `test-file/DWG-0202GP06-01.pid`, an A2 sheet whose template's name,
+/// `CPECCHBA2`, states its size.
+fn dwg_0202() -> PathBuf {
+    fixtures().join("DWG-0202GP06-01.pid")
+}
+
+/// A border template that is sought and not found is said with the sheet
+/// it was sought for, and whether that sheet is one anything states.
+///
+/// Two drawings against a corpus that holds no template. `D06` names
+/// `CPECCHB-SQ-A2`, a name that states no size, so with its frame refused
+/// the template is sought for the smallest standard sheet the drawing's
+/// own lines and curves fit — which is an A4 on its side, 297 by 210, for
+/// this A2 sheet: what a drawing's lines fit is not the sheet it was drawn
+/// on. Against the fixtures that does not matter to `D06`, whose template
+/// is found by the whole name its link spells; it is what loses the seven
+/// `收球筒` sheets of the plant backup their template, which they name by
+/// its first six characters and which is not the size of the A3 their
+/// lines fit. `DWG-0202GP06-01` names `CPECCHBA2`, which states A2: its
+/// template is sought for that size. Either way the program prints two
+/// lines — the template that was named and not found, as for any such
+/// drawing, and the frame's — and the frame's line does not say the
+/// template lies anywhere.
+#[test]
+fn a_refused_frame_whose_template_is_sought_and_not_found_says_for_which_sheet() {
+    for (case, source, sheet_um, fitted, names, sought) in [
+        (
+            "frame-template-absent-fitted",
+            d06(),
+            [297_000, 210_000],
+            true,
+            vec!["CPECCH", "CPECCHB-SQ-A2"],
+            "no border template is drawn: a template was sought for a sheet of 297.000 x \
+             210.000 mm, the smallest standard sheet the drawing's own lines and curves fit, \
+             and none was found; the drawing's ink lies where it does without the frame's \
+             offsets",
+        ),
+        (
+            "frame-template-absent-named",
+            dwg_0202(),
+            [594_000, 420_000],
+            false,
+            vec!["CPECCHBA2"],
+            "no border template is drawn: a template was sought for a sheet of 594.000 x \
+             420.000 mm and none was found; the drawing's ink lies where it does without the \
+             frame's offsets",
+        ),
+    ] {
+        let AnotherBorderFrame {
+            path: drawing,
+            record,
+            oid,
+            ..
+        } = with_another_border_frame(&source, "/Sheet6", case, BorderFrame::RatioOff);
+        let (said, model, _) = export_against_a_corpus_with_no_templates(case, &drawing);
+        assert_eq!(
+            model.page_mm,
+            Some([594.0, 420.0]),
+            "{case}: the page is the paper"
+        );
+        assert_eq!(
+            model.missing_templates, names,
+            "{case}: the templates named and not found"
+        );
+        assert!(
+            !model.primitives.is_empty(),
+            "{case}: the drawing's own ink is on the page"
+        );
+        let recorded: Vec<_> = model
+            .ledger
+            .frames_refused
+            .iter()
+            .map(|refused| (refused.template, refused.primitives))
+            .collect();
+        assert_eq!(
+            recorded,
+            [(
+                TemplateWithoutTheFrame::NotFound { sheet_um, fitted },
+                u64::try_from(model.primitives.len()).expect("a count")
+            )],
+            "{case}: what the layout recorded of the page"
+        );
+        let warned = warnings(&said.stderr);
+        assert_eq!(
+            warned.len(),
+            2,
+            "{case}: the template not found, and the frame refused\n{said}"
+        );
+        let of_the_template: Vec<&&str> = warned
+            .iter()
+            .filter(|line| line.contains("names its border template"))
+            .collect();
+        assert_eq!(
+            of_the_template.len(),
+            1,
+            "{case}: one line of the template\n{said}"
+        );
+        let of_the_frame: Vec<&&str> = warned
+            .iter()
+            .filter(|line| line.contains("the border frame of /Sheet6"))
+            .collect();
+        assert_eq!(
+            of_the_frame.len(),
+            1,
+            "{case}: one line of the frame\n{said}"
+        );
+        let line = *of_the_frame[0];
+        for needle in [
+            drawing.display().to_string(),
+            format!("the record at +{record}, oid {oid}"),
+            "the sheet is laid out as one with no frame".to_string(),
+            "the page is the paper its sheet states, 594.000 x 420.000 mm".to_string(),
+            sought.to_string(),
+        ] {
+            assert!(
+                line.contains(&needle),
+                "{case}: the warning does not say {needle:?}\n{said}"
+            );
+        }
+        assert_eq!(
+            line.contains("the smallest standard sheet"),
+            fitted,
+            "{case}: whether the sheet is one the drawing's lines fit\n{said}"
+        );
+        assert!(
+            !line.contains("its border template lie") && !line.contains("nothing is drawn"),
+            "{case}: no template lies anywhere, and the drawing is on the page\n{said}"
+        );
+    }
 }

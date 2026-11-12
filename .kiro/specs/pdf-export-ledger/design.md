@@ -564,7 +564,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
 | `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；只在读到图框时成立（2026-11-12 加） |
 | `paper_unlike_the_template_name` | `lay_out_drawing` 定页面时没有读到图框、`paper_is_the_named_sheet` 不成立：页面仍是纸张，`LayoutLedger::paper_unlike_the_name` 记下两个尺寸（微米）；汇总时页级记 1 项、来源记 `PaperBesideAName::sides()`；`LayoutLedger::page_warnings` 给那一行 `warning:`（2026-11-12 第七轮加） |
-| `page_frame_refused` | `lay_out_drawing` 收尾时读 `PidDocument::refused_smart_frames`，留下根存储图纸流上、`RefusedSmartFrame::may_state_a_page()` 为真的记录，连同页面的去向（`PageWithoutTheFrame`：纸张 / 模板名 / 另一条图框 / 都没有）记进 `LayoutLedger::frames_refused`；汇总时页级每条记 1 项，来源记流、oid、类型码 `0x003D` 与原因；`LayoutLedger::page_warnings` 给那一行 `warning:`，并在这种页上不再另起「纸张不是模板名的页幅」那一句（那一句说的「没有读到图框」不属实），两个尺寸并进本句（2026-11-12 解析线第六轮加） |
+| `page_frame_refused` | `lay_out_drawing` 收尾时读 `PidDocument::refused_smart_frames`，留下根存储图纸流上、`RefusedSmartFrame::may_state_a_page()` 为真的记录，连同页面的去向（`PageWithoutTheFrame`：纸张 / 模板名 / 另一条图框 / 都没有）、边框模板的去向（`TemplateWithoutTheFrame`：照排 / 找过没找到，带图幅与它是不是按线估出来的 / 不点名所以没找 / 点了名却没有图幅可找；由 `model::template_without_the_frame` 从排版自己的四个事实得出）与页面上的图元数记进 `LayoutLedger::frames_refused`；汇总时页级每条记 1 项，来源记流、oid、类型码 `0x003D` 与原因；`LayoutLedger::page_warnings` 给那一行 `warning:`（`frame_refused_warning`：每个分句都从记下来的事实来——模板没画就说没画和为什么，页面空白就说空白），并在这种页上不再另起「纸张不是模板名的页幅」那一句（那一句说的「没有读到图框」不属实），两个尺寸并进本句（2026-11-12 解析线第六轮加；同日第十一轮改句子的后半，补上各种页面去向的用例） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models
