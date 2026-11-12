@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### 根 crate 的软跳过逐条列清；整套符号库从入库的压缩包读（#54，2026-11-12）
+
+根 crate 的测试在数据不在时打印一行就通过，`cargo test` 不显示这些行，所以全绿说不出有多少条没有断言。
+逐条量过（`docs/analysis/2026-11-12-what-the-root-crates-tests-skip.md`）：
+
+| | `396593c` | 现在 |
+|---|---:|---:|
+| 本机：没做完断言就通过的测试 | 16（1 条不出声） | 15（0 条不出声） |
+| 只有仓库（模拟 CI）：没做完断言就通过的测试 | 57（10 条不出声，30 条换了别的写法） | 45（全部打印 `skipping: `） |
+
+**12 条改成真跑。** 它们读厂里的整套符号库，原来从被 gitignore 的 `test-file/symbols-full` 读，目录不在时 10 条
+一个字不说就通过。整套库在入库的两个 `RefData~4~681.zip` 里，618 个文件逐字节相同
+（`examples/probe_is_the_unpacked_symbol_library_what_the_archives_hold.rs`）；现在从压缩包读
+（`tests/support/library_symbols.rs`、`src/symbol_library.rs` 测试模块的 `library_symbol`），哪里检出都断言。
+把每条里的一个钉值故意改坏：`396593c` 上没有这个目录时 12 条照样通过，现在 12 条全部失败。
+
+**一条从没跑过的测试，断言也不成立。** `a_symbol_carries_the_colour_and_width_its_own_style_table_states`
+（2026-08-24）找的 `ElecTraceLine.sym` 不在它找的目录里，在任何机器上都是静默通过；第一次真跑就红。它说十条
+笔画是表里唯一的线型 `#0000FF`、0.5 mm；文件里十条笔画的样式号是 9——`Normal` 的一个只改线宽的覆盖，
+黑色、0.13 mm——`As Drawn`（蓝、0.5 mm）在表里而没有笔画指向它（整套库 616 个符号里 586 个带着这一条，没有
+一个用它）。伴热那一行确实画成蓝色，蓝来自放置记录的 `As Drawn`，0.13 mm 是符号体自己的。测试按文件改正，
+并多断言了样式表与覆盖本身。**没有放宽任何断言**：期望值从没被运行检验过的（蓝，0.5）换成文件里的（黑，0.13）。
+
+**跳过只有一种写法，数得出来。** 一行，以 `skipping: ` 开头。`skip: …` 50 处、不带冒号的 `skipping …` 8 处与
+另外四种说法都改了；原来不出声的（符号库样本目录的守卫、几何金样缺的夹具）现在说话。
+`tests/soft_skip_spelling.rs` 守着写法；`python tools/soft_skips.py --run` 带输出跑根 crate 的测试、数出行数并
+列出来（`--by-test` 归到每条测试）。本机现在 21 行；只有仓库时 55 行（真正的 CI 上推算是 53 行）。
+
+**改不了的 45 条全是缺仓库里没有的数据**，清单在笔记第六节（给 #62）。其中 13 条 DWG 镜像门禁在哪里都没跑过：
+它们要的 `Export.mdf` 从来没有存在过，入库的是那个厂的 Oracle 导出，数据库这条线读不了。
+
+顺带：`the_bundled_library_refuses_no_text_record_but_the_empty_ones` 原来走查到 0 个文件也通过，现在断言读到
+618 个符号、没有一个读不出来。`AGENTS.md` 加了「Soft skips of the root crate's tests」一节与两行测试表，
+`cargo fmt --all` 那一段的数改了：多了两个文件之后，路径 50 个字符的检出跑不了 `cargo fmt --all` 了（上限从
+50 降到 49，按 47 个字符的检出上量到的命令行推算，没有在 50 上实跑）。
+
 ### 第九次独立审查之后：模板名不否决纸张；链的那一行把话说完（2026-11-12）
 
 审查固定在 `735de61`，结论是可以交付、可以并入，没有阻断项。应修 1 条、建议 7 条。

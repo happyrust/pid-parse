@@ -78,6 +78,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/boundary_loops.rs` | A boundary of two loops fills the area between them. `XA-A1.igr`'s oids 5074 and 5076 — outer loops of 104 and 162 lines, counters of 77 and 54 — decode with their loops, anchor and member references, and each reaches the sheet as one fill ring whose area is the outer loop's less the counter's, with the record's anchor inside it and a point of the counter outside | `test-file/Ref/Template Files/XA-A1.igr` (committed; runs in CI) |
 | `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default. And the other direction byte: the four `-W` templates of the committed `RefData~4~682.zip` each keep four arcs and four B-splines in their logo; on `A1-W.igr` the arcs are the top cap, the bottom cap and two left-side pieces of one ellipse, clockwise, each on the ends of the logo's lines, the caps turning 106.26° on the far side of their chord | `test-file/export-test/publish-data/A01/A01.pid` (soft-skips when absent), `test-file/Ref/Template Files/XA-A1.igr` and `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` (committed; absent is a failure) |
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
+| `tests/symbol_library_text.rs`, `tests/symbol_library_sheet_pick.rs`, three tests of `tests/parse_real_files.rs` (`rectangles_own_their_edges_and_the_bspline_reaches_its_body`, `a_cached_body_carries_the_stroke_styles_its_own_storage_states`, `a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`) and five unit tests of `src/symbol_library.rs` | The twelve tests that read a symbol of the plant's **whole** library rather than of the three-symbol sample under `test-file/symbols`: labels the text reader used to refuse, every text record of all 618 symbols (1 265 read, none refused, none unreadable), which sheet a body is drawn from, a cached body's strokes against the library's own style tables (17 / 11 / 6 / 4 / 2 placed symbols on the five fixtures), the `Remarks` cloud's arcs, and an arc's direction, a dash, lettering and an override read off one `.sym` each. They read the library out of the archives it is committed in — `tests/support/library_symbols.rs` for the integration tests, `library_symbol` in the unit-test module — so they assert on every checkout. Until 2026-11-12 they read `test-file/symbols-full`, which is gitignored, and ten of them returned without a word where it was absent; `a_symbol_carries_the_colour_and_width_its_own_style_table_states` looked for `ElecTraceLine.sym` where it never was, had run on no machine, and asserted a colour and a width the file does not state (its strokes are an override of `Normal` at 0.13 mm, black; the blue the trace-heating row draws in is the placement's `As Drawn`). A new test that needs a symbol of the whole library reads it the same way and not off the directory | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip` (616 `.sym`) and, for the two it lacks, `…/TEST02_p/RefData~4~681.zip` — together the 618 files of `symbols-full`, byte for byte (`examples/probe_is_the_unpacked_symbol_library_what_the_archives_hold.rs`). Committed; runs in CI. A build without the `refdata-archive` feature reads the directory, where a machine has it |
+| `tests/soft_skip_spelling.rs` | A soft skip is spelled one way: no string literal of the crate's test code — the files under `tests/`, and each file under `src/` from its `#[cfg(test)]` module on — opens with `skip: ` or with `skipping ` and no colon, the two spellings the tests used beside `skipping: ` until 2026-11-12 (58 literals). That is what keeps `tools/soft_skips.py`'s count worth reading; a skip that prints nothing, or says it in other words, it cannot see | the crate's own sources (130 files of test code, 200 notices); runs in CI |
 | `tests/render_gap_census.rs` | A sheet record that does not reach the drawing is named. Per fixture, the refused and the undecoded graphic records are pinned in records — none of either on any fixture — every refused record has a warning, the lines a retired rule refused are counted, and the records the native reader skips are counted apart. The two documents that last carried a refusal, `A井场` of the plant backup and the committed `XA-A1.igr`, are pinned to none, in the prose and in the structured list alike; with no document left to read a refusal's wording on, that is held on synthetic rows in `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`, `a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`) | `test-file/*.pid`, `XA-A1.igr` (committed); the backup sheet where present |
 | `tests/parser_panic_safety.rs` | No byte-level parser entry point panics. An adversarial corpus and its truncations go through every stream entry point. Every `decode_*_at(data, offset)` — the 23 of `AT_ENTRIES`, which `every_at_entry_point_is_listed` checks against the sources, so that the four retired matchers cannot come back into `src/parsers` unlisted — is called at every offset of every input, one past its end and where `offset + 6` overflows. And because a family decodes only where a record chain starts a record, 270 planted streams (the magic, the record count, one record of each family's type code for each of 28 lengths, filled with noise, zeros or `0xFF`) carry the stream entry points past the chain into every payload decoder: 182 of them are chains and hand the decoders 5 070 records of the right length and the wrong content; the other 88 carry a type word no record opens with (the `0x4000` flag, and `0x3FE6`, planted for being past the class table) and are held to stopping on their first word | inline bytes; runs in CI |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports its whole page: laid out from the committed sources the ledger gate states, each of the seven wears the border template `FIXTURE_TEMPLATES` names (a drawing with no row fails rather than passing unframed), the writer's `mismatches` is empty, `cross_check` finds nothing (8.6 included, with real faces), and the PDF reads back with exactly the ink segments the model strokes and the characters it letters, the template's among them. None names a symbol no library carries — the 熊安 fixture's own `Xa …` symbols and its `XA-A1.igr` are committed under `test-file/Ref` The order the lettering is read back in is this test's own statement (`painted_order`: the decoded layer then the inferred one, each in the model's `paint_sequence`), not the writer's `written_order`, so a writer that walks its sequence another way fails here. How each page ends its strokes is read back too (`FIXTURE_ENDS`: the inked paths stroked butt-ended and the ones stroked round, per fixture — `工艺管道及仪表流程-1` 4 903 and 389), and no path is stroked any other way | every `test-file/**/*.pid`; faces from `PID_PLOT_FONTS` or the share's `fonts` (the export soft-skips without a font directory; the walk and the template table still assert) |
@@ -93,7 +95,72 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/reference_plots_ink.rs` | 同样 11 张图，按**纸上看得见的墨**读（验收门禁比的是「画了什么」，不分颜色，也读不到图纸边上的线、线帽和先后）。两页都用 `ink::PageInk::read` 读成墨与纸色两份，每页 29 个读数，全部是等式：页幅与参考纸张之差；掩膜视图与整页的 coverage / 未覆盖 / 多余 / 标签配对；笔宽一致 / 不符 / 未配；笔画、标签与字的颜色（两页都是墨，还是一页是墨、另一页只是纸色）；两页用到的墨色是否相同；沿图纸边的笔画按位置配对并比笔宽（`ink::sheet_edges`）；线帽或拐角与参考图同一位置的笔画不同的墨长（`ink::ends_apart`）；参考图用纸色画在墨上的每一处，我方那两样东西的先后是否相同（`ink::wipe_order`：11 页 91 处，89 处相同）。一页与参考图印得一样时每个读数都是理想值，所以表（`SHEETS`）里每页只写它自己的数——标签数、配上的笔画数、图纸边数、白色记号数；达不到理想值的读数各占一行「已知缺陷」，写明它读多少、为什么（还没修 / 等现场数据 / 未定）。读数变差失败；变好也失败，直到收紧钉值或删掉那一行。现在 22 行：还没修的一行都没有（A2 页幅两行、图纸边一行在页面改成图纸写的纸张之后删掉了），12 行等现场数据（A2 晚一版的仪表回路），10 行未定（`一级闪蒸分离器A` / `低温分离器A`：参考图没有印图框，也不按手头这张图纸的显示次序画）。线帽一行都没有：11 页都是 0.000 mm。另一条用例钉 A2 图上盒比字高的 4 条标签（`低压放空总管`、`仪表风管线` 各两条）：我方基线离参考图不超过半个设备单位（现在读 −0.0505 / +0.0251 mm；这一行挂在盒顶之前是 +0.1222 / +0.1979）。`PID_INK_GATE_OUT=<dir>` 把打印的表写到 `<dir>/reference-plots-ink.txt`；这道门从不往语料里写东西 | `PID_ACCEPTANCE_CORPUS`（默认 `D:\work\cad\pid-test-data\验收数据`）；第一张参考图不在时打印原因并软跳过，只读表的那条用例（`every_known_defect_is_one_reading_with_a_cause`）到处都跑 |
 | `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364`。第二条用例钉每张夹具的**绘制次序**：`paint_sequence` 写成图元下标，放在 `tests/golden/paint-order/<slug>.txt`（7 份、7 732 个图元、36 KiB）；次序在模型旁边、不在模型里，所以页面模型金样不含它。一张夹具没有次序、或有画了东西却没有位置的记录，这条用例失败；差异报第一个分开的位置和两侧的记录。`PID_PLOT_BLESS=1` 连同页面模型金样一起重写 | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
-DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
+### Soft skips of the root crate's tests
+
+A root-crate test that leaves a check unmade for want of data — a corpus
+that is not in the repository, a fixture a checkout does not hold — prints
+**one line that starts `skipping: `**, says what is missing, and passes. A
+loop prints one line for each thing it passes over. That is the only
+spelling: `tests/soft_skip_spelling.rs` refuses `skip: …` and `skipping …`
+without the colon in test code.
+
+`cargo test` shows nothing a passing test prints, so a green run says
+nothing of how many tests asserted. To see it:
+
+```bash
+python tools/soft_skips.py --run             # runs the root crate's tests with --nocapture, counts and lists the lines
+python tools/soft_skips.py --run --by-test   # single-threaded, each line under the test that printed it
+python tools/soft_skips.py <log>             # the same, of a log made with `-- --nocapture`
+```
+
+(`--cargo "rustup run stable cargo"` where the `cargo` on `PATH` is the
+fork; the benches are left out, their harness takes no test flags.) A gate
+run that wants the count in its summary runs the root crate's set with
+`-- --nocapture` and hands the log to the tool. CI's own `cargo test` is
+captured, so its log shows none of these lines.
+
+Read on 2026-11-12
+(`docs/analysis/2026-11-12-what-the-root-crates-tests-skip.md`, which lists
+every test, what it lacks, and what #62 would have to supply):
+
+| | this machine | the repository alone |
+|---|---:|---:|
+| tests that pass with a check unmade | 15 | 45 |
+| lines that start `skipping: ` | 21 | 55 in the simulation, 53 expected on CI |
+| tests that leave early and say nothing | 0 | 0 |
+
+"The repository alone" is a simulation on this machine — the three corpus
+variables naming a directory that does not exist, the 34 hard-coded
+`D:\work\…` roots moved, the worktree's `symbols-full` junction taken away
+— not a reading off a CI runner. On `396593c` the same two columns read 16
+and 57 tests; 1 and 10 of them said nothing, and 30 of the 57 said it in
+another spelling.
+
+What is skipped everywhere, this machine included:
+
+- **The thirteen DWG mirror gates** (`publish_dwg_mirror.rs` 4,
+  `publish_dwg_generated_parity.rs` 4, `publish_meta_parity.rs` 2,
+  `publish_rel_parity.rs` 3) want
+  `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`. That file
+  has never existed: the package's `Export.dmp` is an Oracle `exp` dump,
+  which the MDF line cannot read, and no SQL Server copy of plant `P01` is
+  on this machine. They have run nowhere since they were written.
+- `interface_parity_on_a01_writer_matches_reference_superset_post_a22`
+  passes over seven tags the A01 reference does not hold; only the DWG
+  gates would compare them.
+- `controlled_pid_diff_pairs_report_stream_level_evidence_when_available`
+  wants drawing pairs under `test-file/controlled-diff`, which are
+  gitignored by policy and exist nowhere.
+
+The other thirty skip only where the corpora outside the repository are
+absent: the share (`PID_PARSE_SELF_CHECK_DIR`), the 53-sheet backup package
+(`PID_TEST_DATA_DIR`) and the acceptance sheets (`PID_ACCEPTANCE_CORPUS`).
+
+When a test needs data the repository does not hold: look for it in a
+committed archive first (the symbol library and the border templates are
+there, and `refdata_archive` reads them without unpacking); otherwise print
+the line, return, and say so in the table above. A walk that reads "what is
+there" asserts how much it read, so that reading nothing is not a pass.
 
 ### 排字规则由谁守
 
@@ -858,9 +925,17 @@ is `tests/geometry_golden_snapshot.rs`
 A probe is a throwaway `main` that asks one local fixture a question
 and prints the answer — how a decoder question gets settled before it
 earns a test. The committed form is named for what it settles, not for
-what it reads: `examples/probe_<the question>.rs` (291 of the 299
+what it reads: `examples/probe_<the question>.rs` (292 of the 300
 tracked root examples carry that prefix; the other eight predate the
 convention and keep their names).
+
+`probe_is_the_unpacked_symbol_library_what_the_archives_hold` compares
+`test-file/symbols-full`, on a machine that has that directory, with the two
+committed `RefData~4~681.zip` the tests now read the library out of: the
+members each archive holds, the names both hold and how many of those differ
+(603, 12), and, file by file, the directory against the archives read in
+order. It read 618 files on each side, the same names, every one identical,
+and exits non-zero when they are not.
 
 `probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
 its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
@@ -1045,7 +1120,7 @@ only the root directory, so keep scratch there out of commits by hand.
 ## Common commands
 
 ```bash
-cargo test                                        # 1000+ tests (851 unit + 91 integration, 2 DWG-gated skipped)
+cargo test                                        # the root crate: 1 873 pass here, 15 of them with a check unmade — see "Soft skips"
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (37 tests)
 ```
@@ -1096,24 +1171,28 @@ cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-un
 ```
 
 `cargo fmt --all` hands rustfmt the root file of every target, as
-`\\?\`-prefixed absolute paths, in one command line for each edition: 357
-files for edition 2021 (the root crate's lib, 6 bins, 299 examples, 47
+`\\?\`-prefixed absolute paths, in one command line for each edition: 359
+files for edition 2021 (the root crate's lib, 6 bins, 300 examples, 48
 tests and a bench, and the three of `vendor/oxidized-mdf`) and 97 for
 edition 2024 (`pid-plot`: its lib, 7 bins, 72 examples, 17 tests). Under
 Windows a command line may not pass 32 767 characters, and the 2021 line
-grows by 357 characters for every character of the checkout's path, so
+grows by 359 characters for every character of the checkout's path, so
 whether the command runs depends on where the checkout is. Measured with
 rustfmt 1.10.0-stable on `e9ebba1` (the seventh review) and again on
-`735de61`, after the merge of main (the ninth, 2026-11-12): a checkout
-whose path is 50 characters or shorter runs it — at 50 the line is 32 564
-characters long — and from 51 on cargo-fmt fails before rustfmt reads a
-file (`os error 206`). The main checkout (32 characters) runs it, with 18
-characters of path to spare — the line is about 26 100 characters there
-— or some 60 to 85 more root-crate examples, each of which costs its
+`735de61`, after the merge of main (the ninth, 2026-11-12), when the line
+held 357 files: a checkout whose path was 50 characters or shorter ran it
+and from 51 on cargo-fmt failed before rustfmt read a file (`os error
+206`). **Two files more and the limit is 49**: with a probe and a test
+added the same day, the command line `cargo fmt --all -v` prints is 31 719
+characters in a 47-character checkout, which makes it 32 437 at 49 and
+32 796 at 50 — 29 past the limit. (The 49 and the 50 are reckoned from
+the 47, not run.) The main checkout (32 characters) runs it, with 17
+characters of path to spare — the line is about 26 300 characters there
+— or some 60 more root-crate examples, each of which costs its
 path, its name and about 15
-characters. A worktree under `pid-parse-wt\accept-evidence` (51) cannot
-run it, and one under `pid-parse-wt\publish-export` (50) is one example
-from the limit. The `pid-plot` line (about 8 800 characters) is nowhere
+characters. Worktrees under `pid-parse-wt\accept-evidence` (51) and
+`pid-parse-wt\publish-export` (50) cannot run it; one under
+`pid-parse-wt\lettering-8` (47) can. The `pid-plot` line (about 8 800 characters) is nowhere
 near it, so `cargo fmt -p pid-plot` runs anywhere. Linux, and so CI, has
 no such limit. Where it bites, check the tree out under a shorter path,
 or run rustfmt over the same roots in pieces: each package's `src/lib.rs`,
