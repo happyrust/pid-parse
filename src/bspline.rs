@@ -6,8 +6,8 @@
 //! coordinates: rational curves fall out of the same loop as polynomial ones
 //! by carrying the weight as a third coordinate and dividing at the end. The
 //! degree is not stored in the record; it is `knots - poles - 1`, which is
-//! how the corpus's one curve (five poles, nine knots) reads as the clamped
-//! cubic it draws as.
+//! how every curve of the corpora -- 112 records; the first one read had
+//! five poles and nine knots -- reads as the clamped cubic it draws as.
 //!
 //! Two things about that loop are not left to the record. The recursion
 //! costs the square of the degree for every point, and the degree is the
@@ -20,9 +20,9 @@ use std::cmp::Ordering;
 
 /// How many straight segments each knot span is drawn with, by every consumer
 /// that draws the curve as a polyline (the sheet-level emitter here, the
-/// symbol-body renderer downstream). The corpus's curve is a 2 mm lip of two
-/// spans; eight a span keeps its chord error under a hundredth of a
-/// millimetre.
+/// symbol-body renderer downstream). The curve the number was chosen on is a
+/// 2 mm lip of two spans; eight a span keeps its chord error under a
+/// hundredth of a millimetre.
 pub const SEGMENTS_PER_SPAN: usize = 8;
 
 /// The highest degree [`sample`] evaluates, and so the highest an
