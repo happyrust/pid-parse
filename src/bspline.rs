@@ -915,7 +915,7 @@ mod tests {
             let mut knots = vec![0.0; degree + 1];
             let mut at = 0.0;
             for _ in 0..n - degree - 1 {
-                if rng.next_u64() % 5 != 0 {
+                if !rng.next_u64().is_multiple_of(5) {
                     at += rng.range(0.01, 1.0);
                 }
                 knots.push(at);
@@ -949,7 +949,7 @@ mod tests {
             let major = (rng.range(-0.1, 0.1), rng.range(-0.1, 0.1));
             let ratio = rng.range(0.05, 3.0);
             let (start, end) = (rng.range(-7.0, 7.0), rng.range(-7.0, 7.0));
-            let clockwise = rng.next_u64() % 2 == 0;
+            let clockwise = rng.next_u64().is_multiple_of(2);
             let Some((poles, weights, knots)) =
                 elliptical_arc_directed(center, major, ratio, start, end, clockwise)
             else {
