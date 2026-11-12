@@ -126,7 +126,9 @@ captured, so its log shows none of these lines.
 
 Read on 2026-11-12
 (`docs/analysis/2026-11-12-what-the-root-crates-tests-skip.md`, which lists
-every test, what it lacks, and what #62 would have to supply):
+every test, what it lacks, and what #62 would have to supply; the first
+column read again on 2026-11-13 with #52, #67, #68 and #69 merged, 59 test
+binaries and 1 930 tests: the same 21 lines of the same 15 tests):
 
 | | this machine | the repository alone |
 |---|---:|---:|
@@ -1426,8 +1428,16 @@ one (1 201) or two (77) are normal views; and the body is one normal view on
 only sheet on 126, the whole body on 6, nothing to draw on 9. It also counts
 the superseded records on symbol sheets (1 106, 660 of a type the symbol
 reader draws), which that reader decodes and the reader of a drawing does
-not. It exits non-zero if a stream is not a chain that holds or a table read
-off the chain is not the walker's.
+not. Since 2026-11-13 it also counts what the symbol reader takes for damage
+where the chain walk has no word: a chain stream that holds no byte, a file
+with no `PSMcluster0` in its root, and with them every body that lists a
+fault, was read short or is not drawn. Over every root on this machine —
+`test-file`, both `pid-test-data` (1 932 symbol files each) and the share
+(644), 6 353 files — all three are zero, which is what lets the reader treat
+the first two as a stream read short at no cost to a sound file. It exits
+non-zero if a stream is not a chain that holds or holds no byte, a table read
+off the chain is not the walker's, a file has no root cluster, or a body is
+not a sound file's.
 
 `probe_what_curve_each_boundary_member_relists` reads every live `0x0013`
 record on the sheet chains of the documents it is given by one grammar written
@@ -1640,7 +1650,7 @@ only the root directory, so keep scratch there out of commits by hand.
 ## Common commands
 
 ```bash
-cargo test                                        # the root crate: 1 882 pass here (library, binaries, integration and doc tests), 15 of them with a check unmade — see "Soft skips"
+cargo test                                        # the root crate: 1 930 pass here (library, binaries, integration and doc tests), 15 of them with a check unmade — see "Soft skips"
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (37 tests)
 ```
