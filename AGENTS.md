@@ -80,6 +80,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
 | `tests/render_gap_census.rs` | A sheet record that does not reach the drawing is named. Per fixture, the refused and the undecoded graphic records are pinned in records — none of either on any fixture — every refused record has a warning, the lines a retired rule refused are counted, and the records the native reader skips are counted apart. The two documents that last carried a refusal, `A井场` of the plant backup and the committed `XA-A1.igr`, are pinned to none, in the prose and in the structured list alike; with no document left to read a refusal's wording on, that is held on synthetic rows in `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`, `a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`) | `test-file/*.pid`, `XA-A1.igr` (committed); the backup sheet where present |
 | `tests/parser_panic_safety.rs` | No byte-level parser entry point panics. An adversarial corpus and its truncations go through every stream entry point. Every `decode_*_at(data, offset)` — the 23 of `AT_ENTRIES`, which `every_at_entry_point_is_listed` checks against the sources, so that the four retired matchers cannot come back into `src/parsers` unlisted — is called at every offset of every input, one past its end and where `offset + 6` overflows. And because a family decodes only where a record chain starts a record, 270 planted streams (the magic, the record count, one record of each family's type code for each of 28 lengths, filled with noise, zeros or `0xFF`) carry the stream entry points past the chain into every payload decoder: 182 of them are chains and hand the decoders 5 070 records of the right length and the wrong content; the other 88 carry a type word no record opens with (the `0x4000` flag, and `0x3FE6`, planted for being past the class table) and are held to stopping on their first word | inline bytes; runs in CI |
+| `tests/arbitrary_bytes_never_panic.rs::a_planted_bspline_of_any_degree_comes_back_in_time`, with seven unit tests in `src/bspline.rs`, two in `src/geometry.rs` (`a_bspline_of_any_degree_is_emitted_in_bounded_time`, `a_bspline_under_weights_of_any_size_is_emitted_as_its_curve`) and one in `src/parsers/sheet_records.rs` (`a_bspline_past_the_highest_degree_is_refused`) | A record that asks for more work than its bytes say. An `igBspCurve2d` states its degree in no field — it is the knot count less the pole count less one — and a point of the curve costs the square of it. One record of 4 096 poles is appended to `DWG-0201GP06-01.pid`'s `/Sheet6` (the header's count raised by one, no other byte changed) at degree 1 024, 2 730, 33 and 32, and the whole chain the importer runs — parse, `build_normalized_geometry`, the style entry points — has to come back inside the ten seconds every case of this file is held to. Past `bspline::MAX_DEGREE` (32) the record is refused, the refusal is named (`refused_graphic_records`: `/Sheet6`, `0x005D`, 1, and its warning) and every other entity is the fixture's; at 32 it is drawn as one polyline of 32 513 points. Before the bound the first of the four hung (`hung > 10 s`; the sampling alone took 358 s in a debug build). The unit tests hold the same on values built in the test: `bspline::sample` evaluates degree 32 and hands back the poles of 33, 1 024 and 2 730 inside ten seconds, the decoder reads 32 and refuses 33, the emitter draws a hand-built record of any degree in bounded time; and a rational curve is the same curve whatever the size of its weights — ten unit tests in all, one of which holds 20 000 generated curves and 4 000 elliptical arcs to the bits the evaluation gave before the weights were brought to scale | `test-file/DWG-0201GP06-01.pid` (committed; a checkout without it fails); the unit tests on values built in the test; runs in CI |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports its whole page: laid out from the committed sources the ledger gate states, each of the seven wears the border template `FIXTURE_TEMPLATES` names (a drawing with no row fails rather than passing unframed), the writer's `mismatches` is empty, `cross_check` finds nothing (8.6 included, with real faces), and the PDF reads back with exactly the ink segments the model strokes and the characters it letters, the template's among them. None names a symbol no library carries — the 熊安 fixture's own `Xa …` symbols and its `XA-A1.igr` are committed under `test-file/Ref` The order the lettering is read back in is this test's own statement (`painted_order`: the decoded layer then the inferred one, each in the model's `paint_sequence`), not the writer's `written_order`, so a writer that walks its sequence another way fails here. How each page ends its strokes is read back too (`FIXTURE_ENDS`: the inked paths stroked butt-ended and the ones stroked round, per fixture — `工艺管道及仪表流程-1` 4 903 and 389), and no path is stroked any other way | every `test-file/**/*.pid`; faces from `PID_PLOT_FONTS` or the share's `fonts` (the export soft-skips without a font directory; the walk and the template table still assert) |
 | `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, every page exactly the paper its sheet states (`PAPERS`: 17 sheets on 594 × 420, 27 on 841 × 594, 9 on 1189 × 841; none measured), exactly one primitive of a drawing's own past its page (the sideways `N井场` run whose first glyph is clipped), what each of the fifteen frame-offset sheets' template holds past the paper pinned sheet by sheet (`TEMPLATE_PAST_THE_PAPER`: the sheet outline, and on the nine `CPECCHB-SQ-A2` sheets the line that restates its right edge, with the reach past the right and top edges — in the model, not printed; and how the ledger files the unprinted segments, by sheet: `PLOTTED_PAST_THE_PAPER`, the nine sheets a reference plot shows placed so, three segments each under `segment_beyond_the_paper`, and `UNPLOTTED_PAST_THE_PAPER`, the six it does not, with the template each wears, two segments each under `segment_beyond_the_paper_no_plot_of_template`; nothing of a drawing's own is filed past the paper), known library gaps only, and no drawing's own ink wider than the widest pen (a validation mark such as `BandAid`'s 10 mm is not a pen). Which template each sheet wears is pinned exactly — `CPE-SQ-A0/A1/A2` on 8/22/7 sheets, `CPECCHB-SQ-A1/A2` on 4/9, the two `W` templates on **0** (so their 50 pinned label cells are held against no page until a sheet wears one), three bare sheets by name — with the 175 label cells and 64 template placements the run holds against a page. The readings a run used to print without asserting are pinned as well: the 15 sheets whose frame places the template off the page origin, by page key with the offset in millimetres (`FRAME_OFFSET_SHEETS` — all nine `CPECCHB-SQ-A2` sheets at (0.388407, 0.565648), `N井场`/`O井场`/`P井场`, `A井场` and the two `凝析油稳定塔` sheets); all 64 template placements naming a file no library carries (`TEMPLATE_NAME_GAPS`); which label is past its page and where it starts (`PAST_THE_PAGE`: `15-TD-4101416-B2-EH40` at (259.113810, −0.207788) mm); and each sheet's template coming from the kind of source its corpus calls for — disk exactly when a template directory of the corpus holds a file of that name, a `RefData~*.zip` otherwise, which is 0 disk / 50 archive in the package and 50 disk / 0 archive in the share, held sheet by sheet rather than as two totals. A failure names the measured value, the pin and the sheets that differ. The typefaces a run embeds are printed by name and deliberately not pinned (which faces a machine has is its own business; the ledger gate skips its two font marks when they are not the baseline's). **Also carries the export-ledger gate** for this corpus: each page's `ExportLedger` is assembled from the same `PaperModel` and write result, `cross_check` must find nothing, the face-free account must match the written one except for the two font marks, and every page is compared against `docs/baselines/export-ledger-backup.json` (suspect counts may only fall, intentional counts are pinned exactly). That comparison needs the layout to read a backup package, so a package in reach is the default: with `PID_PARSE_SELF_CHECK_DIR` unset the corpus is the directory above the `backup-plant-data` the gate found whenever that directory holds `RefData~*.zip`, and the share otherwise. A run that names a corpus reads it, and a named share skips the count comparison (requirement 13.7) and passes on the unattributed and cross-check rules alone. A package picked by default is held to more: if its symbol or template sources are not the baseline's the comparison is skipped all the same, and the test then **fails** for having compared nothing (the baseline's symbol sources include this machine's gitignored `test-file/symbols-full`, so a checkout without that directory has to name its corpus). The first line a run prints names the corpus and says why it was picked The caps are read back from the 53 PDFs: 4 374 inked paths stroked butt-ended and mitred, 79 651 round (`STROKE_ENDS`), and the one sheet whose own thin strokes its list puts ahead of its first wide pen, `凝析油一级闪蒸分离器B气相出口改造`, 47 and 430 (`THIN_AHEAD_OF_THE_WIDE_PEN`) — the one reading of any gate that tells the round-cap rule from the one before it (round ends from the drawing's first stroke on any pen reads 4 327 and 79 698) | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the named corpus (the share when none is named), or either `pid-test-data` (soft-skips when absent); faces from `PID_PLOT_FONTS`, the corpus's `fonts`, `test-file/fonts`, then the share's `fonts` for a package picked by default (no face directory at all fails rather than skips) |
 | `pid-plot/tests/export_ledger_fixtures.rs` | 7 张仓库夹具的出图记账门禁：每页 `assemble` 后五层（解析 / 排版 / 符号体 / 写出 / 段）未归因全为 0，`cross_check`（8.1–8.5 与 8.7；8.6 要字体，由 `export_every_fixture` 与 `export_plant_backup` 在写出的页上执行）无不符，同一页排两遍、两次序列化逐字节相同，序列化结果与语料描述头不含本机目录、任意盘符路径或 UNC 路径（原样与 JSON 转义两种写法都查），最后与 `docs/baselines/export-ledger-fixtures.json` 逐页比对（可疑项只许降、有意项精确钉）；语料描述与基线不同时**失败**，不跳过比对（`GateReport::counts_compared()`）。**没有字体需求，也没有任何软跳过分支**：7 张夹具、`test-file/symbols`、`test-file/Ref/Symbols`、`test-file/Ref/Template Files` 与 `test-file/backup-test/*_p/RefData~*.zip` 全部已入库，所以本机与 CI 都真跑。`UPDATE_EXPORT_LEDGER=1` 重写基线（可疑项会升高则拒绝写入） | 全部在仓库内（`test-file/**`），CI 上真跑 |
@@ -384,6 +385,46 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   drawing-side decoder uses, so the two paths can never disagree on
   the curve (`tests/sym_elliptical_arc_matches_cached_body.rs`).
   See `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
+- **An `igBspCurve2d` states its degree in no field, and is held to
+  degree 32.** The degree is the knot count less the pole count less
+  one, and de Boor's recursion pays `degree · (degree + 1) / 2` blends
+  for every point, so the work a record asks for is not bounded by its
+  bytes: until 2026-11-12 the only limits were on the two counts (4 096
+  poles, 4 096 more knots than poles), a record could state any degree
+  up to 4 095, and one of 106 KB at degree 1 024 took minutes to sample
+  (358 s in a debug build, 32 s optimized). `bspline::MAX_DEGREE` is
+  the one bound, kept in two places. `bspcurve_geometry` — the reader
+  a sheet record, a cached symbol body and a `.sym` body share —
+  refuses a record past it, and the refusal is named like any other
+  (`refused_graphic_records` and its warning on a sheet,
+  `SymbolGeometry::skipped_records` in a `.sym`). `bspline::sample`
+  hands back the poles of a curve past it, as it does for every record
+  it cannot draw as a curve, so a `DecodedIgBspCurve2dRecord` that did
+  not come from the decoder — the DTO deserializes — is emitted in
+  bounded time too. All 112 records on the corpora's chains are cubics
+  with at most 75 poles and 79 knots, none of them rational; 32 is a
+  guard on the cost, ten times that, not a reading of the format, and
+  the number #52 holds a boundary's B-spline member to. At the bound
+  the largest record the decoder takes (4 096 poles, 99 KB) is 32 513
+  points: 0.6 s unoptimized, 0.03 s optimized. The pole cap did not
+  move. **The weights of a rational curve are a ratio**, and `sample`
+  brings them to one scale before it uses them — each times the power
+  of two that puts the largest in `[1, 2)`, which changes no bit of a
+  curve whose weights are ordinary. Weights that are all `5e-324` (the
+  decoder takes any weight that is finite and above zero) used to draw
+  every point at the origin, because a point whose weight was under
+  `f64::EPSILON` was left undivided, and weights near `1e308` drew
+  points that are not numbers; both now draw the curve they state. A
+  point is divided by its weight when that is a normal number, and a
+  weight list that leaves some point without one — not finite, all
+  zero, cancelling, or more than 2^1022 times lighter than the
+  heaviest — gives the poles. The real records sample to the bits they
+  did: one probe, built against the code before and after, records
+  the 112 records, the whole geometry of 885 documents and 774 `.sym`
+  bodies to the same file. Left as they were: the `EPSILON` test on a
+  knot step inside the recursion (the smallest step on the corpora is
+  2.68e-3), and the boundary members' side, which is #52's. See
+  `docs/analysis/2026-11-12-a-bspline-record-is-held-to-degree-32.md`.
 - Payload `+8` (`aux_hi`, the high half of the PSM envelope's `aux`)
   is **the oid of the sheet layer the object sits on** — never a
   framing constant. Grouping a storage's objects by it reproduces
@@ -858,7 +899,7 @@ is `tests/geometry_golden_snapshot.rs`
 A probe is a throwaway `main` that asks one local fixture a question
 and prints the answer — how a decoder question gets settled before it
 earns a test. The committed form is named for what it settles, not for
-what it reads: `examples/probe_<the question>.rs` (291 of the 299
+what it reads: `examples/probe_<the question>.rs` (292 of the 300
 tracked root examples carry that prefix; the other eight predate the
 convention and keep their names).
 
@@ -1034,6 +1075,29 @@ template's sheet outline (its top and right pieces) and, on the eleven that
 wear `CPECCHB-SQ-A2`, the line that restates its right edge; the one primitive
 of a drawing's own is `N井场`'s sideways label.
 
+`probe_how_high_a_degree_a_bspline_record_states` is what the degree
+bound of an `igBspCurve2d` was set against, and what shows the bound and
+the weight scale moved nothing a file holds. With no argument it reads
+every `0x005D` record at a chain start of every distinct document in
+reach — 885 on this machine, the members of the packages' archives among
+them — and prints where the records are, their degrees, pole and knot
+counts, weights and closing bytes, exiting non-zero if the decoder
+refuses one: 112 records, every one a cubic, 75 poles and 79 knots at
+the most, none rational. `record <file>` writes a line for everything a
+change to the decoder or to the evaluation could move — each record as
+decoded and as sampled, each document's whole normalized geometry, the
+B-splines of its cached symbol bodies as sampled, each `.sym` body — with
+a 128-bit sum of the bit patterns, and `compare <a> <b>` names the lines
+that differ. Recorded against `396593c` and against the change, with the
+probe's source the same, the two files are one file (1 771 lines). A
+recording is the same from run to run only because the probe sorts a
+symbol body's layer table before it sums it:
+`SymbolGeometry::sheet_layers` lists the layers of each `PSMcluster0` of
+a file in the order a hash map yields the storages, which changes
+between runs for the forty symbols of the committed `RefData~4~681.zip`
+that hold more than one (what is drawn does not depend on it: a
+primitive's layer name is resolved against its own storage's table).
+
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
 and it disappears once the answer lands. When the numbers do turn
@@ -1096,24 +1160,29 @@ cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-un
 ```
 
 `cargo fmt --all` hands rustfmt the root file of every target, as
-`\\?\`-prefixed absolute paths, in one command line for each edition: 357
-files for edition 2021 (the root crate's lib, 6 bins, 299 examples, 47
+`\\?\`-prefixed absolute paths, in one command line for each edition: 358
+files for edition 2021 (the root crate's lib, 6 bins, 300 examples, 47
 tests and a bench, and the three of `vendor/oxidized-mdf`) and 97 for
 edition 2024 (`pid-plot`: its lib, 7 bins, 72 examples, 17 tests). Under
 Windows a command line may not pass 32 767 characters, and the 2021 line
-grows by 357 characters for every character of the checkout's path, so
+grows by 358 characters for every character of the checkout's path, so
 whether the command runs depends on where the checkout is. Measured with
 rustfmt 1.10.0-stable on `e9ebba1` (the seventh review) and again on
-`735de61`, after the merge of main (the ninth, 2026-11-12): a checkout
-whose path is 50 characters or shorter runs it — at 50 the line is 32 564
-characters long — and from 51 on cargo-fmt fails before rustfmt reads a
-file (`os error 206`). The main checkout (32 characters) runs it, with 18
-characters of path to spare — the line is about 26 100 characters there
-— or some 60 to 85 more root-crate examples, each of which costs its
-path, its name and about 15
+`735de61`, after the merge of main (the ninth, 2026-11-12), when there
+were 357 files: a checkout whose path is 50 characters or shorter runs
+it — at 50 the line was 32 564 characters long — and from 51 on cargo-fmt
+fails before rustfmt reads a file (`os error 206`). The example added
+since (`probe_how_high_a_degree_a_bspline_record_states`, 2026-11-12)
+makes the line 115 characters longer at that path, 32 679 by the same
+count: it was run at 47 characters and not again at 50. The main
+checkout (32 characters) runs it, with 18 characters of path to spare —
+the line is about 26 200 characters there — or some 60 to 85 more
+root-crate examples, each of which costs its path, its name and about 15
 characters. A worktree under `pid-parse-wt\accept-evidence` (51) cannot
-run it, and one under `pid-parse-wt\publish-export` (50) is one example
-from the limit. The `pid-plot` line (about 8 800 characters) is nowhere
+run it, and one under `pid-parse-wt\publish-export` (50) is 88 characters
+from the limit: one more root-crate example whose file name is longer
+than 23 characters puts the command out of reach there. The `pid-plot`
+line (about 8 800 characters) is nowhere
 near it, so `cargo fmt -p pid-plot` runs anywhere. Linux, and so CI, has
 no such limit. Where it bites, check the tree out under a shorter path,
 or run rustfmt over the same roots in pieces: each package's `src/lib.rs`,
@@ -1232,3 +1301,14 @@ When sweeping for new edge cases, start with these patterns:
 - `unwrap()` / `expect()` on `Iterator::next()` after `peek()`
   returns `Some` — sound by contract but cosmetic noise to remove
   when the surrounding diff already touches the function.
+- A count that states a cost rather than a length. "Every counted
+  field accounts for the payload exactly" holds a count to the bytes
+  the record has; it does not hold what a later stage does with the
+  count. The degree of an `igBspCurve2d` is the difference of two such
+  counts, the evaluation pays its square for every point, and a record
+  of 106 KB asked for six minutes of it (#68). When a decoded number
+  drives a loop somewhere downstream — a degree, a subdivision count,
+  a repeat count — bound the number where the bytes are read, bound
+  the loop where it runs, and pin both with a test that has to come
+  back in time (`tests/arbitrary_bytes_never_panic.rs` holds a case to
+  ten seconds on a thread of its own).
