@@ -8377,6 +8377,16 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
 // §16).
 //
+// What sets it is how far the members reach: the scale is `1.0` while the
+// far corner of the box that holds them is less than a metre from the
+// origin, and `2.0` from one metre to two — the same for a sheet's own
+// child list (`sheet_display_order::SheetChildTable`), and nothing to do
+// with the sheet, the layer or the size of what is listed. `A1-W.igr` keeps
+// its border group at `2.0` and its logo group at `1.0` on one sheet. Held
+// on 1 293 records of the corpora with none against it, read off the files
+// and not off the vendor's code
+// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`).
+//
 // Both decode so that they stop being graphic records nothing reads, and
 // both emit nothing: emitting either would draw its members twice.
 

@@ -70,7 +70,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
-| `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
+| `tests/sheet_family_wiring.rs` | Four holds on every committed drawing and template. (The fourth, `a_range_scale_is_set_by_how_far_the_children_reach`: every record that lists children with a range box — a sheet's own `JSheet` table, a `ComplexString`, a Group; 24 sheets, 3 strings and 13 groups in the repository — states the scale its children's reach calls for, `1.0` under a metre from the origin to the far corner of their box and `2.0` beyond; sheets of both scales are read, and `A1-W.igr`'s border group at `2.0` beside its logo group at `1.0` is pinned. Moved to 1.05 m, the line names eight A1 records.) The first three: Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
 | `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. Each such record also keeps the place the sheet's own list gives it in the display order (`sheet_display_order`), the records drawn at one place keep their order, and nothing past the stop is ranked. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. Those are fourteen changes a record. The corpus test below makes all 128 of −64 … +64 and puts every record a walk then reads off a chain to all sixteen families: on the repository's files (3 776 624 changes, 61 060 such records, pinned) no family decodes one; on every corpus in reach (29 120 173 changes, 1 371 448 records) none decodes as a page frame, and four decode as `igComplexString2d`, all on one sheet of the plant backup — a ceiling the test holds. A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned). It also holds every live page frame to decoding and every intact stream to no refused frame (91 across the corpora; the repository's 32 a floor) and tries the frame decoder at every offset off a chain where a walk could read a frame's type word, whatever wrong length leads there (179 places across the corpora, 83 of them frames by the decoder's first rules, none now; the repository's one pinned). With the frame rule taken away this test fails on the repository's files alone; with either half of it taken away — the extent being lengths, or the ratio — it fails where the outside corpora are, and the lib's unit tests fail everywhere | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
 | `tests/sheet_display_order_fixtures.rs` | The display order of the committed files, read off the files themselves (the parser's own unit tests are on bytes built by hand). For each of the seven fixture drawings and the five border templates under `test-file/Ref/Template Files`: every top-level sheet stream that holds a record of the sheet's own has an order and one without holds no live record; the sheet's list names exactly the live records of the stream whose parent is the sheet; every live record takes a rank; and the objects listed (1 014 over the seven drawings), the records ranked, the place of the border frame (`DWG-0201GP06-01`: 91) and a digest of the order are pinned per file (`PINNED`). The counts it compares with are taken from the stream bytes with the chain walk, not through the module. `A01.pid`'s embedded sheet `/JSite204/Sheet6` is held to its own order — 97 objects, 107 ranked records — and to the place of the frame that embeds it, 0. A second case walks `test-file` and fails on a drawing or template `PINNED` does not list. With a record's place taken from its oid, two of the three cases fail | `test-file/**/*.pid` and `test-file/Ref/Template Files/*.igr` (committed; runs in CI; a missing file fails) |
 | `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 27 条共 34 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；页面按图纸自己的显示次序画读到的那些记录（`paint_sequence` 有值，且与截到停点的那一份相同）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，合并后的 26 条里 3 条失败、23 条通过：失败的是这两条和 `a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place`（第九次审查在 26 条时量的；之后加的八条——第 27 条、符号文件的五条与页框被拒的两条——没有在那个改动下重量）（第一份原先读成 359 条记录的完好流，一个字都不说）。七份副本另各自断言链读到、却没有显示次序位置的记录：第 1 条长度 +8 那一份有 1 条（2 个图元；链只读到这一条，它挂在图纸的一个对象下面，那个对象在停点之后，所以流里没有图纸自己的记录可以对照图纸的表），账本在流那一项之外另记一项 `record_without_display_place`、可疑比完好图纸多 2 项，其余六份没有；七份上 `display_order_warnings` 都不另起一句——链停造成的没有位置，由链的那一行说：那一份上链的一行接着说「读到的记录没有一条是图纸自己的」「1 条记录、2 个图元没有位置」「页面是模板名给出的页幅 594 × 420」，其余带停点的副本上那一行不说这些；每份带停点的副本上 stderr 那一行就是库函数 `chain_fault_warnings` 的那一句 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
@@ -79,6 +79,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default. And the other direction byte: the four `-W` templates of the committed `RefData~4~682.zip` each keep four arcs and four B-splines in their logo; on `A1-W.igr` the arcs are the top cap, the bottom cap and two left-side pieces of one ellipse, clockwise, each on the ends of the logo's lines, the caps turning 106.26° on the far side of their chord | `test-file/export-test/publish-data/A01/A01.pid` (soft-skips when absent), `test-file/Ref/Template Files/XA-A1.igr` and `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` (committed; absent is a failure) |
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
 | `tests/sym_sheet_layers_read_in_one_order.rs` | A symbol file's `sheet_layers` read in one order, and the file says which: storages in path order, the root first, and within a storage the order its `PSMcluster0` holds the layers in. Every `.sym` of the committed `RefData~4~681.zip` (616, pinned) is read through `read_symbol_geometry_from_bytes` and held to that order as worked out from the file's own streams; the 40 (pinned) whose storages keep tables that differ — the only ones whose layers can be listed in more than one order — are read four times. The test then runs itself as another process (`--exact`, with `PID_PARSE_SYM_LAYER_ORDER_ASKED` set), which reads the same files as often, and the two processes' readings must digest alike. With the tables gathered in a hash map again, 38 of the 40 read out of order in a run and the two digests differ | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip` (committed; runs in CI; feature `refdata-archive`) |
+| `tests/symbol_library_text.rs`, `tests/symbol_library_sheet_pick.rs`, three tests of `tests/parse_real_files.rs` (`rectangles_own_their_edges_and_the_bspline_reaches_its_body`, `a_cached_body_carries_the_stroke_styles_its_own_storage_states`, `a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`) and five unit tests of `src/symbol_library.rs` | The twelve tests that read a symbol of the plant's **whole** library rather than of the three-symbol sample under `test-file/symbols`: labels the text reader used to refuse, every text record of all 618 symbols (1 265 read, none refused, none unreadable), which sheet a body is drawn from, a cached body's strokes against the library's own style tables (17 / 11 / 6 / 4 / 2 placed symbols on the five fixtures), the `Remarks` cloud's arcs, and an arc's direction, a dash, lettering and an override read off one `.sym` each. They read the library out of the archives it is committed in — `tests/support/library_symbols.rs` for the integration tests, `library_symbol` in the unit-test module — so they assert on every checkout. Until 2026-11-12 they read `test-file/symbols-full`, which is gitignored, and ten of them returned without a word where it was absent; `a_symbol_carries_the_colour_and_width_its_own_style_table_states` looked for `ElecTraceLine.sym` where it never was, had run on no machine, and asserted a colour and a width the file does not state (its strokes are an override of `Normal` at 0.13 mm, black; the blue the trace-heating row draws in is the placement's `As Drawn`). A new test that needs a symbol of the whole library reads it the same way and not off the directory | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip` (616 `.sym`) and, for the two it lacks, `…/TEST02_p/RefData~4~681.zip` — together the 618 files of `symbols-full`, byte for byte (`examples/probe_is_the_unpacked_symbol_library_what_the_archives_hold.rs`). Committed; runs in CI. A build without the `refdata-archive` feature reads the directory, where a machine has it |
+| `tests/soft_skip_spelling.rs` | A soft skip is spelled one way: no string literal of the crate's test code — the files under `tests/`, and each file under `src/` from its `#[cfg(test)]` module on — opens with `skip: ` or with `skipping ` and no colon, the two spellings the tests used beside `skipping: ` until 2026-11-12 (58 literals). That is what keeps `tools/soft_skips.py`'s count worth reading; a skip that prints nothing, or says it in other words, it cannot see | the crate's own sources (131 files of test code, 200 notices, on the tree with the parse line's sixth round merged); runs in CI |
 | `tests/render_gap_census.rs` | A sheet record that does not reach the drawing is named. Per fixture, the refused and the undecoded graphic records are pinned in records — none of either on any fixture — every refused record has a warning, the lines a retired rule refused are counted, and the records the native reader skips are counted apart. The two documents that last carried a refusal, `A井场` of the plant backup and the committed `XA-A1.igr`, are pinned to none, in the prose and in the structured list alike; with no document left to read a refusal's wording on, that is held on synthetic rows in `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`, `a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`) | `test-file/*.pid`, `XA-A1.igr` (committed); the backup sheet where present |
 | `tests/parser_panic_safety.rs` | No byte-level parser entry point panics. An adversarial corpus and its truncations go through every stream entry point. Every `decode_*_at(data, offset)` — the 24 of `AT_ENTRIES` (the frame decoder's `smartframe_refusal_at` among them), which `every_at_entry_point_is_listed` checks against the sources, so that the four retired matchers cannot come back into `src/parsers` unlisted — is called at every offset of every input, one past its end and where `offset + 6` overflows. And because a family decodes only where a record chain starts a record, 270 planted streams (the magic, the record count, one record of each family's type code for each of 28 lengths, filled with noise, zeros or `0xFF`) carry the stream entry points past the chain into every payload decoder: 182 of them are chains and hand the decoders 5 070 records of the right length and the wrong content; the other 88 carry a type word no record opens with (the `0x4000` flag, and `0x3FE6`, planted for being past the class table) and are held to stopping on their first word | inline bytes; runs in CI |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports its whole page: laid out from the committed sources the ledger gate states, each of the seven wears the border template `FIXTURE_TEMPLATES` names (a drawing with no row fails rather than passing unframed), the writer's `mismatches` is empty, `cross_check` finds nothing (8.6 included, with real faces), and the PDF reads back with exactly the ink segments the model strokes and the characters it letters, the template's among them. None names a symbol no library carries — the 熊安 fixture's own `Xa …` symbols and its `XA-A1.igr` are committed under `test-file/Ref` The order the lettering is read back in is this test's own statement (`painted_order`: the decoded layer then the inferred one, each in the model's `paint_sequence`), not the writer's `written_order`, so a writer that walks its sequence another way fails here. How each page ends its strokes is read back too (`FIXTURE_ENDS`: the inked paths stroked butt-ended and the ones stroked round, per fixture — `工艺管道及仪表流程-1` 4 903 and 389), and no path is stroked any other way | every `test-file/**/*.pid`; faces from `PID_PLOT_FONTS` or the share's `fonts` (the export soft-skips without a font directory; the walk and the template table still assert) |
@@ -94,7 +96,72 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/reference_plots_ink.rs` | 同样 11 张图，按**纸上看得见的墨**读（验收门禁比的是「画了什么」，不分颜色，也读不到图纸边上的线、线帽和先后）。字型逐张备，读的每一页另断言与 `pid_plot` 作为进程对同一张图写出的文件逐字节相同（`tests/support/exported_page.rs`，与验收门禁对自己交付的页做的是同一条断言），所以读的就是验收门禁验过并交付的那一页的字节——这句话 2026-11-12 之前只靠两道门禁恰好用同样的办法备字，改回成批备字没有东西变红；现在改回去在第一页失败（`I井场`：462 246 对 430 508 字节，第 57 个字节起不同）。两页都用 `ink::PageInk::read` 读成墨与纸色两份，每页 29 个读数，全部是等式：页幅与参考纸张之差；掩膜视图与整页的 coverage / 未覆盖 / 多余 / 标签配对；笔宽一致 / 不符 / 未配；笔画、标签与字的颜色（两页都是墨，还是一页是墨、另一页只是纸色）；两页用到的墨色是否相同；沿图纸边的笔画按位置配对并比笔宽（`ink::sheet_edges`）；线帽或拐角与参考图同一位置的笔画不同的墨长（`ink::ends_apart`）；参考图用纸色画在墨上的每一处，我方那两样东西的先后是否相同（`ink::wipe_order`：11 页 91 处，89 处相同）。一页与参考图印得一样时每个读数都是理想值，所以表（`SHEETS`）里每页只写它自己的数——标签数、配上的笔画数、图纸边数、白色记号数；达不到理想值的读数各占一行「已知缺陷」，写明它读多少、为什么（还没修 / 等现场数据 / 未定）。读数变差失败；变好也失败，直到收紧钉值或删掉那一行。现在 22 行：还没修的一行都没有（A2 页幅两行、图纸边一行在页面改成图纸写的纸张之后删掉了），12 行等现场数据（A2 晚一版的仪表回路），10 行未定（`一级闪蒸分离器A` / `低温分离器A`：参考图没有印图框，也不按手头这张图纸的显示次序画）。线帽一行都没有：11 页都是 0.000 mm。另一条用例钉 A2 图上盒比字高的 4 条标签（`低压放空总管`、`仪表风管线` 各两条）：我方基线离参考图不超过半个设备单位（现在读 −0.0505 / +0.0251 mm；这一行挂在盒顶之前是 +0.1222 / +0.1979）。再两条只读图、不写页（2026-11-12）。`a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them` 钉「标签与它的原点标记谁先画」：符号体带纸色原点标记的标签 11 页共 96 条，图纸把文字的拥有者列在符号紧后的 49 条、列在符号之前的 47 条，参考图 95 条照图纸列的次序画（每页四个数 `MARKED_LABELS`）；唯一不照的是 `一级闪蒸分离器A` 的 `P70`（`AGAINST_ITS_LIST`），而 `一级闪蒸分离器B` 上同样的记录（三条记录只差各自文档内部的编号：oid、样式号、缓存体的引用）列在同样的两个位置、参考图照列的画（`ITS_TWIN`）——同样的记录、两张参考图、两种次序，没有哪条读记录的规则能同时给出，所以那两行「未定」留着、页面不改。96 条之外另有 1 条没读进来——A2 图的 `SP=-8℃`，参考图在它的标记处没有纸色笔画（晚一版挪走的那一簇仪表，参考图把这段字写在 16.9 mm 外）——另有 23 个点名带标记符号的拥有者名下只有一个点、没有文字，不是标签；两样都钉着（`NO_LABEL`、`NOT_WHERE_ITS_PLOT_HAS_IT`），没有因为别的原因没读进来的。`the_eleven_pages_draw_every_placement_from_a_cached_body` 钉 11 页每个放置从哪里画（`PLACEMENTS`）：图纸自己的 2 395 个、模板的 12 个，全部从文件缓存的体画，没有一个从符号库画，没有一个缺体。`PID_INK_GATE_OUT=<dir>` 把打印的表写到 `<dir>/reference-plots-ink.txt`；这道门从不往语料里写东西 | `PID_ACCEPTANCE_CORPUS`（默认 `D:\work\cad\pid-test-data\验收数据`）；第一张参考图（或图纸）不在时四条读语料的用例各打印原因并软跳过，只读表的那条用例（`every_known_defect_is_one_reading_with_a_cause`）到处都跑 |
 | `pid-plot/tests/paper_model_golden.rs` | 7 张仓库夹具的整棵 `PaperModel` 逐字节钉死（页幅、模板与其家具、每个图元的纸面毫米）。**没有任何软跳过分支**：夹具、模板、项目符号与备份包里的 `RefData~4~681.zip` / `~682.zip` 全部已入库。符号来源是**声明**的（`test-file/Ref/Symbols` + 备份包 `~681.zip`），不走 `lay_out_drawing` 的自动搜索，因此不会被本机 gitignore 的 `symbols-full` 影响；序列化前把 `\` 归一为 `/`、仓库根替换成 `<repo>`，并把每个浮点量化到 1 µm（跨平台 libm 的末位差异，见下）。`PID_PLOT_BLESS=1` 重写金样（7 个文件共 3.97 MiB）。失败时打印第一个差异的 JSON 路径与两侧值，例如 `template.extent_mm[0]: expected 593.939394, actual 594.236364`。第二条用例钉每张夹具的**绘制次序**：`paint_sequence` 写成图元下标，放在 `tests/golden/paint-order/<slug>.txt`（7 份、7 732 个图元、36 KiB）；次序在模型旁边、不在模型里，所以页面模型金样不含它。一张夹具没有次序、或有画了东西却没有位置的记录，这条用例失败；差异报第一个分开的位置和两侧的记录。`PID_PLOT_BLESS=1` 连同页面模型金样一起重写 | 全部在仓库内（`test-file/**`），CI 上真跑 |
 
-DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
+### Soft skips of the root crate's tests
+
+A root-crate test that leaves a check unmade for want of data — a corpus
+that is not in the repository, a fixture a checkout does not hold — prints
+**one line that starts `skipping: `**, says what is missing, and passes. A
+loop prints one line for each thing it passes over. That is the only
+spelling: `tests/soft_skip_spelling.rs` refuses `skip: …` and `skipping …`
+without the colon in test code.
+
+`cargo test` shows nothing a passing test prints, so a green run says
+nothing of how many tests asserted. To see it:
+
+```bash
+python tools/soft_skips.py --run             # runs the root crate's tests with --nocapture, counts and lists the lines
+python tools/soft_skips.py --run --by-test   # single-threaded, each line under the test that printed it
+python tools/soft_skips.py <log>             # the same, of a log made with `-- --nocapture`
+```
+
+(`--cargo "rustup run stable cargo"` where the `cargo` on `PATH` is the
+fork; the benches are left out, their harness takes no test flags.) A gate
+run that wants the count in its summary runs the root crate's set with
+`-- --nocapture` and hands the log to the tool. CI's own `cargo test` is
+captured, so its log shows none of these lines.
+
+Read on 2026-11-12
+(`docs/analysis/2026-11-12-what-the-root-crates-tests-skip.md`, which lists
+every test, what it lacks, and what #62 would have to supply):
+
+| | this machine | the repository alone |
+|---|---:|---:|
+| tests that pass with a check unmade | 15 | 45 |
+| lines that start `skipping: ` | 21 | 55 in the simulation, 53 expected on CI |
+| tests that leave early and say nothing | 0 | 0 |
+
+"The repository alone" is a simulation on this machine — the three corpus
+variables naming a directory that does not exist, the 34 hard-coded
+`D:\work\…` roots moved, the worktree's `symbols-full` junction taken away
+— not a reading off a CI runner. On `396593c` the same two columns read 16
+and 57 tests; 1 and 10 of them said nothing, and 30 of the 57 said it in
+another spelling.
+
+What is skipped everywhere, this machine included:
+
+- **The thirteen DWG mirror gates** (`publish_dwg_mirror.rs` 4,
+  `publish_dwg_generated_parity.rs` 4, `publish_meta_parity.rs` 2,
+  `publish_rel_parity.rs` 3) want
+  `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`. That file
+  has never existed: the package's `Export.dmp` is an Oracle `exp` dump,
+  which the MDF line cannot read, and no SQL Server copy of plant `P01` is
+  on this machine. They have run nowhere since they were written.
+- `interface_parity_on_a01_writer_matches_reference_superset_post_a22`
+  passes over seven tags the A01 reference does not hold; only the DWG
+  gates would compare them.
+- `controlled_pid_diff_pairs_report_stream_level_evidence_when_available`
+  wants drawing pairs under `test-file/controlled-diff`, which are
+  gitignored by policy and exist nowhere.
+
+The other thirty skip only where the corpora outside the repository are
+absent: the share (`PID_PARSE_SELF_CHECK_DIR`), the 53-sheet backup package
+(`PID_TEST_DATA_DIR`) and the acceptance sheets (`PID_ACCEPTANCE_CORPUS`).
+
+When a test needs data the repository does not hold: look for it in a
+committed archive first (the symbol library and the border templates are
+there, and `refdata_archive` reads them without unpacking); otherwise print
+the line, return, and say so in the table above. A walk that reads "what is
+there" asserts how much it read, so that reading nothing is not a pass.
 
 ### 排字规则由谁守
 
@@ -703,7 +770,25 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   until 2026-11-11): a box is in `range_scale / 32768` m — 1.0 on
   fourteen of the corpora's twenty records, 2.0 on six
   (`CPECCHB-SQ-A1.igr`'s outer frame, five groups of the A0 / A1 `-W`
-  templates). A `ComplexString`'s curve members are `igLine2d` /
+  templates). **What sets the scale is how far the members reach**:
+  it is 1.0 while the far corner of the box that holds them is less
+  than a metre from the origin, and 2.0 from one metre to two. A
+  sheet's own child list (`0x0114 JSheet`) states the same double by
+  the same rule, and the 1 293 such records of the corpora — 1 273
+  sheets, 8 strings, 12 groups, each distinct sheet stream once —
+  hold it with none against: the far corner is at most 998.0 mm out
+  under 1.0 and at least 1 015.9 mm under 2.0. It is not the
+  template, the paper, the sheet's own scale, the layer, the owner or
+  the size of what is listed: `A1-W.igr` keeps the group of its
+  border at 2.0 and the group of its logo at 1.0 on one sheet, and
+  one sheet on A1 paper states 1.0 where thirty-nine state 2.0. Nor
+  is it whether an `i16` holds each coordinate: an A1 frame ends at
+  841 mm and states 2.0 for its diagonal of 1 030. Read off the
+  files, not off the vendor's code; a box past two metres has no
+  witness. A reader takes the scale as stated, as before; a writer
+  would have to set it by this
+  (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`,
+  `examples/probe_what_decides_the_scale_of_a_range_box.rs`). A `ComplexString`'s curve members are `igLine2d` /
   `igArc2d` with its layer and style id, joined by `0x0019 KeyPoint
   Constraint` members, which have no decoder and need none; a Group
   lists the two `igRectangle2d` of a border or, in `A0-W.igr` to
@@ -729,6 +814,9 @@ order is the sheet's own list: the `0x0114 JSheet` record of the root
 `PSMcluster0` names every record of the sheet stream whose parent is the
 sheet, 14 bytes each (oid, a range box of four `i16` in
 `scale × 2⁻¹⁵` m, a flag word), in the order the sheet draws them.
+(The scale is 1.0 while the far corner of the children's boxes is
+less than a metre from the origin and 2.0 beyond — the rule of the
+association records, see the caveat above.)
 `src/parsers/sheet_display_order.rs` decodes it and ranks every live
 record of the stream (`PidDocument::sheet_display_order`, keyed by
 `/Sheet<N>`; not serialized, so no JSON or schema output changes):
@@ -1037,9 +1125,30 @@ is `tests/geometry_golden_snapshot.rs`
 A probe is a throwaway `main` that asks one local fixture a question
 and prints the answer — how a decoder question gets settled before it
 earns a test. The committed form is named for what it settles, not for
-what it reads: `examples/probe_<the question>.rs` (291 of the 299
+what it reads: `examples/probe_<the question>.rs` (293 of the 301
 tracked root examples carry that prefix; the other eight predate the
 convention and keep their names).
+
+`probe_is_the_unpacked_symbol_library_what_the_archives_hold` compares
+`test-file/symbols-full`, on a machine that has that directory, with the two
+committed `RefData~4~681.zip` the tests now read the library out of: the
+members each archive holds, the names both hold and how many of those differ
+(603, 12), and, file by file, the directory against the archives read in
+order. It read 618 files on each side, the same names, every one identical,
+and exits non-zero when they are not.
+
+`probe_what_decides_the_scale_of_a_range_box` reads every record that lists
+children with a range box — `JSheet`, `ComplexString`, Group — on every
+distinct sheet stream of the corpora and their archives (885 documents, 1 293
+records) and sets the scale each states beside what could decide it. It
+prints the twenty strings and groups one by one, the sheets by paper and
+scale, the records that share a document, a sheet, an owner and a layer and
+state two scales (two places), and, for seven measures of where the children
+lie, the largest value under 1.0 against the smallest under 2.0: only the
+distance from the origin to the far corner separates them (998.0 mm against
+1 015.9 mm). It exits non-zero when a record does not state the scale that
+distance calls for; an argument lists the records of the documents it names.
+About 70 seconds in a debug build.
 
 `probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
 its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
@@ -1250,7 +1359,7 @@ only the root directory, so keep scratch there out of commits by hand.
 ## Common commands
 
 ```bash
-cargo test                                        # 1000+ tests (851 unit + 91 integration, 2 DWG-gated skipped)
+cargo test                                        # the root crate: 1 874 pass here, 15 of them with a check unmade — see "Soft skips"
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (37 tests)
 ```
@@ -1313,26 +1422,33 @@ cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-un
 ```
 
 `cargo fmt --all` hands rustfmt the root file of every target, as
-`\\?\`-prefixed absolute paths, in one command line for each edition: 358
-files for edition 2021 (the root crate's lib, 6 bins, 299 examples, 48
+`\\?\`-prefixed absolute paths, in one command line for each edition: 361
+files for edition 2021 (the root crate's lib, 6 bins, 301 examples, 49
 tests and a bench, and the three of `vendor/oxidized-mdf`) and 98 for
 edition 2024 (`pid-plot`: its lib, 7 bins, 73 examples, 17 tests; counted
-on the tree on 2026-11-12, one example more than the 97 of the ninth
-review). Under
+on the tree on 2026-11-12, after the parse line's sixth round and the
+soft-skip round were merged). Under
 Windows a command line may not pass 32 767 characters, and the 2021 line
-grows by 358 characters for every character of the checkout's path, so
+grows by 361 characters for every character of the checkout's path, so
 whether the command runs depends on where the checkout is. Measured with
 rustfmt 1.10.0-stable on `e9ebba1` (the seventh review) and again on
-`735de61`, after the merge of main (the ninth, 2026-11-12): a checkout
-whose path is 50 characters or shorter runs it — at 50 the line is 32 564
-characters long — and from 51 on cargo-fmt fails before rustfmt reads a
-file (`os error 206`). The main checkout (32 characters) runs it, with 18
-characters of path to spare — the line is about 26 100 characters there
-— or some 60 to 85 more root-crate examples, each of which costs its
+`735de61`, after the merge of main (the ninth, 2026-11-12), when the line
+held 357 files: a checkout whose path was 50 characters or shorter ran it
+and from 51 on cargo-fmt failed before rustfmt read a file (`os error
+206`). **Four files more and the limit is 49**: with two probes and two
+tests added the same day, the command line `cargo fmt --all -v` prints is
+33 375 characters in a 51-character checkout (measured on the merged tree,
+where the command fails with `os error 206`; an independent review read
+30 848 in a 44-character one, the same line less 361 a character), which
+makes it 32 653 at 49 and 33 014 at 50 — 247 past the limit. (The 49 and
+the 50 are reckoned, not run.) The main checkout (32 characters) runs it,
+with 17 characters of path to spare — the line is about 26 500 characters
+there — or some 60 more root-crate examples, each of which costs its
 path, its name and about 15
-characters. A worktree under `pid-parse-wt\accept-evidence` (51) cannot
-run it, and one under `pid-parse-wt\publish-export` (50) is one example
-from the limit. The `pid-plot` line (about 8 800 characters) is nowhere
+characters. Worktrees under `pid-parse-wt\accept-evidence` (51) and
+`pid-parse-wt\publish-export` (50) cannot run it; one under
+`pid-parse-wt\lettering-8` (47) can. The `pid-plot` line (98 files, about 10 400 characters
+even in a 51-character checkout) is nowhere
 near it, so `cargo fmt -p pid-plot` runs anywhere. Linux, and so CI, has
 no such limit. Where it bites, check the tree out under a shorter path,
 or run rustfmt over the same roots in pieces: each package's `src/lib.rs`,

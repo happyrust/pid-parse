@@ -370,7 +370,7 @@ fn corpus() -> &'static [Original] {
             .filter_map(|&name| match std::fs::read(root.join(name)) {
                 Ok(bytes) => Some(Original { name, bytes }),
                 Err(err) => {
-                    eprintln!("skip {name}: {err} (test-file/ is git-ignored)");
+                    eprintln!("skipping: {name}: {err} (test-file/ is git-ignored)");
                     None
                 }
             })
@@ -847,7 +847,7 @@ fn run_batch(batch: &str, base: u64, plan: &[Case], corpus: &[Original], baselin
 fn the_six_originals_set_the_allocation_cap() {
     let _serial = lock(&SERIAL);
     if corpus().is_empty() {
-        eprintln!("skip: no corpus drawing under test-file/; the cap stays at its floor");
+        eprintln!("skipping: no corpus drawing under test-file/; the cap stays at its floor");
         return;
     }
     let baseline = baseline();

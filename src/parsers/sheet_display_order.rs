@@ -122,6 +122,13 @@ pub struct SheetChildTable {
     pub sheet_oid: u32,
     /// The `f64` ahead of the count, 2.0 or 1.0 on the corpus: the reach of
     /// a child's range box, in metres either side of the origin.
+    ///
+    /// It is 1.0 while the far corner of the box that holds the children is
+    /// less than a metre from the origin and 2.0 from one metre to two — on
+    /// every one of the corpora's 1 273 sheets, whatever paper they state:
+    /// one sheet on A1 paper whose children stop 998.0 mm out states 1.0
+    /// where the other thirty-nine state 2.0
+    /// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`).
     pub range_scale: f64,
     /// The sheet's children, in the order the sheet draws them.
     pub children: Vec<SheetChild>,

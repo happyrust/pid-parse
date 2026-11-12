@@ -2133,9 +2133,67 @@ mod tests {
             .join("symbols")
     }
 
+    /// One of the sample symbols committed under `test-file/symbols`. A
+    /// checkout that does not hold it is told so and given none.
     fn fixture(relative: &str) -> Option<PathBuf> {
         let path = symbols_root().join(relative);
-        path.is_file().then_some(path)
+        if !path.is_file() {
+            eprintln!("skipping: {} is not in this checkout", path.display());
+            return None;
+        }
+        Some(path)
+    }
+
+    /// Whether the committed sample is here; a checkout without it is told
+    /// what the test in hand needed.
+    fn sample_library_is_here() -> bool {
+        let here = symbols_root().is_dir();
+        if !here {
+            eprintln!(
+                "skipping: {} is not in this checkout",
+                symbols_root().display()
+            );
+        }
+        here
+    }
+
+    /// The backup package whose `RefData~4~681.zip` is the plant's whole
+    /// symbol library: 616 `.sym` members, each of them byte for byte the
+    /// file of that name in `test-file/symbols-full`, which is the same
+    /// library unpacked on a machine that has done so.
+    #[cfg(feature = "refdata-archive")]
+    const LIBRARY_ARCHIVE: &str = "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip";
+
+    /// The bytes of `relative`, a symbol of the whole library rather than of
+    /// the committed sample.
+    ///
+    /// They come out of the committed archive, so the test that asks runs on
+    /// any checkout. A build without the `refdata-archive` feature cannot
+    /// open an archive and reads the unpacked library, which is a machine's
+    /// own. Where the symbol can be had from neither, the test is told so
+    /// and given none.
+    fn library_symbol(relative: &str) -> Option<Vec<u8>> {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        #[cfg(feature = "refdata-archive")]
+        {
+            let archive = manifest.join(LIBRARY_ARCHIVE);
+            if let Ok(bytes) = crate::refdata_archive::read_archive_member(&archive, relative) {
+                return Some(bytes);
+            }
+        }
+        let unpacked = manifest.join("test-file").join("symbols-full");
+        if let Ok(bytes) = std::fs::read(unpacked.join(relative)) {
+            return Some(bytes);
+        }
+        #[cfg(feature = "refdata-archive")]
+        let archived = "is no member of the library's committed archive";
+        #[cfg(not(feature = "refdata-archive"))]
+        let archived = "a build without the `refdata-archive` feature reads no archive";
+        eprintln!(
+            "skipping: {relative} is not under {}, and {archived}",
+            unpacked.display()
+        );
+        None
     }
 
     fn scratch_root(tag: &str) -> PathBuf {
@@ -2384,13 +2442,12 @@ mod tests {
     /// draw on the same side and the wave becomes a pair of C's.
     #[test]
     fn an_arc_carries_the_direction_its_trailing_byte_states() {
-        let path = symbols_root()
-            .with_file_name("symbols-full")
-            .join(r"Instrumentation/In-Line/Flow/FT-Ultrasonic Flowmeter.sym");
-        if !path.is_file() {
+        let Some(bytes) =
+            library_symbol(r"Instrumentation/In-Line/Flow/FT-Ultrasonic Flowmeter.sym")
+        else {
             return;
-        }
-        let body = read_symbol_geometry(&path).expect("a readable compound file");
+        };
+        let body = read_symbol_geometry_from_bytes(&bytes).expect("a readable compound file");
         let halves: Vec<(&(f64, f64), bool)> = body
             .primitives
             .iter()
@@ -2427,33 +2484,102 @@ mod tests {
     /// A symbol states its own colour and width, and the reader hands them
     /// over with the stroke they belong to.
     ///
-    /// The colour cannot come from the drawing: an `igSymbol2d` placement
-    /// carries the `JSite` id where its siblings carry the style index, so
-    /// nothing on the placement names a style at all. It comes from the
-    /// `StyleCluster` the `.sym` carries itself. `ElecTraceLine` is the
-    /// smallest symbol that proves the join: its table defines exactly one
-    /// line style, `#0000FF` at 0.5mm, and every one of its ten strokes
-    /// indexes it -- which is why the trace-heating row draws blue.
+    /// They come from the `StyleCluster` the `.sym` carries itself, and
+    /// `ElecTraceLine` is a small body to read the join on. Its table
+    /// defines two line styles, `Normal` (black, 0.35 mm) and `As Drawn`
+    /// (`#0000FF`, 0.5 mm), and its ten strokes name neither: each names
+    /// style 9, a `JStyleOverride` of `Normal` that states one thing of its
+    /// own, a width of 0.13 mm. So the body is black at 0.13 mm — a pen
+    /// neither line style states, which is the override's say handed over.
+    ///
+    /// Until 2026-11-12 this test held that the table defined one line
+    /// style, `As Drawn`, that every stroke took it, and that this was why
+    /// the trace-heating row draws blue. It had never run: it looked for the
+    /// file in the committed sample, which never held it, and returned
+    /// without a word on every machine. Read out of the library's archive it
+    /// ran, and failed on the first stroke. The row does draw blue, and at
+    /// 0.13 mm: the blue is the placement's — the drawing's `As Drawn`, see
+    /// [`PrimitiveStyle`] — and the width is this body's own.
     #[test]
     fn a_symbol_carries_the_colour_and_width_its_own_style_table_states() {
-        let Some(path) = fixture(r"Design/Annotation/Graphics/ElecTraceLine.sym") else {
+        use crate::parsers::sheet_records::PSM_TYPE_CODE_JSTYLE_OVERRIDE;
+        use crate::style_link::{
+            StyleHop, OVERRIDE_STATES_WIDTH, PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
+        };
+
+        // Of the whole library, not of the committed sample.
+        let Some(bytes) = library_symbol(r"Design/Annotation/Graphics/ElecTraceLine.sym") else {
             return;
         };
-        let body =
-            read_symbol_geometry(&path).expect("ElecTraceLine.sym is a readable compound file");
+
+        // What the table states.
+        let package = PidPackage::from_bytes(&bytes).expect("a readable compound file");
+        let table = package
+            .streams
+            .get("/StyleCluster")
+            .map(|raw| DocumentStyleTable::from_stylecluster_bytes(&raw.data))
+            .expect("the symbol's own style table");
+        let line_styles: Vec<(u32, Option<&str>, [u8; 3], f64)> = table
+            .records()
+            .iter()
+            .filter(|record| record.type_code == PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE)
+            .map(|record| {
+                let symbology = record.symbology.expect("a line style reads");
+                (
+                    record.style_id,
+                    record.name.as_deref(),
+                    symbology.rgb(),
+                    (symbology.width_mm() * 1e6).round() / 1e6,
+                )
+            })
+            .collect();
+        assert_eq!(
+            line_styles,
+            [
+                (1, Some("Normal"), [0x00, 0x00, 0x00], 0.35),
+                (7, Some("As Drawn"), [0x00, 0x00, 0xFF], 0.5),
+            ],
+            "the two line styles the table defines"
+        );
+        let stated = table.get(9).expect("style 9 is defined");
+        assert_eq!(stated.type_code, PSM_TYPE_CODE_JSTYLE_OVERRIDE);
+        assert_eq!(stated.base_reference, Some(1), "an override of `Normal`");
+        assert_eq!(
+            stated.override_mask,
+            Some(OVERRIDE_STATES_WIDTH),
+            "it states a width and nothing else"
+        );
+        let resolved = table
+            .resolve_line_style(9)
+            .expect("style 9 is a line style");
+        assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 9 });
+        let pen = PrimitiveStyle::from_resolved(&resolved);
+        assert_eq!(pen.rgb, [0x00, 0x00, 0x00]);
+        assert!((pen.width_mm - 0.13).abs() < 1e-9, "width {}", pen.width_mm);
+        assert!(!pen.is_dashed() && !pen.paper, "{pen:?}");
+
+        // What the reader hands over: every stroke with style 9's pen, which
+        // no other style of the table resolves to.
+        let body = read_symbol_geometry_from_bytes(&bytes)
+            .expect("ElecTraceLine.sym is a readable compound file");
         assert_eq!(body.primitives.len(), 10, "8 lines and 2 arcs");
         for styled in &body.primitives {
             let style = styled
                 .style
                 .as_ref()
                 .unwrap_or_else(|| panic!("every stroke names a style: {styled:?}"));
-            assert_eq!(style.rgb, [0x00, 0x00, 0xFF], "{styled:?}");
-            assert!(
-                (style.width_mm - 0.5).abs() < 1e-9,
-                "width {}",
-                style.width_mm
+            assert_eq!(style, &pen, "{styled:?}");
+        }
+        for other in table.records().iter().filter(|record| record.style_id != 9) {
+            let Some(resolved) = table.resolve_line_style(other.style_id) else {
+                continue;
+            };
+            assert_ne!(
+                PrimitiveStyle::from_resolved(&resolved),
+                pen,
+                "style {} draws with the same pen",
+                other.style_id
             );
-            assert!(!style.is_dashed(), "a solid stroke: {styled:?}");
         }
     }
 
@@ -2463,16 +2589,13 @@ mod tests {
     /// outright and dash at 3.5 / 1.75 mm; the rest draw solid.
     #[test]
     fn a_symbol_carries_the_dash_its_own_style_table_states() {
-        // The reference library beside the fixtures, not the small sample
-        // the other tests read: the pit is only in the full one.
-        let path = symbols_root()
-            .with_file_name("symbols-full")
-            .join(r"Equipment/Vessels/Tanks/Wastewater Pit.sym");
-        if !path.is_file() {
+        // The whole library, not the small sample the other tests read: the
+        // pit is only in the full one.
+        let Some(bytes) = library_symbol(r"Equipment/Vessels/Tanks/Wastewater Pit.sym") else {
             return;
-        }
-        let body =
-            read_symbol_geometry(&path).expect("Wastewater Pit.sym is a readable compound file");
+        };
+        let body = read_symbol_geometry_from_bytes(&bytes)
+            .expect("Wastewater Pit.sym is a readable compound file");
         let dashed: Vec<&StyledPrimitive> = body
             .primitives
             .iter()
@@ -2518,14 +2641,11 @@ mod tests {
     /// names 宋体. See `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
     #[test]
     fn a_symbols_lettering_comes_off_its_own_style_table() {
-        let path = symbols_root()
-            .with_file_name("symbols-full")
-            .join(r"Design/Title Block Label.sym");
-        if !path.is_file() {
+        let Some(bytes) = library_symbol(r"Design/Title Block Label.sym") else {
             return;
-        }
-        let body =
-            read_symbol_geometry(&path).expect("Title Block Label.sym is a readable compound file");
+        };
+        let body = read_symbol_geometry_from_bytes(&bytes)
+            .expect("Title Block Label.sym is a readable compound file");
         let lettered: Vec<&SymbolLettering> = body
             .primitives
             .iter()
@@ -2597,13 +2717,12 @@ mod tests {
     /// dashed.
     #[test]
     fn a_symbols_override_switches_off_the_dash_its_base_names() {
-        let path = symbols_root()
-            .with_file_name("symbols-full")
-            .join(r"Piping/Valves/2 Way Other/arrester breather valve(RD).sym");
-        if !path.is_file() {
+        let Some(bytes) =
+            library_symbol(r"Piping/Valves/2 Way Other/arrester breather valve(RD).sym")
+        else {
             return;
-        }
-        let body = read_symbol_geometry(&path)
+        };
+        let body = read_symbol_geometry_from_bytes(&bytes)
             .expect("arrester breather valve(RD).sym is a readable compound file");
         assert_eq!(body.primitives.len(), 30);
         assert!(
@@ -2855,7 +2974,7 @@ mod tests {
         let path =
             corpus.join(r"Ref/Symbols/Equipment/Other Equipment/Wellhead Christmas Tree 02.sym");
         if !path.is_file() {
-            eprintln!("skipping the wellhead body; {} is absent", path.display());
+            eprintln!("skipping: the wellhead body, {}, is absent", path.display());
             return;
         }
         let body = read_symbol_geometry(&path).expect("wellhead .sym is a readable compound file");
@@ -2983,7 +3102,7 @@ mod tests {
     #[test]
     fn library_resolves_through_a_unc_path_and_caches_the_miss() {
         let root = symbols_root();
-        if !root.is_dir() {
+        if !sample_library_is_here() {
             return;
         }
         let mut library = SymbolLibrary::new(&root);
@@ -3152,7 +3271,7 @@ mod tests {
     fn library_searches_past_a_root_that_lacks_the_symbol() {
         // The fixtures cite five different reference shares, and a machine
         // normally holds a partial copy of each rather than one merged tree.
-        if !symbols_root().is_dir() {
+        if !sample_library_is_here() {
             return;
         }
         let absent = scratch_root("absent");
@@ -3173,7 +3292,7 @@ mod tests {
     /// all before the trimmed spelling was tried.
     #[test]
     fn a_component_leading_space_still_finds_the_file_on_disk() {
-        if !symbols_root().is_dir() {
+        if !sample_library_is_here() {
             return;
         }
         let mut library = SymbolLibrary::new(symbols_root());
@@ -3202,7 +3321,7 @@ mod tests {
     fn library_searches_past_a_root_whose_copy_will_not_read() {
         // A partial copy can leave a placeholder or a truncated file where
         // another copy has the real symbol. That must not end the search.
-        if !symbols_root().is_dir() {
+        if !sample_library_is_here() {
             return;
         }
         let broken = scratch_root("broken");

@@ -2,11 +2,16 @@
 //! the reader refused before it asked the `igTextBox` shape table, and a
 //! ratchet on how many text records the library still refuses.
 //!
-//! Soft-skips where `test-file/symbols-full` is absent.
+//! The library is read out of the archives it is committed in
+//! (`tests/support/library_symbols.rs`), so these run on every checkout.
+//! Until 2026-11-12 they read `test-file/symbols-full`, a directory only a
+//! machine that had unpacked the library holds, and returned without a word
+//! where it was absent.
 
-use std::path::{Path, PathBuf};
+#[path = "support/library_symbols.rs"]
+mod library_symbols;
 
-use pid_parse::symbol_library::{read_symbol_geometry, SymbolPrimitive};
+use pid_parse::symbol_library::{read_symbol_geometry_from_bytes, SymbolPrimitive};
 
 const EQUIPMENT_LABELS: &str = "Equipment Components/Labels - Equipment Components";
 const INSTRUMENT_LABELS: &str = "Instrumentation/Labels - General Instrument";
@@ -16,35 +21,11 @@ const PIPING_LABELS: &str = "Piping/Labels - Piping Components";
 /// Diameter.sym` both sit, in metres: 4.25 in by 5.5 in.
 const DEFAULT_LABEL_AT: (f64, f64) = (0.10795, 0.1397);
 
-fn library_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/symbols-full")
-}
-
-fn collect_syms(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_syms(&path, out);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("sym"))
-        {
-            out.push(path);
-        }
-    }
-}
-
-/// Every text a symbol's body carries, with its insertion point; `None`
-/// where the file is not in this checkout.
+/// Every text a symbol's body carries, with its insertion point; `None`,
+/// after a `skipping: ` line, where the symbol is not in reach.
 fn texts(folder: &str, file: &str) -> Option<Vec<(String, (f64, f64))>> {
-    let path = library_root().join(folder).join(file);
-    if !path.is_file() {
-        return None;
-    }
-    let body = read_symbol_geometry(&path).expect("a readable .sym");
+    let bytes = library_symbols::library_symbol(&format!("{folder}/{file}"))?;
+    let body = read_symbol_geometry_from_bytes(&bytes).expect("a readable .sym");
     let found = body
         .primitives
         .into_iter()
@@ -93,24 +74,42 @@ fn labels_the_reader_used_to_refuse_read_off_the_bundled_library() {
 
 /// The bundled library refuses no text record but the ones stating an empty
 /// text: two across both library copies when the shape table landed.
+///
+/// Every symbol of the library is read, and the walk says so: a walk that
+/// found no file, or left one unread, used to pass on the bound alone.
 #[test]
 fn the_bundled_library_refuses_no_text_record_but_the_empty_ones() {
-    let root = library_root();
-    if !root.is_dir() {
+    let Some(symbols) = library_symbols::every_library_symbol() else {
         return;
-    }
-    let mut files = Vec::new();
-    collect_syms(&root, &mut files);
+    };
+    let count = symbols.len();
+    assert_eq!(
+        count,
+        library_symbols::LIBRARY_SYMBOLS,
+        "the symbols the library holds"
+    );
     let mut refused = 0usize;
-    for path in &files {
-        let Ok(body) = read_symbol_geometry(path) else {
+    let mut read = 0usize;
+    let mut unreadable: Vec<&str> = Vec::new();
+    for (name, bytes) in &symbols {
+        let Ok(body) = read_symbol_geometry_from_bytes(bytes) else {
+            unreadable.push(name);
             continue;
         };
         refused += body.skipped_records.get(&0x004D).copied().unwrap_or(0);
+        read += body
+            .primitives
+            .iter()
+            .filter(|styled| matches!(styled.primitive, SymbolPrimitive::Text { .. }))
+            .count();
     }
-    let count = files.len();
+    assert!(
+        unreadable.is_empty(),
+        "symbols that are not readable compound files: {unreadable:?}"
+    );
     assert!(
         refused <= 2,
         "{refused} text records refused across {count} files"
     );
+    eprintln!("symbol library: {count} symbols, {read} text records read, {refused} refused");
 }
