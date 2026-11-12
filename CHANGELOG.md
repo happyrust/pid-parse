@@ -138,7 +138,7 @@ Tc     = 截断到三位((S − 前 n−1 个字的前进量之和) × 0.48 / ((
   矩形排的图、被压窄的标签）它也接着前一段的笔位写，所以前一段同样把最后一个字单写
   （`a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it`，先红：`[3, 3]` 对
   `[2, 1, 3]`）。这是 `641451b` 漏掉的一种情形，补在后一个提交里；71 页上没有这样的标签，导出逐字节不变。
-- 库内用例 353 → 362，先红后绿：`a_string_is_one_text_object_under_the_drivers_letter_spacing`（改前
+- 库内用例 354 → 362（353 → 354 是第七轮加的那一条），先红后绿：`a_string_is_one_text_object_under_the_drivers_letter_spacing`（改前
   `Tc -0.08949152542372815 is not the driver's -0.089`）、`a_stated_width_is_set_under_the_matrix_the_driver_writes`
   （改成逐位相等）、`a_string_another_piece_carries_on_from_has_its_last_glyph_apart`，和 `letter_spacing` 的
   5 条（标题栏三档 `0.124` / `0.169` / `0.155`、证书行 `-0.494` / `-0.288`、就近与截断各一例、除以矩阵那一项、
