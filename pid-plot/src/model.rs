@@ -112,7 +112,9 @@ pub struct PaperModel {
     /// The parser keeps those as inferred lines because they are the evidence
     /// for how the record reads at all; a page draws what the drawing states.
     pub skipped_endpoint_pairs: usize,
-    /// Symbol files the drawing names and the library does not have.
+    /// Symbol files the drawing names and the library does not have — or
+    /// has in a file too damaged to draw from, which the name then says:
+    /// `… (the library's file is damaged and is not drawn from)`.
     pub missing_symbols: Vec<String>,
     /// Template stems the drawing's frame links that this corpus could not put
     /// furniture behind.
@@ -195,7 +197,10 @@ pub enum SymbolBodySource {
     /// `(JSheet, LdcSite)` pair, resolved against the file's definition cache.
     Cached,
     /// Neither body: nothing was drawn, and the page carries a box where the
-    /// placement stood.
+    /// placement stood. Also a placement whose library file is damaged in
+    /// a way that leaves nothing of its body that can be drawn as the sound
+    /// file's (`SymbolGeometry::displayed`): the file is there, and is said
+    /// to be damaged, and the placement is left its box.
     Missing,
 }
 
@@ -2391,20 +2396,16 @@ struct SymbolPlacements {
     /// its strokes reached. Only a template's are read back
     /// ([`BorderTemplate::symbols`]).
     placed: Vec<TemplateSymbol>,
-    /// The symbol files a placement was drawn from whose body carries a
-    /// chain fault, by key: the file as the placement names it, how many
-    /// placements were drawn from it, and the faults of the file.
-    faulted: std::collections::BTreeMap<String, FaultedSymbol>,
+    /// The symbol files a placement took its body from whose body carries
+    /// a chain fault, by key: the file as the placement names it, how many
+    /// placements took their body from it, whether they were drawn, and the
+    /// faults of the file.
+    faulted: std::collections::BTreeMap<String, crate::ledger::SymbolFileFaults>,
 }
-
-/// A symbol file with a chain stream that does not hold that placements
-/// were drawn from: its name below the library's `Symbols` directory, the
-/// placements, the faults.
-type FaultedSymbol = (String, u64, Vec<pid_parse::StreamChainFault>);
 
 impl SymbolPlacements {
     /// The damaged symbol files, as the layout ledger files them.
-    fn faulted(&self) -> Vec<FaultedSymbol> {
+    fn faulted(&self) -> Vec<crate::ledger::SymbolFileFaults> {
         self.faulted.values().cloned().collect()
     }
 }
@@ -2417,6 +2418,15 @@ impl SymbolPlacements {
 /// (the templates' `C:\…\Temp\BLFH.sym` is long gone) — then the `.sym` the
 /// placement names, from the symbol library. A placement that finds neither
 /// leaves a box where it stood rather than disappearing.
+///
+/// A library file with a chain stream that does not hold is drawn from as
+/// far as it can be drawn as the sound file's — part of what the sound file
+/// draws, never another sheet of the file in a short one's place — and
+/// where no part can be had the placement is not drawn: it counts as a
+/// missing symbol and leaves what one leaves, which for a placement of the
+/// drawing's own is a box (a border template's placements are tallied
+/// apart, and their boxes are not the page's). Either way the file is
+/// tallied, to be said and filed.
 ///
 /// The line-style index and the `As Drawn` set travel together because the pen
 /// a body draws with is decided from both at once; a struct holding them would
@@ -2529,45 +2539,72 @@ fn push_symbol_instance(
         source = PlacementSource::Cached;
         SymbolBodySource::Cached
     } else if let Some(body) = body {
-        // The body is the library's. A file with a chain stream that does
-        // not hold gave the reader what its own walk could take of it — a
-        // sheet short, another sheet in its place, or all of it — and the
-        // page cannot tell which, so it says which file.
+        // The body is the library's. What a file with a chain stream that
+        // does not hold draws is part of what the sound file draws, or
+        // nothing, and the page cannot show which, so it says which file.
+        let shown = body.displayed();
         if !body.chain_faults.is_empty()
             && let (Some(key), Some(path)) = (key.clone(), symbol_path.as_deref())
         {
             let named = pid_parse::symbol_library::library_relative_path(path).unwrap_or(path);
-            let found = tally
-                .faulted
-                .entry(key)
-                .or_insert_with(|| (named.to_owned(), 0, body.chain_faults.clone()));
-            found.1 = found.1.saturating_add(1);
+            let found =
+                tally
+                    .faulted
+                    .entry(key)
+                    .or_insert_with(|| crate::ledger::SymbolFileFaults {
+                        symbol: named.to_owned(),
+                        placements: 0,
+                        not_drawn: shown.as_ref().err().copied(),
+                        faults: body.chain_faults.clone(),
+                    });
+            found.placements = found.placements.saturating_add(1);
         }
-        let displayed = body.displayed_primitives();
-        body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
-        body_tally.dropped.insert(
-            DropReason::BodyLayerHidden,
-            u64::try_from(body.primitives.len().saturating_sub(displayed.len()))
-                .unwrap_or(u64::MAX),
-        );
-        for styled in displayed {
-            let item = push_symbol_primitive(
-                out,
-                entity,
-                &placement,
-                SymbolItem {
-                    shape: &styled.primitive,
-                    style: styled.style.as_ref(),
-                    lettering: styled.lettering.as_ref(),
-                },
-                placement_style,
-                as_drawn,
-                page_mm,
-            );
-            body_tally.count(item);
+        match shown {
+            Ok(displayed) => {
+                body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
+                body_tally.dropped.insert(
+                    DropReason::BodyLayerHidden,
+                    u64::try_from(body.primitives.len().saturating_sub(displayed.len()))
+                        .unwrap_or(u64::MAX),
+                );
+                for styled in displayed {
+                    let item = push_symbol_primitive(
+                        out,
+                        entity,
+                        &placement,
+                        SymbolItem {
+                            shape: &styled.primitive,
+                            style: styled.style.as_ref(),
+                            lettering: styled.lettering.as_ref(),
+                        },
+                        placement_style,
+                        as_drawn,
+                        page_mm,
+                    );
+                    body_tally.count(item);
+                }
+                source = PlacementSource::Library;
+                SymbolBodySource::Library
+            }
+            Err(_) => {
+                // No part of the body can be drawn as the sound file's:
+                // the placement is a symbol the page has no body for. It
+                // leaves the box and the count of a missing symbol; that
+                // the file is there, and damaged, is the tally's above.
+                if let Some(key) = key.clone() {
+                    tally
+                        .missing_boxes
+                        .push(missing_box(&key, [insertion.x, insertion.y]));
+                    tally.missing.insert(format!(
+                        "{} (the library's file is damaged and is not drawn from)",
+                        missing_name(&key)
+                    ));
+                }
+                source = PlacementSource::Missing;
+                dropped = Some(DropReason::SymbolMissing);
+                SymbolBodySource::Missing
+            }
         }
-        source = PlacementSource::Library;
-        SymbolBodySource::Library
     } else {
         if let Some(key) = key.clone() {
             tally
@@ -8148,11 +8185,13 @@ mod tests {
     const GAUGE_AS_PLACED: &str = r"\\SITE\Project\Plant\Ref\Symbols\Instrumentation\Off-Line\Without Implied Components\Pressure\PG-Pressure Gauge.sym";
 
     /// A symbol library of one file — the committed gauge, with the chain
-    /// of its fullest sheet stopped on its first record when `stopped` —
-    /// and the directory that holds the file for as long as the guard lives.
+    /// of its fullest sheet, `/Sheet6`, stopped on the record `stop_at`
+    /// counts from the first — and the directory that holds the file for as
+    /// long as the guard lives. The sheet is the gauge's normal view, and
+    /// its first record is the circle a page draws.
     fn a_library_of_the_gauge(
         name: &str,
-        stopped: bool,
+        stop_at: Option<usize>,
     ) -> (SymbolLibrary, crate::scratch::ScratchDir) {
         use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
@@ -8164,7 +8203,7 @@ mod tests {
             .parse_package(&source)
             .expect("the committed gauge");
         let mut plan = WritePlan::default();
-        if stopped {
+        if let Some(record) = stop_at {
             let (stream, mut data) = package
                 .streams
                 .iter()
@@ -8177,9 +8216,10 @@ mod tests {
                 .map(|(path, raw)| (path.clone(), raw.data.clone()))
                 .max_by_key(|(_, data)| data.len())
                 .expect("the gauge has a sheet");
-            // An eight-byte header, then the first record: its type word
-            // and its length, which is set to zero.
-            data[10..14].copy_from_slice(&0u32.to_le_bytes());
+            // An eight-byte header, then records end to end: the length of
+            // the one asked for is set to zero.
+            let at = pid_parse::parsers::sheet_records::SheetChain::walk(&data).starts[record];
+            data[at + 2..at + 6].copy_from_slice(&0u32.to_le_bytes());
             plan.stream_replacements.push(StreamReplacement {
                 path: stream,
                 new_data: data,
@@ -8217,15 +8257,18 @@ mod tests {
         .source
     }
 
-    /// A placement drawn from a library body whose file has a chain that
-    /// does not hold is tallied: the file once, by the name the placement
-    /// gives it below `Symbols`, with every placement drawn from it and the
-    /// faults of the file. A sound file is not, and neither is a file the
-    /// placement is not drawn from — a drawing that caches the body reads
-    /// the cache.
+    /// A placement that takes its body from a library file with a chain
+    /// that does not hold is tallied: the file once, by the name the
+    /// placement gives it below `Symbols`, with every placement that takes
+    /// its body from it, whether they are drawn, and the faults of the
+    /// file. A sound file is not, and neither is a file the placement does
+    /// not take its body from — a drawing that caches the body reads the
+    /// cache.
     #[test]
     fn a_placement_drawn_from_a_damaged_symbol_file_is_tallied_once_a_file() {
-        let (mut stopped, _kept) = a_library_of_the_gauge("a-gauge-read-short", true);
+        // The gauge's normal view stopped past its first record, the
+        // circle: the placement is drawn from the records the chain read.
+        let (mut stopped, _kept) = a_library_of_the_gauge("a-gauge-read-short", Some(7));
         let nothing_cached = NormalizedPidGeometry::default();
         let gauge = symbol_placement(Some(GAUGE_AS_PLACED), None);
         let mut tally = super::SymbolPlacements::default();
@@ -8237,13 +8280,67 @@ mod tests {
         }
         let faulted = tally.faulted();
         assert_eq!(faulted.len(), 1, "{faulted:?}");
-        let (file, placements, faults) = &faulted[0];
-        assert_eq!(file, &GAUGE.join("\\"));
-        assert_eq!(*placements, 2);
-        assert_eq!(faults.len(), 1, "{faults:?}");
+        let file = &faulted[0];
+        assert_eq!(file.symbol, GAUGE.join("\\"));
+        assert_eq!((file.placements, file.not_drawn), (2, None));
+        assert_eq!(file.faults.len(), 1, "{:?}", file.faults);
         assert!(
-            faults[0].stream_path.contains("Sheet") && faults[0].stop.is_some(),
-            "{faults:?}"
+            file.faults[0].stream_path.contains("Sheet") && file.faults[0].stop.is_some(),
+            "{:?}",
+            file.faults
+        );
+        assert!(
+            tally.missing.is_empty() && tally.missing_boxes.is_empty(),
+            "a placement drawn as far as its file reads is no missing symbol"
+        );
+
+        // Stopped on its first record: nothing of the normal view is read.
+        // The file's other sheet is not drawn in its place; the placement
+        // is not drawn, leaves the box and the name of a missing symbol,
+        // and the file is tallied as one its placements are not drawn from.
+        let (mut unread, _kept) = a_library_of_the_gauge("a-gauge-read-nothing", Some(0));
+        let mut tally = super::SymbolPlacements::default();
+        let mut out = Vec::new();
+        let layout = push_symbol_instance(
+            &mut out,
+            &gauge,
+            &nothing_cached,
+            &mut unread,
+            &no_styles(),
+            &std::collections::BTreeSet::new(),
+            Some([420.0, 297.0]),
+            &mut tally,
+        );
+        assert_eq!(
+            (layout.source, layout.dropped),
+            (PlacementSource::Missing, Some(DropReason::SymbolMissing))
+        );
+        assert!(out.is_empty(), "nothing is drawn of it: {out:?}");
+        let faulted = tally.faulted();
+        assert_eq!(faulted.len(), 1, "{faulted:?}");
+        assert_eq!(
+            (faulted[0].placements, faulted[0].not_drawn),
+            (
+                1,
+                Some(pid_parse::symbol_library::SymbolNotDrawn::NothingToShow)
+            )
+        );
+        assert_eq!(tally.missing_boxes.len(), 1, "the box of a missing symbol");
+        assert_eq!(
+            tally.missing.iter().collect::<Vec<_>>(),
+            [&format!(
+                "{} (the library's file is damaged and is not drawn from)",
+                GAUGE.join("\\").to_ascii_lowercase()
+            )],
+            "named as a file that is there and damaged"
+        );
+        assert_eq!(
+            tally
+                .placed
+                .iter()
+                .map(|placed| (placed.body, placed.library_available))
+                .collect::<Vec<_>>(),
+            [(SymbolBodySource::Missing, true)]
         );
 
         // The same file, cached by the drawing: drawn from the cache, and
@@ -8270,7 +8367,7 @@ mod tests {
         assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
 
         // A sound file, drawn from.
-        let (mut sound, _kept) = a_library_of_the_gauge("a-gauge-read-whole", false);
+        let (mut sound, _kept) = a_library_of_the_gauge("a-gauge-read-whole", None);
         let mut tally = super::SymbolPlacements::default();
         assert_eq!(
             placed_from(&gauge, &nothing_cached, &mut sound, &mut tally),
@@ -8375,7 +8472,7 @@ mod tests {
             DropReason::SymbolFileChainFault => {
                 // A placement the drawing caches no body for, and a library
                 // whose file for it has a sheet with a chain that stops.
-                let (mut library, _kept) = a_library_of_the_gauge("a-gauge-case", true);
+                let (mut library, _kept) = a_library_of_the_gauge("a-gauge-case", Some(0));
                 let mut tally = super::SymbolPlacements::default();
                 placed_from(
                     &symbol_placement(Some(GAUGE_AS_PLACED), None),

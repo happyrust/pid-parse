@@ -116,22 +116,24 @@ pub enum DropReason {
     /// records, once per stream (`LayoutLedger::note_unplaced`); no page of
     /// the corpora this crate is tested on has one.
     RecordWithoutDisplayPlace,
-    /// A placement drawn from a symbol library body whose file has a chain
-    /// stream that does not hold
-    /// (`pid_parse::symbol_library::SymbolGeometry::chain_faults`): the
-    /// placement is drawn from whatever the symbol reader took of the file.
-    /// The reader takes a sheet only where its own walk of it ends on the
-    /// stream's last byte, so that can be the body less a sheet, nothing,
-    /// or — where the file keeps the body on a second sheet — that sheet,
-    /// which a sound file is not drawn from; and for a fault that walk does
-    /// not see, the sound file's body. The page cannot tell which. Counted
-    /// once a symbol file and stream on a page that draws a placement from
-    /// it, with the bytes its chain left unread
-    /// (`LayoutLedger::symbol_chain_faults`); `pid_plot` says it. A file no
-    /// placement is drawn from costs the page nothing and is not counted: a
-    /// drawing caches the body of every symbol it places, and no page of
-    /// the corpora this crate is tested on draws a placement from the
-    /// library at all.
+    /// A placement that takes its body from a symbol library file with a
+    /// chain stream that does not hold
+    /// (`pid_parse::symbol_library::SymbolGeometry::chain_faults`). The
+    /// symbol reader reads such a stream as far as its chain holds, and
+    /// what is drawn of the file is part of what the sound file draws, or
+    /// nothing (`SymbolGeometry::displayed`): the strokes before a stop on
+    /// the sheet that draws the body, never the file's other sheet in its
+    /// place; the whole body for a fault that loses no record; and where no
+    /// part can be had the placement is not drawn and is a
+    /// [`Self::SymbolMissing`] as well. The page cannot show which. Counted
+    /// once a symbol file and stream on a page with a placement of that
+    /// file, with the bytes its chain left unread
+    /// (`LayoutLedger::symbol_chain_faults`, which also says whether the
+    /// placements are drawn); `pid_plot` says it. A file no placement takes
+    /// its body from costs the page nothing and is not counted: a drawing
+    /// caches the body of every symbol it places, and no page of the
+    /// corpora this crate is tested on draws a placement from the library
+    /// at all.
     SymbolFileChainFault,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as
@@ -201,8 +203,12 @@ pub enum DropReason {
     /// which carry byte provenance but no reading a page could draw.
     KindUnknown,
     /// A placement that names a symbol path no library answers — cached body
-    /// and library body both absent. The writer draws no placeholder box; the
-    /// count is `PaperModel::missing_boxes` too.
+    /// and library body both absent — or one the library answers with a file
+    /// read short in a way that leaves nothing of its body to draw as the
+    /// sound file's (`pid_parse::symbol_library::SymbolNotDrawn`; the file
+    /// is then a [`Self::SymbolFileChainFault`] of the page too). The writer
+    /// draws no placeholder box; the count is `PaperModel::missing_boxes`
+    /// too.
     SymbolMissing,
     /// A placement with neither a symbol path nor a resolvable cached body.
     /// Silent until the ledger: nothing anywhere counted it.

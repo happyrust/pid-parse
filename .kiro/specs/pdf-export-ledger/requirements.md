@@ -256,7 +256,7 @@
 | `record_native_skip` | 有意 | 类型字带 `0x8000` 原生跳过位，是文件自己退役的旧副本：`skipped_graphic_records` | 已计数，不告警 |
 | `sheet_stream_without_geometry` | 可疑 | `SheetStream::geometry` 为 `None`：流打不开，或没有任何族解码出记录且探针一无所获；这时该流的三类普查在 `sheet_geometry_from_probe`（`src/streams/cluster.rs`）里一并丢掉 | 静默（新发现） |
 | `record_without_display_place` | 可疑 | `paint_order` / `unplaced_records`（`pid-plot/src/model.rs`）：页上有图元、却在图纸的显示次序里没有位置的记录——图纸没有读到自己的对象表（`JSheet` 记录缺失，或它列的不全是这条流的记录），表够不到这条记录的拥有者，或记录在一张嵌入的图纸里而图纸列出的图框没有一个嵌着它。这样的记录照样画，画在有位置的全部之后；整页没有一张图纸给出次序时退到「先笔画后文字」。页上不少东西，少的是「谁盖住谁」的依据。按流记一项，计数是记录数；`LayoutLedger::unplaced` 留着原因与图元数，`pid_plot` 在 stderr 上各说一行（2026-11-11 加，附录由 44 行变 45 行，可疑 23 / 有意 22）。手头 71 页一项都没有。原因按流取自解析侧（`PidDocument::sheet_without_display_order`）：流里没有图纸自己的记录（`UnplacedWhy::NoRecordOfTheSheet`）与「没有表」分开记；链停在图纸自己的记录之前留下的正是前一种，这时账本照记本项，stderr 由链故障那一行说，不另起一行（2026-11-12） | 静默（审查发现） |
-| `symbol_file_chain_fault` | 可疑 | `push_symbol_instance`（`pid-plot/src/model.rs`）的库符号体分支：放置是从符号库的 `.sym` 画出来的，而这个文件有一条链流立不住（`pid_parse::symbol_library::SymbolGeometry::chain_faults` 非空）。放置画的是符号读取器从这个文件里读到的东西；读取器只在自己的走查恰好走到流尾时才收下一张 Sheet，所以结果可以是少一张 Sheet 的体、什么都没有、文件里另一张 Sheet 的样子（入库的压力表 `/Sheet6` 长度字段为零、流尾多出字节或魔数不对时，体只剩 `/Sheet68`，页上是那个圆外加一个完好文件不写的 `PG`），也可以与完好文件一模一样（类型字带 `0x4000`、流头记录数不对：读取器的走查看不见这两种）。页面分不出是哪一种，所以只要文件有故障就记。按「符号文件 + 流」记一项，计数 1、字节数是链没读的那部分，记在放置所在的域；`LayoutLedger::symbol_chain_faults` 留着文件名、放置数与故障本身，`pid_plot` 在 stderr 上各说一行（点名符号文件、流与停点）。没有放置从它画的文件不记也不说：图纸缓存着自己放置的每个符号的体，只有图纸里没有缓存体的放置才读符号库（2026-11-12 加，附录由 49 行变 50 行，可疑 27 / 有意 23）。手头 71 页没有一个放置是从符号库画的，所以一项都没有 | 静默（工单） |
+| `symbol_file_chain_fault` | 可疑 | `push_symbol_instance`（`pid-plot/src/model.rs`）的库符号体分支：放置的体取自符号库的 `.sym`，而这个文件有一条链流立不住（`pid_parse::symbol_library::SymbolGeometry::chain_faults` 非空；每张 `Sheet*`、每个 `PSMcluster0`、每个 `StyleCluster` 都算，根簇在内）。符号读取器把这样的流读到链立得住的地方，画出来的是完好文件所画的一部分或者不画（`SymbolGeometry::displayed`，2026-11-12 起）：画符号体的那张图纸停了，画停点之前的笔画，不拿文件里另一张图纸顶替；没有少读记录的故障（魔数不对而链走到流尾、流头条数少写）画完好文件的体；拿不到这一部分时放置不画，另记一项 `symbol_missing`（根簇读短、作正常视图的图纸读短而读到的一笔都不显示、要按笔画数挑图纸而有图纸读短）。页面显不出是哪一种，所以只要文件有故障就记。按「符号文件 + 流」记一项，计数 1、字节数是链没读的那部分，记在放置所在的域；`LayoutLedger::symbol_chain_faults` 留着文件名、放置数、放置画没画（`not_drawn`）与故障本身，`pid_plot` 在 stderr 上各说一行（点名符号文件、流与停点；没画时说没画和原因）。没有放置取它的体的文件不记也不说：图纸缓存着自己放置的每个符号的体，只有图纸里没有缓存体的放置才读符号库（2026-11-12 加，附录由 49 行变 50 行，可疑 27 / 有意 23；同日 #67 改了画法，码表不变）。手头 71 页没有一个放置是从符号库画的，所以一项都没有 | 静默（工单） |
 | `record_symbol_body_cache` | 有意 | 嵌套 `JSite*/PSMcluster0` 的符号体记录，经引用它的放置画出，本身不是页面内容 | 只有告警文字 |
 | `cache_definition_unplaced` | 有意 | 缓存定义没有任何放置引用（例如参数化符号缓存的模板体），其记录不上页 | 未计数（新发现） |
 | `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |
@@ -285,7 +285,7 @@
 | `point_marker_degenerate` | 可疑 | `Point`：marker 的笔画全部 `is_degenerate` | 未计数 |
 | `kind_annotation` | 可疑 | `PidGraphicKind::Annotation`；当前没有发射器产出，应为 0 | 未计数 |
 | `kind_unknown` | 有意 | `PidGraphicKind::Unknown`：探针证据、`JStyleOverride` 等 | 未计数 |
-| `symbol_missing` | 可疑 | 放置有符号路径，缓存体与符号库体都没有；写出端不画方框 | 已计数（`missing_symbols` / `missing_boxes`） |
+| `symbol_missing` | 可疑 | 放置有符号路径，缓存体与符号库体都没有；或者符号库里的文件有流读短了、画不出完好文件所画的任何一部分（`SymbolGeometry::displayed` 返回 `Err`，2026-11-12 起；这个文件同时是一项 `symbol_file_chain_fault`，`missing_symbols` 里的名字后面注明 `the library's file is damaged and is not drawn from`）；写出端不画方框 | 已计数（`missing_symbols` / `missing_boxes`） |
 | `symbol_unresolvable` | 可疑 | 放置既没有符号路径，也没有可解析的缓存体；今天任何地方都不记 | 静默（新发现） |
 | `symbol_body_empty` | 可疑 | 解析到了符号体，但体内图元全部按 A.3 的原因丢掉，一个页面图元也没产出 | 未计数（新发现） |
 

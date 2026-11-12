@@ -1153,10 +1153,16 @@ fn a_style_table_reads_the_records_its_fault_says_the_chain_read() {
 /// tripwire reads past the stop on.
 const STYLE_TABLE_LENGTH_CHANGES: (usize, usize, usize) = (3, 3405, 122);
 
-/// A symbol file read as a library body. The body's reader takes a sheet
-/// whole or not at all, so a sheet whose chain stops gives it nothing — a
-/// body short of that sheet's strokes, and until now nothing that said so.
-/// The body carries the faults the parse of the file found.
+/// A symbol file read as a library body. The body's reader reads a sheet
+/// by the walk a drawing's own sheets are read by, so a sheet whose chain
+/// stops gives the body the records before the stop and nothing after — a
+/// body short of the rest of that sheet's strokes — and the body lists the
+/// fault that walk states and says which sheet it read short. (Until
+/// 2026-11-12 the reader walked a sheet by a rule of its own and took it
+/// whole or not at all; "a sheet whose chain stops gives the body nothing"
+/// was not true of a stop on a type word flagged `0x4000`, which that rule
+/// read through.) What a body with a stream read short may draw is held in
+/// `tests/sym_file_chain_faults.rs`.
 #[test]
 fn a_symbol_files_broken_sheet_is_named_on_the_body_it_leaves_short() {
     use pid_parse::symbol_library::read_symbol_geometry_from_bytes;
@@ -1219,6 +1225,13 @@ fn a_symbol_files_broken_sheet_is_named_on_the_body_it_leaves_short() {
             body.primitives.len(),
             intact.primitives.len()
         );
+        assert_eq!(
+            (body.short.sheets.len(), body.short.clusters.len()),
+            (1, 0),
+            "{label} {stream}: the one sheet read short: {:?}",
+            body.short
+        );
+        assert!(intact.short.is_empty(), "{label}: {:?}", intact.short);
         held += 1;
     }
     assert!(

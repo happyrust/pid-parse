@@ -509,7 +509,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `point_marker_degenerate` | Point 臂：有 marker 但 `draws()` 为假（D2 推荐口径） |
 | `kind_annotation` | `push_entity_with` 的 `Annotation` 臂（约 2469 行） |
 | `kind_unknown` | 同处的 `Unknown` 臂 |
-| `symbol_missing` | `push_symbol_instance` 的 `Missing` 分支，`symbol_path` 有值（约 1268–1277 行，与 `missing_boxes.push` 同处） |
+| `symbol_missing` | `push_symbol_instance` 的 `Missing` 分支，`symbol_path` 有值（与 `missing_boxes.push` 同处）；以及库符号体分支里 `SymbolGeometry::displayed` 返回 `Err` 的那一支（文件读短、画不出来，同样 `missing_boxes.push`） |
 | `symbol_unresolvable` | 同一分支，`symbol_path` 为 `None`；来源记流路径与 oid（需求 4.2） |
 | `symbol_body_empty` | `Cached` 或 `Library` 分支之后 `out.len() == before` |
 

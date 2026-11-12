@@ -255,6 +255,10 @@ fn exercise_all_parsers(input: &[u8]) {
     // bounds-checked against adversarial lengths.
     let _ = pid_parse::parsers::sheet_layers::decode_sheet_layers(input);
     let _ = pid_parse::parsers::view_filter_sets::decode_view_filter_sets(input);
+    // The same two read off a plain chain, as a symbol file's cluster is:
+    // the records the chain walk reads, whatever the stream's first word.
+    let _ = pid_parse::parsers::sheet_layers::decode_sheet_layers_on_chain(input);
+    let _ = pid_parse::parsers::view_filter_sets::decode_view_filter_sets_on_chain(input);
     // The display order reads a `JSheet` child table by the count the file
     // states, looks for it in a cluster by the sheet's oid, and walks a sheet
     // stream against it. Oid 0 is the one every run of zeros matches.

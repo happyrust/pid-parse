@@ -2526,6 +2526,29 @@ impl SheetChain {
     pub fn is_sound(&self) -> bool {
         self.stop.is_none() && self.wrong_magic().is_none() && !self.count_differs()
     }
+
+    /// Whether the walk read the stream short of its records: it stopped
+    /// before the stream's end, or it reached the end with fewer live
+    /// records than the header states.
+    ///
+    /// The second is what a stream cut off at a record boundary reads as —
+    /// the walk ends cleanly on the new last byte, and only the count says
+    /// records are gone. It is also what a header that counts one too many
+    /// reads as, and nothing in the stream tells the two apart; a reader
+    /// that must not take a short stream for a whole one takes both for
+    /// short.
+    ///
+    /// Not short, though [`Self::is_sound`] is false: a first word that is
+    /// not the magic over a chain that reaches the end, and a header that
+    /// counts fewer live records than the chain holds. Neither left a
+    /// record unread.
+    #[must_use]
+    pub fn is_short(&self) -> bool {
+        self.stop.is_some()
+            || self.stated_records.is_some_and(|stated| {
+                usize::try_from(stated).is_ok_and(|stated| self.live_records < stated)
+            })
+    }
 }
 
 /// Every offset a record starts at in a chain stream that walks to its last
@@ -10619,6 +10642,69 @@ mod tests {
         let refused = refused_smartframes(&stream);
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0].byte_range, second..stream.len());
+    }
+
+    /// A chain is short when records are left unread: the walk stopped, or
+    /// it ended with fewer live records than the header states. A wrong
+    /// magic and a header that counts too few are faults that lose nothing.
+    #[test]
+    fn a_chain_is_short_when_records_are_left_unread() {
+        let frame = smart_frame_record(22);
+        let stream = |stated: u32, records: usize| {
+            let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+            stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+            stream[4..8].copy_from_slice(&stated.to_le_bytes());
+            for _ in 0..records {
+                stream.extend_from_slice(&frame);
+            }
+            stream
+        };
+        let sound = stream(2, 2);
+        let chain = SheetChain::walk(&sound);
+        assert!(chain.is_sound() && !chain.is_short());
+
+        // Stopped: a length of zero, stray bytes after the last record, a
+        // stream shorter than its header.
+        let mut zero = sound.clone();
+        let second = SHEET_STREAM_HEADER_LEN + frame.len();
+        zero[second + 2..second + 6].copy_from_slice(&0u32.to_le_bytes());
+        let mut stray = sound.clone();
+        stray.extend_from_slice(&[0xEE; 4]);
+        for (stopped, what) in [
+            (zero.as_slice(), "a length of zero"),
+            (stray.as_slice(), "stray bytes"),
+            (&sound[..5], "five bytes"),
+        ] {
+            let chain = SheetChain::walk(stopped);
+            assert!(chain.stop.is_some() && chain.is_short(), "{what}");
+        }
+
+        // Not stopped, and short all the same: cut off at a record
+        // boundary; a header that counts one more than the chain holds.
+        for (short, what) in [
+            (sound[..second].to_vec(), "cut off before the second record"),
+            (stream(3, 2), "a count one too many"),
+        ] {
+            let chain = SheetChain::walk(&short);
+            assert!(
+                chain.stop.is_none() && !chain.is_sound() && chain.is_short(),
+                "{what}"
+            );
+        }
+
+        // Faults that leave no record unread.
+        let mut magic = sound.clone();
+        magic[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        for (whole, what) in [
+            (magic, "a wrong magic"),
+            (stream(1, 2), "a count one too few"),
+        ] {
+            let chain = SheetChain::walk(&whole);
+            assert!(!chain.is_sound() && !chain.is_short(), "{what}");
+        }
+
+        // An empty stream has nothing to be short of.
+        assert!(!SheetChain::walk(&[]).is_short());
     }
 
     /// A family decodes the records its stream's chain starts, and nothing

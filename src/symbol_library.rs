@@ -10,9 +10,13 @@
 //! simplification: a symbol's `Sheet*` stream is a plain record chain
 //! starting at [`CHAIN_START`], so the records can be walked rather than
 //! searched for. Across the 618-file reference library that walk lands
-//! exactly on the last byte of all 1134 sheet streams, which is what makes
-//! it safe to read the chain instead of scanning for candidates the way the
-//! drawing-side decoders must.
+//! exactly on the last byte of all 1134 sheet streams, and so does the walk
+//! of the file's `PSMcluster0`, which holds its layer table and view sets.
+//! The walk is the one a drawing's own sheets are read by
+//! ([`crate::parsers::sheet_records::SheetChain`]): a stream whose chain
+//! does not hold is read as far as it holds, listed
+//! ([`SymbolGeometry::chain_faults`]), and never made up for from another
+//! sheet ([`SymbolGeometry::displayed`]).
 //!
 //! Five record types carry something to draw — four geometry families and
 //! the symbol's own lettering; the rest are connect points, styles and
@@ -37,16 +41,12 @@ use crate::api::PidParser;
 use crate::error::PidError;
 use crate::package::PidPackage;
 use crate::parsers::sheet_records::{
-    igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, IGTEXTBOX_BODY_START,
-    IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT, IGTEXTBOX_TAIL_KIND_BOX,
-    IGTEXTBOX_TAIL_KIND_PLACEMENT, IGTEXTBOX_TAIL_LEN,
+    igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, parse_psm_header, SheetChain,
+    IGTEXTBOX_BODY_START, IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT,
+    IGTEXTBOX_TAIL_KIND_BOX, IGTEXTBOX_TAIL_KIND_PLACEMENT, IGTEXTBOX_TAIL_LEN,
 };
 use crate::style_link::{DocumentStyleTable, ResolvedTextStyle, TextAlignment};
 use crate::DecodedTextRun;
-
-/// `u32` LE signature shared by every cluster-family stream, including a
-/// symbol's `Sheet*` streams.
-const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 
 /// Offset of the first record in a symbol `Sheet*` stream.
 ///
@@ -55,9 +55,6 @@ const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 /// at 8..16 are in fact the first record's own PSM envelope, which is why
 /// the chain starts here and not at 16.
 pub const CHAIN_START: usize = 8;
-
-/// Length of the PSM record envelope: `u16` type code + `u32` payload length.
-const PSM_ENVELOPE_LEN: usize = 6;
 
 /// Payload bytes ahead of the geometry: oid, parent reference, a `u32`, a
 /// `u16` sub-type, and an index. Read positionally — the drawing-side
@@ -603,14 +600,113 @@ pub struct SymbolGeometry {
     /// file's sheets by.
     #[serde(default)]
     pub sheet_views: Vec<SymbolSheetView>,
-    /// The chain streams of the file whose own framing does not hold — a
-    /// `Sheet*` stream, a `StyleCluster`, a cache — as the parse of the
-    /// file found them ([`crate::model::StreamChainFault`]). A sheet is
-    /// read whole or not at all, so one listed here with a stop gave the
-    /// body nothing, and the body is short of whatever that sheet holds.
-    /// Empty for every symbol of the corpora.
+    /// The chain streams the body is read from whose own framing does not
+    /// hold — every `Sheet*`, `PSMcluster0` and `StyleCluster` of the file,
+    /// the root's among them — each as the walk that reads a drawing's
+    /// streams judges it ([`crate::model::StreamChainFault`]), in path
+    /// order. A stream listed here was read as far as its chain holds and
+    /// no further: a sheet gives the body the records before the stop, a
+    /// style table the styles before it, a cluster the layers and the view
+    /// sets before it. What that leaves of the body to draw is
+    /// [`Self::displayed`]'s to say, from [`Self::short`]. Empty for every
+    /// symbol of the corpora.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chain_faults: Vec<crate::model::StreamChainFault>,
+    /// Which of the streams that decide what is drawn were read short of
+    /// their records. Empty for a file every record of which was read,
+    /// whatever its fault list holds.
+    #[serde(default, skip_serializing_if = "SymbolShortRead::is_empty")]
+    pub short: SymbolShortRead,
+}
+
+/// The streams of a `.sym` that decide what is drawn of it and were read
+/// short of their records.
+///
+/// A chain stream is read short when its walk stops before the stream's
+/// end, or reaches the end with fewer live records than its header states
+/// ([`SheetChain::is_short`]) — which is how a stream cut off at a record
+/// boundary reads. A stream whose framing is wrong some other way — a first
+/// word that is not the magic, a header that counts fewer records than the
+/// chain holds — lost no record and is not listed here, though it is among
+/// [`SymbolGeometry::chain_faults`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolShortRead {
+    /// The `PSMcluster0` streams read short, by path. The layer table and
+    /// the view sets of such a storage may be missing entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clusters: Vec<String>,
+    /// The sheets read short, by the `JSheet` oid their stream's name
+    /// carries, in the order the sheets were read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets: Vec<u32>,
+    /// The sheets read after the first short one. A stroke two sheets share
+    /// is kept on the sheet read first, so a stroke such a sheet holds may
+    /// be one the sound file keeps on the short sheet instead — on that
+    /// sheet's layer, shown or hidden by it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets_after: Vec<u32>,
+}
+
+impl SymbolShortRead {
+    /// Whether every stream that decides what is drawn was read to its
+    /// last record.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.clusters.is_empty() && self.sheets.is_empty()
+    }
+}
+
+/// Why the body of a damaged symbol file is not drawn.
+///
+/// What a file with a stream read short draws is part of what the sound
+/// file draws, or nothing: [`SymbolGeometry::displayed`] never answers a
+/// short stream by drawing another sheet in its place. These are the three
+/// ways the part cannot be had. A caller that draws placements treats each
+/// as a symbol it has no body for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolNotDrawn {
+    /// A `PSMcluster0` of the file was read short
+    /// ([`SymbolShortRead::clusters`]). It holds the layer table and the
+    /// view sets, which say which sheet draws the body and which layers of
+    /// it: with entries of either unread, a hidden layer reads as shown
+    /// and an alternate view as the body. The committed pressure gauge
+    /// drew two circles so, where the sound file draws one.
+    ClusterShort,
+    /// A sheet whose view set makes it the body's normal view was read
+    /// short, and nothing that was read of the normal views shows. The
+    /// sheet keeps its place: the file's other sheets are not drawn in
+    /// its stead, since what was not read may be the very strokes that
+    /// make it the body. The gauge drew its circle and a `PG` so, off the
+    /// alternate sheet, where the sound file draws the circle.
+    NothingToShow,
+    /// No normal view of the file draws, so the body is the sheet that
+    /// keeps the most strokes — and a sheet was read short, so how many
+    /// each keeps is not known and the pick cannot be made as on the sound
+    /// file.
+    PickAmongShortSheets,
+}
+
+impl SymbolNotDrawn {
+    /// The reason as the clause of a sentence about the file: `its sheet
+    /// that draws the body was not read whole and …`.
+    #[must_use]
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::ClusterShort => {
+                "its PSMcluster0 was not read whole, and with it the layer table and the \
+                 view sets that say which sheet and which layers draw the body"
+            }
+            Self::NothingToShow => {
+                "the sheet that draws its body was not read whole, and nothing that was \
+                 read of it shows"
+            }
+            Self::PickAmongShortSheets => {
+                "its body is the sheet that keeps the most strokes, and a sheet in the \
+                 running was not read whole"
+            }
+        }
+    }
 }
 
 /// One `JSheetLayer` of a `.sym` file: the oid a primitive's
@@ -864,41 +960,130 @@ impl SymbolGeometry {
     /// A body the filter would empty is returned whole instead: a symbol
     /// authored entirely on an unconventional name keeps its strokes
     /// rather than vanishing into a marker dot.
-    #[must_use]
-    pub fn displayed_primitives(&self) -> Vec<&StyledPrimitive> {
-        let view_of = |sheet_ref: u32| {
-            self.sheet_views
-                .iter()
-                .find(|view| view.sheet_ref == sheet_ref)
-        };
-        let sheet_of = |styled: &StyledPrimitive| styled.sheet_ref;
-        let sheets_present: BTreeSet<u32> = self
-            .primitives
-            .iter()
-            .map(sheet_of)
-            .chain(self.sheet_views.iter().map(|view| view.sheet_ref))
-            .collect();
-        let normal: BTreeSet<u32> = sheets_present
+    ///
+    /// All of the above is for a file whose streams were read to their last
+    /// record. **Where a stream was read short** ([`Self::short`]), what is
+    /// drawn is part of what the sound file draws, or nothing — never
+    /// another sheet in a short one's place:
+    ///
+    /// * a `PSMcluster0` read short draws nothing: the layer table and the
+    ///   view sets are what the two selections above read;
+    /// * otherwise the sheets that draw are the normal views that keep a
+    ///   stroke, as above, less the ones read after the first short sheet —
+    ///   a stroke two sheets share is kept on the one read first, so what a
+    ///   later sheet holds may be the short sheet's own, on its layer. A
+    ///   short sheet draws the strokes its chain read;
+    /// * where no such sheet is left, nothing is drawn. Neither fallback
+    ///   runs: not the sheet that keeps the most strokes, whose count a
+    ///   short sheet leaves unknown, and not the whole body.
+    ///
+    /// # Errors
+    ///
+    /// Why a body with a stream read short is not drawn
+    /// ([`SymbolNotDrawn`]). A body every record of which was read is
+    /// always drawn.
+    pub fn displayed(&self) -> Result<Vec<&StyledPrimitive>, SymbolNotDrawn> {
+        if !self.short.clusters.is_empty() {
+            return Err(SymbolNotDrawn::ClusterShort);
+        }
+        if self.short.sheets.is_empty() {
+            return Ok(self.displayed_of_whole_sheets());
+        }
+        let normal = self.normal_sheets(&self.sheets_present());
+        let in_doubt = |sheet: u32| self.short.sheets_after.contains(&sheet);
+        // The normal views that certainly draw on the sound file: read
+        // before any short sheet, or the first short sheet itself, and
+        // showing a stroke of what was read.
+        let sure: BTreeSet<u32> = normal
             .iter()
             .copied()
-            .filter(|sheet| view_of(*sheet).is_some_and(|view| !view.shows_supplementary()))
+            .filter(|sheet| !in_doubt(*sheet) && self.shows_a_stroke(*sheet))
             .collect();
-        let layer_shown = |styled: &&StyledPrimitive| {
-            if styled.sheet_layer_ref == 0 {
-                return true;
+        if sure.is_empty() {
+            let a_normal_view_is_short = normal
+                .iter()
+                .any(|sheet| self.short.sheets.contains(sheet) || in_doubt(*sheet));
+            return Err(if a_normal_view_is_short {
+                SymbolNotDrawn::NothingToShow
+            } else {
+                SymbolNotDrawn::PickAmongShortSheets
+            });
+        }
+        Ok(self
+            .primitives
+            .iter()
+            .filter(|styled| sure.contains(&styled.sheet_ref) && self.layer_shown(styled))
+            .collect())
+    }
+
+    /// [`Self::displayed`], with nothing for a body that is not drawn.
+    #[must_use]
+    pub fn displayed_primitives(&self) -> Vec<&StyledPrimitive> {
+        self.displayed().unwrap_or_default()
+    }
+
+    /// The view set of one sheet, when the file states one.
+    fn view_of(&self, sheet_ref: u32) -> Option<&SymbolSheetView> {
+        self.sheet_views
+            .iter()
+            .find(|view| view.sheet_ref == sheet_ref)
+    }
+
+    /// Whether the layer a primitive sits on is one its sheet displays: the
+    /// second selection of [`Self::displayed`].
+    fn layer_shown(&self, styled: &StyledPrimitive) -> bool {
+        if styled.sheet_layer_ref == 0 {
+            return true;
+        }
+        if let Some(answer) = self
+            .view_of(styled.sheet_ref)
+            .and_then(|view| view.is_displayed(styled.sheet_layer_number))
+        {
+            if !answer {
+                return false;
             }
-            if let Some(answer) = view_of(styled.sheet_ref)
-                .and_then(|view| view.is_displayed(styled.sheet_layer_number))
-            {
-                if !answer {
-                    return false;
-                }
-            }
-            styled
-                .sheet_layer_name
-                .as_deref()
-                .is_none_or(|name| !hidden_symbol_layer(name))
-        };
+        }
+        styled
+            .sheet_layer_name
+            .as_deref()
+            .is_none_or(|name| !hidden_symbol_layer(name))
+    }
+
+    /// Whether a sheet keeps a stroke once its own view set has had its say.
+    fn shows_a_stroke(&self, sheet: u32) -> bool {
+        self.primitives
+            .iter()
+            .any(|styled| styled.sheet_ref == sheet && self.layer_shown(styled))
+    }
+
+    /// The sheets the body has: the ones a primitive was read from and the
+    /// ones a view set governs.
+    fn sheets_present(&self) -> BTreeSet<u32> {
+        self.primitives
+            .iter()
+            .map(|styled| styled.sheet_ref)
+            .chain(self.sheet_views.iter().map(|view| view.sheet_ref))
+            .collect()
+    }
+
+    /// The sheets among `present` whose view set files the supplementary
+    /// layers off: the body's normal views.
+    fn normal_sheets(&self, present: &BTreeSet<u32>) -> BTreeSet<u32> {
+        present
+            .iter()
+            .copied()
+            .filter(|sheet| {
+                self.view_of(*sheet)
+                    .is_some_and(|view| !view.shows_supplementary())
+            })
+            .collect()
+    }
+
+    /// What is drawn of a body no sheet of which was read short: the pick
+    /// [`Self::displayed`] describes, fallbacks and all.
+    fn displayed_of_whole_sheets(&self) -> Vec<&StyledPrimitive> {
+        let sheets_present = self.sheets_present();
+        let normal = self.normal_sheets(&sheets_present);
 
         // With no normal view the body is the sheet that keeps the most
         // strokes, not `Sheet6`: a body kept once on an all-on sheet leaves
@@ -910,7 +1095,7 @@ impl SymbolGeometry {
                     .primitives
                     .iter()
                     .filter(|styled| styled.sheet_ref == *sheet)
-                    .filter(|styled| layer_shown(styled))
+                    .filter(|styled| self.layer_shown(styled))
                     .count();
                 if best.is_none_or(|(_, most)| strokes > most) {
                     best = Some((*sheet, strokes));
@@ -930,11 +1115,7 @@ impl SymbolGeometry {
         let drawing: BTreeSet<u32> = normal
             .iter()
             .copied()
-            .filter(|sheet| {
-                self.primitives
-                    .iter()
-                    .any(|styled| styled.sheet_ref == *sheet && layer_shown(&styled))
-            })
+            .filter(|sheet| self.shows_a_stroke(*sheet))
             .collect();
 
         let selected: BTreeSet<u32> = if !drawing.is_empty() {
@@ -947,9 +1128,11 @@ impl SymbolGeometry {
             return self.primitives.iter().collect();
         };
 
-        let shown =
-            |styled: &&StyledPrimitive| selected.contains(&styled.sheet_ref) && layer_shown(styled);
-        let visible: Vec<&StyledPrimitive> = self.primitives.iter().filter(|s| shown(s)).collect();
+        let visible: Vec<&StyledPrimitive> = self
+            .primitives
+            .iter()
+            .filter(|styled| selected.contains(&styled.sheet_ref) && self.layer_shown(styled))
+            .collect();
         if visible.is_empty() {
             self.primitives.iter().collect()
         } else {
@@ -1263,50 +1446,52 @@ pub(crate) fn boundary_member_key(member: &SymbolPrimitive, fill: Option<Primiti
     hasher.finish()
 }
 
-/// Walk one symbol `Sheet*` stream's record chain into `out`.
+/// Decode the records of one symbol `Sheet*` stream into `out`: the ones
+/// that start at `starts`, which are the offsets the stream's own chain
+/// reads a record at ([`SheetChain::walk`]).
 ///
-/// The chain is only read when it accounts for the stream exactly: a walk
-/// that stops early or overruns means the bytes are not the layout this
-/// reader knows, and half a symbol drawn from a misread chain is worse than
-/// no symbol at all.
-fn read_sheet_chain(
+/// That walk is the one a drawing's sheets and cached bodies are read by,
+/// so the two readers take the same records of the same bytes: all of them
+/// where the chain reaches the stream's end, the ones before the stop where
+/// it does not. Until 2026-11-12 this reader walked the stream itself and
+/// took a sheet whole or not at all — "half a symbol drawn from a misread
+/// chain is worse than no symbol at all" — and what that did in practice
+/// was hand the body to the file's other sheet. It also masked a type word
+/// to its class before asking whether a record opens with it, and so read
+/// through the `0x4000` flag the walk stops on. What a short sheet may
+/// draw is now [`SymbolGeometry::displayed`]'s decision, not this reader's.
+///
+/// A record the native reader skips (`0x8000` in its type word) is decoded
+/// like any other, as it always was here; the drawing-side decoders do not.
+fn read_sheet_records(
     bytes: &[u8],
+    starts: &[usize],
     sheet_ref: u32,
     styles: Option<&DocumentStyleTable>,
     layers: Option<&[SymbolSheetLayer]>,
     out: &mut SymbolGeometry,
 ) {
-    if u32_le(bytes, 0) != Some(CLUSTER_MAGIC) {
-        return;
-    }
     let layer = |reference: u32| {
         layers.and_then(|layers| layers.iter().find(|layer| layer.oid == reference))
     };
-    let mut primitives = Vec::new();
-    let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
     // Boundary records can overlap: the plug-valve bodies store two records
     // covering the same disc, and either one fills it identically. A member
     // shape another boundary already claimed is dropped so the disc draws
     // once, the way the plots draw it.
     let mut seen_boundary_members: std::collections::HashSet<u64> =
         std::collections::HashSet::new();
-    let mut at = CHAIN_START;
-    while at + PSM_ENVELOPE_LEN <= bytes.len() {
-        let (Some(raw_type), Some(length)) = (u16_le(bytes, at), u32_le(bytes, at + 2)) else {
-            return;
+    for &at in starts {
+        let Some(header) = parse_psm_header(bytes, at) else {
+            continue;
         };
-        if raw_type == 0 {
-            return;
-        }
-        let body = at + PSM_ENVELOPE_LEN;
-        let Some(end) = body.checked_add(length as usize) else {
-            return;
+        let Some(payload) = header
+            .body_start
+            .checked_add(header.bytes_to_follow as usize)
+            .and_then(|end| bytes.get(header.body_start..end))
+        else {
+            continue;
         };
-        if end > bytes.len() {
-            return;
-        }
-        let type_code = raw_type & 0x0FFF;
-        let payload = &bytes[body..end];
+        let type_code = header.type_code;
         match decode_primitive(type_code, payload) {
             Some(mut primitive) => {
                 // A boundary's style index names a fill, not a line —
@@ -1321,7 +1506,6 @@ fn read_sheet_chain(
                         seen_boundary_members.insert(boundary_member_key(member, *fill))
                     });
                     if members.is_empty() {
-                        at = end;
                         continue;
                     }
                 }
@@ -1333,7 +1517,7 @@ fn read_sheet_chain(
                 let found = (sheet_layer_ref != 0)
                     .then(|| layer(sheet_layer_ref))
                     .flatten();
-                primitives.push(StyledPrimitive {
+                out.primitives.push(StyledPrimitive {
                     primitive,
                     style: style_of(payload, styles),
                     lettering,
@@ -1344,16 +1528,8 @@ fn read_sheet_chain(
                     sheet_ref,
                 });
             }
-            None => *skipped.entry(type_code).or_default() += 1,
+            None => *out.skipped_records.entry(type_code).or_default() += 1,
         }
-        at = end;
-    }
-    if at != bytes.len() {
-        return;
-    }
-    out.primitives.append(&mut primitives);
-    for (code, count) in skipped {
-        *out.skipped_records.entry(code).or_default() += count;
     }
 }
 
@@ -1490,7 +1666,7 @@ fn parent_storage(stream_path: &str) -> &str {
 /// is a real thing in the library.
 pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
     let package = PidParser::new().parse_package(path)?;
-    symbol_geometry_from_package(&package)
+    Ok(symbol_geometry_of_package(&package))
 }
 
 /// Read a `.sym` body from bytes already in memory.
@@ -1505,11 +1681,18 @@ pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
 /// As [`read_symbol_geometry`].
 pub fn read_symbol_geometry_from_bytes(bytes: &[u8]) -> Result<SymbolGeometry, PidError> {
     let package = PidPackage::from_bytes(bytes)?;
-    symbol_geometry_from_package(&package)
+    Ok(symbol_geometry_of_package(&package))
 }
 
-/// The drawable body of a parsed `.sym`.
-fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, PidError> {
+/// The drawable body of a `.sym` already parsed as a package.
+///
+/// What [`read_symbol_geometry`] and [`read_symbol_geometry_from_bytes`]
+/// return, for a caller that holds the package. The body is read from the
+/// package's streams as they stand — every `Sheet*`, `PSMcluster0` and
+/// `StyleCluster` — each by its own record chain, and each chain that does
+/// not hold is listed ([`SymbolGeometry::chain_faults`]).
+#[must_use]
+pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
     // Styles are scoped to the storage they sit in, the same rule
     // `style_link` applies to a drawing: a sheet is resolved against its own
     // document's table and never against another's.
@@ -1521,17 +1704,38 @@ fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, 
     // reading of a file to the next and from one process to the next.
     let mut tables: BTreeMap<&str, DocumentStyleTable> = BTreeMap::new();
     let mut layer_tables: BTreeMap<&str, Vec<SymbolSheetLayer>> = BTreeMap::new();
+    let mut geometry = SymbolGeometry::default();
+    let mut sheets: Vec<(&str, u32, &[u8], SheetChain)> = Vec::new();
     for (stream_path, raw) in &package.streams {
-        match stream_path.rsplit('/').next() {
-            Some("StyleCluster") => {
+        let name = stream_path.rsplit('/').next().unwrap_or("");
+        let is_sheet = name.starts_with("Sheet");
+        if !is_sheet && name != "StyleCluster" && name != "PSMcluster0" {
+            continue;
+        }
+        // One walk for every stream the body is read from, the root
+        // cluster's among them: what it finds wrong is what the reader of a
+        // drawing says of the same bytes, and what it reads is what is read.
+        let chain = SheetChain::walk(&raw.data);
+        if let Some(fault) = crate::model::StreamChainFault::of(stream_path, &chain) {
+            geometry.chain_faults.push(fault);
+        }
+        match name {
+            "StyleCluster" => {
                 tables.insert(
                     parent_storage(stream_path),
                     DocumentStyleTable::from_stylecluster_bytes(&raw.data),
                 );
             }
-            Some("PSMcluster0") => {
+            "PSMcluster0" => {
+                // A symbol file's cluster is a plain chain, and its layers
+                // and view sets are the records that chain reads: all of
+                // them under a wrong magic, the ones before the stop where
+                // it stops. Read short, it leaves both tables in doubt.
+                if chain.is_short() {
+                    geometry.short.clusters.push(stream_path.clone());
+                }
                 let layers: Vec<SymbolSheetLayer> =
-                    crate::parsers::sheet_layers::decode_sheet_layers(&raw.data)
+                    crate::parsers::sheet_layers::decode_sheet_layers_on_chain(&raw.data)
                         .into_iter()
                         .map(|layer| SymbolSheetLayer {
                             oid: layer.oid,
@@ -1540,63 +1744,57 @@ fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, 
                         })
                         .collect();
                 layer_tables.insert(parent_storage(stream_path), layers);
+                for set in
+                    crate::parsers::view_filter_sets::decode_view_filter_sets_on_chain(&raw.data)
+                {
+                    geometry.sheet_views.push(SymbolSheetView {
+                        sheet_ref: set.sheet_ref,
+                        display: set.display,
+                        layers: set
+                            .layers
+                            .iter()
+                            .map(|entry| (entry.layer_number, entry.name.clone()))
+                            .collect(),
+                    });
+                }
             }
-            _ => {}
-        }
-    }
-
-    let mut geometry = SymbolGeometry {
-        sheet_layers: layer_tables.values().flatten().cloned().collect(),
-        // What the parse of the file found wrong with its chain streams. A
-        // sheet among them was not read below, and nothing else would say
-        // the body is short.
-        chain_faults: package.parsed.chain_faults.clone(),
-        ..SymbolGeometry::default()
-    };
-    for (stream_path, raw) in &package.streams {
-        if stream_path.rsplit('/').next() == Some("PSMcluster0") {
-            for set in crate::parsers::view_filter_sets::decode_view_filter_sets(&raw.data) {
-                geometry.sheet_views.push(SymbolSheetView {
-                    sheet_ref: set.sheet_ref,
-                    display: set.display,
-                    layers: set
-                        .layers
-                        .iter()
-                        .map(|entry| (entry.layer_number, entry.name.clone()))
-                        .collect(),
-                });
+            _ => {
+                // The stream name carries the JSheet oid (`Sheet68` is sheet
+                // 68) — the same id a `0x0057` view filter set's `sheet_ref`
+                // names. A name that does not parse reads as sheet 0, an id
+                // no corpus set governs, so its records filter as a sheet
+                // with no view state.
+                let sheet_ref = name
+                    .strip_prefix("Sheet")
+                    .and_then(|number| number.parse::<u32>().ok())
+                    .unwrap_or(0);
+                sheets.push((stream_path.as_str(), sheet_ref, raw.data.as_slice(), chain));
             }
         }
     }
+    geometry.sheet_layers = layer_tables.values().flatten().cloned().collect();
 
-    let mut sheets: Vec<(&str, u32, &[u8])> = Vec::new();
-    for (stream_path, raw) in &package.streams {
-        let name = stream_path.rsplit('/').next().unwrap_or("");
-        let is_sheet = name.starts_with("Sheet");
-        if !is_sheet || raw.data.len() <= CHAIN_START {
-            continue;
-        }
-        // The stream name carries the JSheet oid (`Sheet68` is sheet 68) —
-        // the same id a `0x0057` view filter set's `sheet_ref` names. A
-        // name that does not parse reads as sheet 0, an id no corpus set
-        // governs, so its records filter as a sheet with no view state.
-        let sheet_ref = name
-            .strip_prefix("Sheet")
-            .and_then(|number| number.parse::<u32>().ok())
-            .unwrap_or(0);
-        sheets.push((stream_path.as_str(), sheet_ref, raw.data.as_slice()));
-    }
     // The sheets the symbol presents as its normal view are read first, so a
     // stroke two sheets share survives on the normal one. In stream order a
     // twin can sort ahead (`Sheet46` before `Sheet6`) and take the whole body,
     // leaving the normal sheet its lettering alone — which is then all
     // `displayed_primitives` draws.
-    sheets.sort_by_key(|&(_, sheet_ref, _)| !is_normal_sheet(&geometry.sheet_views, sheet_ref));
+    sheets.sort_by_key(|&(_, sheet_ref, _, _)| !is_normal_sheet(&geometry.sheet_views, sheet_ref));
 
-    for (stream_path, sheet_ref, data) in sheets {
+    for (stream_path, sheet_ref, data, chain) in sheets {
+        // What a sheet read after a short one holds may be the short
+        // sheet's own strokes, kept here only because the short sheet's
+        // copy was not read (see the dedup below).
+        if !geometry.short.sheets.is_empty() && !geometry.short.sheets_after.contains(&sheet_ref) {
+            geometry.short.sheets_after.push(sheet_ref);
+        }
+        if chain.is_short() && !geometry.short.sheets.contains(&sheet_ref) {
+            geometry.short.sheets.push(sheet_ref);
+        }
         let mut sheet = SymbolGeometry::default();
-        read_sheet_chain(
+        read_sheet_records(
             data,
+            &chain.starts,
             sheet_ref,
             tables.get(parent_storage(stream_path)),
             layer_tables
@@ -1625,7 +1823,7 @@ fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, 
             *geometry.skipped_records.entry(code).or_default() += count;
         }
     }
-    Ok(geometry)
+    geometry
 }
 
 /// The library-relative part of a placement's symbol path.
@@ -2026,6 +2224,15 @@ impl SymbolLibrary {
     /// nothing to draw while another root has the drawn version, so an empty
     /// body is kept only as a fallback rather than ending the search.
     ///
+    /// That is for a copy every record of which was read. A copy with a
+    /// stream read short ([`SymbolGeometry::short`]) ends the search
+    /// whatever was read of it, nothing included: it is the copy the
+    /// library answers with when the file is sound, and another root's copy
+    /// is not drawn in its place any more than another sheet of the file is
+    /// ([`SymbolGeometry::displayed`]). Until 2026-11-12 a copy whose only
+    /// drawn sheet stopped on its first record read as an empty body and
+    /// was passed over, with nothing to say so.
+    ///
     /// A stored path can carry a leading space on a component that the
     /// exported share does not have on disk: the plant backup's `集注站`
     /// drawings name `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym` while
@@ -2048,7 +2255,7 @@ impl SymbolLibrary {
                 let Ok(body) = read_symbol_geometry(&path) else {
                     continue;
                 };
-                if !body.primitives.is_empty() {
+                if !body.primitives.is_empty() || !body.short.is_empty() {
                     return Some(body);
                 }
                 empty.get_or_insert(body);
@@ -2057,7 +2264,7 @@ impl SymbolLibrary {
                 let Some(body) = archived_symbol_body(archive, &candidate) else {
                     continue;
                 };
-                if !body.primitives.is_empty() {
+                if !body.primitives.is_empty() || !body.short.is_empty() {
                     return Some(body);
                 }
                 empty.get_or_insert(body);
@@ -2751,6 +2958,7 @@ mod tests {
             }],
             sheet_views: Vec::new(),
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         assert_eq!(body.displayed_primitives().len(), 1);
     }
@@ -2788,6 +2996,7 @@ mod tests {
             sheet_layers: Vec::new(),
             sheet_views: vec![view(6, 0b01), view(8, 0b11)],
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         assert_eq!(body.displayed_primitives().len(), 3);
     }
@@ -2827,6 +3036,7 @@ mod tests {
                 ],
             }],
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         let displayed = body.displayed_primitives();
         assert_eq!(
@@ -2904,6 +3114,7 @@ mod tests {
                 layers: vec![(0, "Default".to_owned()), (1, "Heat Trace".to_owned())],
             }],
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         let drawn = body.displayed_primitives();
         assert_eq!(drawn.len(), 3, "the body, not the hidden stub: {drawn:?}");
@@ -2951,6 +3162,7 @@ mod tests {
                 },
             ],
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         let drawn = body.displayed_primitives();
         assert_eq!(drawn.len(), 4, "the normal view's own strokes: {drawn:?}");
@@ -2958,6 +3170,137 @@ mod tests {
             drawn.iter().all(|styled| styled.sheet_ref == 6),
             "not the all-on sheet: {drawn:?}"
         );
+    }
+
+    /// A body with a stream read short draws part of what the sound file
+    /// draws, or nothing; it never draws another sheet in a short one's
+    /// place. The shape is the committed pressure gauge's: a normal view,
+    /// `Sheet6`, with a stroke on `Default` and one on a layer its view set
+    /// hides, and a `Sheet68` no view set governs with a stroke of its own.
+    #[test]
+    fn a_body_read_short_draws_part_of_the_sound_body_or_nothing() {
+        let line = |start: f64| SymbolPrimitive::Line {
+            start: (start, 0.0),
+            end: (start, 1.0),
+        };
+        let styled_on = |sheet: u32, number: u32, name: &str, primitive| StyledPrimitive {
+            primitive,
+            style: None,
+            lettering: None,
+            sheet_layer_ref: number + 1,
+            sheet_layer_name: Some(name.to_owned()),
+            sheet_layer_number: number,
+            sheet_ref: sheet,
+        };
+        let normal_view = |sheet_ref: u32| SymbolSheetView {
+            sheet_ref,
+            display: vec![0b0000_0001],
+            layers: vec![(0, "Default".to_owned()), (1, "Heat Trace".to_owned())],
+        };
+        let body = |primitives: Vec<StyledPrimitive>, short: SymbolShortRead| SymbolGeometry {
+            primitives,
+            skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: vec![normal_view(6)],
+            chain_faults: Vec::new(),
+            short,
+        };
+        let face = styled_on(6, 0, "Default", line(0.0));
+        let halo = styled_on(6, 1, "Heat Trace", line(1.0));
+        let other = styled_on(68, 0, "Default", line(2.0));
+        let whole = SymbolShortRead::default;
+
+        // Every record read: the normal view's shown stroke.
+        let sound = body(vec![face.clone(), halo.clone(), other.clone()], whole());
+        assert_eq!(sound.displayed(), Ok(vec![&face]));
+
+        // The normal view read short of its first record. Nothing of it
+        // was read; the other sheet is not drawn in its place — as it is,
+        // by the pick of the fullest sheet, when the same records are all
+        // the file holds.
+        let short_view = SymbolShortRead {
+            sheets: vec![6],
+            sheets_after: vec![68],
+            ..SymbolShortRead::default()
+        };
+        let nothing = body(vec![other.clone()], short_view.clone());
+        assert_eq!(nothing.displayed(), Err(SymbolNotDrawn::NothingToShow));
+        assert!(nothing.displayed_primitives().is_empty());
+        assert_eq!(
+            body(vec![other.clone()], whole()).displayed(),
+            Ok(vec![&other])
+        );
+
+        // Read short past its shown stroke: that stroke, and nothing of
+        // the sheet read after it.
+        let part = body(vec![face.clone(), other.clone()], short_view.clone());
+        assert_eq!(part.displayed(), Ok(vec![&face]));
+
+        // Read short with a hidden stroke alone: nothing to show, and the
+        // whole-body fallback does not show the hidden stroke either.
+        let hidden = body(vec![halo.clone(), other.clone()], short_view);
+        assert_eq!(hidden.displayed(), Err(SymbolNotDrawn::NothingToShow));
+
+        // The other sheet read short: the normal view was read before it
+        // and draws what it draws on the sound file.
+        let short_other = SymbolShortRead {
+            sheets: vec![68],
+            ..SymbolShortRead::default()
+        };
+        let as_sound = body(vec![face.clone(), halo.clone()], short_other.clone());
+        assert_eq!(as_sound.displayed(), Ok(vec![&face]));
+
+        // No normal view draws, so the body is the sheet that keeps the
+        // most strokes: with a sheet read short that pick is not made.
+        let pick = body(vec![halo.clone(), other.clone()], short_other);
+        assert_eq!(pick.displayed(), Err(SymbolNotDrawn::PickAmongShortSheets));
+        assert_eq!(
+            body(vec![halo.clone(), other.clone()], whole()).displayed(),
+            Ok(vec![&other])
+        );
+
+        // A cluster read short: nothing, whatever the sheets hold.
+        let cluster = body(
+            vec![face.clone(), halo, other],
+            SymbolShortRead {
+                clusters: vec!["/PSMcluster0".to_owned()],
+                ..SymbolShortRead::default()
+            },
+        );
+        assert_eq!(cluster.displayed(), Err(SymbolNotDrawn::ClusterShort));
+        assert!(cluster.displayed_primitives().is_empty());
+
+        // Two normal views, the first read short. A stroke the two share
+        // is kept on the first read, so what the second holds may be the
+        // first's own: the second is not drawn from, and where the first
+        // shows nothing the body is not drawn.
+        let seven = styled_on(7, 0, "Default", line(3.0));
+        let two_views = |primitives: Vec<StyledPrimitive>| SymbolGeometry {
+            primitives,
+            skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: vec![normal_view(6), normal_view(7)],
+            chain_faults: Vec::new(),
+            short: SymbolShortRead {
+                sheets: vec![6],
+                sheets_after: vec![7],
+                ..SymbolShortRead::default()
+            },
+        };
+        assert_eq!(
+            two_views(vec![face.clone(), seven.clone()]).displayed(),
+            Ok(vec![&face])
+        );
+        assert_eq!(
+            two_views(vec![seven]).displayed(),
+            Err(SymbolNotDrawn::NothingToShow)
+        );
+
+        // Nothing read short serializes as before: the field is left out.
+        let json = serde_json::to_string(&sound).expect("a body serializes");
+        assert!(!json.contains("short"), "{json}");
+        let back: SymbolGeometry = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, sound);
     }
 
     #[test]
@@ -3416,7 +3759,7 @@ mod tests {
             records.push((crate::style_link::PSM_TYPE_CODE_JSTYLE_TEXT_PARA, payload));
         }
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&CLUSTER_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&crate::parsers::sheet_records::SHEET_STREAM_MAGIC.to_le_bytes());
         bytes.extend_from_slice(&(records.len() as u32).to_le_bytes());
         for (type_code, payload) in &records {
             bytes.extend_from_slice(&type_code.to_le_bytes());
@@ -3717,6 +4060,7 @@ mod tests {
             sheet_layers: Vec::new(),
             sheet_views: Vec::new(),
             chain_faults: Vec::new(),
+            short: SymbolShortRead::default(),
         };
         assert_eq!(body.bounds(), Some((-0.2, 0.0, 0.1, 0.3)));
     }
