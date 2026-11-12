@@ -31,13 +31,19 @@
 //! label the list puts text first and each the plot paints against its
 //! list; and for one painted against its list, the same label on any other
 //! sheet — the same text, at the same point, at the same places of that
-//! sheet's list — with what that sheet's plot does.
+//! sheet's list — with what that sheet's plot does. It prints as well each
+//! owner that names a symbol with a mark and gave no label, with why: it
+//! holds no text, or the plot does not have the label where the drawing
+//! puts it (`marked_labels::NotALabel`).
 //!
 //! Then, a sheet a line and over all of them: the places, how many the
 //! reference paints ink first, how many our page paints in the reference's
 //! order, how many the sheet's list puts in the reference's order — a mark
 //! on its own label's text apart from a mark on anything else — and the
-//! labels. A rule would show as a column that is all one way.
+//! labels. A rule would show as a column that is all one way. The last
+//! line asks the same of what else a record carries that could decide an
+//! order — its oid, and its place in the stream: for how many labels each
+//! says what the plot paints.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_which_of_a_mark_and_its_ink_a_plot_paints_first -- <corpus>
@@ -51,7 +57,14 @@
 //! for 47, and the plots paint 95 as listed. The one against its list is
 //! `P70` on `一级闪蒸分离器A` — listed text first, painted mark first — and
 //! the same label on `一级闪蒸分离器B`, at the same point and the same
-//! places (99 and 104), is painted as listed. See
+//! places (99 and 104), is painted as listed. The 96 are every such label
+//! the drawings and their plots both show: 120 owners name a symbol with a
+//! mark, 23 of them hold a point and no text, each on the symbol of one of
+//! the 96, and one is a label the plot does not have where the drawing puts
+//! it (`SP=-8℃` on the A2 sheet, lettered 16.9 mm away in the instrument
+//! cluster a later revision moved). The oids of a label's records, and
+//! their places in the stream, say what the plot paints for 48 and 56 of
+//! the 96; the sheet's list for 95. See
 //! `docs/analysis/2026-11-12-a-mark-and-its-ink-are-painted-in-the-order-the-sheet-lists-them.md`.
 //! Read-only: it writes nothing into the corpus.
 
@@ -68,8 +81,8 @@ use pid_plot::write::{PlotFont, write_plot};
 #[path = "../tests/support/marked_labels.rs"]
 mod marked_labels;
 use marked_labels::{
-    MarkedLabel, NEAR_MM, apart, live_records, marked_labels, off_the_piece, the_symbols_own_text,
-    white,
+    LeftOut, MarkedLabel, NEAR_MM, NotALabel, apart, live_records, marked_label_census,
+    off_the_piece, the_same_mark, the_symbols_own_text, white,
 };
 
 fn paired_sheets(dir: &Path) -> Vec<PathBuf> {
@@ -306,24 +319,79 @@ impl Labels {
 
 /// What a sheet reads: places where a mark lies on its own label's text,
 /// places where it lies on anything else, places one side of which our
-/// model does not have, and its labels.
+/// model does not have, its labels, and the owners of a marked symbol that
+/// gave no label.
 #[derive(Default)]
 struct SheetReading {
     own: Tally,
     another: Tally,
     unplaced: Tally,
     labels: Vec<MarkedLabel>,
+    left_out: Vec<LeftOut>,
+}
+
+/// Why an owner gave no label, in a few words.
+fn why(why: NotALabel) -> &'static str {
+    match why {
+        NotALabel::NoText => "it holds no text box",
+        NotALabel::TextNotOnOurPage => "our page letters nothing from its text box",
+        NotALabel::NoMarkOnThePlot => {
+            "the plot strokes nothing in the paper's colour through the mark"
+        }
+        NotALabel::Unranked => "the sheet's list ranks its symbol or its text nowhere",
+        NotALabel::TextNotOnThePlot => "the plot has no run of glyphs that spells its text",
+    }
+}
+
+/// The owners of a marked symbol that gave no label, tallied by why — and
+/// those with no text box by what they hold instead.
+fn left_out_says(left_out: &[&LeftOut]) -> String {
+    let mut by_why: std::collections::BTreeMap<NotALabel, usize> =
+        std::collections::BTreeMap::new();
+    let mut held: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for owner in left_out {
+        *by_why.entry(owner.why).or_default() += 1;
+        if owner.why == NotALabel::NoText {
+            let holds: Vec<String> = owner
+                .holds
+                .iter()
+                .map(|kind| format!("0x{kind:04X}"))
+                .collect();
+            *held.entry(format!("[{}]", holds.join(", "))).or_default() += 1;
+        }
+    }
+    let reasons: Vec<String> = by_why
+        .iter()
+        .map(|(reason, count)| format!("{count} because {}", why(*reason)))
+        .collect();
+    let held: Vec<String> = held
+        .iter()
+        .map(|(holds, count)| format!("{count} hold {holds}"))
+        .collect();
+    format!(
+        "{} owner(s) of a marked symbol gave no label{}{}{}",
+        left_out.len(),
+        if reasons.is_empty() { "" } else { ": " },
+        reasons.join("; "),
+        if held.is_empty() {
+            String::new()
+        } else {
+            format!(" (of those with no text box, {})", held.join(", "))
+        }
+    )
 }
 
 fn says(label: &MarkedLabel) -> String {
     format!(
-        "label {:?} of {} at ({:.2}, {:.2}): the sheet lists the symbol at {:?} and the text at \
-         {:?} ({}); the plot strokes the mark at step(s) {:?} and letters the text from step {} \
-         ({}{})",
+        "label {:?} of {} at ({:.2}, {:.2}), symbol / owner / text oid {:?} at +{:?}: the sheet \
+         lists the symbol at {:?} and the text at {:?} ({}); the plot strokes the mark at \
+         step(s) {:?} and letters the text from step {} ({}{})",
         label.value,
         label.symbol,
         label.mark_mm[0],
         label.mark_mm[1],
+        label.oids,
+        label.stored_at,
         label.symbol_rank,
         label.text_rank,
         if label.listed_text_first() {
@@ -477,7 +545,34 @@ fn read_sheet(path: &Path, corpus: &Path, dirs: &[PathBuf]) -> Result<SheetReadi
         println!("      the mark: {}", mark.what);
         println!("      the ink:  {}", ink.what);
     }
-    reading.labels = marked_labels(path, &model, &doc, &reference_order)?;
+    let census = marked_label_census(path, &model, &doc, &reference_order)?;
+    reading.labels = census.labels;
+    reading.left_out = census.left_out;
+    for owner in &reading.left_out {
+        // Whether the symbol it names is one a label read here names too:
+        // the same mark, to the last bit.
+        let of_a_label = reading
+            .labels
+            .iter()
+            .any(|label| the_same_mark(label.mark_mm, owner.mark_mm));
+        println!(
+            "   no label: the owner at +{} of {} with its mark at ({:.2}, {:.2}){}: {}{}",
+            owner.owner_at,
+            owner.symbol,
+            owner.mark_mm[0],
+            owner.mark_mm[1],
+            owner
+                .value
+                .as_ref()
+                .map_or_else(String::new, |value| format!(", text {value:?}")),
+            why(owner.why),
+            if of_a_label {
+                "; its symbol is the symbol of a label read here"
+            } else {
+                "; no label read here names its symbol"
+            },
+        );
+    }
     for label in &reading.labels {
         if label.listed_text_first() || !label.as_listed() {
             println!(
@@ -516,6 +611,7 @@ fn main() -> ExitCode {
         Labels::default(),
     );
     let mut read: Vec<(String, Vec<MarkedLabel>)> = Vec::new();
+    let mut left_out: Vec<LeftOut> = Vec::new();
     for path in &sheets {
         let name = path
             .file_stem()
@@ -537,6 +633,13 @@ fn main() -> ExitCode {
                     );
                 }
                 println!("   labels: {}", tallied.says());
+                if !reading.left_out.is_empty() {
+                    println!(
+                        "   {}",
+                        left_out_says(&reading.left_out.iter().collect::<Vec<_>>())
+                    );
+                }
+                left_out.extend(reading.left_out);
                 own.add(reading.own);
                 another.add(reading.another);
                 unplaced.add(reading.unplaced);
@@ -551,6 +654,31 @@ fn main() -> ExitCode {
     println!("   a mark on anything else:        {}", another.says());
     println!("   a side our model lacks:         {}", unplaced.says());
     println!("   labels: {}", labels.says());
+    println!("   {}", left_out_says(&left_out.iter().collect::<Vec<_>>()));
+    // What else a record holds that could say which comes first: its
+    // number and its place in the stream. For how many labels each says
+    // what the plot paints.
+    let all: Vec<&MarkedLabel> = read.iter().flat_map(|(_, labels)| labels).collect();
+    let says_what_is_painted = |text_first: fn(&MarkedLabel) -> bool| {
+        all.iter()
+            .filter(|label| text_first(label) == label.painted_text_first())
+            .count()
+    };
+    println!(
+        "   which says what the plot paints, of {} label(s): the sheet's list for {}; the oid \
+         of the text's owner against the symbol's for {}; the oid of the text against the \
+         symbol's for {}; the owner's place in the stream against the symbol's for {}; the \
+         text's place in the stream against the symbol's for {}; \"the mark first\" for {}; \
+         \"the text first\" for {}",
+        all.len(),
+        says_what_is_painted(MarkedLabel::listed_text_first),
+        says_what_is_painted(MarkedLabel::owner_numbered_first),
+        says_what_is_painted(MarkedLabel::text_numbered_first),
+        says_what_is_painted(MarkedLabel::owner_stored_first),
+        says_what_is_painted(MarkedLabel::text_stored_first),
+        says_what_is_painted(|_| false),
+        says_what_is_painted(|_| true),
+    );
     // A label painted against its list, and the same label elsewhere: the
     // same text at the same point, listed at the same places.
     for (sheet, sheet_labels) in &read {

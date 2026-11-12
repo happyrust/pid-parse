@@ -1367,6 +1367,47 @@ const AGAINST_ITS_LIST: (&str, &str, &str, [(u32, u32); 2]) = (
 /// follow gives both.
 const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
 
+/// The owners that name a symbol with a mark and gave [`MARKED_LABELS`] no
+/// label, in the order of [`SHEETS`]: how many hold no text box, and how
+/// many hold a text whose mark the plot does not stroke.
+///
+/// An owner is a `DependencyObject` the sheet lists that names the symbol
+/// at payload `+16`. 120 of them name a symbol with a mark. 96 hold the
+/// text of a label. 23 hold a point (`igPoint2d`) and no text, each of
+/// them on the symbol of one of the 96: a second object hanging on a
+/// label's symbol, not a label. One holds a text the plot does not have
+/// where the drawing puts it ([`NOT_WHERE_ITS_PLOT_HAS_IT`]). None is left
+/// out for any other reason — unranked by its sheet's list, or lettered on
+/// one page and not the other — so the 96 are every label with a mark that
+/// the drawing on hand and its plot both show.
+const NO_LABEL: [[usize; 2]; 11] = [
+    [6, 0],
+    [6, 0],
+    [6, 0],
+    [0, 0],
+    [0, 0],
+    [0, 0],
+    [1, 0],
+    [1, 0],
+    [1, 0],
+    [1, 0],
+    [1, 1],
+];
+
+/// The one label with a mark that is not among the 96: the sheet, the
+/// text, and a point of its mark on our page, millimetres.
+///
+/// The plot of the A2 sheet is of a later state of the drawing, in which
+/// one instrument cluster stands elsewhere ([`LATER_REVISION`]). It
+/// letters this `SP=-8℃` 16.9 mm from where the drawing on hand puts it
+/// and strokes nothing in the paper's colour at the mark, so there is no
+/// order to read off the plot for it.
+const NOT_WHERE_ITS_PLOT_HAS_IT: (&str, &str, [f64; 2]) = (
+    "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+    "SP=-8℃",
+    [508.24, 254.72],
+);
+
 /// A label and its origin mark are painted in the order the sheet lists
 /// them: on every label of the eleven sheets but one, and that one has a
 /// twin painted the other way.
@@ -1377,7 +1418,9 @@ const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B�
 /// with a word when the corpus is absent.
 #[test]
 fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
-    use marked_labels::{MarkedLabel, apart, marked_labels};
+    use marked_labels::{
+        LeftOut, MarkedLabel, NotALabel, apart, marked_label_census, the_same_mark,
+    };
 
     let corpus = corpus_dir();
     let first_reference = corpus.join(format!("{}.pdf", SHEETS[0].name));
@@ -1389,6 +1432,7 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
         return;
     }
     let mut read: Vec<(&str, Vec<MarkedLabel>)> = Vec::new();
+    let mut no_label: Vec<(&str, Vec<LeftOut>)> = Vec::new();
     for sheet in &SHEETS {
         let name = sheet.name;
         let path = corpus.join(format!("{name}.pid"));
@@ -1399,9 +1443,10 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
         let plot = std::fs::read(corpus.join(format!("{name}.pdf")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         let plot = read_plot_sequence(&plot).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let labels =
-            marked_labels(&path, &model, &doc, &plot).unwrap_or_else(|e| panic!("{name}: {e}"));
-        read.push((name, labels));
+        let census = marked_label_census(&path, &model, &doc, &plot)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        read.push((name, census.labels));
+        no_label.push((name, census.left_out));
     }
 
     let mut against: Vec<(&str, &MarkedLabel)> = Vec::new();
@@ -1444,6 +1489,72 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
          them",
         read.len(),
         total - against.len()
+    );
+
+    // The owners of a marked symbol that gave no label: each sheet's two
+    // counts, and none left out for any other reason.
+    for (((name, owners), (_, labels)), pinned) in no_label.iter().zip(&read).zip(&NO_LABEL) {
+        let because = |why: NotALabel| owners.iter().filter(|owner| owner.why == why).count();
+        assert_eq!(
+            [
+                because(NotALabel::NoText),
+                because(NotALabel::NoMarkOnThePlot)
+            ],
+            *pinned,
+            "{name}: owners of a marked symbol that hold no text box, and that hold a text \
+             whose mark the plot does not stroke"
+        );
+        assert_eq!(
+            owners.len(),
+            pinned[0] + pinned[1],
+            "{name}: an owner gave no label for another reason: {owners:#?}"
+        );
+        for owner in owners.iter().filter(|owner| owner.why == NotALabel::NoText) {
+            // A second object hanging on a label's symbol: it holds a
+            // point, and a label read on this sheet names the same symbol.
+            assert_eq!(owner.holds, [0x005E], "{name}: {owner:?}");
+            assert!(
+                labels
+                    .iter()
+                    .any(|label| the_same_mark(label.mark_mm, owner.mark_mm)),
+                "{name}: no label read here names the symbol of {owner:?}"
+            );
+        }
+    }
+    let gave_none: usize = no_label.iter().map(|(_, owners)| owners.len()).sum();
+    eprintln!(
+        "owners of a symbol with an origin mark: {} — {total} hold the text of a label read \
+         here, {} hold a point and no text, {} holds a text the plot does not have where the \
+         drawing puts it",
+        total + gave_none,
+        NO_LABEL.iter().map(|sheet| sheet[0]).sum::<usize>(),
+        NO_LABEL.iter().map(|sheet| sheet[1]).sum::<usize>(),
+    );
+    // The one label the plot does not have where the drawing puts it.
+    let (sheet, value, mark_mm) = NOT_WHERE_ITS_PLOT_HAS_IT;
+    let elsewhere: Vec<(&str, &LeftOut)> = no_label
+        .iter()
+        .flat_map(|(name, owners)| owners.iter().map(move |owner| (*name, owner)))
+        .filter(|(_, owner)| owner.why == NotALabel::NoMarkOnThePlot)
+        .collect();
+    assert_eq!(elsewhere.len(), 1, "{elsewhere:#?}");
+    let (found_on, owner) = elsewhere[0];
+    assert_eq!(
+        (found_on, owner.value.as_deref(), owner.symbol.as_str()),
+        (sheet, Some(value), "Remarks.sym")
+    );
+    assert!(
+        apart(owner.mark_mm, mark_mm) <= 0.01,
+        "its mark is at {:?}, not {mark_mm:?}",
+        owner.mark_mm
+    );
+    assert!(
+        !read
+            .iter()
+            .filter(|(name, _)| *name == sheet)
+            .flat_map(|(_, labels)| labels)
+            .any(|label| the_same_mark(label.mark_mm, owner.mark_mm)),
+        "a label read on {sheet} names the symbol of {owner:?}"
     );
 
     // The one against its list, and what it is.

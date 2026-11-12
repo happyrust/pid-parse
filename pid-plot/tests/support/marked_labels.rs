@@ -14,6 +14,11 @@
 //! first: the step of its stroke in the paper's colour through the mark,
 //! and the step of the first glyph of the run that spells the text.
 //!
+//! An owner that names a symbol with a mark and gives no label is kept
+//! too, with why ([`NotALabel`]): a second object hanging on a label's
+//! symbol that holds no text, or a label the plot does not have where the
+//! drawing puts it. So a count of labels says what it left out.
+//!
 //! Shared by the ink gate, which pins what the eleven reference plots do,
 //! and by `probe_which_of_a_mark_and_its_ink_a_plot_paints_first`, which
 //! lists it. Included by path from both, so neither uses all of it.
@@ -40,6 +45,13 @@ const DEPENDS_ON_AT: usize = 16;
 
 pub fn apart(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// Whether two marks are one: the same point, to the last bit. A mark is
+/// read off the symbol's record, so two owners that name one symbol have
+/// the same mark.
+pub fn the_same_mark(a: [f64; 2], b: [f64; 2]) -> bool {
+    a.map(f64::to_bits) == b.map(f64::to_bits)
 }
 
 /// How near `point` passes to the straight piece `a`–`b`.
@@ -200,6 +212,12 @@ pub struct MarkedLabel {
     pub mark_steps: Vec<u32>,
     /// The step the plot letters the first glyph of the text at.
     pub lettered: u32,
+    /// The oids of the symbol's record, of the text's owner and of the
+    /// text's record: numbers of the drawing's own, which another drawing
+    /// holding the same label does not share.
+    pub oids: [u32; 3],
+    /// Where the same three records start in their stream.
+    pub stored_at: [usize; 3],
 }
 
 impl MarkedLabel {
@@ -232,6 +250,75 @@ impl MarkedLabel {
     pub fn as_listed(&self) -> bool {
         self.listed_text_first() == self.painted_text_first()
     }
+
+    /// Whether the text's owner carries a lower oid than the symbol.
+    pub fn owner_numbered_first(&self) -> bool {
+        self.oids[1] < self.oids[0]
+    }
+
+    /// Whether the text carries a lower oid than the symbol.
+    pub fn text_numbered_first(&self) -> bool {
+        self.oids[2] < self.oids[0]
+    }
+
+    /// Whether the stream holds the text's owner ahead of the symbol.
+    pub fn owner_stored_first(&self) -> bool {
+        self.stored_at[1] < self.stored_at[0]
+    }
+
+    /// Whether the stream holds the text ahead of the symbol.
+    pub fn text_stored_first(&self) -> bool {
+        self.stored_at[2] < self.stored_at[0]
+    }
+}
+
+/// Why an owner that names a symbol with a mark gave [`marked_labels`] no
+/// label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NotALabel {
+    /// The owner holds no text box. A label's symbol can have a second
+    /// `DependencyObject` hanging on it that holds something else — a
+    /// point, on the sheets on hand — and letters nothing.
+    NoText,
+    /// The page model letters nothing from the owner's text box, so there
+    /// is no text to look for on the plot.
+    TextNotOnOurPage,
+    /// The plot strokes nothing in the paper's colour through the mark:
+    /// the label is not where the drawing on hand puts it.
+    NoMarkOnThePlot,
+    /// The sheet's list ranks the symbol or the text nowhere.
+    Unranked,
+    /// The plot has no run of glyphs that spells the text.
+    TextNotOnThePlot,
+}
+
+/// An owner that names a symbol with a mark and is no label of
+/// [`marked_labels`], and why.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeftOut {
+    /// Why it is no label.
+    pub why: NotALabel,
+    /// Where the owner's record starts in its stream.
+    pub owner_at: usize,
+    /// The type words of the live records the owner holds, in stream order.
+    pub holds: Vec<u16>,
+    /// The symbol file the owner names, by its file name.
+    pub symbol: String,
+    /// A point of the symbol's mark, paper millimetres.
+    pub mark_mm: [f64; 2],
+    /// The text the label would letter, where the page model letters one.
+    pub value: Option<String>,
+}
+
+/// What a drawing's owners of marked symbols come to on a plot: the labels
+/// read, and the owners that gave none.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MarkedLabels {
+    /// Every label whose mark and text the plot paints.
+    pub labels: Vec<MarkedLabel>,
+    /// Every owner — and, for an owner of several text boxes, every text —
+    /// that names a symbol with a mark and gave no label.
+    pub left_out: Vec<LeftOut>,
 }
 
 /// Every label of the drawing's own sheets whose symbol carries a mark and
@@ -243,17 +330,36 @@ impl MarkedLabel {
 /// where the sheet's list ranks the records. A label is left out when its
 /// symbol draws no stroke in the paper's colour, when the list ranks one of
 /// its two records nowhere, or when the plot has no such stroke or no run
-/// of glyphs that spells the text.
+/// of glyphs that spells the text. [`marked_label_census`] is the same
+/// reading with what was left out.
 pub fn marked_labels(
     path: &Path,
     model: &PaperModel,
     doc: &pid_parse::PidDocument,
     plot: &PlotSequence,
 ) -> Result<Vec<MarkedLabel>, String> {
+    Ok(marked_label_census(path, model, doc, plot)?.labels)
+}
+
+/// [`marked_labels`], and with them every owner that names a symbol with a
+/// mark and gave no label ([`LeftOut`]).
+///
+/// The owners counted are the `DependencyObject`s the sheet lists as its
+/// own children that name, at payload `+16`, an `igSymbol2d` of the same
+/// stream from which the page model draws a stroke in the paper's colour.
+/// Each either holds text boxes — and every one of them is a label read or
+/// a text left out, for the first of the reasons in [`NotALabel`]'s order
+/// that holds — or holds none and is left out once.
+pub fn marked_label_census(
+    path: &Path,
+    model: &PaperModel,
+    doc: &pid_parse::PidDocument,
+    plot: &PlotSequence,
+) -> Result<MarkedLabels, String> {
     let package = pid_parse::PidParser::new()
         .parse_package(path)
         .map_err(|error| error.to_string())?;
-    let mut labels = Vec::new();
+    let mut read = MarkedLabels::default();
     for (stream_path, order) in &doc.sheet_display_order {
         let Some(stream) = package.get_stream(stream_path) else {
             continue;
@@ -285,10 +391,6 @@ pub fn marked_labels(
             else {
                 continue;
             };
-            let mark_steps = marked_at(plot, mark_mm);
-            let (Some(symbol_rank), false) = (rank(symbol.at), mark_steps.is_empty()) else {
-                continue;
-            };
             let symbol_name = drawn_from(symbol.at)
                 .find_map(|primitive| primitive.symbol.as_deref())
                 .map_or_else(String::new, |symbol| {
@@ -298,10 +400,30 @@ pub fn marked_labels(
                         .unwrap_or(symbol)
                         .to_string()
                 });
-            for text in records
+            let holds: Vec<u16> = records
+                .iter()
+                .filter(|record| record.parent == owner.oid)
+                .map(|record| record.kind)
+                .collect();
+            let left_out = |why: NotALabel, value: Option<String>| LeftOut {
+                why,
+                owner_at: owner.at,
+                holds: holds.clone(),
+                symbol: symbol_name.clone(),
+                mark_mm,
+                value,
+            };
+            let texts: Vec<&Record<'_>> = records
                 .iter()
                 .filter(|record| record.kind == TEXT_BOX && record.parent == owner.oid)
-            {
+                .collect();
+            if texts.is_empty() {
+                read.left_out.push(left_out(NotALabel::NoText, None));
+                continue;
+            }
+            let mark_steps = marked_at(plot, mark_mm);
+            let symbol_rank = rank(symbol.at);
+            for text in texts {
                 let Some((value, origin)) =
                     drawn_from(text.at).find_map(|primitive| match &primitive.shape {
                         PaperShape::Text {
@@ -310,14 +432,26 @@ pub fn marked_labels(
                         _ => None,
                     })
                 else {
+                    read.left_out
+                        .push(left_out(NotALabel::TextNotOnOurPage, None));
                     continue;
                 };
-                let (Some(text_rank), Some(lettered)) =
-                    (rank(text.at), lettered_at(plot, &value, origin))
-                else {
+                if mark_steps.is_empty() {
+                    read.left_out
+                        .push(left_out(NotALabel::NoMarkOnThePlot, Some(value)));
+                    continue;
+                }
+                let (Some(symbol_rank), Some(text_rank)) = (symbol_rank, rank(text.at)) else {
+                    read.left_out
+                        .push(left_out(NotALabel::Unranked, Some(value)));
                     continue;
                 };
-                labels.push(MarkedLabel {
+                let Some(lettered) = lettered_at(plot, &value, origin) else {
+                    read.left_out
+                        .push(left_out(NotALabel::TextNotOnThePlot, Some(value)));
+                    continue;
+                };
+                read.labels.push(MarkedLabel {
                     value,
                     symbol: symbol_name.clone(),
                     mark_mm,
@@ -325,9 +459,11 @@ pub fn marked_labels(
                     text_rank,
                     mark_steps: mark_steps.clone(),
                     lettered,
+                    oids: [symbol.oid, owner.oid, text.oid],
+                    stored_at: [symbol.at, owner.at, text.at],
                 });
             }
         }
     }
-    Ok(labels)
+    Ok(read)
 }
