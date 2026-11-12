@@ -784,8 +784,10 @@ pub fn load_publish_from_reader<R: Read + Seek>(
 /// publishes is then short of every attribute row, label text and symbol
 /// placement that stream holds — 18 published attributes become none on a
 /// copy of `DWG-0201GP06-01.pid` with one length field of `/Sheet6` set to
-/// zero. A stream whose chain reaches the end with a header count that
-/// differs is read as far as the chain reaches, and listed all the same.
+/// zero, and a copy whose `/Unclustered Dynamic Attributes` stops has no
+/// drawing row left and publishes nothing. A stream whose chain reaches the
+/// end with a header count that differs is read as far as the chain
+/// reaches, and listed all the same.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishChainFault {
     /// The stream, and what is wrong with its framing.
@@ -800,25 +802,71 @@ pub struct PublishChainFault {
 }
 
 impl PublishChainFault {
-    /// The fault in one sentence ([`crate::model::StreamChainFault::describe`]),
-    /// and what the publish reader made of the stream.
+    /// What is wrong with the stream's framing, in one sentence
+    /// ([`crate::model::StreamChainFault::describe_framing`]), and what the
+    /// publish reader is left without, in the chain's own numbers.
+    ///
+    /// For a chain that stops short: how many live records it read before
+    /// the stop and how many of those are of a kind the reader keeps — none
+    /// of which is in the XML — and how many more live records the header
+    /// states, which were not read at all. For a chain that reaches the
+    /// stream's end with a count that differs: that the reader read what
+    /// the chain reached, and by how much the header differs.
+    ///
+    /// The sentence says nothing of what the stream draws. A publisher
+    /// draws nothing, and `/Unclustered Dynamic Attributes`, the stream a
+    /// drawing's own row is in, holds no graphic record; until 2026-11-12
+    /// the line for that stream ended "what the stream draws may be
+    /// incomplete; … nothing it read is missing from the XML", ahead of
+    /// the error that no row carries a `DrawingNo`.
     #[must_use]
     pub fn describe(&self) -> String {
-        let made = match (&self.fault.stop, self.publishable_records_read) {
-            (None, _) => "the publish reader read the records the chain reached".to_string(),
-            (Some(_), 0) => "the publish reader takes nothing from a stream whose chain stops \
-                             short; the chain read no attribute row, text box, dependency object \
-                             or symbol placement before the stop, so nothing it read is missing \
-                             from the XML, and what lies past the stop is not read"
-                .to_string(),
-            (Some(_), lost) => format!(
-                "the publish reader takes nothing from a stream whose chain stops short, so the \
-                 {lost} attribute row(s), text box(es), dependency object(s) and symbol \
-                 placement(s) the chain read before the stop are not in the XML, and what lies \
-                 past the stop is not read"
-            ),
+        let live = self.fault.live_records_read;
+        // Live records the header states beyond the ones the chain read.
+        let more_stated = self
+            .fault
+            .stated_records
+            .and_then(|stated| usize::try_from(stated).ok())
+            .and_then(|stated| stated.checked_sub(live))
+            .filter(|more| *more > 0);
+        let made = if self.fault.stop.is_none() {
+            let differs = match (more_stated, self.fault.stated_records) {
+                (Some(more), _) => {
+                    format!("; the header states {more} more, which the stream does not hold")
+                }
+                (None, Some(stated)) if self.fault.count_differs() => {
+                    format!("; the header states {stated}")
+                }
+                _ => String::new(),
+            };
+            format!("the publish reader read the {live} live record(s) the chain reached{differs}")
+        } else {
+            let read = match (live, self.publishable_records_read) {
+                (0, _) => "the chain read no live record before the stop".to_string(),
+                (live, 0) => format!(
+                    "none of the {live} live record(s) the chain read before the stop is an \
+                     attribute row, a text box, a dependency object or a symbol placement, so \
+                     the XML is missing nothing the chain read"
+                ),
+                (live, lost) => format!(
+                    "{lost} of the {live} live record(s) the chain read before the stop are \
+                     attribute rows, text boxes, dependency objects or symbol placements, and \
+                     none of them is in the XML"
+                ),
+            };
+            let unread = match more_stated {
+                Some(more) => format!(
+                    "the other {more} live record(s) the header states are not read, and the \
+                     XML has nothing of them"
+                ),
+                None => "what lies past the stop is not read".to_string(),
+            };
+            format!(
+                "the publish reader takes nothing from a stream whose chain stops short: \
+                 {read}; {unread}"
+            )
         };
-        format!("{}; {made}", self.fault.describe())
+        format!("{}; {made}", self.fault.describe_framing())
     }
 }
 

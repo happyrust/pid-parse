@@ -75,8 +75,11 @@ pub struct BackupPublishReport {
     /// hold, in the order the drawings were read. The publish reader takes
     /// a stream's records all or nothing, so each of these is a drawing
     /// whose delivery may be short of what that stream holds while it
-    /// counts as written; `_Index.json` and the coverage reports do not
-    /// list them, and a caller that delivers the package says them, as
+    /// counts as written. `_Index.json` lists each among its `problems`,
+    /// as [`PackageChainFault::describe`] words it — the one kind of
+    /// problem there that is not a drawing or an archive the run could not
+    /// read; its `failed` count and the coverage reports do not change. A
+    /// caller that delivers the package says them as well, as
     /// `pid_publish_xml` does. Always empty for a SQL Server package,
     /// whose drawings are read from the database and not from the `.pid`.
     pub chain_faults: Vec<PackageChainFault>,
@@ -418,8 +421,10 @@ struct PublishTally<'a> {
     paired_entries: &'a mut HashSet<String>,
     written_names: &'a mut HashSet<String>,
     drawings: &'a mut Vec<Value>,
+    /// The sentences `_Index.json` lists as `problems`.
     problems: &'a mut Vec<String>,
-    /// Not `problems`: that list is written into `_Index.json`.
+    /// The chain faults of the drawings read, for the report. Each is also
+    /// one of `problems`.
     chain_faults: &'a mut Vec<PackageChainFault>,
     gate: Option<&'a mut PackageGate>,
 }
@@ -501,17 +506,18 @@ fn publish_one(
     // stops short is often why it has no `DrawingNo` or publishes little.
     let loaded_drawing = match read_publish_from_reader(std::io::Cursor::new(bytes), &stem) {
         Ok(read) => {
-            tally
-                .chain_faults
-                .extend(
-                    read.chain_faults
-                        .into_iter()
-                        .map(|fault| PackageChainFault {
-                            zip_file: plant.file_name.clone(),
-                            zip_entry: zip_entry.to_string(),
-                            fault,
-                        }),
-                );
+            for fault in read.chain_faults {
+                let fault = PackageChainFault {
+                    zip_file: plant.file_name.clone(),
+                    zip_entry: zip_entry.to_string(),
+                    fault,
+                };
+                // The index says it too: the drawing below may well be
+                // written and counted as written, and a reader of the
+                // index alone would not know its delivery is short.
+                tally.problems.push(fault.describe());
+                tally.chain_faults.push(fault);
+            }
             read.drawing
         }
         Err(error) => Err(error),

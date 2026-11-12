@@ -1344,3 +1344,41 @@ XML、`_Coverage.json`、退出码不变。备份包模式没有做。
 改成 `BTreeMap`：存储按路径排（根存储的键是空串，排在最前），存储之内是 `PSMcluster0` 里的次序。这个次序由文件
 内容决定。测试不重复读取器的做法，而是直接从文件的流里按同一条规则拼出期望的表，再与读取器的结果逐项比；并把
 自己作为另一个进程再跑一遍，比两个进程全部读数的摘要（`DefaultHasher::new()` 的键是固定的，跨进程可比）。
+
+### 19.3 发布时的断链进索引；告警说的损失与链读到的行一致
+
+**索引。** `publish_backup_package` 原先把断链只放在报告的 `chain_faults` 里，由 `pid_publish_xml` 打到 stderr；
+`_Index.json` 的 `problems` 是空的，只看索引的人不知道某张「已写出」的图少了东西。现在每条断链同时进 `problems`，
+句子就是 stderr 那一句（`<zip> <成员>: the record chain of <流> does not hold: …`），按图纸读取的先后排。
+
+`_Index.json` 多出的内容对读它的人的影响，查过的范围与结论：
+
+- 键集合不变（24 个顶层键，`tests/publish_from_pid.rs` 的 `INDEX_KEYS`）。多出来的只是 `problems` 这个字符串数组里的
+  元素，而且只在包里有断链的图时才有；完好的包索引逐字节不变（本机的 53 张图的包 91 836 字节、入库的 `TEST02_p`
+  1 470 字节，改动前后各发布一次，SHA-256 相同；53 张图的包另外 159 个交付文件也逐个相同）。
+- 本仓库里没有代码读 `problems` 的内容：`pid_publish_xml` 的退出码是 `failed > 0` 或门禁不干净，不看 `problems`；
+  测试只断言这个键存在。`D:\work\plant-code` 下的其他工程（`.rs` / `.ts` / `.js` / `.py` / `.cs` 等源文件）里，
+  提到 `_Index.json` 的只有本仓库的另一个检出。仓库之外、这台机器之外有没有人读，查不到。
+- 语义上的变化只有一条：这一类条目对应的图是**写出了、算在已写出里**的，`failed` 不加。`problems` 原先就不是
+  「一条对应一张失败的图」——包扫描的问题（清单读不了、`RefData` 扫描失败、zip 打不开）也在里面、同样不计入
+  `failed`——但原先每一条都是「没读成」；现在多了「读成了、但少东西」这一种。拿 `problems` 非空当作「有图失败」
+  的读者会多报；拿 `failed` 判断的读者不受影响。
+- 入库的 `test-file/backup-test/DWG-0202GP06-01_p` 整包发布以
+  `Export.dmp: T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer` 退出 1、不写索引，改动前后都是如此，与本轮无关。
+
+**措辞。** 发布线的告警原先是 `StreamChainFault::describe()` 加一句发布读取器的话。前一半以「what the stream draws
+may be incomplete」结尾——那是图纸流的后果，发布线不画东西，`/Unclustered Dynamic Attributes` 里也没有图形记录。
+后一半在「停点之前没有读到读取器要的那几类记录」时说「nothing it read is missing from the XML」：这句话对
+`StyleCluster` 成立（样式表里本来就没有那几类记录），对断在第一条记录上的属性流却是在「XML 根本没做出来」的报错
+前面说「不缺」。现在：`describe_framing()` 只说分帧；发布线自己的后一半用链的数说损失——
+
+| 情形 | 现在说的 |
+|---|---|
+| 链停了、停点之前没有活记录 | 没有读到活记录；头部声明的 N 条都没读，XML 里没有它们 |
+| 链停了、读到的活记录里没有那四类 | 读到的 L 条里没有那四类，XML 不缺链读到的东西；另外 N − L 条没读 |
+| 链停了、读到的 L 条里有 P 条是那四类 | 这 P 条不在 XML 里；另外 N − L 条没读 |
+| 链走到流尾、头部计数不同 | 读取器读了链走到的 L 条；头部多声明的 N − L 条流里没有 |
+
+夹具上的读数：`/Sheet6` 断在中间——179 条活记录里 120 条是那四类，另 175 条没读；`/Unclustered Dynamic Attributes`
+断在中间——115 条全是属性行，另 116 条没读，随后 `no P&IDAttributes row carries a DrawingNo`、退出 1；断在第一条——
+0 条、231 条没读，同样退出 1；`/StyleCluster` 断在中间——67 条里没有那四类，另 68 条没读，XML 与完好图纸逐字节相同。

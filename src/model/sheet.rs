@@ -1826,9 +1826,30 @@ impl StreamChainFault {
     }
 
     /// The fault in one sentence, naming the stream and, when the walk
-    /// stopped short, the offset it stopped at and the bytes left unread.
+    /// stopped short, the offset it stopped at and the bytes left unread:
+    /// [`Self::describe_framing`], and what it means for a stream that
+    /// draws.
     #[must_use]
     pub fn describe(&self) -> String {
+        format!(
+            "{}; what the stream draws may be incomplete",
+            self.describe_framing()
+        )
+    }
+
+    /// What is wrong with the stream's framing, and nothing about what
+    /// follows from it: the stream, and, when the walk stopped short, the
+    /// offset it stopped at, why, the records read before it and the bytes
+    /// left unread; the header's count against the chain's.
+    ///
+    /// [`Self::describe`] goes on to say that what the stream draws may be
+    /// incomplete, which is the consequence for a sheet. A reader of
+    /// something else says its own after this sentence: the publish line
+    /// reads attribute rows and labels, from streams some of which draw
+    /// nothing, and says what its XML is short of
+    /// (`PublishChainFault::describe` in `publish::pid_load`).
+    #[must_use]
+    pub fn describe_framing(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(found) = self.wrong_magic {
             parts.push(format!(
@@ -1891,7 +1912,7 @@ impl StreamChainFault {
             }
         }
         format!(
-            "the record chain of {} does not hold: {}; what the stream draws may be incomplete",
+            "the record chain of {} does not hold: {}",
             self.stream_path,
             parts.join("; ")
         )
