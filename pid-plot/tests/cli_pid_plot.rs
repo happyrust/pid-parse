@@ -65,7 +65,10 @@
 //! none, loses the template only its frame's rectangle picked; `D06` cut
 //! down to its frame, a sheet with no ink of its own, is a blank page; and
 //! against a corpus with no template, `D06`'s is sought for the sheet its
-//! lines fit and `DWG-0202GP06-01`'s for the size its name states.
+//! lines fit and `DWG-0202GP06-01`'s for the size its name states. A
+//! refused frame that could never have stated the drawing's page — one in
+//! a cached sheet, linked inside the drawing — is held to no warning at
+//! all.
 //!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
@@ -4284,4 +4287,97 @@ fn a_refused_frame_whose_template_is_sought_and_not_found_says_for_which_sheet()
             "{case}: no template lies anywhere, and the drawing is on the page\n{said}"
         );
     }
+}
+
+/// A frame record that could never have stated the drawing's page is the
+/// parse layer's alone when it is refused: the page says nothing of it.
+///
+/// `A01.pid` caches the sheet its frame embeds in `/JSite204`, and that
+/// sheet holds a frame of its own: a micrometre square, linked inside the
+/// drawing. It is in a nested storage, so it is no frame of the drawing's
+/// own sheet, and a frame linked inside the drawing states no page when it
+/// decodes — it fails both halves of the rule for what a page answers for
+/// (`the_page_answers_for` in the layout, which a unit test holds half by
+/// half). Refused, it is one more refused record of its stream. The page
+/// is the committed drawing's primitive for primitive, the page's own
+/// account files nothing, and the program does not print a line.
+#[test]
+fn a_refused_frame_that_states_no_page_of_the_drawings_is_not_the_pages_to_say() {
+    let case = "frame-a01-nested";
+    const CACHED_SHEET: &str = "/JSite204/Sheet6";
+    let corpus = fixtures();
+    let committed = a01();
+    let AnotherBorderFrame {
+        path: drawing,
+        stated: [width, height, _],
+        ..
+    } = with_another_border_frame(&committed, CACHED_SHEET, case, BorderFrame::RatioOff);
+    assert!(
+        (width - 1e-6).abs() < 1e-9 && (height - 1e-6).abs() < 1e-9,
+        "the frame the cached sheet states: {width} by {height}"
+    );
+    // The record is refused, and the parser lists it where it is.
+    let doc = pid_parse::PidParser::new()
+        .parse_file(&drawing)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    let refused: Vec<(&str, bool)> = doc
+        .refused_smart_frames
+        .iter()
+        .map(|frame| (frame.stream_path.as_str(), frame.may_state_a_page()))
+        .collect();
+    assert_eq!(
+        refused,
+        [(CACHED_SHEET, false)],
+        "{case}: the one refused frame, in the cached sheet, linked inside the drawing"
+    );
+
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert_eq!(
+        (model.page_mm, model.frame_mm),
+        (sound.page_mm, sound.frame_mm)
+    );
+    assert_eq!(
+        model.template.as_ref().map(|template| &template.path),
+        sound.template.as_ref().map(|template| &template.path),
+        "{case}: the border template"
+    );
+    assert_eq!(
+        model.primitives, sound.primitives,
+        "{case}: the page, primitive for primitive"
+    );
+
+    // Nothing of the page's own: no item, no sentence.
+    assert!(
+        model.ledger.frames_refused.is_empty(),
+        "{case}: no frame the page answers for: {:?}",
+        model.ledger.frames_refused
+    );
+    assert!(
+        model.ledger.page_warnings().is_empty(),
+        "{case}: {:?}",
+        model.ledger.page_warnings()
+    );
+    let (ledger, sound_ledger) = (account_of(&model, &drawing), account_of(&sound, &committed));
+    assert!(
+        ledger.page.dropped.is_empty(),
+        "{case}: the page files nothing of its own: {:?}",
+        ledger.page.dropped
+    );
+    let mut expected = suspects(&sound_ledger);
+    *expected.entry("record_refused").or_insert(0) += 1;
+    assert_eq!(
+        suspects(&ledger),
+        expected,
+        "{case}: the committed page's suspects and the refused record, nothing more"
+    );
+
+    // The program: not a line.
+    let said = export_against_the_fixtures(case, &drawing, "refused.pdf");
+    assert!(
+        warnings(&said.stderr).is_empty(),
+        "{case}: a frame that is no page of the drawing's drew a warning\n{said}"
+    );
 }

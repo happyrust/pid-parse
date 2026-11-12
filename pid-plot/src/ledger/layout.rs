@@ -2605,6 +2605,172 @@ mod tests {
         }
     }
 
+    /// Where another border frame of the drawing still states its sheet,
+    /// the page is that one's, and the sentence says so rather than "no
+    /// frame"; a template the other frame's rectangle finds none for is
+    /// said there too. `Q井场` states two frames: with the embedded one
+    /// refused the page is the linked one's 841 by 594 and wears its
+    /// template; with the linked one refused the page is the embedded
+    /// object's rectangle, and no template is that size.
+    #[test]
+    fn a_refused_frame_beside_another_says_the_page_is_that_ones() {
+        let with_its_template = said_of(frame_refused(
+            PageWithoutTheFrame::AnotherFrame,
+            Some([841_000, 594_000]),
+            TemplateWithoutTheFrame::Drawn,
+            4_458,
+        ));
+        assert_eq!(
+            with_its_template,
+            "another border frame of the drawing states its sheet, 841.000 x 594.000 mm, and \
+             the page is laid out by that one"
+        );
+        let without = said_of(frame_refused(
+            PageWithoutTheFrame::AnotherFrame,
+            Some([689_600, 554_302]),
+            TemplateWithoutTheFrame::NotFound {
+                sheet_um: [689_600, 554_302],
+                fitted: false,
+            },
+            4_030,
+        ));
+        assert_eq!(
+            without,
+            "another border frame of the drawing states its sheet, 689.600 x 554.302 mm, and \
+             the page is laid out by that one, and no border template is drawn: a template was \
+             sought for a sheet of 689.600 x 554.302 mm and none was found"
+        );
+        for said in [&with_its_template, &without] {
+            assert!(
+                !said.contains("with no frame") && !said.contains("without the frame's offsets"),
+                "a page another frame lays out is not one with no frame: {said}"
+            );
+        }
+        // Two frames refused are two sentences, each of its own record.
+        let mut second = frame_refused(
+            PageWithoutTheFrame::Paper,
+            Some([594_000, 420_000]),
+            TemplateWithoutTheFrame::Drawn,
+            156,
+        );
+        second.record = 2_048;
+        second.oid = None;
+        let both = LayoutLedger {
+            frames_refused: vec![
+                frame_refused(
+                    PageWithoutTheFrame::Paper,
+                    Some([594_000, 420_000]),
+                    TemplateWithoutTheFrame::Drawn,
+                    156,
+                ),
+                second,
+            ],
+            ..LayoutLedger::default()
+        };
+        let said = both.page_warnings();
+        assert_eq!(said.len(), 2, "{said:#?}");
+        assert!(said[0].starts_with(FRAME_REFUSED), "{}", said[0]);
+        assert!(
+            said[1].starts_with("the border frame of /Sheet6, the record at +2048, is refused: "),
+            "a record whose payload reaches no oid names none: {}",
+            said[1]
+        );
+    }
+
+    /// What states the page of a sheet laid out with no frame: the paper,
+    /// the size its template's name stands for, or neither — and then the
+    /// page is fitted to what is drawn, unless nothing is.
+    #[test]
+    fn a_refused_frame_says_what_states_the_page_without_it() {
+        const PLACED: &str = ", and nothing is placed by the frame: the drawing's ink and its \
+                              border template lie where they do without the frame's offsets";
+        assert_eq!(
+            said_of(frame_refused(
+                PageWithoutTheFrame::TemplateName,
+                Some([594_000, 420_000]),
+                TemplateWithoutTheFrame::Drawn,
+                339,
+            )),
+            format!(
+                "the sheet is laid out as one with no frame: the page is the size its \
+                 template's name states, 594.000 x 420.000 mm{PLACED}"
+            )
+        );
+        assert_eq!(
+            said_of(frame_refused(
+                PageWithoutTheFrame::Unstated,
+                None,
+                TemplateWithoutTheFrame::Drawn,
+                40,
+            )),
+            format!(
+                "the sheet is laid out as one with no frame: no paper and no template name \
+                 states its page, which is fitted to what is drawn{PLACED}"
+            )
+        );
+        // Nothing states a size and nothing is drawn: there is no page to
+        // fit, and the sentence does not say there is one.
+        let no_page = said_of(frame_refused(
+            PageWithoutTheFrame::Unstated,
+            None,
+            TemplateWithoutTheFrame::NotNamed,
+            0,
+        ));
+        assert_eq!(
+            no_page,
+            "the sheet is laid out as one with no frame: no paper and no template name states \
+             its page, and nothing is drawn to fit one to, and no border template is drawn: \
+             the drawing names none, and only a frame's rectangle picks one for a drawing that \
+             names none"
+        );
+        assert!(
+            !no_page.contains("fitted to what is drawn") && !no_page.contains("on the page"),
+            "{no_page}"
+        );
+    }
+
+    /// A page whose frame was refused is not one where "no border frame
+    /// was read": the paper that is not the size its template's name
+    /// states is said in the frame's own sentence, and the sentence that
+    /// opens with the paper is not started beside it.
+    #[test]
+    fn a_refused_frame_is_not_said_again_as_no_frame_read() {
+        let beside_a_name = PaperBesideAName {
+            paper_um: [297_000, 420_000],
+            named_um: [594_000, 420_000],
+        };
+        let ledger = LayoutLedger {
+            frames_refused: vec![frame_refused(
+                PageWithoutTheFrame::Paper,
+                Some([297_000, 420_000]),
+                TemplateWithoutTheFrame::Drawn,
+                156,
+            )],
+            paper_unlike_the_name: Some(beside_a_name),
+            ..LayoutLedger::default()
+        };
+        assert_eq!(
+            ledger.page_warnings(),
+            [format!(
+                "{FRAME_REFUSED}the sheet is laid out as one with no frame: the page is the \
+                 paper its sheet states, 297.000 x 420.000 mm, which is not the size its \
+                 template's name states, 594.000 x 420.000 mm, and nothing is placed by the \
+                 frame: the drawing's ink and its border template lie where they do without \
+                 the frame's offsets"
+            )],
+            "one sentence, the frame's, with both sizes"
+        );
+        // The same paper beside the same name with no frame refused: the
+        // sentence of its own, which says no frame was read.
+        let no_frame = LayoutLedger {
+            paper_unlike_the_name: Some(beside_a_name),
+            ..LayoutLedger::default()
+        };
+        let said = no_frame.page_warnings();
+        assert_eq!(said.len(), 1, "{said:#?}");
+        assert!(said[0].contains("no border frame was read"), "{}", said[0]);
+    }
+
     /// A symbol file with a chain that does not hold, drawn from: one item
     /// a file and stream in the domain of the placement, and one sentence
     /// that names the file and says the reader's own of the stream.

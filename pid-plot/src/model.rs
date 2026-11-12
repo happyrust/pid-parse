@@ -1716,7 +1716,7 @@ pub fn lay_out_with_symbol_roots(
     ledger.frames_refused = doc
         .refused_smart_frames
         .iter()
-        .filter(|frame| frame.stream_path.matches('/').count() == 1 && frame.may_state_a_page())
+        .filter(|frame| the_page_answers_for(frame))
         .map(|frame| crate::ledger::FrameRefused {
             stream: frame.stream_path.clone(),
             record: u64::try_from(frame.refused.byte_range.start).unwrap_or(u64::MAX),
@@ -1780,6 +1780,25 @@ fn template_without_the_frame(
         (false, None) if names_a_template => Template::NoSheet,
         (false, None) => Template::NotNamed,
     }
+}
+
+/// Whether a frame record the frame rule refuses is one the page answers
+/// for: a record of the drawing's own sheet that could have stated the
+/// sheet's page.
+///
+/// Two conditions, and a record has to meet both. Its stream is a sheet of
+/// the document's root storage: a frame in a nested storage is a cached
+/// sheet's — a symbol's, an embedded template's — and no page of the
+/// drawing's. And its flag words read as an embedded or a linked frame, or
+/// cannot be read (`RefusedSmartFrame::may_state_a_page`): an empty frame,
+/// and one linked inside the drawing, state no page when they decode. A
+/// record that fails either stays with the refused records of its stream,
+/// which the parse account counts, and the page says nothing of it —
+/// `A01.pid` holds one of each kind, the embedded frame of its sheet and a
+/// frame linked inside the drawing in `/JSite204/Sheet6`.
+fn the_page_answers_for(frame: &pid_parse::RefusedSmartFrame) -> bool {
+    let of_the_drawings_own_sheet = frame.stream_path.matches('/').count() == 1;
+    of_the_drawings_own_sheet && frame.may_state_a_page()
 }
 
 /// How far a side of a border frame's rectangle may lie from the same side
@@ -9703,6 +9722,56 @@ mod tests {
                 Ok(())
             })
             .expect("the body conservation equation holds");
+    }
+
+    /// Which refused frame records the page answers for: those of the
+    /// drawing's own sheets — streams of the document's root — whose flag
+    /// words read as an embedded or a linked frame, or cannot be read. Each
+    /// half of the rule is held by itself: a frame of the drawing's own
+    /// sheet that states no page when it decodes, and a frame that could
+    /// state a page in a sheet that is not the drawing's own.
+    #[test]
+    fn only_a_refused_frame_of_the_drawings_own_sheet_that_could_state_a_page_is_the_pages() {
+        use pid_parse::parsers::sheet_records::{
+            SheetSmartFrame2dState as State, SheetSmartFrameRefused, SmartFrameRefusal,
+        };
+        let refused = |stream: &str, state: Option<State>| pid_parse::RefusedSmartFrame {
+            stream_path: stream.to_string(),
+            refused: SheetSmartFrameRefused {
+                byte_range: 8..170,
+                oid: Some(22),
+                state,
+                why: SmartFrameRefusal::NotLengths {
+                    width_m: 0.0,
+                    height_m: 0.42,
+                },
+            },
+        };
+        for (stream, state, the_pages) in [
+            ("/Sheet6", Some(State::Embedded), true),
+            ("/Sheet6", Some(State::Linked), true),
+            // A payload too short to reach the flag words: it may have
+            // been either.
+            ("/Sheet6", None, true),
+            // The state half: a frame of the drawing's own sheet that
+            // states no page when it decodes.
+            ("/Sheet6", Some(State::Empty), false),
+            ("/Sheet6", Some(State::LocallyLinked), false),
+            // The storage half: a frame that could state a page, in a
+            // sheet that is not the drawing's own.
+            ("/JSite204/Sheet6", Some(State::Embedded), false),
+            ("/JSite204/Sheet6", Some(State::Linked), false),
+            ("/JSite204/Sheet6", None, false),
+            // Neither.
+            ("/JSite204/Sheet6", Some(State::LocallyLinked), false),
+            ("/JSite204/JSite16/Sheet6", Some(State::Empty), false),
+        ] {
+            assert_eq!(
+                super::the_page_answers_for(&refused(stream, state)),
+                the_pages,
+                "{stream} {state:?}"
+            );
+        }
     }
 
     /// What a page laid out without a refused frame is told of its border
