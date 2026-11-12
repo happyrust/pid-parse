@@ -5762,6 +5762,38 @@ const IGSMARTFRAME_MAX_PAGE_M: f64 = 5.0;
 /// Narrowest sheet a page extent can plausibly claim, in metres.
 const IGSMARTFRAME_MIN_PAGE_M: f64 = 0.05;
 
+/// Whether a frame's extent and the ratio it states hold each other: the
+/// ratio lies within [`IGSMARTFRAME_ASPECT_TOLERANCE`] of the height over
+/// the width.
+///
+/// That can be asked only of an extent that has a ratio. The width and the
+/// height are lengths in metres: above zero, and normal numbers — a
+/// denormal is what a count or a flag word reads as when the eight bytes
+/// are not a double, and is below 2.3e-308 m besides. Their quotient is a
+/// normal number too: one that overflows, or is rounded away to nothing,
+/// is no number a stated ratio can be near. The comparison is written so
+/// that whatever cannot be compared fails it.
+///
+/// Until 2026-11-12 a width of zero skipped the comparison and a quotient
+/// of infinity passed it (nothing is further from infinity than a millionth
+/// of infinity), and so did a height of zero under a stated ratio of zero.
+/// Six of the 1 371 448 records that walks read off the corpora's chains,
+/// with one length changed by every amount from −64 to +64, were frames
+/// that way: four of no width and no height, two a count wide under a
+/// height of 3.7e62 m. The smallest frame the chains hold is a micrometre
+/// square; none states a side of zero
+/// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+fn smart_frame_extent_states_its_ratio(width_m: f64, height_m: f64, aspect_ratio: f64) -> bool {
+    let is_length = |metres: f64| metres.is_normal() && metres > 0.0;
+    if !is_length(width_m) || !is_length(height_m) || !aspect_ratio.is_finite() {
+        return false;
+    }
+    let stated_by_extent = height_m / width_m;
+    stated_by_extent.is_normal()
+        && (aspect_ratio - stated_by_extent).abs()
+            <= IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent
+}
+
 /// Which of the native reader's three states a frame is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SheetSmartFrame2dState {
@@ -5925,28 +5957,13 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             .iter()
             .all(|v| v.is_finite())
             .then_some(range_origin_m);
-        // A frame with a non-finite or negative extent is not a frame this
-        // reader understands, whatever the flags say.
-        if ![extent_width_m, extent_height_m, aspect_ratio]
-            .iter()
-            .all(|v| v.is_finite())
-            || extent_width_m < 0.0
-            || extent_height_m < 0.0
-        {
-            return None;
-        }
         // The record states its extent twice over, and a frame's two
         // statements agree. The three doubles of a run of bytes that is not
-        // a frame do not: this is what tells the ten "frames" a walk read
+        // a frame do not: this is what tells the 102 "frames" a walk read
         // off the corpora's chains after a wrong length from the 178 the
-        // chains hold. A frame of no width states nothing to hold it to.
-        if extent_width_m > 0.0 {
-            let stated_by_extent = extent_height_m / extent_width_m;
-            if (aspect_ratio - stated_by_extent).abs()
-                > IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent.abs()
-            {
-                return None;
-            }
+        // chains hold.
+        if !smart_frame_extent_states_its_ratio(extent_width_m, extent_height_m, aspect_ratio) {
+            return None;
         }
 
         let content_transform = (|| {
@@ -10187,6 +10204,135 @@ mod tests {
                 "{width:e} by {height:e} stating {ratio:e}"
             );
         }
+    }
+
+    /// One whole `igSmartFrame2d` record of `payload_len` bytes that states
+    /// `width` by `height` and `ratio`, and nothing else.
+    fn smart_frame_stating(payload_len: usize, width: f64, height: f64, ratio: f64) -> Vec<u8> {
+        let mut payload = vec![0u8; payload_len];
+        for (at, value) in [
+            (IGSMARTFRAME_WIDTH_AT, width),
+            (IGSMARTFRAME_HEIGHT_AT, height),
+            (IGSMARTFRAME_ASPECT_AT, ratio),
+        ] {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+        record
+    }
+
+    /// The six "frames" the ratio rule of 2026-11-11 still took. That rule
+    /// held the ratio to the height over the width only where the width was
+    /// above zero, and wrote the comparison so that a quotient of infinity
+    /// passed it: nothing lies further from infinity than a millionth of
+    /// infinity. With a record's length changed by every amount from −64
+    /// to +64, walks read 1 371 448 records off the corpora's chains; these
+    /// are the extents of the six that decoded, at five places
+    /// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+    /// The first is `I井场`'s `/Sheet6` at `+10702`, which two changes
+    /// reach: a width that is a count read as a double, under a height of
+    /// 3.7e62 m. The other four, on two sheets of the plant backup, are
+    /// zeros where a width and a height would be.
+    #[test]
+    fn what_a_walk_off_the_chain_took_for_a_frame_of_no_width_is_not_one() {
+        let taken: Vec<String> = [
+            (
+                131_072_usize,
+                3.819_594_119_6e-313_f64,
+                3.728_096_263_309_427_4e62_f64,
+                2.263_743_152_185_486_6e164_f64,
+            ),
+            (65_536, 0.0, 0.0, 2.122_513_856_3e-314),
+            (65_536, 0.0, 0.0, 2.434_904_188_060_913_6e144),
+            (65_536, 0.0, 0.0, 1.636_760_400_304_213_6e-251),
+            (65_536, 0.0, 0.0, 2.151_964_644_286_228_7e-281),
+        ]
+        .into_iter()
+        .filter(|&(payload_len, width, height, ratio)| {
+            decode_smartframe_at(&smart_frame_stating(payload_len, width, height, ratio), 0)
+                .is_some()
+        })
+        .map(|(_, width, height, ratio)| format!("{width:e} by {height:e} stating {ratio:e}"))
+        .collect();
+        assert!(taken.is_empty(), "taken for a frame: {taken:#?}");
+    }
+
+    /// The ratio can be held to the extent only where the extent has one:
+    /// a width and a height that are lengths — above zero, and not the
+    /// denormals a count or a flag word reads as — whose quotient is a
+    /// number of its own. Each case here is an extent that states no ratio
+    /// to compare, and each passed until 2026-11-12: by skipping the
+    /// comparison (no width), or by passing it for want of anything to
+    /// differ from (a quotient of zero against a stated zero, of infinity
+    /// against anything, of two counts against one).
+    #[test]
+    fn a_frame_states_an_extent_its_ratio_can_be_held_to() {
+        // The smallest frame of the corpora: the micrometre square a nested
+        // site's placeholder states. Its sides are lengths, and it decodes.
+        let (width, height) = (1.000_000_000_000_000_2e-6_f64, 9.999_999_999_999_997e-7_f64);
+        assert!(
+            decode_smartframe_at(
+                &smart_frame_stating(IGSMARTFRAME_MIN_PAYLOAD, width, height, height / width),
+                0
+            )
+            .is_some(),
+            "a micrometre square"
+        );
+
+        let denormal = f64::from_bits(18 << 32);
+        assert!(denormal > 0.0 && !denormal.is_normal());
+        let taken: Vec<String> = [
+            (0.0, 0.594, 0.706_302, "no width"),
+            (0.0, 0.0, 0.0, "no width and no height"),
+            (-0.0, 0.594, 0.706_302, "a width of minus zero"),
+            (0.841, 0.0, 0.0, "no height, stating a ratio of zero"),
+            (
+                denormal,
+                0.594,
+                1e300,
+                "a count for a width: the quotient is infinite",
+            ),
+            (
+                1.0,
+                denormal,
+                denormal,
+                "a count for a height, and the same count for a ratio",
+            ),
+            (
+                denormal,
+                denormal,
+                1.0,
+                "the same count for a width and a height",
+            ),
+            (
+                1e200,
+                1e-200,
+                0.0,
+                "a quotient too small to be a number, stating zero",
+            ),
+            (
+                1e-200,
+                1e200,
+                f64::MAX,
+                "a quotient too large to be a number",
+            ),
+        ]
+        .into_iter()
+        .filter(|&(width, height, ratio, _)| {
+            decode_smartframe_at(
+                &smart_frame_stating(IGSMARTFRAME_MIN_PAYLOAD, width, height, ratio),
+                0,
+            )
+            .is_some()
+        })
+        .map(|(width, height, ratio, what)| {
+            format!("{what}: {width:e} by {height:e} stating {ratio:e}")
+        })
+        .collect();
+        assert!(taken.is_empty(), "taken for a frame: {taken:#?}");
     }
 
     /// A family decodes the records its stream's chain starts, and nothing

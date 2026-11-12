@@ -71,7 +71,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
 | `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
-| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. Each such record also keeps the place the sheet's own list gives it in the display order (`sheet_display_order`), the records drawn at one place keep their order, and nothing past the stop is ranked. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. (On every corpus in reach that holds as well since the page frame is held to the ratio of its own extent: ten of 49 058 such records decoded as `igSmartFrame2d` before, none now — `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`, which is too slow for a test.) A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned) | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
+| `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. Each such record also keeps the place the sheet's own list gives it in the display order (`sheet_display_order`), the records drawn at one place keep their order, and nothing past the stop is ranked. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. Those are fourteen changes a record. The corpus test below makes all 128 of −64 … +64 and puts every record a walk then reads off a chain to all sixteen families: on the repository's files (3 776 624 changes, 61 060 such records, pinned) no family decodes one; on every corpus in reach (29 120 173 changes, 1 371 448 records) none decodes as a page frame, and four decode as `igComplexString2d`, all on one sheet of the plant backup — a ceiling the test holds. A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned). It also holds every live page frame to decoding (91 across the corpora; the repository's 32 a floor) and tries the frame decoder at every offset off a chain where a walk could read a frame's type word, whatever wrong length leads there (179 places across the corpora, 83 of them frames by the decoder's first rules, none now; the repository's one pinned). With the frame rule taken away this test fails on the repository's files alone; with either half of it taken away — the extent being lengths, or the ratio — it fails where the outside corpora are, and the lib's unit tests fail everywhere | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
 | `tests/sheet_display_order_fixtures.rs` | The display order of the committed files, read off the files themselves (the parser's own unit tests are on bytes built by hand). For each of the seven fixture drawings and the five border templates under `test-file/Ref/Template Files`: every top-level sheet stream that holds a record of the sheet's own has an order and one without holds no live record; the sheet's list names exactly the live records of the stream whose parent is the sheet; every live record takes a rank; and the objects listed (1 014 over the seven drawings), the records ranked, the place of the border frame (`DWG-0201GP06-01`: 91) and a digest of the order are pinned per file (`PINNED`). The counts it compares with are taken from the stream bytes with the chain walk, not through the module. `A01.pid`'s embedded sheet `/JSite204/Sheet6` is held to its own order — 97 objects, 107 ranked records — and to the place of the frame that embeds it, 0. A second case walks `test-file` and fails on a drawing or template `PINNED` does not list. With a record's place taken from its oid, two of the three cases fail | `test-file/**/*.pid` and `test-file/Ref/Template Files/*.igr` (committed; runs in CI; a missing file fails) |
 | `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 20 条共 27 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；页面按图纸自己的显示次序画读到的那些记录（`paint_sequence` 有值，且与截到停点的那一份相同）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，合并后的 26 条里 3 条失败、23 条通过：失败的是这两条和 `a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place`（第九次审查在 26 条时量的；之后加的第 27 条没有在那个改动下重量）（第一份原先读成 359 条记录的完好流，一个字都不说）。七份副本另各自断言链读到、却没有显示次序位置的记录：第 1 条长度 +8 那一份有 1 条（2 个图元；链只读到这一条，它挂在图纸的一个对象下面，那个对象在停点之后，所以流里没有图纸自己的记录可以对照图纸的表），账本在流那一项之外另记一项 `record_without_display_place`、可疑比完好图纸多 2 项，其余六份没有；七份上 `display_order_warnings` 都不另起一句——链停造成的没有位置，由链的那一行说：那一份上链的一行接着说「读到的记录没有一条是图纸自己的」「1 条记录、2 个图元没有位置」「页面是模板名给出的页幅 594 × 420」，其余带停点的副本上那一行不说这些；每份带停点的副本上 stderr 那一行就是库函数 `chain_fault_warnings` 的那一句 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
 | `tests/publish_chain_faults.rs` | `pid_publish_xml` says when a record chain of a `.pid` it publishes does not hold, for a single `.pid` and for each drawing of a backup package. The publish reader takes a stream's records all or nothing, so a copy of `DWG-0201GP06-01.pid` with one length of `/Sheet6` set to zero publishes 0 of 102 label values where the drawing publishes 92: the copy exits 0 with exactly one `warning:` naming the file, the stream, `stops at +16994 of 29594 bytes`, the 12 600 bytes unread and what the stream cost — the 120 attribute rows, text boxes, dependency objects and symbol placements the chain read before the stop — and the line is the library's sentence (`PublishChainFault::describe`) from the one read that makes the drawing (`read_publish_from_pid`). A `/StyleCluster` whose chain stops is said too, as costing the XML nothing the chain read, and the data and meta XML are the intact drawing's byte for byte. A copy whose `DrawingNo` row is in the stopped stream exits 1 with the warning ahead of the error. A header count one too many is said and the stream is still read. A package of two drawings, one damaged, publishes both, exits 0 and prints one warning led by the zip and the entry (`BackupPublishReport::chain_faults`); `_Index.json` and the coverage reports keep their keys and list no fault | `test-file/DWG-0201GP06-01.pid`, `test-file/D06.pid` (committed; runs in CI) |
@@ -532,20 +532,43 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   what ends it is what follows slot `0x0118`, three doubles and
   pointers): a later build with a class past `0x0118` would write
   records the walk stops on, loudly.
-- **What a walk reads off the chain, no family decodes.** A walk that
+- **What a walk reads off the chain is no page frame.** A walk that
   has left the record boundaries can still land on a word the class
   table has: `0x003D`, a page frame's type word, is also the character
-  `=` in a label's text. Of 49 058 records such walks read off the
-  corpora's chains (3 337 379 single-length changes, 885 documents),
-  ten decoded as `igSmartFrame2d` until 2026-11-11 — payloads of
-  65 536 bytes and more, doubles that are denormals. A frame states
-  its extent twice, width and height at `+76` / `+84` and height over
-  width at `+148`, and the decoder now refuses one whose stated ratio
-  is more than a millionth (relative) from that quotient: all 178
-  frames of the corpora's chains agree to 5e-16, none of the ten does.
+  `=` in a label's text. With one length changed by every amount from
+  −64 to +64 on every record (29 120 173 changes, 885 documents),
+  walks read 1 371 448 records off the corpora's chains, and 102 of
+  them were `igSmartFrame2d` by the decoder's first rules — payloads
+  of 65 536 bytes and more, doubles that are denormals or zero. A
+  frame states its extent twice, width and height at `+76` / `+84` and
+  height over width at `+148`, and the decoder takes a record for a
+  frame only when the width and the height are lengths — above zero
+  and normal numbers, not the denormals a count reads as — whose
+  quotient is a normal number too, and the stated ratio lies within a
+  millionth (relative) of it. All 178 frames of the corpora's chains
+  agree to 5e-16, and the smallest is a micrometre square; none of the
+  102 does, nor any of the 179 places off a chain where a walk could
+  read a frame's type word at all, whatever length led it there.
+  (Until 2026-11-12 a width of zero skipped the comparison and a
+  quotient of infinity passed it: six of the 102 still decoded. A
+  frame whose own record states a side of zero is therefore refused
+  as well, and listed with the refused graphic records.)
   `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs` is
-  the measurement; `tests/sheet_chain_faults.rs` pins the same on the
-  committed streams on every run.
+  the measurement; `tests/sheet_chain_faults.rs` holds the same on
+  every corpus in reach, the repository's files pinned.
+- **Of the other families, one is known to decode such a record.** Put
+  to all sixteen families, four of those 1 371 448 records decode as
+  `igComplexString2d` and none as anything else. All four are on
+  `G井场进站生产收球筒`'s `/Sheet6` in the plant backup: 28 bytes into
+  each of two `DependencyObject` records the bytes spell a
+  `ComplexString` of 256 members in a payload of 65 536 bytes, and two
+  length changes reach each place. That decoder holds a record to a
+  member count the payload has room for and a finite scale, which such
+  a run meets; the family emits nothing either way. What would tell a
+  string from the run is not decoded — a string's trailer is four
+  bytes on a sheet and 16, 20 or 36 in a symbol cache — so the four
+  stand, as a ceiling `tests/sheet_chain_faults.rs` holds; no record
+  read off a chain of the repository's own files decodes as anything.
 - `0x0021 ComplexString` and `0x007B Group` are **associations**: a
   member count, a double, and one 14-byte entry per member (oid, range
   box, a word). Neither states a coordinate and neither emits: each
@@ -903,16 +926,22 @@ the chain: over the 53 backup sheets, coverage of the sheet streams went from
 `0x8000` in the type word — which the native reader skips and no family decodes.
 
 `probe_what_passes_for_a_page_frame_off_the_chain` asks what a walk that has
-left the record boundaries takes for an `igSmartFrame2d`. It changes one length
-by ±1 … ±64 on every record of every distinct chain stream of the corpora and
-their archives (885 documents, 3 337 379 changes), and of the 49 058 records the
-walks read off the chain it finds ten that were frames by the decoder's rules
-before 2026-11-11 and none the decoder takes now; beside them it reads the 178
-real frames for their payload lengths (228, 234, 238, 246) and for the ratio
-each states against its own height over its width. It exits non-zero if a
-record read off the chain decodes as a frame, a live frame is refused, or a
-frame's ratio is not that quotient. Run it with `--release`: about three
-minutes.
+left the record boundaries takes for an `igSmartFrame2d`, or for a record of
+any family. It changes one length by every amount from −64 to +64 on every
+record of every distinct chain stream of the corpora and their archives (885
+documents, 29 120 173 changes) and puts each of the 1 371 448 records the walks
+read off the chain to all sixteen families and to the three sets of rules the
+frame decoder has had: 102 were frames by the first rules, six by the ratio
+rule of 2026-11-11, none by the decoder now; four decode as
+`igComplexString2d`. It tries the same three at every offset where a walk could
+read a frame's type word off a chain (179 places: 83, six, none), and keeps the
+tallies of the fourteen changes ±1, ±2 … ±64 (3 337 379 changes, 49 058
+records, ten frames by the first rules) and of the repository's own files
+apart. Beside them it reads the 178 real frames for their payload lengths (228,
+234, 238, 246), their narrowest side (a micrometre) and the ratio each states
+against its own height over its width. It exits non-zero if a record read off
+the chain decodes as a frame, a live frame is refused, or a frame's ratio is
+not that quotient. Run it with `--release`: about two minutes.
 
 `pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is`
 reads the vendor's plot of the A2 acceptance sheet along each curve member of
