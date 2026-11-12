@@ -13647,4 +13647,549 @@ mod tests {
         assert_eq!(super::igboundary_arc_sweep(0.0, TAU, 0), -TAU);
         assert_eq!(super::igboundary_arc_sweep(1.0, 1.0, 1), 0.0);
     }
+
+    // -----------------------------------------------------------------
+    // 2026-11-12: a loop of curves that names its members
+    // -----------------------------------------------------------------
+
+    /// A `0x67` line member's bytes.
+    fn boundary_line_member(from: (f64, f64), to: (f64, f64)) -> Vec<u8> {
+        let mut out = vec![0x67];
+        for value in [from.0, from.1, to.0, to.1] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out
+    }
+
+    /// A `0x74` member's bytes: the two parameters, the centre, the major
+    /// semi-axis vector, the ratio and the direction byte — what an
+    /// `igEllipticalArc2d` record carries after its sub-header.
+    fn boundary_arc_member(
+        sweep: (f64, f64),
+        centre: (f64, f64),
+        major: (f64, f64),
+        ratio: f64,
+        direction: u8,
+    ) -> Vec<u8> {
+        let mut out = vec![0x74];
+        for value in [
+            sweep.0, sweep.1, centre.0, centre.1, major.0, major.1, ratio,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.push(direction);
+        out
+    }
+
+    /// A `0x7F` member's bytes: what an `igBspCurve2d` record carries after
+    /// its sub-header — `u32 N`, the poles, the weight flag and weights,
+    /// `u32 M`, the knots, the double `-1.0` and the bytes `04 01 01 00`.
+    fn boundary_spline_member(poles: &[(f64, f64)], weights: &[f64], knots: &[f64]) -> Vec<u8> {
+        let mut out = vec![0x7F];
+        out.extend_from_slice(&(poles.len() as u32).to_le_bytes());
+        for (x, y) in poles {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+        out.extend_from_slice(&u32::from(!weights.is_empty()).to_le_bytes());
+        for weight in weights {
+            out.extend_from_slice(&weight.to_le_bytes());
+        }
+        out.extend_from_slice(&(knots.len() as u32).to_le_bytes());
+        for knot in knots {
+            out.extend_from_slice(&knot.to_le_bytes());
+        }
+        out.extend_from_slice(&(-1.0f64).to_le_bytes());
+        out.extend_from_slice(&[4, 1, 1, 0]);
+        out
+    }
+
+    /// The payload of a boundary of one loop under sub-type `0x0000` that
+    /// names its members, the layout of the `-W` templates' logo fills: the
+    /// 18-byte prefix, one loop, the member count, `[2, 1]`, the members,
+    /// then the anchor, the flag byte, the reference count and the
+    /// references.
+    fn one_loop_boundary_payload(
+        members: &[Vec<u8>],
+        anchor: (f64, f64),
+        references: &[(u32, u16, u16)],
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&341u32.to_le_bytes());
+        payload.extend_from_slice(&369u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.extend_from_slice(&15u32.to_le_bytes());
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&[2, 1]);
+        for member in members {
+            payload.extend_from_slice(member);
+        }
+        payload.extend_from_slice(&anchor.0.to_le_bytes());
+        payload.extend_from_slice(&anchor.1.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&(references.len() as u32).to_le_bytes());
+        for (oid, class_word, sub_word) in references {
+            payload.extend_from_slice(&oid.to_le_bytes());
+            payload.extend_from_slice(&class_word.to_le_bytes());
+            payload.extend_from_slice(&sub_word.to_le_bytes());
+        }
+        payload
+    }
+
+    /// Half an ellipse closed by its chord: the line `(0, 0) -> (0, 2)`,
+    /// then the arc from the parameter `π` back to `0` of the ellipse about
+    /// `(0, 1)` whose major semi-axis is `(0, -1)` and whose ratio is one
+    /// half — `P(t) = (sin t / 2, 1 - cos t)`. The direction byte says which
+    /// half: `0` runs the parameter down through `π/2`, the half to the
+    /// right of the chord; `1` runs it up through `3π/2`, the half to the
+    /// left.
+    fn half_ellipse_members(direction: u8) -> Vec<Vec<u8>> {
+        vec![
+            boundary_line_member((0.0, 0.0), (0.0, 2.0)),
+            boundary_arc_member(
+                (std::f64::consts::PI, 0.0),
+                (0.0, 1.0),
+                (0.0, -1.0),
+                0.5,
+                direction,
+            ),
+        ]
+    }
+
+    const HALF_ELLIPSE_REFERENCES: [(u32, u16, u16); 2] = [(335, 0x00CB, 5), (354, 0x00D3, 0)];
+
+    #[test]
+    fn igboundary2d_decodes_a_loop_of_a_line_and_an_elliptical_arc() {
+        let payload = one_loop_boundary_payload(
+            &half_ellipse_members(0),
+            (0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        let record = boundary_record(&payload);
+        let decoded = decode_igboundaries(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1, "the loop of a line and an elliptical arc");
+        let b = &decoded[0];
+        assert_eq!((b.oid, b.parent_ref, b.sheet_layer_ref), (341, 369, 8));
+        assert_eq!((b.sub_type_word, b.index), (0x0000, 15));
+        assert_eq!(b.segment_count, 2, "two members");
+        assert_eq!(b.sub_header_tail, [2, 1]);
+        assert!(b.loop_segment_counts.is_empty(), "one loop states no tally");
+        assert_eq!(b.anchor, (0.2, 1.0));
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs
+                .iter()
+                .map(|reference| (
+                    reference.member_oid,
+                    reference.class_word,
+                    reference.sub_word
+                ))
+                .collect::<Vec<_>>(),
+            HALF_ELLIPSE_REFERENCES
+        );
+        // The line is one chord; the arc turns π of parameter in chords of
+        // a quarter radian at most, thirteen of them.
+        assert_eq!(b.segments.len(), 1 + 13);
+        assert_eq!(b.segments[0].tag_offset, 28);
+        assert_eq!(
+            (b.segments[0].start, b.segments[0].end),
+            ((0.0, 0.0), (0.0, 2.0))
+        );
+        let arc = &b.segments[1..];
+        assert!(arc.iter().all(|segment| segment.tag_offset == 28 + 33));
+        for segment in arc {
+            for (x, y) in [segment.start, segment.end] {
+                // On the ellipse: (x / 0.5)² + (y - 1)² = 1.
+                assert!(
+                    ((x / 0.5).powi(2) + (y - 1.0).powi(2) - 1.0).abs() < 1e-12,
+                    "({x}, {y}) is off the ellipse"
+                );
+                assert!(x > -1e-12, "({x}, {y}) is on the far side of the chord");
+            }
+        }
+        // From the chord's end round to its start, through the right-hand
+        // vertex of the ellipse.
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
+        assert!(near(arc[0].start, (0.0, 2.0)), "{:?}", arc[0].start);
+        assert!(near(arc[12].end, (0.0, 0.0)), "{:?}", arc[12].end);
+        let reach = arc.iter().map(|s| s.end.0).fold(f64::MIN, f64::max);
+        assert!((reach - 0.5).abs() < 0.01, "the arc reaches x = {reach}");
+        assert!(b.is_closed_loop(1e-12));
+        assert_eq!(
+            b.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+    }
+
+    #[test]
+    fn igboundary2d_elliptical_member_runs_the_way_its_direction_byte_says() {
+        let payload = one_loop_boundary_payload(
+            &half_ellipse_members(1),
+            (-0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        let arc = &decoded.segments[1..];
+        assert_eq!(arc.len(), 13);
+        // The same two ends, the other half of the ellipse.
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
+        assert!(near(arc[0].start, (0.0, 2.0)) && near(arc[12].end, (0.0, 0.0)));
+        assert!(arc.iter().all(|segment| segment.end.0 < 1e-12));
+        let reach = arc.iter().map(|s| s.end.0).fold(f64::MAX, f64::min);
+        assert!((reach + 0.5).abs() < 0.01, "the arc reaches x = {reach}");
+    }
+
+    /// A cubic of four poles and the chord back to its start, and the same
+    /// with weights: the member is the curve `bspline::sample` draws a
+    /// sheet's own `igBspCurve2d` as, vertex for vertex.
+    #[test]
+    fn igboundary2d_decodes_a_loop_over_a_bspline_member() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        for weights in [&[][..], &[1.0, 2.0, 2.0, 1.0][..]] {
+            let payload = one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&poles, weights, &knots),
+                    boundary_line_member((2.0, 0.0), (0.0, 0.0)),
+                ],
+                (1.0, 0.3),
+                &[(353, 0x00D4, 5), (342, 0x00CB, 4)],
+            );
+            let decoded = decode_igboundary_at(&boundary_record(&payload), 0)
+                .unwrap_or_else(|| panic!("a B-spline member with {} weights", weights.len()));
+            assert_eq!(decoded.segment_count, 2);
+            assert_eq!(decoded.member_refs.len(), 2);
+            let curve =
+                crate::bspline::sample(&poles, weights, &knots, crate::bspline::SEGMENTS_PER_SPAN);
+            assert_eq!(curve.len(), 9, "one span of eight segments");
+            let spline: Vec<&SheetIgBoundary2dSegment> = decoded
+                .segments
+                .iter()
+                .filter(|segment| segment.tag_offset == 28)
+                .collect();
+            assert_eq!(spline.len(), 8);
+            for (segment, pair) in spline.iter().zip(curve.windows(2)) {
+                assert_eq!((segment.start, segment.end), (pair[0], pair[1]));
+            }
+            let line = decoded.segments.last().expect("the chord");
+            assert_eq!((line.start, line.end), ((2.0, 0.0), (0.0, 0.0)));
+            assert!(decoded.is_closed_loop(1e-12));
+        }
+    }
+
+    /// A loop that names no member — the linked-template trailer — reads a
+    /// B-spline member as well: one vocabulary, whichever way the record
+    /// ends.
+    #[test]
+    fn igboundary2d_template_loop_may_hold_a_bspline() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let payload = one_loop_boundary_payload(
+            &[
+                boundary_spline_member(&poles, &[], &knots),
+                boundary_line_member((2.0, 0.0), (0.0, 0.0)),
+            ],
+            (1e30, 1e30),
+            &[],
+        );
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert!(decoded.member_refs.is_empty());
+        assert_eq!(decoded.segments.len(), 8 + 1);
+        assert_eq!(decoded.anchor, (0.0, 0.0), "the ring's first vertex");
+    }
+
+    /// The arc of a circle is the `0x74` member whose major semi-axis is
+    /// `(radius, 0)` and whose ratio is one, and it flattens to the vertices
+    /// it always has, bit for bit: `centre + radius · (cos, sin)` at the
+    /// start angle and each further fraction of the sweep.
+    #[test]
+    fn igboundary2d_circular_arc_member_flattens_as_it_always_has() {
+        for (start, end, centre, radius, direction) in [
+            (0.172_04, 5.996_42, (0.394_572, 0.103_313), 0.003_651, 0u8),
+            (4.425_17, 0.601_38, (0.403_232, 0.100_857), 0.000_096, 1),
+            (
+                4.712_389,
+                1.577_149,
+                (0.710_033_387, 0.095_408_05),
+                6.517e-4,
+                1,
+            ),
+            (1.380_115, 4.903_101, (0.704_962, 0.094_07), 6.7228e-3, 1),
+        ] {
+            let record =
+                build_template_boundary_arc_and_chord(start, end, centre, radius, direction);
+            let decoded = decode_igboundary_at(&record, 0).expect("decodes");
+            let arc = &decoded.segments[..decoded.segments.len() - 1];
+            let sweep = super::igboundary_arc_sweep(start, end, direction);
+            let chords = ((sweep.abs() / 0.25).ceil() as usize).max(1);
+            assert_eq!(arc.len(), chords);
+            let at = |angle: f64| {
+                (
+                    centre.0 + radius * angle.cos(),
+                    centre.1 + radius * angle.sin(),
+                )
+            };
+            let bits = |point: (f64, f64)| (point.0.to_bits(), point.1.to_bits());
+            assert_eq!(bits(arc[0].start), bits(at(start)));
+            for (index, segment) in arc.iter().enumerate() {
+                let angle = start + sweep * ((index + 1) as f64 / chords as f64);
+                assert_eq!(
+                    bits(segment.end),
+                    bits(at(angle)),
+                    "chord {index} of the arc {start} -> {end}"
+                );
+            }
+        }
+    }
+
+    /// A one-loop record may name one line more than it has members, as the
+    /// two-loop record of `XA-A1.igr` does: the references close the payload
+    /// and that is all they are held to.
+    #[test]
+    fn igboundary2d_of_one_curved_loop_need_not_name_one_line_a_member() {
+        let mut references = HALF_ELLIPSE_REFERENCES.to_vec();
+        references.push((4836, 0x00CB, 0));
+        let payload = one_loop_boundary_payload(&half_ellipse_members(0), (0.2, 1.0), &references);
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert_eq!((decoded.segment_count, decoded.member_refs.len()), (2, 3));
+    }
+
+    #[test]
+    fn igboundary2d_curve_members_must_be_curves_and_close_the_payload() {
+        let whole = one_loop_boundary_payload(
+            &half_ellipse_members(0),
+            (0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+        // Where the arc member's doubles stand: tag at +61, then the two
+        // parameters, the centre, the major semi-axis vector, the ratio.
+        let arc_at = 28 + 33;
+        let double_at = |slot: usize| arc_at + 1 + slot * 8;
+        let with = |slot: usize, value: f64| {
+            let mut payload = whole.clone();
+            payload[double_at(slot)..double_at(slot) + 8].copy_from_slice(&value.to_le_bytes());
+            payload
+        };
+
+        // An ellipse with no major semi-axis, or no second one.
+        refused("a zero major semi-axis", with(5, 0.0));
+        refused("a ratio of zero", with(6, 0.0));
+        refused("a negative ratio", with(6, -0.5));
+        for (slot, what) in [
+            (0, "start parameter"),
+            (1, "end parameter"),
+            (2, "centre x"),
+            (3, "centre y"),
+            (4, "major x"),
+            (5, "major y"),
+            (6, "ratio"),
+        ] {
+            refused(&format!("a NaN {what}"), with(slot, f64::NAN));
+            refused(&format!("an infinite {what}"), with(slot, f64::INFINITY));
+            refused(&format!("a {what} of 1e10"), with(slot, 1e10));
+        }
+
+        // The references close the payload, to the byte.
+        let count_at = whole.len() - 2 * 8 - 4;
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        refused("one reference too few is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&3u32.to_le_bytes());
+        refused("one reference too many is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a reference count that overflows", payload);
+        let mut payload = whole.clone();
+        payload.push(0);
+        refused("a byte past the references", payload);
+
+        // An anchor that is not a point of the sheet.
+        let anchor_at = count_at - 1 - 16;
+        let mut payload = whole.clone();
+        payload[anchor_at..anchor_at + 8].copy_from_slice(&1e30f64.to_le_bytes());
+        refused(
+            "the placeholder for an anchor, with references behind it",
+            payload,
+        );
+
+        // Members the loop does not hold, a tag no member has, no loop.
+        let mut payload = whole.clone();
+        payload[22..26].copy_from_slice(&3u32.to_le_bytes());
+        refused("a third member is stated", payload);
+        let mut payload = whole.clone();
+        payload[22..26].copy_from_slice(&0u32.to_le_bytes());
+        refused("no member is stated", payload);
+        let mut payload = whole.clone();
+        payload[arc_at] = 0x66;
+        refused("an unknown member tag", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&0u32.to_le_bytes());
+        refused("no loop at all", payload);
+
+        // The drawing-side sub-type reads lines and a circle, as it did.
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0010u16.to_le_bytes());
+        refused("an elliptical arc under sub-type 0x0010", payload);
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0011u16.to_le_bytes());
+        refused("sub-type 0x0011", payload);
+
+        // Every truncation.
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn igboundary2d_bspline_member_must_be_a_curve() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let closing = boundary_line_member((2.0, 0.0), (0.0, 0.0));
+        let references = [(353, 0x00D4, 5), (342, 0x00CB, 4)];
+        let build = |spline: Vec<u8>| {
+            one_loop_boundary_payload(&[spline, closing.clone()], (1.0, 0.3), &references)
+        };
+        let whole = build(boundary_spline_member(&poles, &[], &knots));
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+
+        refused(
+            "one pole",
+            build(boundary_spline_member(&poles[..1], &[], &knots)),
+        );
+        refused(
+            "fewer knots than a degree-one curve has",
+            build(boundary_spline_member(&poles, &[], &knots[..5])),
+        );
+        refused(
+            "a knot vector that steps back",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.5, 0.25, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "a NaN knot",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, f64::NAN, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "a NaN pole",
+            build(boundary_spline_member(
+                &[(0.0, 0.0), (f64::NAN, 1.0), (1.5, 1.0), (2.0, 0.0)],
+                &[],
+                &knots,
+            )),
+        );
+        refused(
+            "a pole past the coordinate domain",
+            build(boundary_spline_member(
+                &[(0.0, 0.0), (0.5, 1e10), (1.5, 1.0), (2.0, 0.0)],
+                &[],
+                &knots,
+            )),
+        );
+        refused(
+            "a weight of zero",
+            build(boundary_spline_member(
+                &poles,
+                &[1.0, 0.0, 1.0, 1.0],
+                &knots,
+            )),
+        );
+        // Counts the payload does not hold.
+        let pole_count_at = 28 + 1;
+        let mut payload = whole.clone();
+        payload[pole_count_at..pole_count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a pole count of four thousand million", payload);
+        let mut payload = whole.clone();
+        payload[pole_count_at..pole_count_at + 4].copy_from_slice(&5u32.to_le_bytes());
+        refused("a fifth pole is stated", payload);
+        let knot_count_at = pole_count_at + 4 + 4 * 16 + 4;
+        let mut payload = whole.clone();
+        payload[knot_count_at..knot_count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a knot count of four thousand million", payload);
+
+        // A degree the decode would have to flatten at a cost out of all
+        // proportion to the member's bytes: thirty-two is read, thirty-three
+        // is not. (Three on the corpora.)
+        let of_degree = |degree: usize| {
+            let poles: Vec<(f64, f64)> = (0..=degree).map(|i| (i as f64, 0.5)).collect();
+            let mut knots = vec![0.0; degree + 1];
+            knots.extend(std::iter::repeat_n(1.0, degree + 1));
+            let last = poles[degree];
+            one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&poles, &[], &knots),
+                    boundary_line_member(last, (0.0, 0.5)),
+                ],
+                (1.0, 0.3),
+                &references,
+            )
+        };
+        assert!(
+            decode_igboundary_at(&boundary_record(&of_degree(32)), 0).is_some(),
+            "degree 32"
+        );
+        refused("degree 33", of_degree(33));
+
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+    }
+
+    /// Every byte of a loop of all three curved members, set in turn to each
+    /// of a handful of values, and every truncation: the decoder returns,
+    /// with a record or without one.
+    #[test]
+    fn igboundary2d_curve_member_decoder_is_panic_safe_under_mutation() {
+        let mut members = half_ellipse_members(0);
+        members.push(boundary_spline_member(
+            &[(0.0, 0.0), (-0.5, 0.2), (-0.5, 0.8), (0.0, 0.0)],
+            &[1.0, 2.0, 2.0, 1.0],
+            &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        ));
+        let whole = one_loop_boundary_payload(
+            &members,
+            (0.2, 1.0),
+            &[(335, 0x00CB, 5), (354, 0x00D3, 0), (353, 0x00D4, 4)],
+        );
+        let record = boundary_record(&whole);
+        assert!(decode_igboundary_at(&record, 0).is_some());
+        for at in 0..record.len() {
+            for value in [0x00u8, 0x01, 0x7F, 0x80, 0xFF] {
+                let mut mutated = record.clone();
+                mutated[at] = value;
+                let _ = decode_igboundary_at(&mutated, 0);
+                let _ = decode_igboundaries(&chain_stream(&mutated));
+            }
+            let _ = decode_igboundary_at(&record[..at], 0);
+            let _ = decode_igboundaries(&chain_stream(&record[..at]));
+        }
+    }
 }

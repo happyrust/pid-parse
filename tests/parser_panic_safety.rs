@@ -651,6 +651,133 @@ fn record_decoders_do_not_panic_on_planted_chains() {
     );
 }
 
+/// A boundary whose loops hold every member a boundary can — a line, a
+/// point run, an arc of an ellipse, a B-spline with weights, in two loops,
+/// behind a trailer that names them — as one record of a chain.
+///
+/// Noise never gets this far: a planted `0x0013` payload is refused at its
+/// sub-type word or its first tag. This one decodes, so changing it a byte
+/// at a time walks the decoder through each member's reads with every other
+/// field in order: counts that outrun the payload, doubles that are no
+/// number, a weight of nothing, knots that step back.
+fn boundary_of_every_member() -> Vec<u8> {
+    fn doubles(out: &mut Vec<u8>, values: &[f64]) {
+        for value in values {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    let mut payload = Vec::new();
+    // oid, owner, layer, sub-type word 0x0000, style.
+    for word in [341u32, 369, 8] {
+        payload.extend_from_slice(&word.to_le_bytes());
+    }
+    payload.extend_from_slice(&0u16.to_le_bytes());
+    payload.extend_from_slice(&15u32.to_le_bytes());
+    // Two loops.
+    payload.extend_from_slice(&2u32.to_le_bytes());
+
+    // The first: a line up the left, half an ellipse back down on the right.
+    payload.extend_from_slice(&2u32.to_le_bytes());
+    payload.extend_from_slice(&[2, 1]);
+    payload.push(0x67);
+    doubles(&mut payload, &[0.0, 0.0, 0.0, 2.0]);
+    payload.push(0x74);
+    doubles(
+        &mut payload,
+        &[std::f64::consts::PI, 0.0, 0.0, 1.0, 0.0, -1.0, 0.5],
+    );
+    payload.push(0);
+
+    // The second, inside it: a rational cubic and a run of three points
+    // back to its start.
+    payload.extend_from_slice(&2u32.to_le_bytes());
+    payload.extend_from_slice(&[2, 1]);
+    payload.push(0x7F);
+    payload.extend_from_slice(&4u32.to_le_bytes());
+    doubles(&mut payload, &[0.1, 0.8, 0.3, 0.9, 0.3, 1.1, 0.1, 1.2]);
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    doubles(&mut payload, &[1.0, 2.0, 2.0, 1.0]);
+    payload.extend_from_slice(&8u32.to_le_bytes());
+    doubles(&mut payload, &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]);
+    doubles(&mut payload, &[-1.0]);
+    payload.extend_from_slice(&[4, 1, 1, 0]);
+    payload.push(0x68);
+    payload.extend_from_slice(&3u32.to_le_bytes());
+    payload.extend_from_slice(&[0, 0]);
+    doubles(&mut payload, &[0.1, 1.2, 0.05, 1.0, 0.1, 0.8]);
+
+    // The anchor between the two loops, the flag byte, four references.
+    doubles(&mut payload, &[0.2, 0.4]);
+    payload.push(1);
+    payload.extend_from_slice(&4u32.to_le_bytes());
+    for (oid, class_word, last_word) in [
+        (335u32, 0x00CBu16, 5u16),
+        (354, 0x00D3, 0),
+        (353, 0x00D4, 2),
+        (342, 0x00CB, 0),
+    ] {
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&class_word.to_le_bytes());
+        payload.extend_from_slice(&last_word.to_le_bytes());
+    }
+
+    let mut stream = vec![0u8; 8];
+    stream[..4].copy_from_slice(&0x6C90_F544u32.to_le_bytes());
+    stream[4..8].copy_from_slice(&1u32.to_le_bytes());
+    stream.extend_from_slice(&0x0013u16.to_le_bytes());
+    stream.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    stream.extend_from_slice(&payload);
+    stream
+}
+
+/// The curve members of a boundary are reached behind a record that is
+/// otherwise in order: every byte of one that decodes is set to each of a
+/// handful of values in turn, and the stream is cut at every length.
+#[test]
+fn a_boundary_of_every_member_kind_survives_mutation() {
+    let stream = boundary_of_every_member();
+    let whole = decode_igboundaries(&stream);
+    assert_eq!(
+        whole.len(),
+        1,
+        "the record every mutation starts from has to decode"
+    );
+    assert_eq!(
+        (whole[0].segment_count, whole[0].loop_segment_counts.len()),
+        (4, 2),
+        "four members in two loops"
+    );
+    // A line, the ellipse's thirteen chords, the cubic's eight and the run's
+    // two.
+    assert_eq!(whole[0].segments.len(), 1 + 13 + 8 + 2);
+    assert_eq!(whole[0].member_refs.len(), 4);
+
+    let record_at = 8;
+    let mut decoded = 0usize;
+    for at in record_at..stream.len() {
+        for value in [0x00u8, 0x01, 0x02, 0x7F, 0x80, 0xFF] {
+            let mut mutated = stream.clone();
+            mutated[at] = value;
+            decoded += usize::from(decode_igboundary_at(&mutated, record_at).is_some());
+            let _ = decode_igboundaries(&mutated);
+            let _ = decode_igsym_boundary_at(&mutated, record_at);
+        }
+    }
+    // Most single-byte changes leave a record the decoder still reads —
+    // a coordinate moved, a reference renamed — so the sweep is of decodes
+    // as well as of refusals.
+    assert!(
+        decoded > 0,
+        "no mutated record decoded: the sweep never got past the first refusal"
+    );
+    for cut in 0..stream.len() {
+        let _ = decode_igboundary_at(&stream[..cut], record_at);
+        let _ = decode_igboundaries(&stream[..cut]);
+    }
+    exercise_all_parsers(&stream);
+    exercise_every_offset(&stream);
+}
+
 /// The list above is every `decode_*_at` the parsers export: the sources
 /// are read for `pub fn …_at(`, so an entry point added without a row here
 /// fails this rather than going unexercised.

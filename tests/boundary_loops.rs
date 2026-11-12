@@ -10,9 +10,8 @@
 //! and the two template directories — and the decoder, which held the `u32`
 //! at payload `+18` to `1`, refused both: the logo printed one letter of
 //! three. (The templates inside the committed `RefData~4~682.zip` are not
-//! among the 86; what their boundaries read as is in
-//! `docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-//! §17.6.)
+//! among the 86; their boundaries — one loop each, of arcs and B-splines
+//! as well as lines — are held in `tests/boundary_members.rs`.)
 //!
 //! What says the second loop is a hole, on a template no vendor plot wears:
 //!
