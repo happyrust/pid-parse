@@ -2154,9 +2154,6 @@ fn show_text(
             });
         }
     }
-    // A string is shown whole under its letter-spacing, as the reference
-    // writes it, except where another piece carries on from its end.
-    let emitted = last_glyphs_apart(emitted);
     // `laid_out_mm` is what the plotter's own steps make of the run. The
     // driver's matrix moves the drawn run off it by a fraction of a percent
     // (a stretched label's glyphs no longer land on the steps exactly, a
@@ -2256,6 +2253,11 @@ fn show_text(
         .map(|sheet| origin_mm[0] * sheet / (25.4 / PLOT_DPI));
     let origin_mm =
         device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
+    // A string is shown whole under its letter-spacing, as the reference
+    // writes it, except where another piece carries on from its end. A
+    // later run of the record does so wherever it has no pixel of its own
+    // to start on.
+    let emitted = last_glyphs_apart(emitted, unrounded_px.is_some());
     ops.push(Op::new("BT", Vec::new()));
     // `Tj` advances the text position itself, so consecutive runs in one
     // font continue along the same baseline — across a change of face, and
@@ -3158,12 +3160,22 @@ struct LetteredPiece<'f, 'a> {
 /// starts where the text position was left, so the string before it leaves
 /// it at the end of its last glyph, as it did before strings were shown
 /// whole: no reference plot shows a label of two such pieces, and it keeps
-/// the places it had.
-fn last_glyphs_apart<'f, 'a>(pieces: Vec<LetteredPiece<'f, 'a>>) -> Vec<LetteredPiece<'f, 'a>> {
+/// the places it had. So does a later run of the record on a page where it
+/// has no whole pixel to start on (`record_runs_placed` is false: the sheet's
+/// device grid is not known, or the page had to condense the label), since
+/// it then starts where the text position was left as well.
+fn last_glyphs_apart<'f, 'a>(
+    pieces: Vec<LetteredPiece<'f, 'a>>,
+    record_runs_placed: bool,
+) -> Vec<LetteredPiece<'f, 'a>> {
     let carried_on: Vec<bool> = pieces
         .iter()
         .skip(1)
-        .map(|next| next.start == PieceStart::Continues)
+        .map(|next| match next.start {
+            PieceStart::Continues => true,
+            PieceStart::RecordRun(_) => !record_runs_placed,
+            PieceStart::ScriptRun(_) => false,
+        })
         .chain([false])
         .collect();
     pieces
@@ -3799,6 +3811,77 @@ mod tests {
         assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
         assert_eq!(numbers(&ops, "Td").len(), 0, "nothing is moved: {ops:?}");
         assert_eq!(numbers(&ops, "Tm").len(), 1, "one text matrix");
+    }
+
+    /// A later run of a record in one style starts on a whole pixel of its
+    /// own only on a sheet whose device grid is known. On any other page —
+    /// a sheet laid out on its frame's rectangle, 594.328 × 420.566 mm — it
+    /// carries on from the run before it like any other piece, so that run
+    /// keeps its last glyph apart and the later run starts where that glyph
+    /// ends, not one letter-spacing past it.
+    #[test]
+    fn a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it() {
+        let value = "ABCDEF";
+        let face = inter_unnamed(value);
+        let spans = [run_of(0, 3, None), run_of(3, 3, None)];
+        let on_page = |page: [f64; 2]| {
+            let text = ShownText {
+                typeface: face.key,
+                origin_mm: [200.0, 100.0],
+                height_mm: Some(2.5),
+                rotation: 0.0,
+                value,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: &spans,
+                furniture: false,
+            };
+            let mut ops = Vec::new();
+            let mut audit = super::PlotAudit::default();
+            super::show_text(
+                &mut ops,
+                std::slice::from_ref(&face),
+                text,
+                page,
+                &mut audit,
+            )
+            .expect("the label letters");
+            ops
+        };
+        let glyphs = |ops: &[super::Op]| -> Vec<usize> {
+            strings_as_set(ops)
+                .iter()
+                .map(|(_, _, bytes)| face.metrics.codes(bytes).len())
+                .collect()
+        };
+        // On a standard sheet each run is a string of its own, the second
+        // moved to its whole pixel.
+        let standard = on_page([841.0, 594.0]);
+        assert_eq!(glyphs(&standard), [3, 3], "{standard:?}");
+        assert_eq!(numbers(&standard, "Td").len(), 1, "the second run is moved");
+        // On a page with no device grid nothing is moved, and the first run
+        // ends on its last glyph.
+        assert!(super::device_scale([594.328, 420.566]).is_none());
+        let framed = on_page([594.328, 420.566]);
+        assert_eq!(
+            numbers(&framed, "Td").len(),
+            0,
+            "nothing is moved: {framed:?}"
+        );
+        let shown = strings_as_set(&framed);
+        assert_eq!(
+            glyphs(&framed),
+            [2, 1, 3],
+            "`AB` and `C` of the first run, then `DEF` whole"
+        );
+        assert!(
+            shown[0].1 != 0.0,
+            "the first run must need spacing: {shown:?}"
+        );
+        assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
     }
 
     /// A turned label is set under the driver's matrix too, stretched or not:

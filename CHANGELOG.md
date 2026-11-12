@@ -78,7 +78,11 @@ Tc     = 截断到三位((S − 前 n−1 个字的前进量之和) × 0.48 / ((
   `0.155`）。`S` 的规则就是出图程序自己的整像素步进（604 / 575 / 209），我方的步进本来就对；审查那次是拿
   **画出来的**末字位置（604.578 → 605）当 `S`，而这两档字在参考图上画出来的位置本来就偏离步进 0.58～2.3 个
   单位。集成分支的 `07a05dc` 管的是笔宽，与此无关。
-- 库内用例 353 → 361，先红后绿：`a_string_is_one_text_object_under_the_drivers_letter_spacing`（改前
+- 同一种样式的记录的后一段（`SP:` 的 `:`）只在设备网格已知的图幅上有自己的整像素起点；别的页面上（按页框
+  矩形排的图、被压窄的标签）它也接着前一段的笔位写，所以前一段同样把最后一个字单写
+  （`a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it`，先红：`[3, 3]` 对
+  `[2, 1, 3]`）。这是 `641451b` 漏掉的一种情形，补在后一个提交里；71 页上没有这样的标签，导出逐字节不变。
+- 库内用例 353 → 362，先红后绿：`a_string_is_one_text_object_under_the_drivers_letter_spacing`（改前
   `Tc -0.08949152542372815 is not the driver's -0.089`）、`a_stated_width_is_set_under_the_matrix_the_driver_writes`
   （改成逐位相等）、`a_string_another_piece_carries_on_from_has_its_last_glyph_apart`，和 `letter_spacing` 的
   5 条（标题栏三档 `0.124` / `0.169` / `0.155`、证书行 `-0.494` / `-0.288`、就近与截断各一例、除以矩阵那一项、

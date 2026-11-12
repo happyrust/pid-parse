@@ -80,7 +80,8 @@ PDF 里画出来的末字离步进 0.58～2.3 个设备单位——参考图自�
 ## 6. 没有见证的
 
 - **后面有一段接着起笔的字串**：驱动会给每种字体各写一个文字对象、各在整设备单位上起笔；写出器里后一段接在
-  前一段的笔位上，所以前一段仍把最后一个字单写，使笔位停在那个字的末尾，位置同以前。参考图上没有这种标签
+  前一段的笔位上，所以前一段仍把最后一个字单写，使笔位停在那个字的末尾，位置同以前。同一种样式的记录的
+  后一段在没有设备网格的页面上也是这样接着写的（71 页上没有这样的标签）。参考图上没有这种标签
   （以 `℃` 结尾的那一类是逐字写的，另有规则）。
 - **前进量恰好在两个 256 分之一正中间**：取远离零的一侧，与审查的搜索脚本相同。参考图分辨不了这一点：
   五种字型的字格是 256（宋体、新宋体、仿宋）、2288（Arial）、2319（Arial Narrow）个设计单位，含 2 的幂次都
@@ -97,5 +98,6 @@ PDF 里画出来的末字离步进 0.58～2.3 个设备单位——参考图自�
 - `write.rs`：`a_string_is_one_text_object_under_the_drivers_letter_spacing`（改前
   `Tc -0.08949152542372815 is not the driver's -0.089`）、
   `a_stated_width_is_set_under_the_matrix_the_driver_writes`（逐位相等）、
-  `a_string_another_piece_carries_on_from_has_its_last_glyph_apart`。
+  `a_string_another_piece_carries_on_from_has_its_last_glyph_apart`、
+  `a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it`。
 - 验收门禁读不到这条规则：它读位置，新旧两种写法的字最多差 0.008 mm。
