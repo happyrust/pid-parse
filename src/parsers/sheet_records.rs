@@ -5331,16 +5331,21 @@ fn decode_igboundary_template_payload(
     if members_end < 28 {
         return None;
     }
+    // The 21-byte trailer carries two identical 8-byte words followed
+    // by `u32 1` and a flag byte on every corpus record; the marker is
+    // the only part worth holding a rule to. It is looked at before the
+    // members are read: a record that names its members ends on its
+    // references instead, the marker's place falls inside the last of
+    // them — across its class word, which is never zero — and such a
+    // record is refused here without its curves being flattened for
+    // nothing; the read that takes it flattens them once.
+    if read_u32(members_end + 16)? != 1 {
+        return None;
+    }
 
     let mut segments = Vec::new();
     let pos = igboundary_template_members(payload, 28, member_count, members_end, &mut segments)?;
     if pos != members_end || segments.is_empty() || igboundary_segments_coincide(&segments) {
-        return None;
-    }
-    // The 21-byte trailer carries two identical 8-byte words followed
-    // by `u32 1` and a flag byte on every corpus record; the marker is
-    // the only part worth holding a rule to.
-    if read_u32(members_end + 16)? != 1 {
         return None;
     }
     let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
