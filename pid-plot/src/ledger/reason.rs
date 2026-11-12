@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 50 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 51 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -372,6 +372,25 @@ pub enum DropReason {
     /// Nothing witnesses this path: no drawing on hand states a paper
     /// beside a template's name alone.
     PaperUnlikeTheTemplateName,
+    /// A border frame of the drawing's own sheet is a record the frame rule
+    /// refuses (`pid_parse::parsers::sheet_records::refused_smartframes`):
+    /// the ratio it states is not its height over its width, or its sides
+    /// are not lengths — a width of zero among them. The rule is what tells
+    /// a frame from the bytes a walk reads off a broken chain, so a real
+    /// frame that fails it states no page and places nothing, and the
+    /// sheet is laid out as one with no frame is: the page is the paper
+    /// its sheet states, or the size its template's name states, or
+    /// neither, and the drawing's ink and its border template lie where
+    /// they do without the frame's offsets. The page looks like a finished
+    /// export and is not the one the drawing states.
+    ///
+    /// Counted once a refused frame record of the drawing's own sheet that
+    /// could have stated a page — embedded or linked, as far as its flag
+    /// words read (`LayoutLedger::frames_refused`) — and `pid_plot` says
+    /// it. The record itself is one of the parse layer's
+    /// [`Self::RecordRefused`]; this is what the page is for want of it.
+    /// No page of the corpora this crate is tested on has one.
+    PageFrameRefused,
 }
 
 /// Every code, in appendix A's row order.
@@ -380,7 +399,7 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 50] = [
+pub const ALL: [DropReason; 51] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
@@ -431,6 +450,7 @@ pub const ALL: [DropReason; 50] = [
     DropReason::TemplateMissing,
     DropReason::PaperUnlikeTheFrame,
     DropReason::PaperUnlikeTheTemplateName,
+    DropReason::PageFrameRefused,
 ];
 
 impl DropReason {
@@ -497,6 +517,7 @@ impl DropReason {
             Self::TemplateMissing => "template_missing",
             Self::PaperUnlikeTheFrame => "paper_unlike_the_frame",
             Self::PaperUnlikeTheTemplateName => "paper_unlike_the_template_name",
+            Self::PageFrameRefused => "page_frame_refused",
         }
     }
 
@@ -530,7 +551,8 @@ impl DropReason {
             | Self::TemplateCandidateUnreadable
             | Self::TemplateMissing
             | Self::PaperUnlikeTheFrame
-            | Self::PaperUnlikeTheTemplateName => Tier::Suspect,
+            | Self::PaperUnlikeTheTemplateName
+            | Self::PageFrameRefused => Tier::Suspect,
             Self::RecordNativeSkip
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
@@ -609,7 +631,8 @@ impl DropReason {
             Self::TemplateCandidateUnreadable
             | Self::TemplateMissing
             | Self::PaperUnlikeTheFrame
-            | Self::PaperUnlikeTheTemplateName => ReasonLayer::Page,
+            | Self::PaperUnlikeTheTemplateName
+            | Self::PageFrameRefused => ReasonLayer::Page,
         }
     }
 }
@@ -827,7 +850,7 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 50] = [
+    const APPENDIX_A: [&str; 51] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
@@ -884,6 +907,7 @@ mod tests {
         "template_missing",
         "paper_unlike_the_frame",
         "paper_unlike_the_template_name",
+        "page_frame_refused",
     ];
 
     #[test]
@@ -894,7 +918,7 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 50, "the catalog is 50 codes");
+        assert_eq!(ALL.len(), 51, "the catalog is 51 codes");
     }
 
     /// Appendix A's tier column, code by code: the suspect ones.
@@ -906,7 +930,7 @@ mod tests {
     /// turned suspect passes both ledger gates — its pinned count becomes a
     /// ceiling — and the count of each tier stays what it was if another
     /// code is turned the other way with it.
-    const SUSPECT: [&str; 27] = [
+    const SUSPECT: [&str; 28] = [
         "record_no_decoder",
         "record_refused",
         "sheet_stream_without_geometry",
@@ -934,6 +958,7 @@ mod tests {
         "template_missing",
         "paper_unlike_the_frame",
         "paper_unlike_the_template_name",
+        "page_frame_refused",
     ];
 
     /// The intentional ones.
@@ -996,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn tiers_split_27_suspect_23_intentional() {
+    fn tiers_split_28_suspect_23_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -1005,9 +1030,9 @@ mod tests {
             .iter()
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
-        assert_eq!(suspect, 27, "appendix A's suspect column");
+        assert_eq!(suspect, 28, "appendix A's suspect column");
         assert_eq!(intentional, 23, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 50);
+        assert_eq!(suspect + intentional, 51);
     }
 
     #[test]

@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -590,6 +590,12 @@ pub struct SymbolGeometry {
     pub skipped_records: BTreeMap<u16, usize>,
     /// The `JSheetLayer` objects the symbol's own `PSMcluster0` declares —
     /// the table [`StyledPrimitive::sheet_layer_name`] resolves against.
+    ///
+    /// A file keeps one table in each of its storages. They are listed
+    /// here one after another in the file's own order: storages in path
+    /// order, the root first, and within a storage the order its
+    /// `PSMcluster0` holds the layers in. Two readings of one file list
+    /// them alike (`tests/sym_sheet_layers_read_in_one_order.rs`).
     #[serde(default)]
     pub sheet_layers: Vec<SymbolSheetLayer>,
     /// Each sheet's `Top ViewFilterSet` display state — one entry per
@@ -1507,8 +1513,14 @@ fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, 
     // Styles are scoped to the storage they sit in, the same rule
     // `style_link` applies to a drawing: a sheet is resolved against its own
     // document's table and never against another's.
-    let mut tables: HashMap<&str, DocumentStyleTable> = HashMap::new();
-    let mut layer_tables: HashMap<&str, Vec<SymbolSheetLayer>> = HashMap::new();
+    //
+    // Both are keyed by storage path in an ordered map. The layer tables
+    // are listed one after another below, and the order they are listed in
+    // has to be the file's: storages in path order, the root first. A hash
+    // map listed them in its hasher's order, which differed from one
+    // reading of a file to the next and from one process to the next.
+    let mut tables: BTreeMap<&str, DocumentStyleTable> = BTreeMap::new();
+    let mut layer_tables: BTreeMap<&str, Vec<SymbolSheetLayer>> = BTreeMap::new();
     for (stream_path, raw) in &package.streams {
         match stream_path.rsplit('/').next() {
             Some("StyleCluster") => {

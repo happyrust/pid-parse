@@ -1826,9 +1826,30 @@ impl StreamChainFault {
     }
 
     /// The fault in one sentence, naming the stream and, when the walk
-    /// stopped short, the offset it stopped at and the bytes left unread.
+    /// stopped short, the offset it stopped at and the bytes left unread:
+    /// [`Self::describe_framing`], and what it means for a stream that
+    /// draws.
     #[must_use]
     pub fn describe(&self) -> String {
+        format!(
+            "{}; what the stream draws may be incomplete",
+            self.describe_framing()
+        )
+    }
+
+    /// What is wrong with the stream's framing, and nothing about what
+    /// follows from it: the stream, and, when the walk stopped short, the
+    /// offset it stopped at, why, the records read before it and the bytes
+    /// left unread; the header's count against the chain's.
+    ///
+    /// [`Self::describe`] goes on to say that what the stream draws may be
+    /// incomplete, which is the consequence for a sheet. A reader of
+    /// something else says its own after this sentence: the publish line
+    /// reads attribute rows and labels, from streams some of which draw
+    /// nothing, and says what its XML is short of
+    /// (`PublishChainFault::describe` in `publish::pid_load`).
+    #[must_use]
+    pub fn describe_framing(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(found) = self.wrong_magic {
             parts.push(format!(
@@ -1891,9 +1912,42 @@ impl StreamChainFault {
             }
         }
         format!(
-            "the record chain of {} does not hold: {}; what the stream draws may be incomplete",
+            "the record chain of {} does not hold: {}",
             self.stream_path,
             parts.join("; ")
+        )
+    }
+}
+
+/// A live `igSmartFrame2d` record of one of a document's `Sheet*` streams
+/// that the frame decoder refuses
+/// ([`crate::parsers::sheet_records::refused_smartframes`]).
+///
+/// A frame record is taken for a frame only when the ratio it states is
+/// the height over the width it states and the two are lengths: that is
+/// what tells a frame from the bytes a walk reads off a broken chain. A
+/// drawing's own border frame that fails the rule — a ratio written wrong,
+/// a side of zero — states no page and places nothing, and the drawing is
+/// laid out as a sheet with no frame is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefusedSmartFrame {
+    /// Path of the stream the record is in.
+    pub stream_path: String,
+    /// The record, and which part of the frame rule it fails.
+    pub refused: crate::parsers::sheet_records::SheetSmartFrameRefused,
+}
+
+impl RefusedSmartFrame {
+    /// Whether the record could have stated the sheet's page: one whose
+    /// flag words read as an embedded or a linked frame, or cannot be read.
+    /// An empty frame and one linked inside the drawing state no page when
+    /// they decode.
+    #[must_use]
+    pub fn may_state_a_page(&self) -> bool {
+        use crate::parsers::sheet_records::SheetSmartFrame2dState as State;
+        !matches!(
+            self.refused.state,
+            Some(State::Empty | State::LocallyLinked)
         )
     }
 }

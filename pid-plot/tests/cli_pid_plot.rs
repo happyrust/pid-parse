@@ -3337,3 +3337,297 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
         "a sound symbol file drew a warning\n{silent}"
     );
 }
+
+/// What to change in the one live border frame of `D06.pid`'s sheet.
+#[derive(Clone, Copy, Debug)]
+enum BorderFrame {
+    /// The ratio the record states, three parts in a million off its height
+    /// over its width: more than the frame rule's one part in a million.
+    RatioOff,
+    /// A width of zero, under the height and the ratio the drawing states:
+    /// a frame of no width, which has no ratio to be held to.
+    NoWidth,
+}
+
+/// A copy of `D06.pid` whose one live border frame states something else.
+struct AnotherBorderFrame {
+    /// The copy.
+    path: PathBuf,
+    /// Where the frame's record starts in `/Sheet6`.
+    record: usize,
+    /// The record's oid.
+    oid: u32,
+    /// The width, the height and the ratio the copy's record states.
+    states: [f64; 3],
+}
+
+/// A copy of `D06.pid` whose `/Sheet6` differs in eight bytes of its one
+/// live `igSmartFrame2d` record and in nothing else.
+///
+/// The record states its extent at payload `+76` / `+84` and the height
+/// over the width at `+148`. The copy is checked against that: the three
+/// doubles read back as D06's 594.328 mm by 420.566 mm and their own ratio
+/// before one of them is overwritten.
+fn d06_with_another_border_frame(case: &str, change: BorderFrame) -> AnotherBorderFrame {
+    use pid_parse::parsers::sheet_records::{SheetChain, parse_psm_header};
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    const SHEET: &str = "/Sheet6";
+    let source = d06();
+    let package = pid_parse::PidParser::new()
+        .parse_package(&source)
+        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+    let mut sheet = package
+        .get_stream(SHEET)
+        .unwrap_or_else(|| panic!("{} has no {SHEET}", source.display()))
+        .data
+        .clone();
+    let frames: Vec<usize> = SheetChain::walk(&sheet)
+        .starts
+        .into_iter()
+        .filter(|&at| {
+            parse_psm_header(&sheet, at)
+                .is_some_and(|header| header.type_code == 0x003D && !header.native_reader_skips())
+        })
+        .collect();
+    assert_eq!(frames.len(), 1, "D06's sheet holds one live border frame");
+    let record = frames[0];
+    let payload = record + 6;
+    let double = |sheet: &[u8], at: usize| {
+        f64::from_le_bytes(sheet[at..at + 8].try_into().expect("eight bytes"))
+    };
+    let (width, height, ratio) = (
+        double(&sheet, payload + 76),
+        double(&sheet, payload + 84),
+        double(&sheet, payload + 148),
+    );
+    assert!(
+        (width - 0.594_327_89).abs() < 1e-9
+            && (height - 0.420_565_694).abs() < 1e-9
+            && (ratio - height / width).abs() < 1e-12,
+        "the frame D06 states, where the record keeps it: {width} by {height}, ratio {ratio}"
+    );
+    let oid = u32::from_le_bytes(sheet[payload..payload + 4].try_into().expect("four bytes"));
+    let states = match change {
+        BorderFrame::RatioOff => [width, height, ratio * (1.0 + 3e-6)],
+        BorderFrame::NoWidth => [0.0, height, ratio],
+    };
+    for (at, value) in [76, 84, 148].into_iter().zip(states) {
+        sheet[payload + at..payload + at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    let path = scratch(case).join("D06.pid");
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: SHEET.to_string(),
+            new_data: sheet,
+        }],
+        ..WritePlan::default()
+    };
+    PidWriter::write_to(&package, &plan, &path)
+        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    AnotherBorderFrame {
+        path,
+        record,
+        oid,
+        states,
+    }
+}
+
+/// A drawing whose own border frame the frame rule refuses says so, and
+/// says what its page was laid out by.
+///
+/// A frame record is taken for a frame only when the ratio it states is
+/// the height over the width it states, and the two are lengths
+/// (`pid_parse::parsers::sheet_records`): that is what tells a frame from
+/// the bytes a walk reads off a broken chain. A real frame that fails the
+/// rule — a ratio written wrong, a width of zero — is refused the same
+/// way, and the drawing is then laid out as a sheet with no frame is: the
+/// page is the paper its sheet states (or the size its template's name
+/// states, or neither), and nothing is placed by the frame, so the
+/// drawing's ink and the border template sit where they do without the
+/// frame's offsets. The page looks like a finished export, a third of a
+/// millimetre off.
+///
+/// So the program says it in one warning — the drawing, the stream, the
+/// record, why it is refused, and what the page is — and the page's
+/// account files one suspect item of the page's own, beside the refused
+/// record the parse layer counts. The exit code is the committed
+/// drawing's, and the committed drawing says nothing.
+fn export_with_a_border_frame_that_is_refused(
+    case: &str,
+    change: BorderFrame,
+    why: fn([f64; 3]) -> String,
+) {
+    let corpus = fixtures();
+    let committed = d06();
+    let AnotherBorderFrame {
+        path: drawing,
+        record,
+        oid,
+        states,
+    } = d06_with_another_border_frame(case, change);
+    let sound = lay_out_drawing(&committed, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", committed.display()));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+
+    // The page is the paper the sheet states, as the committed drawing's
+    // is; the frame's rectangle is no longer read.
+    assert_eq!(sound.page_mm, Some([594.0, 420.0]));
+    assert!(
+        sound
+            .frame_mm
+            .is_some_and(|frame| (frame[0] - 594.327_89).abs() < 1e-6),
+        "the committed drawing's frame: {:?}",
+        sound.frame_mm
+    );
+    assert_eq!(
+        model.page_mm,
+        Some([594.0, 420.0]),
+        "{case}: the page is the paper"
+    );
+    assert_eq!(
+        model.frame_mm, None,
+        "{case}: no frame gave a rectangle, and the drawing names no template size"
+    );
+    // Every record of the drawing's own still draws what it drew.
+    let own = |model: &PaperModel| -> Vec<String> {
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| !primitive.furniture)
+            .map(|primitive| format!("{:?}", identity(primitive)))
+            .collect()
+    };
+    assert_eq!(own(&model), own(&sound), "{case}: the drawing's own ink");
+    assert_eq!(
+        model.missing_templates, sound.missing_templates,
+        "{case}: the border template is found as on the committed drawing"
+    );
+
+    // The account: conservation and the cross-check hold; the page files
+    // one item of its own, and the parse layer the refused record.
+    let account = |model: &PaperModel, path: &Path| {
+        let write =
+            write_ledger(model).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let account = ExportLedger::assemble(model, &write);
+        assert!(
+            account.conservation_breaches().is_empty(),
+            "{}: {:?}",
+            path.display(),
+            account.conservation_breaches()
+        );
+        let doc = pid_parse::PidParser::new()
+            .parse_file(path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let mismatches = account.cross_check(model, None, Some(&geometry));
+        assert!(
+            mismatches.is_empty(),
+            "{}: the account disagrees with the counts the code keeps: {mismatches:#?}",
+            path.display()
+        );
+        account
+    };
+    let (ledger, sound_ledger) = (account(&model, &drawing), account(&sound, &committed));
+    assert!(
+        sound_ledger.page.dropped.is_empty(),
+        "the committed page files nothing of its own: {:?}",
+        sound_ledger.page.dropped
+    );
+    let page: Vec<(&str, u64)> = ledger
+        .page
+        .dropped
+        .iter()
+        .map(|(reason, count)| (reason.code(), *count))
+        .collect();
+    assert_eq!(
+        page,
+        [("page_frame_refused", 1)],
+        "{case}: the page's own items"
+    );
+    let mut expected = suspects(&sound_ledger);
+    *expected.entry("record_refused").or_insert(0) += 1;
+    *expected.entry("page_frame_refused").or_insert(0) += 1;
+    assert_eq!(
+        suspects(&ledger),
+        expected,
+        "{case}: the committed page's suspects, the refused record and the page laid out \
+         without it"
+    );
+    let sites: Vec<_> = ledger
+        .page
+        .suspect_sites
+        .iter()
+        .filter(|site| site.reason.code() == "page_frame_refused")
+        .map(|site| (site.stream.as_deref(), site.oid, site.type_code, site.count))
+        .collect();
+    assert_eq!(
+        sites,
+        [(Some("/Sheet6"), Some(oid), Some(0x003D), 1)],
+        "{case}: the site of the page's item"
+    );
+
+    // The program: one warning, with the drawing, the stream, the record,
+    // why it is refused and what the page is.
+    let said = export_against_the_fixtures(case, &drawing, "refused.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        1,
+        "{case}: a border frame that is refused is exactly one warning\n{said}"
+    );
+    let line = warned[0];
+    for needle in [
+        drawing.display().to_string(),
+        "the border frame of /Sheet6".to_string(),
+        format!("the record at +{record}, oid {oid}"),
+        format!("is refused: {}", why(states)),
+        "the sheet is laid out as one with no frame".to_string(),
+        "the page is the paper its sheet states, 594.000 x 420.000 mm".to_string(),
+    ] {
+        assert!(
+            line.contains(&needle),
+            "{case}: the warning does not say {needle:?}\n{said}"
+        );
+    }
+
+    // The committed drawing: not a word, and nothing filed.
+    let silent = export_against_the_fixtures(&format!("{case}-committed"), &committed, "d06.pdf");
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "the committed drawing drew a warning\n{silent}"
+    );
+    assert!(sound.ledger.page_warnings().is_empty());
+}
+
+#[test]
+fn a_border_frame_that_states_a_ratio_not_its_extents_is_refused_and_said() {
+    export_with_a_border_frame_that_is_refused(
+        "frame-ratio-off",
+        BorderFrame::RatioOff,
+        |[width, height, ratio]| {
+            format!(
+                "it states a ratio of {ratio:.9} where its height over its width, {height:.6} m \
+                 over {width:.6} m, is {:.9}",
+                height / width
+            )
+        },
+    );
+}
+
+/// A real frame of no width. Until the frame rule held an extent to being
+/// lengths this record decoded, gave no page, and nothing said so.
+#[test]
+fn a_border_frame_of_no_width_is_refused_and_said() {
+    export_with_a_border_frame_that_is_refused(
+        "frame-no-width",
+        BorderFrame::NoWidth,
+        |[width, height, _]| {
+            format!(
+                "it states a width of {width} m and a height of {height} m, and a frame's \
+                 sides are lengths above zero"
+            )
+        },
+    );
+}

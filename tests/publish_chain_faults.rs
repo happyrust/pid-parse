@@ -122,6 +122,54 @@ fn publishable_before(data: &[u8], stop: usize) -> usize {
         .count()
 }
 
+/// The live records of `data`'s chain that start before `stop`: the ones
+/// the native reader reads, whatever their kind.
+fn live_before(data: &[u8], stop: usize) -> usize {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter(|&at| at < stop)
+        .filter(|&at| u16::from_le_bytes([data[at], data[at + 1]]) & 0x8000 == 0)
+        .count()
+}
+
+/// The live-record count a chain stream's header states.
+fn stated_live(data: &[u8]) -> usize {
+    u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize
+}
+
+/// What the publish line says the reader is left without when a chain
+/// stops after `live` live records, `lost` of them of a kind the reader
+/// keeps, in a stream whose header states `stated`: the two clauses after
+/// "the publish reader takes nothing from a stream whose chain stops
+/// short".
+fn left_without(lost: usize, live: usize, stated: usize) -> [String; 2] {
+    let read = match (live, lost) {
+        (0, _) => "the chain read no live record before the stop".to_string(),
+        (live, 0) => format!(
+            "none of the {live} live record(s) the chain read before the stop is an attribute \
+             row, a text box, a dependency object or a symbol placement, so the XML is missing \
+             nothing the chain read"
+        ),
+        (live, lost) => format!(
+            "{lost} of the {live} live record(s) the chain read before the stop are attribute \
+             rows, text boxes, dependency objects or symbol placements, and none of them is in \
+             the XML"
+        ),
+    };
+    assert!(
+        stated > live,
+        "the header states more than a stopped chain read"
+    );
+    [
+        read,
+        format!(
+            "the other {} live record(s) the header states are not read, and the XML has \
+             nothing of them",
+            stated - live
+        ),
+    ]
+}
+
 /// The `warning:` lines of a run's stderr.
 fn warnings(stderr: &str) -> Vec<&str> {
     stderr
@@ -177,6 +225,8 @@ fn a_chain_that_stops_short_is_said_on_stderr_and_the_exit_code_stays() {
     let unread = broken.len() - middle;
     let lost = publishable_before(&intact, middle);
     assert!(lost > 0, "{SHEET} holds records the publish reader keeps");
+    let [read_clause, unread_clause] =
+        left_without(lost, live_before(&intact, middle), stated_live(&intact));
     let plan = WritePlan {
         stream_replacements: vec![StreamReplacement {
             path: SHEET.to_string(),
@@ -226,13 +276,14 @@ fn a_chain_that_stops_short_is_said_on_stderr_and_the_exit_code_stays() {
         "a record states a length of zero".to_string(),
         format!("{unread} byte(s) from it on are not"),
         "the publish reader takes nothing from a stream whose chain stops short".to_string(),
-        format!(
-            "so the {lost} attribute row(s), text box(es), dependency object(s) and symbol \
-             placement(s) the chain read before the stop are not in the XML"
-        ),
+        read_clause,
+        unread_clause,
     ] {
         assert!(warning.contains(&needle), "`{needle}` in: {warning}");
     }
+    // A publisher draws nothing: the line says what the XML is short of
+    // and leaves the page out of it.
+    assert!(!warning.contains("draws"), "{warning}");
 
     // The library says the same fault the parser does, from the one read
     // that makes the drawing, with what the stream cost the reader.
@@ -305,7 +356,10 @@ fn a_header_that_disagrees_with_its_chain_is_said_and_the_stream_is_still_read()
             "{stated} live record(s) where the header states {}",
             stated + 1
         ),
-        "the publish reader read the records the chain reached".to_string(),
+        format!(
+            "the publish reader read the {stated} live record(s) the chain reached; the header \
+             states 1 more, which the stream does not hold"
+        ),
     ] {
         assert!(
             warnings[0].contains(&needle),
@@ -313,6 +367,7 @@ fn a_header_that_disagrees_with_its_chain_is_said_and_the_stream_is_still_read()
             warnings[0]
         );
     }
+    assert!(!warnings[0].contains("draws"), "{}", warnings[0]);
 }
 
 /// A style table holds no record the publish reader keeps. One whose chain
@@ -331,7 +386,12 @@ fn a_style_table_whose_chain_stops_is_said_and_costs_the_xml_nothing() {
     );
     // The two copies carry one file name, so that the drawing name the XML
     // states is the same on both.
-    let sound = copy_with_stream(&scratch.0.join("sound"), "drawing.pid", STYLES, intact);
+    let sound = copy_with_stream(
+        &scratch.0.join("sound"),
+        "drawing.pid",
+        STYLES,
+        intact.clone(),
+    );
     let damaged = copy_with_stream(&scratch.0.join("damaged"), "drawing.pid", STYLES, broken);
 
     let (code, stderr) = publish(&sound, &scratch.0.join("sound-out"));
@@ -344,19 +404,21 @@ fn a_style_table_whose_chain_stops_is_said_and_costs_the_xml_nothing() {
     assert_eq!(label_values_reached(&stderr), summary, "{stderr}");
     let lines = warnings(&stderr);
     assert_eq!(lines.len(), 1, "one warning: {stderr}");
+    let live = live_before(&intact, middle);
+    assert!(live > 0, "the table's chain reads styles before the stop");
+    let [read_clause, unread_clause] = left_without(0, live, stated_live(&intact));
     for needle in [
         format!("the record chain of {STYLES} does not hold"),
         format!("stops at +{middle} of"),
         "the publish reader takes nothing from a stream whose chain stops short".to_string(),
-        "the chain read no attribute row, text box, dependency object or symbol placement \
-         before the stop, so nothing it read is missing from the XML"
-            .to_string(),
+        read_clause,
+        unread_clause,
     ] {
         assert!(lines[0].contains(&needle), "`{needle}` in: {}", lines[0]);
     }
     assert!(
-        !lines[0].contains("are not in the XML"),
-        "nothing is said to be missing: {}",
+        !lines[0].contains("none of them is in the XML") && !lines[0].contains("draws"),
+        "nothing the chain read is said to be missing: {}",
         lines[0]
     );
 
@@ -405,13 +467,28 @@ fn a_chain_fault_is_said_before_the_error_it_causes() {
     );
     let lines = warnings(&stderr);
     assert_eq!(lines.len(), 1, "one warning: {stderr}");
+    // What the line says the reader is left without is what the run then
+    // fails for: no live record read, and every one the header states —
+    // the drawing's own row among them — unread.
+    let stated = stated_live(&intact);
+    assert!(stated > 0, "{ATTRIBUTES} states live records");
+    let [read_clause, unread_clause] = left_without(0, 0, stated);
     for needle in [
         copy.display().to_string(),
         format!("the record chain of {ATTRIBUTES} does not hold"),
         format!("stops at +{first} of"),
         "the chain read 0 record(s) before the stop".to_string(),
+        "the publish reader takes nothing from a stream whose chain stops short".to_string(),
+        read_clause,
+        unread_clause,
     ] {
         assert!(lines[0].contains(&needle), "`{needle}` in: {}", lines[0]);
+    }
+    // This stream draws nothing, and the line used to say that nothing the
+    // chain read was missing from the XML — in front of the error that the
+    // XML could not be made at all.
+    for wrong in ["draws", "nothing it read is missing", "missing nothing"] {
+        assert!(!lines[0].contains(wrong), "`{wrong}` in: {}", lines[0]);
     }
     let warning_at = stderr.find("warning:").expect("the warning");
     let error_at = stderr.find("error:").expect("the error");
@@ -433,6 +510,77 @@ fn a_chain_fault_is_said_before_the_error_it_causes() {
     assert_eq!(read.chain_faults.len(), 1);
     assert_eq!(read.chain_faults[0].fault.stream_path, ATTRIBUTES);
     assert_eq!(read.chain_faults[0].publishable_records_read, 0);
+}
+
+/// The same stream stopped in the middle: the chain read attribute rows
+/// before the stop, and the reader, which takes a stream's records all or
+/// nothing, has none of them. The line states that loss in the chain's own
+/// numbers — how many live records it read, how many of them are rows the
+/// reader keeps, how many more the header states — and the run fails for
+/// exactly it: no row carries a `DrawingNo`.
+#[test]
+fn a_stopped_attribute_stream_states_the_rows_the_reader_is_left_without() {
+    const ATTRIBUTES: &str = "/Unclustered Dynamic Attributes";
+    let scratch = Scratch::new("attribute-rows");
+    let (intact, broken, middle) = middle_length_zeroed(ATTRIBUTES);
+    let live = live_before(&intact, middle);
+    let lost = publishable_before(&intact, middle);
+    let stated = stated_live(&intact);
+    assert!(
+        lost > 0 && lost <= live && live < stated,
+        "{ATTRIBUTES}: {lost} row(s) the reader keeps among {live} live record(s) before the \
+         stop, of {stated} the header states"
+    );
+    let copy = copy_with_stream(&scratch.0, "rows.pid", ATTRIBUTES, broken.clone());
+
+    let (code, stderr) = publish(&copy, &scratch.0.join("out"));
+    assert_eq!(code, Some(1), "the drawing does not load: {stderr}");
+    assert!(
+        stderr.contains("no P&IDAttributes row carries a DrawingNo"),
+        "the error the missing rows raise: {stderr}"
+    );
+    let lines = warnings(&stderr);
+    assert_eq!(lines.len(), 1, "one warning: {stderr}");
+    let [read_clause, unread_clause] = left_without(lost, live, stated);
+    for needle in [
+        copy.display().to_string(),
+        format!("the record chain of {ATTRIBUTES} does not hold"),
+        format!("stops at +{middle} of {} bytes", broken.len()),
+        format!("the stream's header states {stated} live record(s) and the chain read {live}"),
+        "the publish reader takes nothing from a stream whose chain stops short".to_string(),
+        read_clause,
+        unread_clause,
+    ] {
+        assert!(lines[0].contains(&needle), "`{needle}` in: {}", lines[0]);
+    }
+    for wrong in ["draws", "nothing it read is missing", "missing nothing"] {
+        assert!(!lines[0].contains(wrong), "`{wrong}` in: {}", lines[0]);
+    }
+
+    let read = read_publish_from_pid(&copy).expect("the copy reads");
+    assert!(
+        matches!(
+            read.drawing,
+            Err(pid_parse::publish::PidLoadError::NoDrawing)
+        ),
+        "no drawing row was read"
+    );
+    assert_eq!(
+        read.chain_faults,
+        vec![PublishChainFault {
+            fault: StreamChainFault::of_stream(ATTRIBUTES, &broken)
+                .expect("the chain does not hold"),
+            publishable_records_read: lost,
+        }]
+    );
+    assert_eq!(
+        lines[0],
+        format!(
+            "warning: {}: {}",
+            copy.display(),
+            read.chain_faults[0].describe()
+        )
+    );
 }
 
 /// One stored ZIP member, as `tests/publish_from_pid.rs` builds its mini
@@ -520,13 +668,17 @@ fn json_keys(path: &Path) -> Vec<String> {
 /// A backup package of two drawings, one of them with a `/Sheet6` whose
 /// chain stops: the run publishes both, exits 0, and says on stderr which
 /// drawing lost what — one line, naming the zip and the entry. Neither the
-/// index nor a coverage report gains a key for it.
+/// index nor a coverage report gains a key for it; the index lists the
+/// same sentence among its `problems`, where the sound package's index
+/// lists nothing.
 #[test]
 fn a_package_names_the_drawing_whose_chain_stops() {
     const SOUND: &str = "test-file/D06.pid";
     let scratch = Scratch::new("package");
     let (intact, broken, middle) = middle_length_zeroed(SHEET);
     let lost = publishable_before(&intact, middle);
+    let [read_clause, unread_clause] =
+        left_without(lost, live_before(&intact, middle), stated_live(&intact));
     let damaged = copy_with_stream(
         &scratch.0.join("copies"),
         "broken.pid",
@@ -572,16 +724,14 @@ fn a_package_names_the_drawing_whose_chain_stops() {
         "PlantData~2~2.zip U01/DWG-0201.pid".to_string(),
         format!("the record chain of {SHEET} does not hold"),
         format!("stops at +{middle} of {} bytes", broken.len()),
-        format!(
-            "so the {lost} attribute row(s), text box(es), dependency object(s) and symbol \
-             placement(s) the chain read before the stop are not in the XML"
-        ),
+        read_clause,
+        unread_clause,
     ] {
         assert!(lines[0].contains(&needle), "`{needle}` in: {}", lines[0]);
     }
     assert!(
-        !lines[0].contains("D06.pid"),
-        "the sound drawing is not named: {}",
+        !lines[0].contains("D06.pid") && !lines[0].contains("draws"),
+        "the sound drawing is not named, and no page is spoken of: {}",
         lines[0]
     );
 
@@ -603,8 +753,10 @@ fn a_package_names_the_drawing_whose_chain_stops() {
         "the other drawing is untouched"
     );
 
-    // What is said is said on stderr alone: the index and the coverage
-    // report keep their keys, and the index lists no problem.
+    // The index and the coverage reports keep their keys. The index lists
+    // the drawing and its stream among its problems, in the sentence stderr
+    // carries; it still counts the drawing as written, not as failed. The
+    // sound package's index lists no problem.
     for file in ["_Index.json", "DWG-0201_Coverage.json", "D06_Coverage.json"] {
         assert_eq!(
             json_keys(&scratch.0.join("damaged-out").join(file)),
@@ -612,11 +764,50 @@ fn a_package_names_the_drawing_whose_chain_stops() {
             "{file} keeps its keys"
         );
     }
-    let index = std::fs::read_to_string(scratch.0.join("damaged-out").join("_Index.json"))
-        .expect("the index");
-    assert!(
-        !index.contains("record chain"),
-        "the index does not carry the fault"
+    let index = |out: &str| -> serde_json::Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(scratch.0.join(out).join("_Index.json")).expect("the index"),
+        )
+        .expect("the index is JSON")
+    };
+    let problems = |index: &serde_json::Value| -> Vec<String> {
+        index["problems"]
+            .as_array()
+            .expect("the index lists its problems")
+            .iter()
+            .map(|problem| {
+                problem
+                    .as_str()
+                    .expect("a problem is a sentence")
+                    .to_string()
+            })
+            .collect()
+    };
+    let (sound_index, damaged_index) = (index("sound-out"), index("damaged-out"));
+    assert_eq!(
+        problems(&sound_index),
+        Vec::<String>::new(),
+        "a sound package's index lists no problem"
+    );
+    let listed = problems(&damaged_index);
+    assert_eq!(
+        listed,
+        vec![lines[0]
+            .strip_prefix("warning: ")
+            .expect("a warning line")
+            .to_string()],
+        "the index lists the fault, in the words stderr carries"
+    );
+    for needle in [
+        "PlantData~2~2.zip U01/DWG-0201.pid",
+        "the record chain of /Sheet6 does not hold",
+    ] {
+        assert!(listed[0].contains(needle), "`{needle}` in: {}", listed[0]);
+    }
+    assert_eq!(
+        (&damaged_index["failed"], &damaged_index["pid_entries"]),
+        (&serde_json::json!(0), &serde_json::json!(2)),
+        "the drawing is written, and the index counts no failure"
     );
 
     // The library reports the same fault, with the drawing it belongs to.

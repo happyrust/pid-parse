@@ -158,6 +158,19 @@ pub struct PidDocument {
     pub sheet_without_display_order:
         BTreeMap<String, crate::parsers::sheet_display_order::NoDisplayOrder>,
 
+    /// The live `igSmartFrame2d` records of the document's `Sheet*` streams
+    /// that the frame decoder refuses, in the order the streams were read,
+    /// each with why ([`RefusedSmartFrame`]). Such a record is counted with
+    /// the refused graphic records of its stream; this says which record
+    /// and which part of the frame rule it fails, for a reader that has to
+    /// say what a page was laid out without. Empty on every document of the
+    /// corpora.
+    ///
+    /// Not serialized, like the maps above.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub refused_smart_frames: Vec<RefusedSmartFrame>,
+
     /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
     /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
     /// one `JSheet` and states, for the layers that sheet's manager
@@ -314,6 +327,7 @@ impl Default for PidDocument {
             sheet_display_order: BTreeMap::new(),
             embedded_sheet_display_order: BTreeMap::new(),
             sheet_without_display_order: BTreeMap::new(),
+            refused_smart_frames: Vec::new(),
             view_filter_sets: BTreeMap::new(),
             style_tables: BTreeMap::new(),
             version_history: None,
