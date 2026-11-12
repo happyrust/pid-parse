@@ -282,6 +282,11 @@ Narrow 10.17 六个，在 3 页上），夹具 9 个（Arial 12.03 四个、Aria
   压窄比沿用所在那一段的。
 - 页面上，标签的第一个文字对象写它自己的 `Tm`；后面的文字对象只要矩阵与前一个不同，就在自己的起点上再写
   一个 `Tm`（起点仍是前一段画出来的终点，不取整）。矩阵相同的接着写，与原来逐字节相同。
+  **「再写一个 `Tm`」这条路径在 71 页上一次都没有走到**（2026-11-12 数过，改 `Tc` 前后都是：内容流里 `BT` 与
+  `Tm` 各 21 951 个，每条标签恰好一个矩阵）：下面那 12 条标签是整条借字，变的是标签唯一的那个矩阵。走这条
+  路径的只有库内三条用例（`a_lent_piece_of_a_turned_label_is_set_under_its_own_fonts_matrix`、
+  `a_lent_piece_of_a_stretched_label_is_set_under_its_own_fonts_matrix`、
+  `a_run_at_another_height_of_a_turned_label_is_set_under_its_own_matrix`）。
 
 正排又不压窄的标签，每个字体的矩阵都是 `1 0 0 1`，所以不受影响：验收 11 页与备份 53 页逐字节不变，参考图
 见证过的借字那一类（`℃`、`动火点`）也在其中。受影响的是「旋转或压窄的标签里、不是标签点名字体的那一段」，

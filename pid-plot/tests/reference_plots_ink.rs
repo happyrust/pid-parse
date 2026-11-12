@@ -1242,21 +1242,24 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         })
         .collect();
     let dirs = font_search_dirs(&corpus);
-    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
 
     let mut printed = String::new();
     let mut failures: Vec<String> = Vec::new();
     for (sheet, model) in SHEETS.iter().zip(&models) {
         let reference_pdf = std::fs::read(corpus.join(format!("{}.pdf", sheet.name)))
             .unwrap_or_else(|error| panic!("{}: reference: {error}", sheet.name));
+        // The faces are prepared for this sheet by itself, as `pid_plot` and
+        // the acceptance gate prepare them, so the page read here is the
+        // page that gate delivers.
+        let prepared = prepare_fonts(&[model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let our_pdf = write_plot(model, &fonts)
             .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name));
         let reading = read_page(sheet, model, &reference_pdf, &our_pdf);

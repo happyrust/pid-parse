@@ -46,20 +46,23 @@ fn five_drawings_round_trip_through_pdf() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         models.push((name, model));
     }
-    let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
-    let prepared = prepare_fonts(&refs, &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
     let plot_dir = corpus.join("plot");
     std::fs::create_dir_all(&plot_dir).unwrap_or_else(|error| panic!("mkdir plot: {error}"));
 
     for (name, model) in &models {
+        // The page is kept under `plot`, so its faces are prepared for this
+        // sheet by itself, as `pid_plot` prepares them: prepared for the five
+        // together it would be other bytes than that program writes.
+        let prepared =
+            prepare_fonts(&[model], &dirs).unwrap_or_else(|error| panic!("{name}: fonts: {error}"));
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         let out = plot_dir.join(format!("{name}.pdf"));
         std::fs::write(&out, &pdf)

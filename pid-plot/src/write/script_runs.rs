@@ -6,7 +6,8 @@
 //! writes one text object for each piece — its own text matrix, at the
 //! whole pixel the steps before it add up to, and its own letter-spacing,
 //! the average its own glyphs need. This module holds that cut ([`of`]) and
-//! the two figures a piece is written with ([`start_px`], [`spacing_pt`]).
+//! where a piece starts ([`start_px`]); what it is spaced by is the driver's
+//! letter-spacing of its own glyphs ([`super::letter_spacing`]).
 //!
 //! # What the reference plots show
 //!
@@ -60,8 +61,6 @@
 //! - a turned label. Its glyphs are each set on their own step already.
 
 use std::ops::Range;
-
-use super::PLOT_DPI;
 
 /// The three kinds of character that start a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,30 +122,9 @@ pub(super) fn start_px(glyphs: &[Stepped], at: usize) -> i64 {
     glyphs.iter().take(at).map(|glyph| glyph.step_px).sum()
 }
 
-/// The letter-spacing of a run whose glyphs are `glyphs`, in points of a
-/// text space scaled by `sx` along the baseline.
-///
-/// It is what [`super::stepped_advance`] gives a whole string: the average,
-/// over every glyph but the last, of what its step is short of or past its
-/// own width. A run of one glyph has no gap to space.
-pub(super) fn spacing_pt(glyphs: &[Stepped], sx: f64) -> f64 {
-    let Some((_, leading)) = glyphs.split_last() else {
-        return 0.0;
-    };
-    if leading.is_empty() || !(sx.is_finite() && sx > 0.0) {
-        return 0.0;
-    }
-    #[allow(clippy::cast_precision_loss)]
-    let stepped: f64 = leading.iter().map(|glyph| glyph.step_px as f64).sum();
-    let natural: f64 = leading.iter().map(|glyph| glyph.natural_px).sum();
-    #[allow(clippy::cast_precision_loss)]
-    let gaps = leading.len() as f64;
-    (stepped - natural) / gaps * (72.0 / PLOT_DPI) / sx
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Stepped, of, spacing_pt, start_px};
+    use super::{Stepped, of, start_px};
 
     /// `text` cut into its script runs.
     fn cut(text: &str) -> Vec<String> {
@@ -236,11 +214,11 @@ mod tests {
         assert_eq!(start_px(&glyphs, 8), 134);
         assert_eq!(start_px(&glyphs, 19), 238);
         let written = 213.0 / 256.0;
-        let cut_to_three = |tc: f64| (tc * 1000.0).trunc() / 1000.0;
-        assert!((cut_to_three(spacing_pt(&glyphs[..8], written)) + 0.494).abs() < 1e-9);
-        assert!((cut_to_three(spacing_pt(&glyphs[8..19], written)) + 0.288).abs() < 1e-9);
+        let spacing = |glyphs: &[Stepped]| super::super::letter_spacing::of(glyphs, written);
+        assert_eq!(spacing(&glyphs[..8]).to_bits(), (-0.494f64).to_bits());
+        assert_eq!(spacing(&glyphs[8..19]).to_bits(), (-0.288f64).to_bits());
         // One glyph has no gap, and neither has none.
-        assert_eq!(spacing_pt(&glyphs[..1], written), 0.0);
-        assert_eq!(spacing_pt(&[], written), 0.0);
+        assert_eq!(spacing(&glyphs[..1]), 0.0);
+        assert_eq!(spacing(&[]), 0.0);
     }
 }

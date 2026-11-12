@@ -5,25 +5,58 @@
 //! holds ten labels between 9e-8 and 2e-4 rad off level and two a couple of
 //! millionths of a radian off a quarter turn; a fixture holds one more; and
 //! of the 470 turned labels on the eleven sheets that have a reference plot,
-//! 45 are a few 1e-13 rad short of their quarter turn as this crate reads
-//! them.
+//! 45 are short of their quarter turn as this crate reads them — seven by a
+//! bit or two of the double, the rest by up to 9e-13 rad.
 //!
 //! The plotter does not letter at such an angle. `render.dll` hands a label's
 //! angle to GDI as `LOGFONT.lfEscapement`, and that field counts whole tenths
 //! of a degree: the routine that fills the `LOGFONT` takes `atan2` of the
 //! label's matrix, turns it into tenths of a degree and rounds to the nearest
 //! whole number, with a matrix whose sine is under 2^-23 short-cut to none.
-//! So an angle within a twentieth of a degree of a quarter turn *is* that
-//! quarter turn to GDI, and to the PDF driver, which writes the font it is
-//! handed: the reference plots state every one of those 470 labels exactly on
-//! its quarter turn, in whole numbers (`0 1.012 -1.012 0`).
+//! Read that way, an angle within a twentieth of a degree of a quarter turn
+//! *is* that quarter turn to GDI, and to the PDF driver, which writes the
+//! font it is handed. That is the rule here, and it is that routine's: the
+//! reference plots show less.
 //!
-//! A second routine of the same library, on the way to selecting the font
-//! into the device context, states the same product by cutting it to an
-//! integer. Read that way the 45 labels would be lettered at 89.9°, which no
-//! reference plot shows, so the tenth is taken by rounding. The two readings
-//! differ only there and between 0.05° and 0.1° of a quarter turn, where no
-//! label of any corpus lies: the farthest of them is 0.012° off.
+//! # What the reference plots show
+//!
+//! - Every one of their 470 turned labels is stated exactly on its quarter
+//!   turn, in whole numbers (`0 1.012 -1.012 0`), and so are ours.
+//! - A label lettered level looks as the ten of the backup do under this
+//!   rule: an upright Arial at `Tf 12.45` or Arial Narrow at `Tf 10.17` under
+//!   `1 0 0 1`, not the same face 1.2 % or 0.8 % larger under the matrix of a
+//!   turned label.
+//!
+//! # What they do not show
+//!
+//! - How far from a quarter turn a label may lie and still be lettered on
+//!   it. No label of theirs is more than 1.2e-10° from one, so that a label
+//!   0.012° off level is lettered level rests on the reading of `render.dll`
+//!   alone.
+//! - That the tenth is the nearest one. A second routine of the same library
+//!   — the one whose value makes the font that is selected into the device
+//!   context — states the same product by cutting it to an integer. The two
+//!   readings part on a label short of its quarter turn, which the cut
+//!   letters at 89.9°, and between 0.05° and 0.1° of one, where no label of
+//!   any corpus lies (the farthest is 0.012° off). The 45 labels are the
+//!   only ones with a reference plot that the two part on, and their plots
+//!   are the same pages under either: the longest of the 45 is 23 device
+//!   units from its first glyph to its last, so at 89.9° that glyph would
+//!   stand 0.04 of a unit aside, on the same whole unit, and the matrix
+//!   would still be written `0 1.012 -1.012 0` — the driver's 256ths
+//!   ([`super::text_matrix`]) taken to an angle no plot shows, where the
+//!   cosine's entry is under half a 256th and is cut to none. So the plots
+//!   are no witness of the rounding. The tenth is taken by rounding because
+//!   the routine that fills the `LOGFONT` rounds; which routine's value
+//!   reaches GDI has not been traced. One case says it need not be the
+//!   first's: a label at half a turn reads as level by the first routine,
+//!   which looks at the sine alone, and as 1800 by the second.
+//!
+//! On the 71 pages on hand the two readings letter one label differently:
+//! the plant backup's `25-WO-0103528-B2-EH40`, 1.06e-4° short of a quarter
+//! turn and 296 device units long, whose last glyphs the cut would stand one
+//! unit aside. The other 223 labels the two part on are 284 units long or
+//! less, and half a unit aside takes 286.5.
 //!
 //! [`of`] reads an angle that way for one purpose, telling a label on a
 //! quarter turn from a label turned to some other angle. A label within a

@@ -49,6 +49,7 @@
 
 mod borrowed;
 mod escapement;
+mod letter_spacing;
 mod script_runs;
 mod text_matrix;
 mod verdict;
@@ -2107,20 +2108,24 @@ fn show_text(
         } else {
             Vec::new()
         };
-        // The driver states a letter-spacing against the entry it keeps in
-        // 256ths; `run_advance` and [`script_runs`] figure it against `plate`.
-        let respaced = font.respaced();
+        // A string, and each script run of one, is a text object under the
+        // letter-spacing the driver states for it ([`letter_spacing`]): what
+        // the plotter's steps leave over the glyphs' own advances, against
+        // the entry of the text matrix the driver keeps in 256ths. A run
+        // with no steps of its own to state — one glyph, a turned run, a run
+        // the reference font has no cell for — is under none.
+        let along = font.matrix.spacing;
         if script.len() < 2 {
-            emitted.extend(last_glyph_apart(LetteredPiece {
+            emitted.push(LetteredPiece {
                 size_pt,
                 face,
                 bytes,
-                tc_pt: advance.tc_pt * respaced,
+                tc_pt: letter_spacing::of(&advance.glyphs, along),
                 steps_px: advance.steps_px,
                 start,
                 begins_string: true,
                 matrix: font.matrix,
-            }));
+            });
             continue;
         }
         let lens: Vec<usize> = face
@@ -2133,11 +2138,11 @@ fn show_text(
             let from: usize = lens[..glyphs.start].iter().sum();
             let until = from + lens[glyphs.clone()].iter().sum::<usize>();
             let first = order == 0;
-            emitted.extend(last_glyph_apart(LetteredPiece {
+            emitted.push(LetteredPiece {
                 size_pt,
                 face,
                 bytes: bytes[from..until].to_vec(),
-                tc_pt: script_runs::spacing_pt(&advance.glyphs[glyphs.clone()], plate) * respaced,
+                tc_pt: letter_spacing::of(&advance.glyphs[glyphs.clone()], along),
                 steps_px: Vec::new(),
                 start: if first {
                     start
@@ -2146,7 +2151,7 @@ fn show_text(
                 },
                 begins_string: first,
                 matrix: font.matrix,
-            }));
+            });
         }
     }
     // `laid_out_mm` is what the plotter's own steps make of the run. The
@@ -2248,6 +2253,11 @@ fn show_text(
         .map(|sheet| origin_mm[0] * sheet / (25.4 / PLOT_DPI));
     let origin_mm =
         device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
+    // A string is shown whole under its letter-spacing, as the reference
+    // writes it, except where another piece carries on from its end. A
+    // later run of the record does so wherever it has no pixel of its own
+    // to start on.
+    let emitted = last_glyphs_apart(emitted, unrounded_px.is_some());
     ops.push(Op::new("BT", Vec::new()));
     // `Tj` advances the text position itself, so consecutive runs in one
     // font continue along the same baseline — across a change of face, and
@@ -2876,41 +2886,33 @@ fn reference_extent_mm(
 /// it into glyphs, each under its own `Tm` at its cumulative step, so they
 /// land on whole pixels however the 1/2400 in grid rounds the `Tf`
 /// ([`plotted_size_pt`]); such a run comes back with `steps_px` and no
-/// `tc_pt`, for [`glyph_by_glyph`]. An upright run keeps the one `Tj` and
-/// `Tc` the reference writes for it, that grid's drift included.
+/// `glyphs`, for [`glyph_by_glyph`]. An upright run comes back with its
+/// `glyphs`, from which the caller states the one `Tc` the reference writes
+/// for the string ([`letter_spacing`]), that grid's drift included.
 ///
-/// Both `width_mm` and `tc_pt` are figured at `sx = 1` —
-/// the one `Tm` horizontal scale the caller's whole label carries
-/// ([`permille_scale`]) is what turns either into
+/// `width_mm` is figured at `sx = 1` — the one `Tm` horizontal scale the
+/// caller's whole label carries ([`permille_scale`]) is what turns it into
 /// what actually lands on the page, the same way it turns every glyph's
 /// own outline narrower together with its advance (the reason `render.dll`
 /// drew a condensed run with a condensed device font rather than a kerning
-/// table). `sx` is only this function's divisor for `tc_pt`, so a `Tm` of
-/// `1` reproduces it exactly; the caller restates `tc_pt` once, for the
-/// scale the PDF driver writes into `Tm` in place of `sx`
-/// ([`text_matrix`]). See
-/// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
+/// table). See `docs/findings/2026-11-07-text-geometry-writer.md` §2.
 struct RunAdvance {
-    /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
-    /// (`0` for a single glyph); the caller's own `Tm` carries `sx` from
-    /// here on.
-    tc_pt: f64,
     /// This run's total advance to the end of its last glyph, in
     /// millimetres, at `Tm`'s horizontal scale `1`; the caller's own `Tm`
-    /// carries `sx`. The leading `n - 1` glyphs advance by `tc_pt`-corrected
-    /// `lpDx`; the last glyph (drawn under its own `Tc = 0`, see
-    /// [`last_glyph_byte_offset`]) advances by its own embedded-font natural
-    /// width — not the reference font's `lpDx` reading of it, which this
-    /// field never folds in.
+    /// carries `sx`. The leading `n - 1` glyphs advance by their `lpDx`;
+    /// the last glyph advances by its own embedded-font natural width — not
+    /// the reference font's `lpDx` reading of it, which this field never
+    /// folds in.
     width_mm: f64,
     /// The whole-pixel step each glyph but the last takes, in 150 dpi
     /// pixels at `Tm`'s horizontal scale `sx`, for a run the reference
     /// letters glyph by glyph: a rotated one ([`glyph_by_glyph`]). Empty for
-    /// a run lettered as one string under `tc_pt`.
+    /// a run lettered as one string under a letter-spacing.
     steps_px: Vec<i64>,
     /// Every glyph of an upright run as the plotter steps it — its whole
-    /// pixels and its own width in the device font at `sx` — which is what a
-    /// string cut into script runs places and spaces each of them from
+    /// pixels and its own width in the device font at `sx` — which is what
+    /// the string's letter-spacing is stated from ([`letter_spacing`]) and
+    /// what a string cut into script runs places each of them from
     /// ([`script_runs`]). Empty for a run of one glyph, a rotated run and a
     /// run the reference font has no cell for.
     glyphs: Vec<script_runs::Stepped>,
@@ -2934,7 +2936,6 @@ fn run_advance(
     let codes = metrics.codes(bytes);
     let n = codes.len();
     let natural = || RunAdvance {
-        tc_pt: 0.0,
         width_mm: run_width_mm(metrics, size_pt, bytes),
         steps_px: Vec::new(),
         glyphs: Vec::new(),
@@ -2954,7 +2955,6 @@ fn run_advance(
         #[allow(clippy::cast_precision_loss)]
         let width_mm = step as f64 * 25.4 / PLOT_DPI / sx + widths_em[1] * size_pt / PT_PER_MM;
         return RunAdvance {
-            tc_pt: 0.0,
             width_mm,
             steps_px: vec![step],
             glyphs: Vec::new(),
@@ -3032,18 +3032,13 @@ fn stepped_advance(
     let leading: i64 = lp_dx[..n - 1].iter().sum();
     #[allow(clippy::cast_precision_loss)]
     let leading_px = leading as f64;
-    let embedded_px: f64 = widths_em[..n - 1].iter().sum::<f64>() * em_px * sx;
-    #[allow(clippy::cast_precision_loss)]
-    let tc_pt = (leading_px - embedded_px) / (n - 1) as f64 * (72.0 / PLOT_DPI) / sx;
-    // The page renders the first `n - 1` glyphs at `leading_px` (that is
-    // what `tc_pt` was solved to make them do, and where [`glyph_by_glyph`]
-    // sets a rotated run's) and the last glyph at its
-    // own embedded-font natural width, under `Tc = 0`
-    // ([`last_glyph_byte_offset`]'s split) — not at the reference font's
-    // own `lp_dx` reading of it, which `widths_em[n - 1]` never enters.
-    // Summing all `n` entries of `lp_dx` instead double-counts the
-    // reference font's own rounding on the glyph that is never drawn
-    // under its correction.
+    // The plotter puts the first `n - 1` glyphs `leading_px` along (which
+    // is what the string's letter-spacing states, and where
+    // [`glyph_by_glyph`] sets a rotated run's) and the last glyph takes its
+    // own embedded-font natural width — not the reference font's own
+    // `lp_dx` reading of it, which `widths_em[n - 1]` never enters. Summing
+    // all `n` entries of `lp_dx` instead double-counts the reference font's
+    // own rounding on the glyph that no step follows.
     let width_mm = leading_px * 25.4 / PLOT_DPI / sx + widths_em[n - 1] * size_pt / PT_PER_MM;
     if upright {
         let glyphs = lp_dx
@@ -3055,7 +3050,6 @@ fn stepped_advance(
             })
             .collect();
         return RunAdvance {
-            tc_pt,
             width_mm,
             steps_px: Vec::new(),
             glyphs,
@@ -3063,7 +3057,6 @@ fn stepped_advance(
     }
     lp_dx.truncate(n - 1);
     RunAdvance {
-        tc_pt: 0.0,
         width_mm,
         steps_px: lp_dx,
         glyphs: Vec::new(),
@@ -3073,12 +3066,13 @@ fn stepped_advance(
 /// The byte offset where `bytes`' last glyph starts, or `None` for a run of
 /// one glyph (there is no "head" to split off) or an empty run.
 ///
-/// [`run_advance`]'s `Tc` corrects only the gaps *between* glyphs — `n - 1`
-/// of them for `n` glyphs — but a PDF's `Tc` graphics-state parameter adds
-/// to every glyph's own displacement once set, the trailing one included.
-/// Splitting the run here, so the trailing glyph can go out under its own
-/// `Tj` with `Tc` reset to `0`, is what keeps that one extra correction off
-/// the page.
+/// A string's `Tc` states the gaps *between* its glyphs — `n - 1` of them
+/// for `n` glyphs — but a PDF's `Tc` graphics-state parameter adds to every
+/// glyph's own displacement once set, the trailing one included. Splitting
+/// the run here, so the trailing glyph can go out under its own `Tj` with
+/// `Tc` reset to `0`, is what keeps that one extra spacing out of the text
+/// position where another piece is to carry on from it
+/// ([`last_glyphs_apart`]).
 fn last_glyph_byte_offset(metrics: &Metrics, bytes: &[u8]) -> Option<usize> {
     let codes = metrics.codes(bytes);
     if codes.len() < 2 {
@@ -3130,16 +3124,6 @@ impl SetFont {
             matrix: text_matrix::written(px_per_unit, plate, upright),
         }
     }
-
-    /// What a letter-spacing figured against `plate` is multiplied by to be
-    /// stated against the entry the driver keeps in 256ths.
-    fn respaced(&self) -> f64 {
-        if self.plate.is_finite() && self.matrix.spacing > 0.0 {
-            self.plate / self.matrix.spacing
-        } else {
-            1.0
-        }
-    }
 }
 
 /// One piece of a label as the page letters it.
@@ -3161,15 +3145,59 @@ struct LetteredPiece<'f, 'a> {
     matrix: text_matrix::TextMatrix,
 }
 
-/// A piece as the page shows it: one string under its `Tc`, or, where it has
-/// a `Tc` and more than one glyph, every glyph but the last under that `Tc`
-/// and the last one on its own under none.
+/// The pieces of a label as the page shows them: each string whole under
+/// its `Tc`, except one that the next piece carries on from, which is shown
+/// with its last glyph apart ([`last_glyph_apart`]).
 ///
-/// `Tc` is a graphics-state parameter: once set it adds to *every* glyph's
-/// own displacement, including the last one's. The reference's `Tc` is only
-/// the correction for the `n - 1` gaps *between* glyphs ([`run_advance`]), so
-/// a piece that needs one is split here rather than let the PDF apply a
-/// correction meant for `n - 1` transitions to `n` of them.
+/// The reference writes a string as one text object, all of its glyphs
+/// under the one `Tc` ([`letter_spacing`]). `Tc` is a graphics-state
+/// parameter: it follows *every* glyph it is in force for, the last one
+/// too, so a string shown whole leaves the text position one spacing past
+/// the end of its last glyph. That moves nothing where the next piece has a
+/// start of its own — a later script run, a later run of the record — or
+/// where there is no next piece, and the reference starts every text object
+/// under a text matrix of its own. A piece that [`PieceStart::Continues`]
+/// starts where the text position was left, so the string before it leaves
+/// it at the end of its last glyph, as it did before strings were shown
+/// whole: no reference plot shows a label of two such pieces, and it keeps
+/// the places it had. So does a later run of the record on a page where it
+/// has no whole pixel to start on (`record_runs_placed` is false: the sheet's
+/// device grid is not known, or the page had to condense the label), since
+/// it then starts where the text position was left as well.
+fn last_glyphs_apart<'f, 'a>(
+    pieces: Vec<LetteredPiece<'f, 'a>>,
+    record_runs_placed: bool,
+) -> Vec<LetteredPiece<'f, 'a>> {
+    let carried_on: Vec<bool> = pieces
+        .iter()
+        .skip(1)
+        .map(|next| match next.start {
+            PieceStart::Continues => true,
+            PieceStart::RecordRun(_) => !record_runs_placed,
+            PieceStart::ScriptRun(_) => false,
+        })
+        .chain([false])
+        .collect();
+    pieces
+        .into_iter()
+        .zip(carried_on)
+        .flat_map(|(piece, carried_on)| {
+            if carried_on {
+                last_glyph_apart(piece)
+            } else {
+                vec![piece]
+            }
+        })
+        .collect()
+}
+
+/// A string with its last glyph apart: where it has a `Tc` and more than one
+/// glyph, every glyph but the last under that `Tc` and the last one on its
+/// own under none; any other piece as it is.
+///
+/// The `Tc` states the `n - 1` gaps *between* the glyphs
+/// ([`letter_spacing`]), so shown this way the text position is left at the
+/// end of the last glyph rather than one spacing past it.
 fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'f, 'a>> {
     let split = (piece.tc_pt != 0.0)
         .then(|| last_glyph_byte_offset(&piece.face.metrics, &piece.bytes))
@@ -3531,20 +3559,7 @@ mod tests {
         );
         assert_eq!(whole.glyphs.len(), 14, "one step for each glyph");
         let (latin, han) = whole.glyphs.split_at(8);
-        let spaced = |glyphs: &[super::script_runs::Stepped]| {
-            let (_, leading) = glyphs.split_last().expect("glyphs");
-            let short_px: f64 = leading
-                .iter()
-                .map(|glyph| {
-                    #[allow(clippy::cast_precision_loss)]
-                    let step = glyph.step_px as f64;
-                    step - glyph.natural_px
-                })
-                .sum();
-            #[allow(clippy::cast_precision_loss)]
-            let gaps = leading.len() as f64;
-            short_px / gaps * 72.0 / super::PLOT_DPI
-        };
+        let spaced = |glyphs: &[super::script_runs::Stepped]| drivers_spacing(glyphs, 256);
         let (latin_bytes, han_bytes) = (
             metrics.encode("DWG-0100").expect("encodes"),
             metrics.encode("集05-37").expect("encodes"),
@@ -3579,20 +3594,26 @@ mod tests {
             (td[0] - start_pt).abs() < 1e-12 && td[1] == 0.0,
             "moved {td:?}, the Latin run's {start_px} pixels are {start_pt} pt"
         );
-        // Each run is spaced by its own glyphs, and its last glyph by none.
+        // Each run is one text object, spaced by its own glyphs.
         let spacings: Vec<f64> = numbers(&ops, "Tc").into_iter().map(|tc| tc[0]).collect();
         assert!(
             spaced(latin) != 0.0 && spaced(han) != 0.0,
             "both runs must need spacing for this label to show the cut"
         );
-        let expected = [spaced(latin), 0.0, spaced(han), 0.0];
+        let expected = [spaced(latin), spaced(han)];
         assert_eq!(spacings.len(), expected.len(), "{spacings:?}");
         for (got, want) in spacings.iter().zip(expected) {
-            assert!(
-                (got - want).abs() < 1e-12,
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
                 "Tc {spacings:?}, not {expected:?}"
             );
         }
+        assert_eq!(
+            strings_shown(&ops),
+            vec![latin_bytes, han_bytes],
+            "each script run whole in one `Tj`"
+        );
         assert!(
             (spaced(latin) - spaced(han)).abs() > 1e-6,
             "the two runs must need different spacing for this label to tell them apart"
@@ -3638,7 +3659,6 @@ mod tests {
             true,
             device,
         );
-        assert_ne!(stepped.tc_pt, 0.0, "the run is letter-spaced");
         let face = super::ReadyFace {
             key: "SimSun",
             resource: "F1".to_string(),
@@ -3654,12 +3674,214 @@ mod tests {
             "the reference writes `0.797 0 0 1` for this font"
         );
         let spacing = numbers(&ops, "Tc");
-        let on_device = stepped.tc_pt * plate;
-        assert!(
-            (spacing[0][0] - on_device / (204.0 / 256.0)).abs() < 1e-12,
-            "Tc {} is not the device spacing {on_device} over 204/256",
+        let expected = drivers_spacing(&stepped.glyphs, 204);
+        assert!(expected != 0.0, "the run is letter-spaced");
+        assert_eq!(spacing.len(), 1, "one letter-spacing: {spacing:?}");
+        assert_eq!(
+            spacing[0][0].to_bits(),
+            expected.to_bits(),
+            "Tc {} is not the driver's {expected}: the device spacing over 204/256, cut to \
+             three decimals",
             spacing[0][0]
         );
+        assert_eq!(
+            strings_shown(&ops),
+            vec![bytes],
+            "the whole string in one text object"
+        );
+    }
+
+    /// The letter-spacing the reference plots' driver states for `glyphs`
+    /// under a text matrix that keeps `along_256ths` 256ths along the
+    /// baseline, written out on its own: what the whole steps of every glyph
+    /// but the last leave over those glyphs' own advances, each advance taken
+    /// to the nearest 256th of a device unit, in points of text space and cut
+    /// to three decimals. A device unit is 0.48 pt.
+    fn drivers_spacing(glyphs: &[super::script_runs::Stepped], along_256ths: i64) -> f64 {
+        let (_, leading) = glyphs.split_last().expect("glyphs");
+        let short_256ths: i64 = leading
+            .iter()
+            .map(|glyph| {
+                #[allow(clippy::cast_possible_truncation)]
+                let advance = (glyph.natural_px * 256.0).round() as i64;
+                glyph.step_px * 256 - advance
+            })
+            .sum();
+        let gaps = i64::try_from(leading.len()).expect("a few glyphs");
+        // Thousandths of a point; the division of whole numbers cuts toward
+        // nought.
+        let thousandths = short_256ths * 480 / (gaps * along_256ths);
+        #[allow(clippy::cast_precision_loss)]
+        let spacing = thousandths as f64 / 1000.0;
+        spacing
+    }
+
+    /// A string is one text object under the letter-spacing the reference
+    /// plots' driver states for it: all of its glyphs in one `Tj`, the last
+    /// one too, and a `Tc` of three decimals — the plotter's whole steps
+    /// less the glyphs' advances to a 256th of a device unit, cut. The
+    /// reference writes `0.086` where the steps over the glyphs' own widths
+    /// come to `0.08685…`.
+    #[test]
+    fn a_string_is_one_text_object_under_the_drivers_letter_spacing() {
+        let value = "AC-01031A";
+        let face = inter_unnamed(value);
+        let bytes = face
+            .metrics
+            .encode(value)
+            .expect("the face encodes the label");
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (height_mm, page) = (2.5, [841.0, 594.0]);
+        let size_pt = super::plotted_size_pt(face.heights, basis, height_mm);
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let stepped = super::run_advance(
+            "",
+            &face.metrics,
+            &bytes,
+            value,
+            face.heights,
+            basis,
+            height_mm,
+            size_pt,
+            None,
+            1.0,
+            true,
+            device,
+        );
+        assert_eq!(stepped.glyphs.len(), 9, "one step for each glyph");
+        let expected = drivers_spacing(&stepped.glyphs, 256);
+        // What the steps leave over the glyphs' own widths, neither taken to
+        // 256ths nor cut: the label has to tell the two apart.
+        let (_, leading) = stepped.glyphs.split_last().expect("glyphs");
+        #[allow(clippy::cast_precision_loss)]
+        let uncut = leading
+            .iter()
+            .map(|glyph| glyph.step_px as f64 - glyph.natural_px)
+            .sum::<f64>()
+            / leading.len() as f64
+            * 72.0
+            / super::PLOT_DPI;
+        assert!(
+            expected != 0.0 && (uncut - expected).abs() > 1e-6,
+            "the label must need a spacing the cut changes: {uncut} against {expected}"
+        );
+        let ops = label_ops(&face, value, height_mm, 0.0, None);
+        let spacing = numbers(&ops, "Tc");
+        assert_eq!(
+            spacing[0][0].to_bits(),
+            expected.to_bits(),
+            "Tc {} is not the driver's {expected}",
+            spacing[0][0]
+        );
+        assert_eq!(spacing.len(), 1, "one letter-spacing: {spacing:?}");
+        assert_eq!(
+            strings_shown(&ops),
+            vec![bytes],
+            "the whole string in one text object"
+        );
+    }
+
+    /// A string that another piece of its label carries on from keeps its
+    /// last glyph apart, under no letter-spacing. `Tc` follows every glyph it
+    /// is in force for, the last one too, so a string shown whole leaves the
+    /// text position one spacing past its last glyph; the reference writes a
+    /// text matrix for every text object and never carries on from one. No
+    /// reference plot shows a label of two stretches that is not written
+    /// glyph by glyph, so such a label keeps the place it had.
+    #[test]
+    fn a_string_another_piece_carries_on_from_has_its_last_glyph_apart() {
+        let value = "ABCDEFGH";
+        let face = inter_unnamed(value);
+        let spans = [run_of(0, 4, None), run_of(4, 4, Some(3.5))];
+        let ops = record_ops(&face, value, 2.5, 0.0, None, &spans);
+        let shown = strings_as_set(&ops);
+        let glyphs: Vec<usize> = shown
+            .iter()
+            .map(|(_, _, bytes)| face.metrics.codes(bytes).len())
+            .collect();
+        assert_eq!(
+            glyphs,
+            [3, 1, 4],
+            "`ABC` and `D` of the first stretch, then `EFGH` whole"
+        );
+        assert!(
+            shown[0].1 != 0.0 && shown[2].1 != 0.0,
+            "both stretches must need spacing: {shown:?}"
+        );
+        assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
+        assert_eq!(numbers(&ops, "Td").len(), 0, "nothing is moved: {ops:?}");
+        assert_eq!(numbers(&ops, "Tm").len(), 1, "one text matrix");
+    }
+
+    /// A later run of a record in one style starts on a whole pixel of its
+    /// own only on a sheet whose device grid is known. On any other page —
+    /// a sheet laid out on its frame's rectangle, 594.328 × 420.566 mm — it
+    /// carries on from the run before it like any other piece, so that run
+    /// keeps its last glyph apart and the later run starts where that glyph
+    /// ends, not one letter-spacing past it.
+    #[test]
+    fn a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it() {
+        let value = "ABCDEF";
+        let face = inter_unnamed(value);
+        let spans = [run_of(0, 3, None), run_of(3, 3, None)];
+        let on_page = |page: [f64; 2]| {
+            let text = ShownText {
+                typeface: face.key,
+                origin_mm: [200.0, 100.0],
+                height_mm: Some(2.5),
+                rotation: 0.0,
+                value,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: &spans,
+                furniture: false,
+            };
+            let mut ops = Vec::new();
+            let mut audit = super::PlotAudit::default();
+            super::show_text(
+                &mut ops,
+                std::slice::from_ref(&face),
+                text,
+                page,
+                &mut audit,
+            )
+            .expect("the label letters");
+            ops
+        };
+        let glyphs = |ops: &[super::Op]| -> Vec<usize> {
+            strings_as_set(ops)
+                .iter()
+                .map(|(_, _, bytes)| face.metrics.codes(bytes).len())
+                .collect()
+        };
+        // On a standard sheet each run is a string of its own, the second
+        // moved to its whole pixel.
+        let standard = on_page([841.0, 594.0]);
+        assert_eq!(glyphs(&standard), [3, 3], "{standard:?}");
+        assert_eq!(numbers(&standard, "Td").len(), 1, "the second run is moved");
+        // On a page with no device grid nothing is moved, and the first run
+        // ends on its last glyph.
+        assert!(super::device_scale([594.328, 420.566]).is_none());
+        let framed = on_page([594.328, 420.566]);
+        assert_eq!(
+            numbers(&framed, "Td").len(),
+            0,
+            "nothing is moved: {framed:?}"
+        );
+        let shown = strings_as_set(&framed);
+        assert_eq!(
+            glyphs(&framed),
+            [2, 1, 3],
+            "`AB` and `C` of the first run, then `DEF` whole"
+        );
+        assert!(
+            shown[0].1 != 0.0,
+            "the first run must need spacing: {shown:?}"
+        );
+        assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
     }
 
     /// A turned label is set under the driver's matrix too, stretched or not:
@@ -3893,29 +4115,35 @@ mod tests {
                 .collect()
         };
         let (in_the_record, by_itself) = (at_the_runs_size(&record), at_the_runs_size(&alone));
-        assert_eq!(
-            by_itself.len(),
-            2,
-            "`CD` under its spacing and `E` under none: {by_itself:?}"
-        );
+        // By itself the run is one string under its spacing. In the record
+        // another run carries on from it, so it is `CD` under that spacing
+        // and `E` under none.
+        assert_eq!(by_itself.len(), 1, "`CDE` under its spacing: {by_itself:?}");
         assert!(
             by_itself[0].0 != 0.0,
             "the run must need spacing for this label to show what it is measured at"
         );
         assert_eq!(
             in_the_record.len(),
-            by_itself.len(),
+            2,
             "the run of the record: {in_the_record:?}"
         );
-        for (got, want) in in_the_record.iter().zip(&by_itself) {
-            assert_eq!(got.1, want.1, "the same glyphs");
-            assert!(
-                (got.0 - want.0).abs() < 1e-12,
-                "Tc {} in the record, {} as a label of its own",
-                got.0,
-                want.0
-            );
-        }
+        assert_eq!(
+            [in_the_record[0].1.clone(), in_the_record[1].1.clone()].concat(),
+            by_itself[0].1,
+            "the same glyphs"
+        );
+        assert_eq!(
+            in_the_record[0].0.to_bits(),
+            by_itself[0].0.to_bits(),
+            "Tc {} in the record, {} as a label of its own",
+            in_the_record[0].0,
+            by_itself[0].0
+        );
+        assert_eq!(
+            in_the_record[1].0, 0.0,
+            "the glyph set apart: {in_the_record:?}"
+        );
     }
 
     /// The rule that starts each run of a record on a whole pixel of its own
@@ -4250,7 +4478,8 @@ mod tests {
             "the first glyph advances a whole 150 dpi pixel: {leading_px}"
         );
         assert_ne!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "a fractional natural advance is corrected onto that pixel"
         );
     }
@@ -4269,7 +4498,8 @@ mod tests {
             "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, false, 1.0,
         );
         assert_eq!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "a rotated pair states no letter-spacing"
         );
         let codes = metrics.codes(&bytes);
@@ -4309,7 +4539,11 @@ mod tests {
             )
         };
         let (rotated, upright) = (advance(false), advance(true));
-        assert_eq!(rotated.tc_pt, 0.0, "a rotated run states no letter-spacing");
+        assert_eq!(
+            super::letter_spacing::of(&rotated.glyphs, 1.0),
+            0.0,
+            "a rotated run states no letter-spacing"
+        );
         assert!(
             upright.steps_px.is_empty(),
             "an upright run stays one string"
@@ -4374,7 +4608,8 @@ mod tests {
             1.0,
         );
         assert_ne!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "three glyphs letter-space once the reference font's own rounding moves a gap"
         );
         let natural_mm = super::run_width_mm(&metrics, size_pt, &bytes);
@@ -4382,11 +4617,10 @@ mod tests {
             advance.width_mm, natural_mm,
             "the lpDx-rounded width is not the glyphs' own natural advance"
         );
-        // The page draws the leading `n - 1` glyphs under `Tc` and the
-        // trailing one alone under `Tc = 0` ([`super::last_glyph_byte_offset`]),
-        // so only the leading portion sits on the diffused `lpDx` grid —
-        // the trailing glyph keeps its own embedded-font natural width,
-        // which is not generally a whole 150 dpi pixel.
+        // The plotter steps the leading `n - 1` glyphs and no step follows
+        // the trailing one, so only the leading portion sits on the diffused
+        // `lpDx` grid — the trailing glyph keeps its own embedded-font
+        // natural width, which is not generally a whole 150 dpi pixel.
         let codes = metrics.codes(&bytes);
         let last_code = codes.last().expect("three codes").0;
         let last_natural_mm = metrics.width(last_code) * size_pt / super::PT_PER_MM;
@@ -7552,23 +7786,33 @@ mod tests {
             9.0,
             "the stand-in's `?` is {question_px:.3} units at this height, not the reference's 9"
         );
-        let (stepped, last) = whole.split_at(whole.len() - 1);
-        for run in stepped {
-            #[allow(clippy::cast_precision_loss)]
-            let step_pt = run.natural_pt / run.glyphs as f64 + run.tc_pt;
-            assert!(
-                (step_pt - 9.0 * 72.0 / super::PLOT_DPI).abs() < 1e-9,
-                "each glyph of {:?} steps {:.4} units, not the 9 of the named face's `?`",
-                run.text,
-                step_pt * super::PLOT_DPI / 72.0
-            );
-            assert!(
-                step_pt < run.natural_pt / 2.0,
-                "the glyphs of a label borrowed whole overlap: {run:?}"
-            );
-        }
-        assert_eq!(last[0].glyphs, 1, "{last:?}");
-        assert!(last[0].tc_pt.abs() < 1e-12, "{last:?}");
+        // One text object of three glyphs of one width, under the driver's
+        // letter-spacing: the 9 units less a glyph's width to its nearest
+        // 256th of a unit, cut to three decimals. So a step is 9 units to
+        // within a 512th of a unit and a thousandth of a point (NSimSun's
+        // own glyphs are a whole 20 units wide and step 9 exactly, under
+        // `Tc -5.28`; the stand-in's are 13.7988).
+        assert_eq!(whole.len(), 1, "the label is one text object: {whole:?}");
+        let run = &whole[0];
+        assert_eq!(run.glyphs, 3, "{run:?}");
+        #[allow(clippy::cast_precision_loss)]
+        let glyph_pt = run.natural_pt / run.glyphs as f64;
+        let step_pt = glyph_pt + run.tc_pt;
+        let over_pt = step_pt - 9.0 * 72.0 / super::PLOT_DPI;
+        assert!(
+            over_pt.abs() < 0.001 + 72.0 / super::PLOT_DPI / 512.0,
+            "each glyph of {:?} steps {:.4} units, not the 9 of the named face's `?`",
+            run.text,
+            step_pt * super::PLOT_DPI / 72.0
+        );
+        assert!(
+            (run.tc_pt * 1000.0 - (run.tc_pt * 1000.0).round()).abs() < 1e-9,
+            "the letter-spacing is cut to three decimals: {run:?}"
+        );
+        assert!(
+            step_pt < glyph_pt,
+            "the glyphs of a label borrowed whole overlap: {run:?}"
+        );
 
         // The label whose last character alone is borrowed.
         let (_, _, tail) = &shown[1];

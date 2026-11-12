@@ -121,6 +121,24 @@
 //! file. Each page's count of borrowed runs is pinned, and its count of them
 //! in the reference's family may only rise: it is fourteen of fourteen.
 //!
+//! A piece of a label is held to its place (2026-11-12). The twelve paired
+//! labels that end in a borrowed `℃` are two runs each on either page, 24
+//! pairs classed `Left/Ascender part`, and the start of each is within
+//! 0.05 mm of the reference's ([`PIECE_SHIFT_MM`]; they read 0.0015 to
+//! 0.0229 mm). Each page's count of such pairs is pinned. Neither the class
+//! thresholds nor the label limits saw the `℃` stand 0.110 mm late, as it did
+//! until the glyphs before it were each set on their step.
+//!
+//! The page each sheet is held on is the page `pid_plot` writes for it
+//! (2026-11-12). The faces are prepared for the one sheet, as that program
+//! prepares them, and the bytes written here are asserted to be the bytes
+//! the program, run as a process on the same drawing, writes to its file
+//! (`pid_plot_page`). So what the gate verifies, and delivers when all eleven
+//! pass, is what an export of the drawing gives. Until then the faces were
+//! prepared for the eleven sheets together: the same lettering and strokes,
+//! in a file of other bytes — each face a subset cut for all eleven, with
+//! other glyph codes — which no export writes.
+//!
 //! Until the borrowed runs were lettered as the reference letters them
 //! (2026-11-11), the twelve `℃` were FangSong at the label's own 10.17 pt
 //! and the two `动火点` were squeezed to their 1.524 mm step: the pieces of
@@ -128,7 +146,7 @@
 //! there as the one class past the width threshold, 64 labels were past the
 //! two limits, and two of the fourteen runs were in the reference's family.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pid_plot::compare::{
     CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
@@ -139,6 +157,9 @@ use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
 use pid_plot::write::{PlotFont, write_plot};
+
+#[path = "../src/scratch.rs"]
+mod scratch;
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
 struct Pin {
@@ -199,6 +220,11 @@ struct WholePage {
     /// family ([`FAMILIES`]). It may only rise, and the pin rises with it:
     /// fewer is a run that left the reference's family, more a pin to raise.
     borrowed_in_family: usize,
+    /// Paired runs that are one piece of a label — the pairs of the ` part`
+    /// classes, two for each label that ends in a borrowed `℃` — an
+    /// equality. [`PIECE_SHIFT_MM`] holds each of them to its place, and
+    /// would hold nothing on a page that stopped reading them as pieces.
+    pieces: usize,
 }
 
 /// One bridge's worth of slack above the reading, as `plot_compare.rs` holds
@@ -268,6 +294,25 @@ const LABEL_POSITION_MM: f64 = 0.15;
 /// be before the label is counted in [`WholePage::text_off`], millimetres.
 const LABEL_WIDTH_MM: f64 = 0.05;
 
+/// How far the start of one piece of a label may land from the reference's,
+/// millimetres: the ceiling of [`TextOffsetClass::max_shift_mm`] for a class
+/// of pieces (` part`), in the masked view and on the whole page.
+///
+/// A label whose last character its face cannot draw is two runs on either
+/// page — `L=35` and `℃` — and each run is a pair of its own, classed
+/// `Left/Ascender part`: 24 pairs on eight of the eleven pages
+/// ([`WholePage::pieces`]). The reference writes such a label glyph by
+/// glyph, each on a whole device unit, so its `℃` starts on the step of the
+/// digit before it. While ours started after that digit's own width, 0.65 of
+/// a unit late, the class read 0.108 to 0.133 mm on those eight pages and
+/// nothing here said so: a label may be 0.15 mm from its place before it is
+/// counted, and the two class thresholds are of means. With every glyph
+/// before the `℃` on its step the class reads 0.0015 to 0.0229 mm — the
+/// largest on the A2 sheet, whose labels stand a device unit from the
+/// reference's for a reason not found. The ceiling is over twice the largest
+/// of those readings and under half the smallest of the earlier ones.
+const PIECE_SHIFT_MM: f64 = 0.05;
+
 /// The font families a plot letters in, each with the names its faces carry
 /// in a PDF.
 ///
@@ -321,6 +366,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
+            pieces: 4,
         },
     },
     Pin {
@@ -355,6 +401,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 0,
             borrowed_in_family: 0,
+            pieces: 0,
         },
     },
     Pin {
@@ -384,6 +431,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
+            pieces: 4,
         },
     },
     Pin {
@@ -412,6 +460,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 0,
             borrowed_in_family: 0,
+            pieces: 0,
         },
     },
     Pin {
@@ -441,6 +490,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 0,
             borrowed_in_family: 0,
+            pieces: 0,
         },
     },
     Pin {
@@ -469,6 +519,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
+            pieces: 4,
         },
     },
     Pin {
@@ -497,6 +548,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 2,
             borrowed_in_family: 2,
+            pieces: 4,
         },
     },
     Pin {
@@ -535,6 +587,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
+            pieces: 2,
         },
     },
     Pin {
@@ -567,6 +620,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
+            pieces: 2,
         },
     },
     Pin {
@@ -599,6 +653,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 1,
             borrowed_in_family: 1,
+            pieces: 2,
         },
     },
     Pin {
@@ -646,6 +701,7 @@ const PINS: [Pin; 11] = [
             text_off: 0,
             borrowed: 3,
             borrowed_in_family: 3,
+            pieces: 2,
         },
     },
 ];
@@ -729,6 +785,33 @@ fn deliver_plots(corpus: &std::path::Path, delivered: &[(&str, Vec<u8>)]) {
         delivered.len()
     );
     std::fs::write(plot_dir.join("BUILD.txt"), build).expect("write BUILD.txt");
+}
+
+/// The page `pid_plot` writes for the drawing `name` of `corpus`, read back
+/// from `out`: the program run as a process, the way a sheet is exported.
+///
+/// The program looks for its faces in `PID_PLOT_FONTS` and then in the
+/// corpus, which is the order `dirs` is already in, so it is handed the
+/// whole list and reads the files this gate reads. `PID_PLOT_CJK_FONT`,
+/// which has it embed one face more, is taken out of its environment: the
+/// page delivered is the one the program writes with no such face named.
+fn pid_plot_page(corpus: &Path, name: &str, dirs: &[PathBuf], out: &Path) -> Vec<u8> {
+    let fonts = std::env::join_paths(dirs).expect("the font directories as one list");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pid_plot"))
+        .arg(corpus.join(format!("{name}.pid")))
+        .arg(out)
+        .arg(corpus)
+        .env("PID_PLOT_FONTS", fonts)
+        .env_remove("PID_PLOT_CJK_FONT")
+        .output()
+        .unwrap_or_else(|error| panic!("{name}: pid_plot did not start: {error}"));
+    assert!(
+        output.status.success(),
+        "{name}: pid_plot exited {:?}:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::read(out).unwrap_or_else(|error| panic!("{name}: {}: {error}", out.display()))
 }
 
 /// A page that matches no surveyed sheet gets no masks at all.
@@ -823,15 +906,6 @@ fn eleven_reference_plots_hold_their_readings() {
     );
 
     let dirs = font_search_dirs(&corpus);
-    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
 
     // D1/S1: collect each page's gated bytes, then write them as the delivery
     // only after all eleven pass, so the delivery can never drift from what the
@@ -839,8 +913,10 @@ fn eleven_reference_plots_hold_their_readings() {
     let mut delivered: Vec<(&str, Vec<u8>)> = Vec::new();
     let mut borrowed_on_all_pages = 0usize;
     let mut in_family_on_all_pages = 0usize;
+    let mut pieces_on_all_pages = 0usize;
 
-    for (pin, model) in PINS.iter().zip(&models) {
+    let exports = scratch::ScratchDir::new("acceptance-pid-plot");
+    for (index, (pin, model)) in PINS.iter().zip(&models).enumerate() {
         let name = pin.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
         let (reference, reference_faces) =
@@ -863,7 +939,35 @@ fn eleven_reference_plots_hold_their_readings() {
             pin.page_mm
         );
 
+        // The faces are prepared for this sheet by itself, as `pid_plot`
+        // prepares them. Prepared for the eleven together the page letters
+        // and strokes the same and is other bytes: each face is then a
+        // subset cut for all eleven sheets, with other glyph codes.
+        let prepared = prepare_fonts(&[model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let our_bytes = write_plot(model, &fonts).expect("write ours");
+        // What is verified below, and delivered after it, is the page
+        // `pid_plot` writes for this drawing, byte for byte.
+        let exported = pid_plot_page(&corpus, name, &dirs, &exports.join(format!("{index}.pdf")));
+        assert!(
+            our_bytes == exported,
+            "{name}: the page this gate verifies and delivers is not the bytes pid_plot writes \
+             for the drawing: {} bytes here, {} from pid_plot, first apart at byte {}",
+            our_bytes.len(),
+            exported.len(),
+            our_bytes
+                .iter()
+                .zip(&exported)
+                .position(|(ours, theirs)| ours != theirs)
+                .unwrap_or_else(|| our_bytes.len().min(exported.len()))
+        );
         delivered.push((name, our_bytes.clone()));
         let (ours, our_faces) = read_plot_with_faces(&our_bytes).expect("read ours");
         let template = template_masks(reference.page_mm);
@@ -1024,6 +1128,19 @@ fn eleven_reference_plots_hold_their_readings() {
         // The furniture's lettering is in no class of the masked view at all,
         // so the same two thresholds are held again here, where it is.
         assert_classes_hold(name, "whole-page", &whole.text_offsets);
+        let pieces: usize = whole
+            .text_offsets
+            .iter()
+            .filter(|class| is_piece_class(class))
+            .map(|class| class.count)
+            .sum();
+        assert_eq!(
+            pieces, floor.pieces,
+            "{name} whole-page: {pieces} paired runs are read as a piece of a label where {} \
+             are pinned; the ceiling on a piece's place holds only the ones that are read so",
+            floor.pieces
+        );
+        pieces_on_all_pages += pieces;
         let off = labels_off(&whole, &reference);
         assert!(
             off.len() <= floor.text_off,
@@ -1082,6 +1199,11 @@ fn eleven_reference_plots_hold_their_readings() {
          {in_family_on_all_pages} are in the reference's font family",
         PINS.len()
     );
+    eprintln!(
+        "pieces of labels paired on the {} pages: {pieces_on_all_pages}, each within \
+         {PIECE_SHIFT_MM} mm of the reference's",
+        PINS.len()
+    );
 
     deliver_plots(&corpus, &delivered);
 }
@@ -1108,7 +1230,25 @@ fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
             class.mean_advance_heights,
             class.count
         );
+        // A piece of a label is held to its place as well as to the means.
+        if is_piece_class(class) {
+            assert!(
+                class.max_shift_mm <= PIECE_SHIFT_MM,
+                "{name} {view} {}: a piece of a label starts {:.4} mm from the reference's, \
+                 past {PIECE_SHIFT_MM} mm, over {} pieces",
+                class.class,
+                class.max_shift_mm,
+                class.count
+            );
+        }
     }
+}
+
+/// Whether `class` holds the pieces of labels rather than labels lettered
+/// whole: `compare.rs` names such a class after its label's rule with
+/// ` part` behind it.
+fn is_piece_class(class: &TextOffsetClass) -> bool {
+    class.class.ends_with(" part")
 }
 
 /// The paired labels of `report` past [`LABEL_POSITION_MM`] or
