@@ -1792,6 +1792,14 @@ pub const PAPER_NAME_REACH_MM: f64 = 0.5;
 /// longer matches — and overrules no reading. What it can do is disagree,
 /// and that is said (`DropReason::PaperUnlikeTheTemplateName`): with no
 /// frame read, a paper read wrong has nothing else to show it.
+///
+/// A name states its sheet lying on its long side — `A2` is 594 by 420,
+/// never 420 by 594 — and the sides are held in that order. So a sheet of
+/// the named size that stands on its short side is not the named sheet
+/// here, and is said to be unlike its template's name as well. That is
+/// true of the rectangle the name gives and need not mean the paper was
+/// read wrong: whoever reads the item should look at which side is which
+/// before taking it for a misread paper.
 #[must_use]
 pub fn paper_is_the_named_sheet(paper_mm: [f64; 2], named_mm: [f64; 2]) -> bool {
     (0..2).all(|side| (named_mm[side] - paper_mm[side]).abs() < PAPER_NAME_REACH_MM)
