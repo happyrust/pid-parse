@@ -1359,8 +1359,12 @@ const AGAINST_ITS_LIST: (&str, &str, &str, [(u32, u32); 2]) = (
 /// the `P` ahead of the mark, as listed.
 ///
 /// So the records do not decide what the plot of [`AGAINST_ITS_LIST`] did:
-/// two plots, the same records at the same places, the two orders. No rule
-/// our page could follow gives both.
+/// two plots, the same records at the same places, the two orders. (The
+/// same but for numbers of each drawing's own: the label's three records
+/// differ between the two sheets in their oids, in style ids and in the
+/// references of the symbol's cached body, and in nothing else —
+/// `tools/display_order/label_records_apart.py`.) No rule our page could
+/// follow gives both.
 const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
 
 /// A label and its origin mark are painted in the order the sheet lists
