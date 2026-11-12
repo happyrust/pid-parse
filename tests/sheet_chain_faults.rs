@@ -46,7 +46,7 @@ use pid_parse::parsers::sheet_records::{
     decode_igpoint_at, decode_igrectangle_at, decode_igsymbol_at, decode_igtextbox_at,
     decode_smartframe_at, decode_smartframes, parse_psm_header, psm_type_word_opens_a_record,
     refused_smartframes, sheet_record_starts, PsmHeader, PsmRecordDecoder, SheetChain,
-    PSM_TYPE_CODE_IGSMARTFRAME, SHEET_STREAM_MAGIC,
+    PSM_TYPE_CODE_IGCOMPLEXSTRING2D, PSM_TYPE_CODE_IGSMARTFRAME, SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
@@ -1537,6 +1537,10 @@ struct Tally {
     /// Live page frames (`igSmartFrame2d`) on those chains, each distinct
     /// stream once. Every one decodes ([`leave_the_chain`]).
     frames: usize,
+    /// Live `ComplexString` records on those chains, each distinct stream
+    /// once. Every one decodes ([`leave_the_chain`]): the family holds a
+    /// record to closing as a string closes, and that must cost no string.
+    strings: usize,
     /// Length changes made to those records, each distinct stream once:
     /// every amount from −64 to +64 on every record, less those that would
     /// state a length below zero ([`leave_the_chain`]).
@@ -1585,6 +1589,7 @@ impl Tally {
         self.live += other.live;
         self.page_ratio_hits += other.page_ratio_hits;
         self.frames += other.frames;
+        self.strings += other.strings;
         self.length_changes += other.length_changes;
         self.off_the_chain += other.off_the_chain;
         self.frame_words_off_the_chain += other.frame_words_off_the_chain;
@@ -1603,6 +1608,7 @@ impl Tally {
             && self.records >= floor.records
             && self.live >= floor.live
             && self.frames >= floor.frames
+            && self.strings >= floor.strings
     }
 }
 
@@ -1836,6 +1842,13 @@ fn leave_the_chain(
             assert!(
                 decode_smartframe_at(data, at).is_some(),
                 "{label} +{at}: a live page frame of the chain decodes"
+            );
+        }
+        if header.type_code == PSM_TYPE_CODE_IGCOMPLEXSTRING2D && !header.native_reader_skips() {
+            tally.strings += 1;
+            assert!(
+                decode_igcomplexstring_at(data, at).is_some(),
+                "{label} +{at}: a live ComplexString of the chain decodes"
             );
         }
     }
@@ -2146,15 +2159,16 @@ impl Walk {
 /// repository's files what that reads is pinned — one record with a
 /// frame's type word that was a frame by the decoder's first rules, and
 /// nothing any family decodes — so that a frame rule taken away shows
-/// here. On the corpora outside it, what is held is that no family but
-/// `igComplexString2d` decodes such a record, and that one no more than
-/// four times: on one sheet of the plant backup
-/// (`G井场进站生产收球筒`'s `/Sheet6`), 28 bytes into each of two
+/// here. On the corpora outside it no family decodes such a record
+/// either. Until 2026-11-12 one did, four times: on one sheet of the plant
+/// backup (`G井场进站生产收球筒`'s `/Sheet6`), 28 bytes into each of two
 /// `DependencyObject` records, the bytes spell a `ComplexString` of 256
 /// members in a payload of 65 536 bytes, and two length changes reach each
-/// place. That family emits nothing, and what would tell such a run from a
-/// string is not decoded: a string's own trailer is four bytes on a sheet
-/// and 16, 20 or 36 in a symbol cache.
+/// place. A string is now held to closing as a string closes — four bytes
+/// after its last member entry on a sheet, four and a `u32` a member in a
+/// symbol cache — which those runs, with 61 919 bytes after their entries,
+/// do not; and every live `ComplexString` of every chain is held to
+/// decoding, so that the rule is seen to cost no string.
 #[test]
 fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let mut asked: Vec<&str> = FAMILIES_AT.iter().map(|(name, _)| *name).collect();
@@ -2275,15 +2289,9 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
         frames.len(),
         frames.join("\n")
     );
-    let others: Vec<&(&str, String)> = walk
-        .decoded_off_the_chain
-        .iter()
-        .filter(|(family, _)| *family != "igComplexString2d")
-        .collect();
     assert!(
-        others.is_empty() && walk.decoded_off_the_chain.len() <= 4,
-        "what a family decodes off a chain was four `ComplexString`s of one sheet of the plant \
-         backup when this was written, and is now {} record(s): {:#?}",
+        walk.decoded_off_the_chain.is_empty(),
+        "{} record(s) read off a chain are decoded by a family: {:#?}",
         walk.decoded_off_the_chain.len(),
         walk.decoded_off_the_chain
     );
@@ -2304,6 +2312,7 @@ const REPOSITORY_ON_DISK: Tally = Tally {
     live: 11_895,
     page_ratio_hits: 3,
     frames: 8,
+    strings: 6,
     length_changes: 1_303_890,
     off_the_chain: 34_887,
     frame_words_off_the_chain: 1,
@@ -2334,6 +2343,7 @@ const REPOSITORY_ARCHIVED: Tally = Tally {
     live: 25_267,
     page_ratio_hits: 7,
     frames: 24,
+    strings: 23,
     length_changes: 2_472_734,
     off_the_chain: 26_173,
     frame_words_off_the_chain: 0,
