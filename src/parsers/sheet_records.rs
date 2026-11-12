@@ -14229,6 +14229,10 @@ mod tests {
     /// Every byte of a loop of all three curved members, set in turn to each
     /// of a handful of values, and every truncation: the decoder returns,
     /// with a record or without one.
+    ///
+    /// A truncation is of the payload, under an envelope that states the
+    /// length left: cut the record and leave its length, and the envelope
+    /// is what refuses it — no member is read short.
     #[test]
     fn igboundary2d_curve_member_decoder_is_panic_safe_under_mutation() {
         let mut members = half_ellipse_members(0);
@@ -14251,8 +14255,17 @@ mod tests {
                 let _ = decode_igboundary_at(&mutated, 0);
                 let _ = decode_igboundaries(&chain_stream(&mutated));
             }
-            let _ = decode_igboundary_at(&record[..at], 0);
-            let _ = decode_igboundaries(&chain_stream(&record[..at]));
+            // The record cut under its envelope: refused there.
+            assert!(decode_igboundary_at(&record[..at], 0).is_none());
+            assert!(decode_igboundaries(&chain_stream(&record[..at])).is_empty());
+        }
+        for cut in 0..whole.len() {
+            let short = boundary_record(&whole[..cut]);
+            assert!(
+                decode_igboundary_at(&short, 0).is_none(),
+                "a payload cut at {cut} decodes"
+            );
+            assert!(decode_igboundaries(&chain_stream(&short)).is_empty());
         }
     }
 }

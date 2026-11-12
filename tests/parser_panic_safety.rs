@@ -651,9 +651,9 @@ fn record_decoders_do_not_panic_on_planted_chains() {
     );
 }
 
-/// A boundary whose loops hold every member a boundary can — a line, a
-/// point run, an arc of an ellipse, a B-spline with weights, in two loops,
-/// behind a trailer that names them — as one record of a chain.
+/// The payload of a boundary whose loops hold every member a boundary can —
+/// a line, a point run, an arc of an ellipse, a B-spline with weights, in
+/// two loops, behind a trailer that names them.
 ///
 /// Noise never gets this far: a planted `0x0013` payload is refused at its
 /// sub-type word or its first tag. This one decodes, so changing it a byte
@@ -720,22 +720,46 @@ fn boundary_of_every_member() -> Vec<u8> {
         payload.extend_from_slice(&class_word.to_le_bytes());
         payload.extend_from_slice(&last_word.to_le_bytes());
     }
+    payload
+}
 
-    let mut stream = vec![0u8; 8];
+/// Where the one record of a [`boundary_stream`] starts: behind the 8-byte
+/// stream header.
+const BOUNDARY_RECORD_AT: usize = 8;
+
+/// A chain stream of one `0x0013` record whose envelope states the length
+/// of the payload it is given: the magic, a count of one live record, the
+/// type word, that length, the payload. However much of a payload is handed
+/// in, what a walk of the stream finds is one whole record.
+fn boundary_stream(payload: &[u8]) -> Vec<u8> {
+    let mut stream = vec![0u8; BOUNDARY_RECORD_AT];
     stream[..4].copy_from_slice(&0x6C90_F544u32.to_le_bytes());
     stream[4..8].copy_from_slice(&1u32.to_le_bytes());
     stream.extend_from_slice(&0x0013u16.to_le_bytes());
     stream.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    stream.extend_from_slice(&payload);
+    stream.extend_from_slice(payload);
     stream
 }
 
 /// The curve members of a boundary are reached behind a record that is
 /// otherwise in order: every byte of one that decodes is set to each of a
-/// handful of values in turn, and the stream is cut at every length.
+/// handful of values in turn, its payload is cut at every length, and its
+/// tail is blanked from every offset on.
+///
+/// The cuts are of the payload, with the envelope restating the length that
+/// is left. Cut the stream and leave the length, and the record states more
+/// bytes than there are: it is refused at the envelope, the chain stops on
+/// it, and no cut reaches a member. The first form of this test cut that
+/// way, and the review of it took the bounds check off an arc member's
+/// direction byte and off a B-spline member's closing bytes and saw the test
+/// pass both times. Restated, every cut is one record of the chain whose
+/// payload stops inside the prefix, a count, a member, the anchor or a
+/// reference in turn — the reads the bounds checks are there for — and
+/// either of those two changes panics here.
 #[test]
 fn a_boundary_of_every_member_kind_survives_mutation() {
-    let stream = boundary_of_every_member();
+    let payload = boundary_of_every_member();
+    let stream = boundary_stream(&payload);
     let whole = decode_igboundaries(&stream);
     assert_eq!(
         whole.len(),
@@ -752,15 +776,14 @@ fn a_boundary_of_every_member_kind_survives_mutation() {
     assert_eq!(whole[0].segments.len(), 1 + 13 + 8 + 2);
     assert_eq!(whole[0].member_refs.len(), 4);
 
-    let record_at = 8;
     let mut decoded = 0usize;
-    for at in record_at..stream.len() {
+    for at in BOUNDARY_RECORD_AT..stream.len() {
         for value in [0x00u8, 0x01, 0x02, 0x7F, 0x80, 0xFF] {
             let mut mutated = stream.clone();
             mutated[at] = value;
-            decoded += usize::from(decode_igboundary_at(&mutated, record_at).is_some());
+            decoded += usize::from(decode_igboundary_at(&mutated, BOUNDARY_RECORD_AT).is_some());
             let _ = decode_igboundaries(&mutated);
-            let _ = decode_igsym_boundary_at(&mutated, record_at);
+            let _ = decode_igsym_boundary_at(&mutated, BOUNDARY_RECORD_AT);
         }
     }
     // Most single-byte changes leave a record the decoder still reads —
@@ -770,9 +793,52 @@ fn a_boundary_of_every_member_kind_survives_mutation() {
         decoded > 0,
         "no mutated record decoded: the sweep never got past the first refusal"
     );
+
+    // The payload cut at every length, the envelope restating what is left.
+    // Each cut is still one record of the chain, so the decode is handed it
+    // and reads up to where the bytes stop; and no proper prefix of the
+    // record is a record: two loops are stated and the references have to
+    // close the payload.
+    for cut in 0..payload.len() {
+        let cut_stream = boundary_stream(&payload[..cut]);
+        if cut > 0 {
+            assert_eq!(
+                SheetChain::walk(&cut_stream).starts,
+                [BOUNDARY_RECORD_AT],
+                "a payload cut at {cut} is still one record of its chain"
+            );
+        }
+        assert!(
+            decode_igboundary_at(&cut_stream, BOUNDARY_RECORD_AT).is_none(),
+            "a payload cut at {cut} decodes"
+        );
+        assert!(
+            decode_igboundaries(&cut_stream).is_empty(),
+            "a payload cut at {cut} decodes on its chain"
+        );
+        let _ = decode_igsym_boundary_at(&cut_stream, BOUNDARY_RECORD_AT);
+    }
+    // The tail blanked from every offset on, with the length as it was:
+    // counts of nothing and of four thousand million, tags no member has,
+    // doubles that are zero and that are no number, wherever a field starts.
+    for from in 0..payload.len() {
+        for blank in [0x00u8, 0xFF] {
+            let mut blanked = payload.clone();
+            blanked[from..].fill(blank);
+            let blanked_stream = boundary_stream(&blanked);
+            let _ = decode_igboundary_at(&blanked_stream, BOUNDARY_RECORD_AT);
+            let _ = decode_igboundaries(&blanked_stream);
+            let _ = decode_igsym_boundary_at(&blanked_stream, BOUNDARY_RECORD_AT);
+        }
+    }
+    // And the stream cut under the record, the envelope left stating more
+    // than is there: refused before the payload is looked at.
     for cut in 0..stream.len() {
-        let _ = decode_igboundary_at(&stream[..cut], record_at);
-        let _ = decode_igboundaries(&stream[..cut]);
+        assert!(
+            decode_igboundary_at(&stream[..cut], BOUNDARY_RECORD_AT).is_none(),
+            "a stream cut at {cut} under its record decodes"
+        );
+        assert!(decode_igboundaries(&stream[..cut]).is_empty());
     }
     exercise_all_parsers(&stream);
     exercise_every_offset(&stream);
