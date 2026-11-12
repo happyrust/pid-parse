@@ -162,6 +162,14 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 
 更正（2026-11-10，独立审查指出）：上一段原先写的是「第一条管段 `SLOPE = 0.3`」，`80a5f73` 的提交说明、代码注释与 CHANGELOG 也这样写，错了。偏移 `0x7a4c07` 上是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`（0.05）。`SLOPE` 是字符列，值是 `0.3 %`，在第 21、28 行；它的数值列 `SP_SLOPESI` 是 `0.0029999910000486`。这张表一共 10 个非整数的 `NUMBER`：`SP_INSULTHICKSI` 8 个、`SP_SLOPESI` 2 个，另外四张表（`T_PIPINGPOINT`、`T_SIGNALPOINT`、`T_SIGNALRUN`、`CODELISTS`）一个都没有。用自己写的读法复核过（`target/publish-audit/review2/unread_cells.py`）。这两列正是 DWG 那 17 个缺值里 7 个的来源：6 个 `TotalInsulThick "50 mm"` 和 1 个 `SlopedPipingAngle "2.9999910000486E-03 rad"`。
 
+补（2026-11-12）：这一处就是 GitHub `happyrust/pid-parse` #70（「入库的 DWG-0202GP06-01_p 整包发布以 `T_PIPERUN … is not an integer` 退出」），工单是从 `main` 上看到的，`main` 还是严格读法。当天把 `main`（`7f71586`）的树另放一处编出程序跑了一遍，退出 1、报的就是这一句、一个文件不写；本分支的程序退出 0、7 张图写出。另外查清了三件事（脚本在 `target/publish-audit/issue70/`，不入库）：
+
+- **这两列是什么，dump 自己说了。** 它的数据字典（`ATTRIBUTES` / `UNIQUEATTS`）里 `SP_InsulThickSI` 是「Insulation Thickness SI Value」、`SP_SlopeSI` 是「Slope SI Value」，类型都是 `D`（双精度），`ATTRIBUTE_UOM` 指回带单位的那个文字属性（`InsulThick`、`Slope`），不显示、只读。字典里名字是 `SP_…SI` 的属性一共 244 个，全部是 `D`；`T_PIPERUN` 一张表就有 104 个这样的列，这份 dump 里有值的只有这两个。0.05 是 `INSULTHICK` `50mm` 的米数；0.0029999910000486 是 `SLOPE` `0.3 %` 的反正切（`atan(0.003)` = 0.0029999910000485996 弧度），参考发布件里那条管段的 `SlopedPipingAngle "2.9999910000486E-03 rad"` 就是这个数。所以小数是这类列的正常内容。
+- **整份 dump 里不是整数的 `NUMBER` 有 780 格**，分在 27 个（表, 列）里，绝大多数是图形坐标、角度与比例（`T_SYMBOL`、`T_LABELPERSIST`、`T_CONNECTORVERTEX`、`T_LEADERVERTEX`、`T_SMARTFRAME`），都在发布不读的表里；发布读的 15 张表里只有 `T_PIPERUN` 这两列。53 张那个库是 94 658 格、28 个（表, 列），落在发布读的表里的是 `T_CONNECTOR.MINIMUMSEGMENTLENGTH` 与 `RANGECLEARANCE`——`T_CONNECTOR` 在 `main` 上本来就是逐格读，所以那个包在 `main` 上不出事；它的 `T_PIPERUN` 一格小数都没有。两份 dump 里被阶段跟的列都没有小数。
+- **第 0 行是谁。** 管段 `7042E6B0…`：序号 `01`、等级 `1.6AR12`、位号 `OD-50 mm-03-0401-1.6AR12-WE50mm`，是 `DWG-0202GP06-01` 上发成管线的六条之一。严格读法是被一条要发布的管段的保温厚度拦住的。
+
+这份 dump 的读法现在有库一级的用例守着（`oracle_exp` 单测 `the_committed_dwg_dump_projects_through_every_stage` 与 `…_keeps_unread_only_columns_no_stage_follows`，读入库的夹具，任何检出都真跑）；把 `ExpTables::read` 换回 `main` 的写法，它们与另外 4 条读这个夹具的用例一起变红，报的就是工单那一句。
+
 ### 3.2 写错（已修，S2 / S3 / S3b）
 
 `DWG-0202GP06-01` 的 `.pid` 单发有两个值与参考不同：

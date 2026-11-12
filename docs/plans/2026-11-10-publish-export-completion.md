@@ -3,7 +3,7 @@
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
 > 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。2026-11-12 把 `main`（`7f71586`）并进了分支（`7de1ef1`）。
-> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查，见 §5；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
+> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查；第五阶段（同日）复核 GitHub #70 并给入库的 DWG 包补库一级的用例，见 §5；§2 的 Q1–Q7 等批复；§3 其余切片未开工。
 
 ## 一句话
 
@@ -27,6 +27,7 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 | Q4 | DWG-0202GP06-01 的备份包比参考新（管段的序号、位号写法都改过） | (a) 承认它是版本差：`.pid` 单发收进基线，`--oracle-exp` 的管线类差异钉在测试里并写明原因；同时请现场对**现在的库**重新发布一次这张图，或给参考当时的备份；(b) 只管 `.pid` 单发 | **(a)**。这是唯一一个三件都在仓库里、CI 上真跑的 Oracle 图。有了同版参考，「`T_PIPELINE` 有行时管线用它的 UID」（S10）才能验证 |
 | Q5 | 数据库线（`Export.mdf --drawing`）的命令行门禁只比个数 | (a) 换成与 `.pid` 线同一个 `diff_pid_export`，A01 的三类合成残差（连接件 UID、`Rel` UID、`GraphicOID`）逐条登记进基线；(b) 维持 | **(a)**。测试层已经逐字节比过，命令行给用户的却是最弱的一档；MTF 包走包门禁时报的 27 条现在既没登记也没人看 |
 | Q6 | 还缺的参考数据 | 请现场提供：① 4 张旧集注站图那一版的备份包；② 53 张里没有参考的图挑几张发布（建议 C井场——27 个只在库里的管件是外推的，另有 21 个库里画着而 `.pid` 没画的仪表、注释、管嘴、设备现在不发，见 S17——和任意一张带设备 `Description` 标签的图）；③ Q4 的 DWG 重新发布；④ 一张本图 stockpile 里放着 OPC 的图的发布件，连同发布那一刻的备份（`DWG-0202GP06-01_p` 这个库里 `DWG-0201GP06-01` 上就有 2 个，S12） | 没有这些，对应的结论只能停在「外推」或「版本差」 |
+| Q7 | 阶段跟的列里有一格读不懂时，拒收到哪一级（2026-11-12 加，GitHub #70 的口径与现状不同） | 现状（`51521ef`）：取这一列的阶段整个报错，整包里凡是要挂库内容的图全部失败，`_Index.json` 逐图点名表、列、行，退出 1；单图 `--oracle-exp` 退出 1、不写文件。拿入库包试过：`T_PIPERUN` 一格坏，7 张图失败 6 张，其中 5 张与那条管段无关（§5 第五阶段）。(a) 维持；(b) 只让用到那一行的图失败，其余照发；(c) 工单的口径：那一格（或那一行）不发，其余照发，stderr 告警、`_Index.json` 的 `problems` 记一条，退出码不变——与 `main` 上断链的处理是同一个思路 | **(a)，直到有一个真实的包触发它**。两份真实 dump 的 66 个被跟列里没有一格没读懂，所以现在改，写的是没有样本的规则：哪些格子丢掉整行、哪些只丢这个属性，要看那一格在原厂数据里是什么；现在的报错点名表、列、行，第一个真实的例子来了能照着查。(c) 是工单的原话，要的话约一到两天：每个投影逐行记「这一行不能用、为什么」，包与命令行多一条告警通道，66 列那条用例的断言从「报错」改成「发出、并在问题清单里点名」——这是改断言，所以要你点头 |
 
 ## 3. 切片
 
@@ -228,3 +229,69 @@ Q1–Q6 仍未答复。这一阶段做三件不依赖答复的事。
 **这一阶段没做的。** S4、S5 及之后的切片（等 Q1–Q3）；不并 stash（Q2；并入 `main` 之后它要三方合并才套得上）；S17 的规则（没有样本）；发布时断链进 `_Index.json`、`/Unclustered Dynamic Attributes` 的告警措辞（工单 #49，解析线在做）；普查只到表示这一层，属性值与关系没有对库。没核实的：分支上 `624916d` 之后的提交仍然没有独立审查；`pid-plot` 的页面门禁在合并树上没有跑（理由见上）。
 
 **一处环境上的坑。** `cargo fmt --all -- --check` 把一个包的全部 target 根文件以 `\\?\` 开头的绝对路径放在一条命令行上交给 rustfmt。根包现在有 355 个根文件，在这个 worktree 里路径合计 31 006 个字符，加上前缀与程序名就到了 Windows 的 32 767 上限：合并提交上它还过，加了一个示例之后报 `os error 206`（文件名或扩展名太长），rustfmt 一个文件都没读。主检出的路径短 19 个字符，同一条命令行短约 6 700 个字符（355 × 19），那里没有试。在这个 worktree 里 fmt 这道门改成对同一批文件分批跑 `rustfmt --check --edition <版本>`：根包与 `vendor/oxidized-mdf` 是 2021，`pid-plot` 是 2024，共 449 个根文件，0 处差异。`vendor/pdfcraft-pin` 的四个第三方 crate 不在其内：对它们直接跑 rustfmt 有 64 处差异，而 `cargo fmt --all -- --check` 在合并提交上是过的，所以它没有读它们。
+
+### 第五阶段（2026-11-12）：GitHub #70，入库的 DWG 包整包发布
+
+`happyrust/pid-parse` #70「入库的 `DWG-0202GP06-01_p` 整包发布以 `T_PIPERUN … is not an integer` 退出」是解析线在 `main` 上做 #49 时看到的。**它就是第一阶段 S1 修掉的那一处。** `main`（`7f71586`）的 `ExpTables::read` 对 `T_PIPINGPOINT`、`T_SIGNALPOINT`、`T_PIPERUN`、`T_SIGNALRUN`、`CODELISTS` 五张表用严格读法，遇到第一个不是整数的 `NUMBER` 就整表拒绝；本分支在 `80a5f73` 把这五张表改成逐格读，在 `51521ef` 补上「阶段跟的列里有格子没读懂就报错」。分支没有合回 `main`，所以工单在 `main` 上成立，在本分支上从 2026-11-10 起不成立。这一阶段没有改发布的代码：复核，把工单问的几件事答清楚，补两条库内用例，收紧整包那条用例。
+
+**复现。**
+
+| 程序 | 对入库包 `test-file/backup-test/DWG-0202GP06-01_p` 整包发布 |
+|---|---|
+| `main` `7f71586`（把那棵树另放一处编的；`src/**`、`Cargo.toml`、`Cargo.lock` 逐个对过 blob） | 退出 1，`error: read …\Export.dmp: T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer`，不建输出目录 |
+| 本分支 | 退出 0，7 张写出、0 张失败、1 张没有 `DrawingNo`；`_Index.json` 的 `problems` 0 条；stderr 只有汇总那一行 |
+
+**是哪一格。** 用另写的读法把整份 dump 读了一遍（152 张表；另有 2 张带大对象列的框不出来，发布都不读）。不是整数的 `NUMBER` 一共 780 格，分在 27 个（表, 列）里，绝大多数是图形坐标、角度与比例，都在发布不读的表里。发布读的 15 张表里只有 `T_PIPERUN` 有，两列共 10 格：
+
+| 列 | 格数 | 第一格 | 字节 | 值 | 同一行带单位的文字列 |
+|---|---:|---|---|---|---|
+| `SP_INSULTHICKSI` | 8 | 第 0 行，载荷在 `0x7a4c07`（前两个字节是长度 `02 00`） | `c0 06` | 0.05 | `INSULTHICK` = `50mm`（两行写作 `50 mm`） |
+| `SP_SLOPESI` | 2 | 第 21 行，载荷在 `0x7a82e4` | `bf 1e 64 64 0b 01 05 57` | 0.0029999910000486 | `SLOPE` = `0.3 %` |
+
+第 0 行是管段 `7042E6B0…`（序号 `01`、等级 `1.6AR12`、位号 `OD-50 mm-03-0401-1.6AR12-WE50mm`），`DWG-0202GP06-01` 上发成管线的六条之一。
+
+**含义能确定。** dump 自己的数据字典（`ATTRIBUTES` / `UNIQUEATTS`）把这两个属性叫作 `SP_InsulThickSI`「Insulation Thickness SI Value」与 `SP_SlopeSI`「Slope SI Value」：类型 `D`（双精度），`ATTRIBUTE_UOM` 指回带单位的那个文字属性（`InsulThick`、`Slope`），不显示、只读。字典里 244 个 `SP_…SI` 属性全部是 `D`，`T_PIPERUN` 一张表有 104 列。也就是带单位的文字属性旁边另存一份换成 SI 单位的数：0.05 是 50 mm 的米数，0.0029999910000486 是 0.3 % 坡度的反正切（`atan(0.003)` = 0.0029999910000485996 弧度）。参考发布件里 `SlopedPipingAngle "2.9999910000486E-03 rad"` 就是后一个数。小数是这类列的正常内容；严格读法的错是把没人跟的列也要求成整数。
+
+**怎么处理的（已在分支上）。** 逐格读，没人跟的列不判，这 10 格留作没读，表照读。把这两个值发出来是 S9，没有动。
+
+**「一格没读懂就拒收整列」适用不适用。** 不适用。那条规则只管阶段跟的列；`T_PIPERUN` 被跟的是 7 列，这份 dump 里被跟的列没有一格没读懂。15 张表里留作没读的一共 5 列：上面两列，加三个数据库字符集的文字列（`T_REPRESENTATION.FILENAME`、`T_OPC.MATINGOPCPATH`、`T_NOTE.BODY`），没有一列是阶段跟的。53 张那个库的小数（94 658 格）落在发布读的表里的只有 `T_CONNECTOR.MINIMUMSEGMENTLENGTH` 与 `RANGECLEARANCE`，也没人跟。
+
+但这条规则真适用的时候，后果与工单的口径不同，见 Q7。拿入库包做了试验（副本，换一份只坏一处的 dump）：
+
+| 弄坏的一处（都是阶段跟的列） | 整包发布 |
+|---|---|
+| `T_PIPERUN` 第 0 行 `NOMINALDIAMETER` 改成 0.3 | 退出 1，7 张图失败 6 张，`_Index.json` 每张一条 `T_PIPERUN: row 0 NOMINALDIAMETER is not an integer or NULL` |
+| `T_PIPINGPOINT` 第 0 行 `NOMINALDIAMETER` 改成 0.3 | 同上，`T_PIPINGPOINT: row 0 NOMINALDIAMETER is not an integer or NULL` |
+| `T_PIPERUN.TAGSEQUENCENO` 的列头改成数据库字符集 | 同上，`T_PIPERUN: column TAGSEQUENCENO is not AL16UTF16 text; its cells were not read` |
+
+失败的 6 张里有 5 张与那条管段或那个端口无关（它们只画在 `DWG-0202GP06-01` 上）：阶段对整张表投影，一格拒收、整个阶段报错，凡是要挂库内容的图都过不去（没失败的那一张是没有 `DrawingNo`、只发一个壳的 `001`）。
+
+**新加的用例**（`cdabe04`）。
+
+- `src/publish/oracle_exp.rs` 两条单测，读入库的 dump，任何检出都真跑（这个模块原有的真 dump 单测读的都是仓库外的 53 张那个库，CI 上软跳过）：
+  - `the_committed_dwg_dump_projects_through_every_stage`：`0x7a4c05` 起的四个字节是 `02 00 c0 06`；每个投影都读得过；7 张图、3 384 行代码表、93 个管道端口、151 个信号端口、50 条管段其中 20 条有序号；第 0 行那条管段被跟的每一格都读出来。
+  - `the_committed_dwg_dump_keeps_unread_only_columns_no_stage_follows`：15 张表里留作没读的列逐个钉住（表、列、类型、第一行、格数），就是上面那 5 列。预期值先用另写的读法算出来，再写进断言，第一次运行即相符。
+- `tests/publish_from_pid.rs::the_dwg_package_publishes_every_drawing_it_lists` 收紧：`_Index.json` 的 `problems` 与每张图的 `problems` 都是空的；stderr 没有 `warning:` / `error:` 行；逐图钉对象、值、关系的个数；钉全包的合计。原来只断言退出码、文件在不在与 `DWG-0202GP06-01` 的 4 个 `PIDBranchPoint`。
+
+**红绿。** 把 `ExpTables::read` 那五个调用换回 `main` 的写法（测试不动）：这个夹具的 8 条用例（两条新单测，`publish_from_pid` 3 条，`publish_completeness` 3 条）红 6 条——两条新单测、`publish_from_pid` 的 `--oracle-exp` 与整包两条、`publish_completeness` 的带 dump 与整包两条——报的都是 `T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer`；不读 dump 的 2 条（`.pid` 单发）照过。换回来（文件逐字节还原、修改时间更新到当时）之后 8 条全过。
+
+**这个包现在导出什么。** 7 张图各三件加 `_Index.json`，22 个文件；合计 786 个对象、643 个值、1 070 条关系（不含 `001` 那个壳），93 个管道端口、151 个信号端口（dump 里的端口行一行不少）、192 条连通关系、5 个 OPC、12 条管线、20 条 `PipingConnectors`。
+
+| 图 | 对象 | 值 | 关系 | 说明 |
+|---|---:|---:|---:|---|
+| `001` | 1 | 1 | 0 | 没有 `P&IDAttributes` 行，只发图纸对象；库里这张图上也没有任何表示 |
+| `002`、`222` | 3 | 2 | 2 | 各一台设备（`PIDProcessEquipment`）与它的表示 |
+| `DWG-0104GP01-08` | 5 | 6 | 4 | 一条管段、它的工艺点与 1 条管线 |
+| `DWG-0201GP01-01` | 492 | 362 | 688 | 79 个管道端口、103 个信号端口、137 条连通关系；27 条管段没有序号，不成管线 |
+| `DWG-0201GP06-01` | 170 | 150 | 233 | 5 条管线、13 条 `PipingConnectors` |
+| `DWG-0202GP06-01` | 113 | 121 | 141 | 6 条管线；包里的 `.pid` 与库比参考新，对参考的读数见第二阶段的表 |
+
+不靠参考的核对（另写的脚本，与入库的探针 `probe_which_database_representations_a_publish_leaves_out` 两条路，数字相同）：22 个文件里没有重复的 UID，每条关系的两端都是同一个文件里的对象；库里画在这 7 张图上的 392 条表示，写出 276 条，没写的 116 条属于原厂也不发的三类（标签 64、管段上的符号 50、信号线上的符号 2），没有一条写出的表示是库里没有的，也没有「同类别处都发、这里漏了」的行；另有 3 条 OPC 在图的 stockpile 里（`DWG-0201GP06-01` 2 条、`DWG-0202GP06-01` 1 条），不发，是 S12。
+
+**其它输出不变。** 发布的代码这一阶段没有动（`src/` 的改动全在 `oracle_exp.rs` 的 `mod tests` 里）。用尖端的调试构建重跑：53 张整包 160 个文件与 `publish-v4` 逐字节相同；对照矩阵 30 次运行 253 个文件与上一阶段的输出逐字节相同，退出码与标准输出也相同；入库包的 22 个文件与上一阶段发布构建的输出相同。
+
+**门禁。** 工具链 stable 1.99.1，`--locked --offline`，`CARGO_INCREMENTAL=0`。从这一阶段起环境里不再设 `RUSTFLAGS`（它会让全局配置里的 rustflags 整个失效、把所有 crate 另编一套）：告警由 clippy 的 `-- -D warnings` 与「编译日志里 `^warning` 的行数为 0」守，共用的 sccache 开着。读数：`rustfmt --check` 449 个根文件 0 处差异；clippy 通过（第一遍在新单测上报了两处 `unreadable_literal`，偏移要写成 `0x007a_4c05`，改了再过）；根 crate 全部测试 1 898 过 / 0 败 / 3 ignored（库 1 425，47 个集成测试文件 463，300 个示例按测试编译其中 10 条）；16 个 `publish_*` 文件逐个带 `--nocapture` 是 121 过 / 2 ignored，skip 行 21 行，与前几个阶段相同，跑完临时目录里不留东西；`parser_panic_safety` 5 过；`--no-default-features --lib` 928 过；wasm32 通过；`missing documentation` 0 = 基线 0，rustdoc 退出 0；每一步的编译日志都没有告警行。A 部分（fmt、测试目标上的 clippy、库的单测、`publish_*`、精简特性、wasm32、缺文档）对着暂存的改动跑，提交后 `cdabe04` 的 diff 与过门的那一份指纹相同。
+
+根 crate 的测试与 clippy 是**分片**跑的——库的单测、47 个集成测试文件各一条命令、全部示例一条命令，每条 2 个 job——不是一条 `--all-targets`：这段时间机器的内存提交余量一直在 1.5–12.9 GB，到不了大构建要的 16 GB，而且多数时候机器上一个编译器都没有在跑。分片合起来就是 `cargo test -p pid-parse --all-targets` 与 `cargo clippy -p pid-parse --all-targets` 的全部目标。`cargo build --workspace --all-targets` 没有重跑：它是大构建，这一阶段的改动又只在根 crate 的测试里，`pid-plot` 不编它们。
+
+**这一阶段没做的。** Q7（没有改拒收的粒度）；把 `SP_INSULTHICKSI` / `SP_SLOPESI` 的值发出来（S9；读法要先学会读双精度，那两条单测钉的「留作没读的列」届时跟着改）；workspace 构建。工单在 `main` 上要等这条分支合回去才不成立。
