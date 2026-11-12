@@ -73,7 +73,8 @@
 //!   in another font carries on from where the piece before it ended, and
 //!   that piece keeps its last glyph apart so that it ends where it did.
 //!
-//! Read back off the eleven pages this crate writes for those plots: of the
+//! Read back off the eleven pages this crate writes for those plots
+//! (`tools/pdf_letter_spacing.py`): of the
 //! 3 986 text objects, 3 904 pair with one of ours by place and text and 80
 //! more by text alone, each of ours the same string whole under a `Tc`
 //! written character for character as the reference's; the other two are
