@@ -7821,8 +7821,11 @@ const IGRECTANGLE2D_MAX_EDGES: usize = 64;
 /// four flag bytes.
 pub const IGBSPCURVE2D_MIN_PAYLOAD_LEN: usize = CURVE_GEOMETRY_AT + 4 + 32 + 4 + 4 + 32 + 8 + 4;
 
-/// Most poles a B-spline may carry. Five on the corpus; same purpose as the
-/// polyline reader's vertex cap.
+/// Most poles a B-spline may carry: 75 at the most on the corpora's 112
+/// records. Same purpose as the polyline reader's vertex cap — it keeps a
+/// corrupt count from being read as a length — and with the degree held to
+/// `crate::bspline::MAX_DEGREE` the work a record asks for is in proportion
+/// to its bytes: the largest it lets through is 99 KB and 32 513 points.
 const IGBSPCURVE2D_MAX_POLES: usize = 4096;
 
 /// One decoded `0x0020` `igRectangle2d` record.
@@ -7941,9 +7944,12 @@ pub fn decode_igrectangle_at(data: &[u8], offset: usize) -> Option<SheetIgRectan
 ///
 /// Chain-gated like [`decode_iglines`]; then: type code
 /// [`PSM_TYPE_CODE_IGBSPCURVE2D`]; `2..=4096` finite in-domain poles; when
-/// rational, one finite positive weight per pole; at least `N + 2` finite
-/// non-decreasing knots; and every counted field accounting for the payload
-/// exactly, trailing double and four flag bytes included.
+/// rational, one finite positive weight per pole; from `N + 2` to
+/// `N + 1 +` [`crate::bspline::MAX_DEGREE`] finite non-decreasing knots —
+/// a degree from one to the highest the curve is evaluated at, the degree
+/// being stated by nothing but the two counts; and every counted field
+/// accounting for the payload exactly, trailing double and four flag bytes
+/// included.
 pub fn decode_igbspcurves(data: &[u8]) -> Vec<SheetIgBspCurve2dDecoded> {
     SheetChain::walk(data)
         .starts
@@ -8070,9 +8076,14 @@ pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
         }
     }
     let knot_count = u32_le(payload, at)? as usize;
-    // Degree at least one, and no more knots than a cap the corpus is
-    // nowhere near; the exact-length rule below is the real guard.
-    if knot_count < pole_count + 2 || knot_count > pole_count + IGBSPCURVE2D_MAX_POLES {
+    // The knot count is all that states the degree: `knots - poles - 1`. At
+    // least one, and no higher than the curve is evaluated at — three on
+    // every record of the corpora. The exact-length rule below holds the
+    // count to the payload, but it does not hold the degree: until
+    // 2026-11-12 this allowed 4 096 knots more than poles, and a record of
+    // 106 KB could state a degree of 1 024 whose points took minutes to
+    // sample.
+    if knot_count < pole_count + 2 || knot_count > pole_count + 1 + crate::bspline::MAX_DEGREE {
         return None;
     }
     at += 4;
@@ -8975,6 +8986,60 @@ mod rectangle_and_bspline_tests {
         let n_at = PSM_ENVELOPE_LEN + CURVE_GEOMETRY_AT;
         overrun[n_at..n_at + 4].copy_from_slice(&50u32.to_le_bytes());
         assert!(decode_igbspcurves(&chain(&[overrun])).is_empty());
+    }
+
+    /// A record of `poles` poles on a zigzag under the clamped knot vector
+    /// of `degree`: `poles + degree + 1` knots, which is all that states the
+    /// degree.
+    fn bspline_record_of_degree(poles: usize, degree: usize) -> Vec<u8> {
+        let zigzag: Vec<(f64, f64)> = (0..poles)
+            .map(|index| (index as f64 * 0.001, (index % 2) as f64 * 0.001))
+            .collect();
+        let spans = poles - degree;
+        let mut knots = vec![0.0; degree + 1];
+        knots.extend((1..spans).map(|span| span as f64));
+        knots.extend(std::iter::repeat_n(spans as f64, degree + 1));
+        assert_eq!(knots.len(), poles + degree + 1);
+        bspline_record(&zigzag, &[], &knots)
+    }
+
+    /// The degree is no field of the record: it is the knot count less the
+    /// pole count less one, and until 2026-11-12 the two counts could state
+    /// any degree up to 4 095. A curve is drawn by de Boor's recursion, which
+    /// costs the square of the degree for every point, so a record states a
+    /// degree `crate::bspline::sample` evaluates or it is refused — three on
+    /// every record of the corpora.
+    #[test]
+    fn a_bspline_past_the_highest_degree_is_refused() {
+        let highest = crate::bspline::MAX_DEGREE;
+        let decoded = decode_igbspcurves(&chain(&[bspline_record_of_degree(40, highest)]));
+        assert_eq!(decoded.len(), 1, "degree {highest}");
+        assert_eq!(decoded[0].degree(), highest);
+        assert_eq!((decoded[0].poles.len(), decoded[0].knots.len()), (40, 73));
+
+        assert!(
+            decode_igbspcurves(&chain(&[bspline_record_of_degree(40, highest + 1)])).is_empty(),
+            "degree {}",
+            highest + 1
+        );
+        // The record an independent review timed: 358 seconds to emit.
+        assert!(
+            decode_igbspcurves(&chain(&[bspline_record_of_degree(4096, 1024)])).is_empty(),
+            "4 096 poles at degree 1 024"
+        );
+        // As many poles as a record may state are still read at a degree
+        // that is evaluated.
+        let widest = decode_igbspcurves(&chain(&[bspline_record_of_degree(4096, highest)]));
+        assert_eq!(widest.len(), 1, "4 096 poles at degree {highest}");
+        assert_eq!(widest[0].degree(), highest);
+
+        // The symbol reader and the cache reader take the curve through the
+        // same function, so one rule holds a `.sym` body and a drawing's
+        // cached copy of it as well.
+        let record = bspline_record_of_degree(40, highest + 1);
+        assert!(bspcurve_geometry(&record[PSM_ENVELOPE_LEN..]).is_none());
+        let record = bspline_record_of_degree(40, highest);
+        assert!(bspcurve_geometry(&record[PSM_ENVELOPE_LEN..]).is_some());
     }
 
     #[test]
