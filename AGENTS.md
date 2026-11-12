@@ -70,7 +70,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_keeps_its_inferred_line_floor` | DWG-0201 keeps at least 49 EndpointPair-inferred lines, and every decoded line of the drawing is an `igLine2d` (the Phase 14 Slice E guard, less the `GLine2d` half it asserted until the family was retired) | `DWG-0201GP06-01.pid` |
-| `tests/sheet_family_wiring.rs` | Three holds on every committed drawing and template. Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
+| `tests/sheet_family_wiring.rs` | Four holds on every committed drawing and template. (The fourth, `a_range_scale_is_set_by_how_far_the_children_reach`: every record that lists children with a range box — a sheet's own `JSheet` table, a `ComplexString`, a Group; 24 sheets, 3 strings and 13 groups in the repository — states the scale its children's reach calls for, `1.0` under a metre from the origin to the far corner of their box and `2.0` beyond; sheets of both scales are read, and `A1-W.igr`'s border group at `2.0` beside its logo group at `1.0` is pinned. Moved to 1.05 m, the line names eight A1 records.) The first three: Each family's wired `SheetGeometry` field has as many records as a fresh registry re-decode of the same bytes. Every decoded record starts where its stream's own record chain starts one, so no family decodes a byte pattern inside another record. A `ComplexString` or a Group draws through the records it lists: each member is a live record of the same chain that names it as its owner, a string's curves are `igLine2d` / `igArc2d` on its layer with its style id, a group's members are the two rectangles of a border or the 37 records of a logo, and every line member's range box is the line itself when read at the record's `range_scale` — the eleven templates inside the committed `RefData~*.zip` are read for this half too (12 groups, 5 of them at scale 2; the 16 lines of `A0-W.igr`'s logo lie half a metre from their boxes if the unit is taken for 1/32768 m) | `test-file/**/*.pid`, `*.igr` and the committed archives; runs in CI |
 | `tests/sheet_chain_faults.rs` | A chain stream whose framing does not hold is read as far as it holds, and says so. `DWG-0201GP06-01.pid`'s `/Sheet6` is damaged six ways — a record length of zero in the middle, the last record one byte too long, four stray bytes at the end, cut off at a record boundary, the header's record count off by one, a wrong magic — and each raises exactly one `StreamChainFault` and one warning that names the stream, the offset the walk stops at and the bytes left unread; every record before the damage decodes, family by family, as on the intact file, and no `Decoded` entity comes from past the stop. Each such record also keeps the place the sheet's own list gives it in the display order (`sheet_display_order`), the records drawn at one place keep their order, and nothing past the stop is ranked. A length that is wrong and still inside the stream is held separately: thirteen changes — the two of the second independent review and eleven that used to read as a sound chain — each stop at the first offset past the changed record on a type word no record opens with (`NoSuchClass`), and the fault names that word and the last record read; and every record of every committed chain stream has its length changed by ±1 … ±64 with the tallies pinned (`LENGTHS_ON_DISK`, `LENGTHS_ARCHIVED`): none reads as a sound chain through a record the file does not hold, no registry family decodes a record read off the chain, and the three retired matchers would accept 62 of them. (On every corpus in reach that holds as well since the page frame is held to the ratio of its own extent: ten of 49 058 such records decoded as `igSmartFrame2d` before, none now — `examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`, which is too slow for a test.) A `StyleCluster` whose chain stops is reported like a sheet's, and its table is the records the fault says the chain read: every single-length change of the fixture's three style tables that stops the walk (3 405; a walk with no tripwire reads past the stop on 122) builds the table of the stream cut at the stop. A symbol file's broken sheet is named on the body it leaves short. The corpus test parses every drawing, template and symbol in reach, each distinct file once, and holds it to no fault and each of its chain streams to the magic, a walk that ends on the last byte and the header's live-record count: `test-file` with its archives always (floors pinned: 675 files, 1 409 sheet streams, 78 symbol caches, 37 656 records), both `pid-test-data` and the share where a machine has them. The archives are a package's `RefData~*.zip` and its `PlantData~*.zip`, read for their `.igr`, `.sym` and `.pid` members — the drawings a whole-package publish reads among them (885 distinct documents on this machine, 265 492 records). The same walk tries the retired `GLine2d` matcher at every offset of every chain stream and holds each hit to sitting 160 bytes into a page frame, on the frame's own height over its width (13 across the corpora; the 10 in the repository pinned) | `test-file/**` (committed; runs in CI); the outside corpora where present — each prints what it read |
 | `tests/sheet_display_order_fixtures.rs` | The display order of the committed files, read off the files themselves (the parser's own unit tests are on bytes built by hand). For each of the seven fixture drawings and the five border templates under `test-file/Ref/Template Files`: every top-level sheet stream that holds a record of the sheet's own has an order and one without holds no live record; the sheet's list names exactly the live records of the stream whose parent is the sheet; every live record takes a rank; and the objects listed (1 014 over the seven drawings), the records ranked, the place of the border frame (`DWG-0201GP06-01`: 91) and a digest of the order are pinned per file (`PINNED`). The counts it compares with are taken from the stream bytes with the chain walk, not through the module. `A01.pid`'s embedded sheet `/JSite204/Sheet6` is held to its own order — 97 objects, 107 ranked records — and to the place of the frame that embeds it, 0. A second case walks `test-file` and fails on a drawing or template `PINNED` does not list. With a record's place taken from its oid, two of the three cases fail | `test-file/**/*.pid` and `test-file/Ref/Template Files/*.igr` (committed; runs in CI; a missing file fails) |
 | `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 20 条共 27 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；页面按图纸自己的显示次序画读到的那些记录（`paint_sequence` 有值，且与截到停点的那一份相同）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，合并后的 26 条里 3 条失败、23 条通过：失败的是这两条和 `a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place`（第九次审查在 26 条时量的；之后加的第 27 条没有在那个改动下重量）（第一份原先读成 359 条记录的完好流，一个字都不说）。七份副本另各自断言链读到、却没有显示次序位置的记录：第 1 条长度 +8 那一份有 1 条（2 个图元；链只读到这一条，它挂在图纸的一个对象下面，那个对象在停点之后，所以流里没有图纸自己的记录可以对照图纸的表），账本在流那一项之外另记一项 `record_without_display_place`、可疑比完好图纸多 2 项，其余六份没有；七份上 `display_order_warnings` 都不另起一句——链停造成的没有位置，由链的那一行说：那一份上链的一行接着说「读到的记录没有一条是图纸自己的」「1 条记录、2 个图元没有位置」「页面是模板名给出的页幅 594 × 420」，其余带停点的副本上那一行不说这些；每份带停点的副本上 stderr 那一行就是库函数 `chain_fault_warnings` 的那一句 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
@@ -622,7 +622,25 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   until 2026-11-11): a box is in `range_scale / 32768` m — 1.0 on
   fourteen of the corpora's twenty records, 2.0 on six
   (`CPECCHB-SQ-A1.igr`'s outer frame, five groups of the A0 / A1 `-W`
-  templates). A `ComplexString`'s curve members are `igLine2d` /
+  templates). **What sets the scale is how far the members reach**:
+  it is 1.0 while the far corner of the box that holds them is less
+  than a metre from the origin, and 2.0 from one metre to two. A
+  sheet's own child list (`0x0114 JSheet`) states the same double by
+  the same rule, and the 1 293 such records of the corpora — 1 273
+  sheets, 8 strings, 12 groups, each distinct sheet stream once —
+  hold it with none against: the far corner is at most 998.0 mm out
+  under 1.0 and at least 1 015.9 mm under 2.0. It is not the
+  template, the paper, the sheet's own scale, the layer, the owner or
+  the size of what is listed: `A1-W.igr` keeps the group of its
+  border at 2.0 and the group of its logo at 1.0 on one sheet, and
+  one sheet on A1 paper states 1.0 where thirty-nine state 2.0. Nor
+  is it whether an `i16` holds each coordinate: an A1 frame ends at
+  841 mm and states 2.0 for its diagonal of 1 030. Read off the
+  files, not off the vendor's code; a box past two metres has no
+  witness. A reader takes the scale as stated, as before; a writer
+  would have to set it by this
+  (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`,
+  `examples/probe_what_decides_the_scale_of_a_range_box.rs`). A `ComplexString`'s curve members are `igLine2d` /
   `igArc2d` with its layer and style id, joined by `0x0019 KeyPoint
   Constraint` members, which have no decoder and need none; a Group
   lists the two `igRectangle2d` of a border or, in `A0-W.igr` to
@@ -648,6 +666,9 @@ order is the sheet's own list: the `0x0114 JSheet` record of the root
 `PSMcluster0` names every record of the sheet stream whose parent is the
 sheet, 14 bytes each (oid, a range box of four `i16` in
 `scale × 2⁻¹⁵` m, a flag word), in the order the sheet draws them.
+(The scale is 1.0 while the far corner of the children's boxes is
+less than a metre from the origin and 2.0 beyond — the rule of the
+association records, see the caveat above.)
 `src/parsers/sheet_display_order.rs` decodes it and ranks every live
 record of the stream (`PidDocument::sheet_display_order`, keyed by
 `/Sheet<N>`; not serialized, so no JSON or schema output changes):
@@ -925,7 +946,7 @@ is `tests/geometry_golden_snapshot.rs`
 A probe is a throwaway `main` that asks one local fixture a question
 and prints the answer — how a decoder question gets settled before it
 earns a test. The committed form is named for what it settles, not for
-what it reads: `examples/probe_<the question>.rs` (292 of the 300
+what it reads: `examples/probe_<the question>.rs` (293 of the 301
 tracked root examples carry that prefix; the other eight predate the
 convention and keep their names).
 
@@ -936,6 +957,19 @@ members each archive holds, the names both hold and how many of those differ
 (603, 12), and, file by file, the directory against the archives read in
 order. It read 618 files on each side, the same names, every one identical,
 and exits non-zero when they are not.
+
+`probe_what_decides_the_scale_of_a_range_box` reads every record that lists
+children with a range box — `JSheet`, `ComplexString`, Group — on every
+distinct sheet stream of the corpora and their archives (885 documents, 1 293
+records) and sets the scale each states beside what could decide it. It
+prints the twenty strings and groups one by one, the sheets by paper and
+scale, the records that share a document, a sheet, an owner and a layer and
+state two scales (two places), and, for seven measures of where the children
+lie, the largest value under 1.0 against the smallest under 2.0: only the
+distance from the origin to the far corner separates them (998.0 mm against
+1 015.9 mm). It exits non-zero when a record does not state the scale that
+distance calls for; an argument lists the records of the documents it names.
+About 70 seconds in a debug build.
 
 `probe_complex_dash_marks` reports a mark's **anchor**, not the centroid of
 its ink: the L-shaped glyph's two arms sit 0.635 mm apart along the run, so a
@@ -1120,7 +1154,7 @@ only the root directory, so keep scratch there out of commits by hand.
 ## Common commands
 
 ```bash
-cargo test                                        # the root crate: 1 873 pass here, 15 of them with a check unmade — see "Soft skips"
+cargo test                                        # the root crate: 1 874 pass here, 15 of them with a check unmade — see "Soft skips"
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (37 tests)
 ```
@@ -1171,23 +1205,23 @@ cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-un
 ```
 
 `cargo fmt --all` hands rustfmt the root file of every target, as
-`\\?\`-prefixed absolute paths, in one command line for each edition: 359
-files for edition 2021 (the root crate's lib, 6 bins, 300 examples, 48
+`\\?\`-prefixed absolute paths, in one command line for each edition: 360
+files for edition 2021 (the root crate's lib, 6 bins, 301 examples, 48
 tests and a bench, and the three of `vendor/oxidized-mdf`) and 97 for
 edition 2024 (`pid-plot`: its lib, 7 bins, 72 examples, 17 tests). Under
 Windows a command line may not pass 32 767 characters, and the 2021 line
-grows by 359 characters for every character of the checkout's path, so
+grows by 360 characters for every character of the checkout's path, so
 whether the command runs depends on where the checkout is. Measured with
 rustfmt 1.10.0-stable on `e9ebba1` (the seventh review) and again on
 `735de61`, after the merge of main (the ninth, 2026-11-12), when the line
 held 357 files: a checkout whose path was 50 characters or shorter ran it
 and from 51 on cargo-fmt failed before rustfmt read a file (`os error
-206`). **Two files more and the limit is 49**: with a probe and a test
-added the same day, the command line `cargo fmt --all -v` prints is 31 719
-characters in a 47-character checkout, which makes it 32 437 at 49 and
-32 796 at 50 — 29 past the limit. (The 49 and the 50 are reckoned from
+206`). **Three files more and the limit is 49**: with two probes and a test
+added the same day, the command line `cargo fmt --all -v` prints is 31 827
+characters in a 47-character checkout, which makes it 32 547 at 49 and
+32 907 at 50 — 140 past the limit. (The 49 and the 50 are reckoned from
 the 47, not run.) The main checkout (32 characters) runs it, with 17
-characters of path to spare — the line is about 26 300 characters there
+characters of path to spare — the line is about 26 400 characters there
 — or some 60 more root-crate examples, each of which costs its
 path, its name and about 15
 characters. Worktrees under `pid-parse-wt\accept-evidence` (51) and

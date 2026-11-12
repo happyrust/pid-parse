@@ -629,6 +629,197 @@ fn a_complex_string_and_a_group_own_the_records_that_draw_them() {
     );
 }
 
+/// The records of one document that list children with a range box — its
+/// sheets' own tables, its strings and its groups — each as `(what, oid,
+/// scale it states, distance in metres from the origin to the far corner of
+/// the box that holds its children)`, with the place it was read at.
+fn range_scales(
+    label: &str,
+    package: &pid_parse::PidPackage,
+) -> Vec<(String, &'static str, u32, f64, f64)> {
+    use pid_parse::parsers::sheet_display_order::find_sheet_child_table;
+    use pid_parse::parsers::sheet_records::{
+        decode_igcomplexstrings, decode_iggroups, parse_live_psm_header, sheet_record_starts,
+    };
+
+    /// The far corner of the boxes that state an extent, in units.
+    fn far_units(boxes: impl Iterator<Item = [i16; 4]>) -> Option<f64> {
+        let mut far: Option<(i32, i32)> = None;
+        for range in boxes {
+            // A child with no extent states an inverted box.
+            if range[0] > range[2] || range[1] > range[3] {
+                continue;
+            }
+            let x = i32::from(range[0]).abs().max(i32::from(range[2]).abs());
+            let y = i32::from(range[1]).abs().max(i32::from(range[3]).abs());
+            far = Some(far.map_or((x, y), |(held_x, held_y)| (held_x.max(x), held_y.max(y))));
+        }
+        far.map(|(x, y)| f64::from(x).hypot(f64::from(y)))
+    }
+
+    let mut found = Vec::new();
+    for (stream, raw) in &package.streams {
+        let Some(cut) = stream.rfind('/') else {
+            continue;
+        };
+        let (storage, leaf) = (&stream[..cut], &stream[cut + 1..]);
+        let Some(sheet_oid) = leaf
+            .strip_prefix("Sheet")
+            .and_then(|number| number.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let data = raw.data.as_slice();
+        let place = format!("{label} {stream}");
+        let mut hold = |what: &'static str, oid: u32, scale: f64, far: Option<f64>| {
+            if let Some(far) = far {
+                found.push((place.clone(), what, oid, scale, far * scale / 32768.0));
+            }
+        };
+        for string in decode_igcomplexstrings(data) {
+            let far = far_units(string.members.iter().map(|member| member.range_box));
+            hold("string", string.oid, string.range_scale, far);
+        }
+        for group in decode_iggroups(data) {
+            let far = far_units(group.members.iter().map(|member| member.range_box));
+            hold("group", group.oid, group.range_scale, far);
+        }
+        // The sheet's own table: the one whose children are records of this
+        // stream.
+        let live: std::collections::HashSet<u32> = sheet_record_starts(data)
+            .into_iter()
+            .filter_map(|at| {
+                let header = parse_live_psm_header(data, at)?;
+                let oid = data.get(header.body_start..header.body_start + 4)?;
+                Some(u32::from_le_bytes([oid[0], oid[1], oid[2], oid[3]]))
+            })
+            .collect();
+        let table = package
+            .streams
+            .get(&format!("{storage}/PSMcluster0"))
+            .and_then(|cluster| {
+                find_sheet_child_table(&cluster.data, sheet_oid, |table| {
+                    table.children.iter().all(|child| live.contains(&child.oid))
+                })
+            });
+        if let Some(table) = table {
+            let far = far_units(table.children.iter().map(|child| child.range));
+            hold("sheet", sheet_oid, table.range_scale, far);
+        }
+    }
+    found
+}
+
+/// The scale a record states for its children's range boxes is set by how
+/// far from the origin they reach: `1.0` while the far corner of the box
+/// that holds them is less than a metre away, `2.0` from one metre to two.
+///
+/// Three records carry such a list — a sheet's own (`0x0114 JSheet`), a
+/// `ComplexString` and a Group — and the rule is the same for all three. It
+/// is the distance that decides, not the paper, the template, the layer,
+/// the owner, the sheet's own scale or the size of what is listed:
+/// `A1-W.igr` keeps the group of its border, which reaches (841, 594) mm,
+/// at `2.0`, and the group of its logo, 14 mm long and 718 mm out, at `1.0`
+/// — on one sheet, under one owner, on no layer; and `A0-W.igr`'s logo, the
+/// same 14 mm, sits 1 064 mm out and states `2.0`.
+///
+/// Held on every committed drawing and template, the templates inside the
+/// committed archives included. The corpora outside the repository hold the
+/// two records nearest the metre — a sheet at 998.0 mm under `1.0` and a
+/// string at 1 015.9 mm under `2.0` — and no record that breaks the rule:
+/// `examples/probe_what_decides_the_scale_of_a_range_box.rs`, 1 293 records
+/// of 885 documents; see
+/// `docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`.
+#[test]
+fn a_range_scale_is_set_by_how_far_the_children_reach() {
+    let mut documents = Vec::new();
+    committed_documents(std::path::Path::new("test-file"), &mut documents);
+    let mut found = Vec::new();
+    for path in &documents {
+        let package = PidParser::new()
+            .parse_package(path)
+            .unwrap_or_else(|error| panic!("{} should parse: {error}", path.display()));
+        found.extend(range_scales(&path.display().to_string(), &package));
+    }
+    #[cfg(feature = "refdata-archive")]
+    {
+        use pid_parse::refdata_archive::{archive_members, read_archive_file};
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        let mut archives = Vec::new();
+        committed_archives(std::path::Path::new("test-file"), &mut archives);
+        for archive in &archives {
+            let members = archive_members(archive, "igr")
+                .unwrap_or_else(|error| panic!("{}: {error}", archive.display()));
+            for member in members {
+                let label = member.label().display().to_string();
+                let bytes =
+                    read_archive_file(&member).unwrap_or_else(|error| panic!("{label}: {error}"));
+                if seen.contains(&bytes) {
+                    continue;
+                }
+                let package = pid_parse::PidPackage::from_bytes(&bytes)
+                    .unwrap_or_else(|error| panic!("{label} should parse: {error}"));
+                seen.push(bytes);
+                found.extend(range_scales(&label, &package));
+            }
+        }
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut tally: std::collections::BTreeMap<(&str, String), usize> =
+        std::collections::BTreeMap::new();
+    for (place, what, oid, scale, far) in &found {
+        let called_for = if *far < 1.0 { 1.0 } else { 2.0 };
+        if *scale != called_for || *far >= 2.0 {
+            wrong.push(format!(
+                "{place}: {what} {oid} states {scale} with its far corner {:.1} mm out",
+                far * 1000.0
+            ));
+        }
+        *tally.entry((what, format!("{scale}"))).or_default() += 1;
+    }
+    eprintln!("range scales of the committed documents: {tally:?}");
+    assert!(
+        wrong.is_empty(),
+        "{} record(s) state a scale their children's reach does not call for:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    // Both scales are among the sheets read, so the rule was put to both.
+    let stated = |what: &str, scale: &str| {
+        tally
+            .get(&(what, scale.to_owned()))
+            .copied()
+            .unwrap_or_default()
+    };
+    assert!(
+        stated("sheet", "1") >= 6 && stated("sheet", "2") >= 4,
+        "sheets of both scales: {tally:?}"
+    );
+    assert_eq!(stated("string", "1"), 3, "`CPECCHB-SQ-A2.igr`'s three");
+
+    // One sheet, one owner, no layer, two scales: the border and the logo
+    // of `A1-W.igr`.
+    #[cfg(feature = "refdata-archive")]
+    {
+        assert_eq!(
+            (stated("group", "1"), stated("group", "2")),
+            (8, 5),
+            "the groups of the archived templates and of `A01.pid`'s border: {tally:?}"
+        );
+        let of_a1: Vec<(u32, f64, f64)> = found
+            .iter()
+            .filter(|(place, what, ..)| *what == "group" && place.contains("A1-W.igr"))
+            .map(|(_, _, oid, scale, far)| (*oid, *scale, (far * 1000.0).round()))
+            .collect();
+        assert_eq!(
+            of_a1,
+            [(93, 2.0, 1030.0), (369, 1.0, 718.0)],
+            "`A1-W.igr`'s border and logo"
+        );
+    }
+}
+
 /// Every `RefData~*.zip` the repository commits under `dir`, path-sorted.
 #[cfg(feature = "refdata-archive")]
 fn committed_archives(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
