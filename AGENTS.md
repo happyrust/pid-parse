@@ -764,9 +764,11 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   frame's rectangle picked one (175 of its 279 primitives gone); `D03`,
   which has no ink of its own, is a blank page; and each of `Q井场`'s
   two frames leaves the page to the other, once with no template.
-  Until that day the sentence ended, on every one of them, "the
-  drawing's ink and its border template lie where they do without the
-  frame's offsets" — true of 57. The cases are in
+  Until that day the sentence of a sheet laid out with no frame — 66
+  of the 68 copies — ended "the drawing's ink and its border template
+  lie where they do without the frame's offsets", which was true of
+  57 of them; the two pages another frame lays out said nothing of a
+  template, drawn or not. The cases are in
   `pid-plot/tests/cli_pid_plot.rs` — `D06` twice, `A01`'s embedded
   frame, `D06` cut down to its frame for the blank page, a template
   sought and not found for the sheet the lines fit and for the size
