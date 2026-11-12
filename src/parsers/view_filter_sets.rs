@@ -257,6 +257,26 @@ pub fn decode_view_filter_sets(data: &[u8]) -> Vec<ViewFilterSetDecoded> {
         .collect()
 }
 
+/// Decode every `Top ViewFilterSet` among the records a plain chain stream
+/// reads: the cluster of a symbol file, which is an eight-byte header and
+/// records end to end like a sheet.
+///
+/// The records are the ones [`SheetChain::walk`] reads, so a chain that
+/// stops gives the sets before the stop and one whose first word is not
+/// the magic gives every set it holds; [`decode_view_filter_sets`] gives
+/// nothing for either. On every sound symbol file in reach the two agree.
+///
+/// [`SheetChain::walk`]: crate::parsers::sheet_records::SheetChain::walk
+pub fn decode_view_filter_sets_on_chain(data: &[u8]) -> Vec<ViewFilterSetDecoded> {
+    crate::parsers::sheet_records::SheetChain::walk(data)
+        .starts
+        .into_iter()
+        .filter_map(|at| crate::parsers::cluster_header::decode_cluster_body_record_at(data, at))
+        .filter(|record| record.type_code == PSM_TYPE_CODE_VIEW_FILTER_SET)
+        .filter_map(|record| decode_payload(&record.raw_payload, record.byte_range))
+        .collect()
+}
+
 /// Resync-scan variant of [`decode_view_filter_sets`] for storages whose
 /// `PSMcluster0` is not a contiguous chain — the document storage's records
 /// sit behind padding the strict walker cannot cross. `decode_payload` is
@@ -386,5 +406,51 @@ mod tests {
         let mut raw = payload(false, &[]);
         raw[38] = 0x00;
         assert!(decode_payload(&raw, 0..raw.len()).is_none(), "bitmap flag");
+    }
+
+    /// The view sets of a symbol file's cluster are the set records its
+    /// chain reads: all of them whatever the stream's first word, the ones
+    /// before the stop where the chain stops.
+    #[test]
+    fn sets_are_read_off_a_plain_chain_as_far_as_it_holds() {
+        let set = payload(false, &[]);
+        let mut sound = 0x6C90_F544u32.to_le_bytes().to_vec();
+        sound.extend_from_slice(&3u32.to_le_bytes());
+        let mut starts = Vec::new();
+        for (type_word, record) in [
+            (PSM_TYPE_CODE_VIEW_FILTER_SET, set.clone()),
+            (0x0081u16, vec![0u8; 20]),
+            (PSM_TYPE_CODE_VIEW_FILTER_SET, set),
+        ] {
+            starts.push(sound.len());
+            sound.extend_from_slice(&type_word.to_le_bytes());
+            sound.extend_from_slice(&(record.len() as u32).to_le_bytes());
+            sound.extend_from_slice(&record);
+        }
+        let sheets = |data: &[u8]| -> Vec<u32> {
+            decode_view_filter_sets_on_chain(data)
+                .into_iter()
+                .map(|set| set.sheet_ref)
+                .collect()
+        };
+        assert_eq!(sheets(&sound), [6, 6]);
+        assert_eq!(
+            decode_view_filter_sets_on_chain(&sound)[1].byte_range,
+            starts[2]..sound.len(),
+            "a set's range is its record's"
+        );
+
+        let mut magic = sound.clone();
+        magic[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(sheets(&magic), [6, 6], "a wrong magic");
+
+        let mut stopped = sound.clone();
+        stopped[starts[1] + 2..starts[1] + 6].copy_from_slice(&0u32.to_le_bytes());
+        assert_eq!(sheets(&stopped), [6], "a length of zero on the second");
+
+        assert!(
+            sheets(&sound[..starts[0] + 4]).is_empty(),
+            "cut inside the first"
+        );
     }
 }

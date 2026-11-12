@@ -52,12 +52,18 @@
 //! by the first rules, six by the ratio rule and none by the decoder; at
 //! every offset, 179 places a walk could read such a record, 83 frames by
 //! the first rules, six by the ratio rule, none by the decoder. Four of the
-//! records read off the chain decode as another family, `igComplexString2d`,
-//! all on one sheet of the plant backup.
+//! records read off the chain decoded as another family, `igComplexString2d`,
+//! all on one sheet of the plant backup: a type word `0x0021`, a length of
+//! 65 536 and a count of 256, 28 bytes into a `DependencyObject`. Read again
+//! the same day, with that decoder holding a record to closing as a string
+//! closes (four bytes after its last member entry on a sheet, four and a
+//! `u32` a member in a symbol cache): the same changes and records, and no
+//! family decodes one.
 //!
 //! Exits non-zero when the decoder takes a record read off the chain for a
-//! frame, refuses a live frame of a chain, or a real frame's ratio is not
-//! its height over its width.
+//! frame, any family decodes a record read off the chain, a live frame of a
+//! chain is refused, or a real frame's ratio is not its height over its
+//! width.
 //!
 //! ```text
 //! cargo run --release --example probe_what_passes_for_a_page_frame_off_the_chain
@@ -611,6 +617,7 @@ fn main() {
     }
     if reading.all.by_the_decoder != 0
         || reading.anywhere.by_the_decoder != 0
+        || !reading.all.decoded.is_empty()
         || reading.ratio_differs != 0
         || reading.decoded != reading.live
     {

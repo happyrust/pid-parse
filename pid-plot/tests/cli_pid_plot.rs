@@ -48,12 +48,25 @@
 //! its cache, is held to saying nothing whatever the library holds. A gauge
 //! with two damaged streams is held to a warning and an item for each.
 //!
+//! What a damaged file draws is part of what the sound file draws, or
+//! nothing. A sheet whose chain stops is read as far as it holds, so a gauge
+//! whose normal view stops past its circle is the sound gauge. One whose
+//! normal view reads nothing, or whose root cluster — the layers and the
+//! view sets that say which sheet is drawn and what of it — is read short,
+//! is not drawn at all: no other sheet of the file stands in for the one
+//! read short, the placement leaves the box of a missing symbol and counts
+//! as one, the file is named among the page's missing symbols as one that
+//! is there and damaged, and the program says a line a damaged stream. A
+//! library kept inside a `RefData~*.zip` is held as one in a directory is.
+//!
 //! A border template's placements are held the same way. No template on
 //! hand draws from the library either, so a copy of `D06`'s template has
 //! its two placements of one title-block symbol name a body the template
 //! does not hold; with a damaged library file for them the program is held
 //! to one warning that says the file is the border template's, and the
-//! account to one suspect item among the template's.
+//! account to one suspect item among the template's. Where the file is not
+//! drawn from, the placements count as the template's missing symbols and
+//! not the drawing's.
 //!
 //! A border frame of the drawing's own sheet that the frame rule refuses is
 //! held to one warning that says what the page laid out without it is and
@@ -2501,62 +2514,59 @@ fn a_library_of_the_gauge(case: &str, bytes: &[u8]) -> PathBuf {
     a_library_holding(case, &GAUGE, bytes)
 }
 
-/// What a chain stream opens with.
-const CHAIN_MAGIC: [u8; 4] = [0x44, 0xF5, 0x90, 0x6C];
+/// One change to one chain stream of the gauge: the stream, and what is
+/// done to its bytes, handed the offsets its chain reads a record at.
+type GaugeDamage = (&'static str, fn(&mut [u8], &[usize]));
 
-/// The record starts of a chain stream: an eight-byte header, then records
-/// end to end.
-fn record_starts(data: &[u8]) -> Vec<usize> {
-    let mut starts = Vec::new();
-    let mut at = 8usize;
-    while at + 6 <= data.len() {
-        starts.push(at);
-        let length = u32::from_le_bytes(data[at + 2..at + 6].try_into().expect("four bytes"));
-        at += 6 + length as usize;
-    }
-    starts
-}
-
-/// The gauge with each stream of `streams` changed by `damage` — which is
-/// handed the stream's bytes and the offset of its middle record — and what
-/// a reader of each chain finds wrong with it, in the order of `streams`.
+/// The gauge with each of `damages` made, and what a reader of the chain
+/// finds wrong with each damaged stream, in the order given.
 ///
-/// The file keeps four chain streams a body is read from: `/Sheet6`, its
-/// normal view; `/Sheet68`, a second sheet the sound file is not drawn
-/// from; `/StyleCluster`, its pens; and `/PSMcluster0`, its layers and
-/// which of them each sheet shows.
-fn a_gauge_damaged_in(
-    streams: &[&str],
-    damage: fn(&mut [u8], usize),
-) -> (Vec<u8>, Vec<pid_parse::StreamChainFault>) {
+/// The gauge keeps its body on two sheets: `/Sheet6`, its normal view, 14
+/// records of which the first is the circle a page draws; and `/Sheet68`,
+/// the same circle and the lettering `PG`, which no view set governs. Its
+/// root `/PSMcluster0`, 30 records, holds the layer table and the view set
+/// that make `/Sheet6` the normal view and keep a second, heat-trace circle
+/// of it off the page.
+fn a_damaged_gauge(damages: &[GaugeDamage]) -> (Vec<u8>, Vec<pid_parse::StreamChainFault>) {
+    use pid_parse::parsers::sheet_records::SheetChain;
     use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 
     let package = pid_parse::PidParser::new()
         .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
         .unwrap_or_else(|error| panic!("the gauge: {error}"));
+    let records = |stream: &str| {
+        SheetChain::walk(
+            &package
+                .get_stream(stream)
+                .unwrap_or_else(|| panic!("the gauge has no {stream}"))
+                .data,
+        )
+        .starts
+        .len()
+    };
+    assert_eq!(
+        (
+            records("/Sheet6"),
+            records("/Sheet68"),
+            records("/PSMcluster0")
+        ),
+        (14, 2, 30),
+        "the gauge's chains"
+    );
     let mut plan = WritePlan::default();
     let mut faults = Vec::new();
-    for stream in streams {
+    for (stream, damage) in damages {
         let mut data = package
             .get_stream(stream)
             .unwrap_or_else(|| panic!("the gauge has no {stream}"))
             .data
             .clone();
-        assert!(
-            data.starts_with(&CHAIN_MAGIC),
-            "{stream} is no chain stream"
+        let starts = SheetChain::walk(&data).starts;
+        damage(&mut data, &starts);
+        faults.push(
+            pid_parse::StreamChainFault::of_stream(stream, &data)
+                .unwrap_or_else(|| panic!("{stream}: the chain holds")),
         );
-        let records = record_starts(&data);
-        assert!(
-            records.len() >= 2,
-            "{stream} holds {} record(s)",
-            records.len()
-        );
-        damage(&mut data, records[records.len() / 2]);
-        let fault = pid_parse::StreamChainFault::of_stream(stream, &data)
-            .unwrap_or_else(|| panic!("the chain of {stream} holds"));
-        assert!(fault.stop.is_some(), "{fault:?}");
-        faults.push(fault);
         plan.stream_replacements.push(StreamReplacement {
             path: (*stream).to_string(),
             new_data: data,
@@ -2567,52 +2577,66 @@ fn a_gauge_damaged_in(
     (bytes, faults)
 }
 
-/// The gauge with its fullest sheet — `/Sheet6`, its normal view — changed
-/// by `damage`, which is handed the stream's bytes and the offset of its
-/// middle record, and what a reader of the chain finds wrong with it.
-fn a_damaged_gauge(damage: fn(&mut [u8], usize)) -> (Vec<u8>, pid_parse::StreamChainFault) {
-    let package = pid_parse::PidParser::new()
-        .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
-        .unwrap_or_else(|error| panic!("the gauge: {error}"));
-    let fullest = package
-        .streams
-        .iter()
-        .filter(|(path, raw)| {
-            path.rsplit('/')
-                .next()
-                .is_some_and(|name| name.starts_with("Sheet"))
-                && raw.data.starts_with(&CHAIN_MAGIC)
-        })
-        .max_by_key(|(_, raw)| record_starts(&raw.data).len())
-        .map(|(path, _)| path.clone())
-        .expect("the gauge has a sheet");
-    assert_eq!(fullest, "/Sheet6", "the gauge's fullest sheet");
-    let (bytes, mut faults) = a_gauge_damaged_in(&["/Sheet6"], damage);
-    (bytes, faults.remove(0))
+/// The record in the middle of the stream states a length of zero: the
+/// chain stops on it, with the records before it read.
+fn a_length_of_zero_in_the_middle(data: &mut [u8], starts: &[usize]) {
+    let at = starts[starts.len() / 2];
+    data[at + 2..at + 6].copy_from_slice(&0u32.to_le_bytes());
 }
 
-/// The middle record of the sheet states a length of zero: the chain stops
-/// on it, and the symbol reader's own walk does not reach the stream's end
-/// either.
-fn a_length_of_zero(data: &mut [u8], record: usize) {
-    data[record + 2..record + 6].copy_from_slice(&0u32.to_le_bytes());
+/// The stream's first record states a length of zero: the chain reads
+/// nothing.
+fn a_length_of_zero_on_the_first_record(data: &mut [u8], starts: &[usize]) {
+    let at = starts[0];
+    data[at + 2..at + 6].copy_from_slice(&0u32.to_le_bytes());
 }
 
-/// The middle record's type word carries the `0x4000` flag: the chain stops
-/// on it, as the native reader does, and the symbol reader — which masks a
-/// type word to its class — reads the record like any other.
-fn a_flagged_type_word(data: &mut [u8], record: usize) {
-    data[record + 1] |= 0x40;
+/// The first record's type word carries the `0x4000` flag: the chain stops
+/// on it, as the native reader does, with nothing read. The symbol reader
+/// used to mask a type word to its class and read such a record like any
+/// other.
+fn a_flagged_first_type_word(data: &mut [u8], starts: &[usize]) {
+    data[starts[0] + 1] |= 0x40;
 }
 
-/// The page of `drawing` laid out against `corpus` with `library` for its
-/// one symbol root, and its account.
-fn laid_out_against(drawing: &Path, corpus: &Path, library: &Path) -> (PaperModel, ExportLedger) {
+/// The record in the middle of the stream carries the `0x4000` flag in its
+/// type word, which no record opens with: the chain stops on it, as the
+/// native reader does, with the records before it read.
+fn a_flagged_type_word_in_the_middle(data: &mut [u8], starts: &[usize]) {
+    data[starts[starts.len() / 2] + 1] |= 0x40;
+}
+
+/// The stream opens with another word than the chain magic: every record
+/// is still read.
+fn another_first_word(data: &mut [u8], _starts: &[usize]) {
+    data[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+}
+
+/// The page laid out with `library` for its one symbol root, and its
+/// account.
+fn laid_out_with(drawing: &Path, library: &Path) -> (PaperModel, ExportLedger) {
+    laid_out(
+        drawing,
+        &fixtures(),
+        vec![library.to_path_buf()],
+        Vec::new(),
+    )
+}
+
+/// The page of `drawing` laid out against `corpus` with the symbol library
+/// stated — directory roots, then archives — and its account, held to
+/// conservation and to the counts the code keeps.
+fn laid_out(
+    drawing: &Path,
+    corpus: &Path,
+    roots: Vec<PathBuf>,
+    archives: Vec<PathBuf>,
+) -> (PaperModel, ExportLedger) {
     let model = lay_out_with_symbol_roots(
         drawing,
         corpus,
-        vec![library.to_path_buf()],
-        Vec::new(),
+        roots,
+        archives,
         &["a library of one gauge".to_string()],
     )
     .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
@@ -2638,20 +2662,16 @@ fn laid_out_against(drawing: &Path, corpus: &Path, library: &Path) -> (PaperMode
     (model, account)
 }
 
-/// [`laid_out_against`] the repository's fixtures.
-fn laid_out_with(drawing: &Path, library: &Path) -> (PaperModel, ExportLedger) {
-    laid_out_against(drawing, &fixtures(), library)
+/// Start `pid_plot` on `drawing` against the fixtures with `library` for
+/// its symbol library, as far as this machine lets an export go.
+fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str) -> Outcome {
+    export_with(case, drawing, &fixtures(), library, name)
 }
 
-/// Start `pid_plot` on `drawing` against `corpus` with `library` for its
-/// symbol library, as far as this machine lets an export go.
-fn export_against(
-    case: &str,
-    drawing: &Path,
-    corpus: &Path,
-    library: &Path,
-    name: &str,
-) -> Outcome {
+/// Start `pid_plot` on `drawing` against `corpus` with `library` — a
+/// directory root, or a `RefData~*.zip` — for its symbol library, as far
+/// as this machine lets an export go.
+fn export_with(case: &str, drawing: &Path, corpus: &Path, library: &Path, name: &str) -> Outcome {
     let out = unwritten(&scratch(case), name);
     let fonts = fonts_for_a_child();
     let mut command = pid_plot();
@@ -2674,11 +2694,6 @@ fn export_against(
         }
     }
     outcome
-}
-
-/// [`export_against`] the repository's fixtures.
-fn export_with_a_library(case: &str, drawing: &Path, library: &Path, name: &str) -> Outcome {
-    export_against(case, drawing, &fixtures(), library, name)
 }
 
 /// Whether a primitive of the page is one of the gauge's placement.
@@ -2746,6 +2761,128 @@ fn symbol_files_filed_in(domain: &DomainAccount) -> Vec<(&str, u64, Option<u64>)
 /// domain.
 fn symbol_files_filed(account: &ExportLedger) -> Vec<(&str, u64, Option<u64>)> {
     symbol_files_filed_in(&account.drawing)
+}
+
+/// Where the export ran to its end the program printed its summary: the
+/// suspects it counts are the account's own, which is the number a gate
+/// reads.
+fn the_programs_suspects_are_the_accounts(said: &Outcome, account: &ExportLedger) {
+    if said.code == Some(0) {
+        assert_eq!(
+            ledger_count(said, "suspect"),
+            account.summary().suspect,
+            "the program's summary is not the account's\n{said}"
+        );
+    }
+}
+
+/// The suspects of `sound` with `more` of each code added: what a page is
+/// expected to file beside the same page drawn from a sound library.
+fn suspects_with(
+    sound: &ExportLedger,
+    more: &[(&'static str, u64)],
+) -> std::collections::BTreeMap<&'static str, u64> {
+    let mut expected = suspects(sound);
+    for (code, count) in more {
+        *expected.entry(code).or_insert(0) += count;
+    }
+    expected
+}
+
+/// The sentence `pid_plot` prints for a damaged symbol file placements are
+/// drawn from, after the drawing's path.
+fn drawn_from_sentence(
+    whose: &str,
+    symbol: &str,
+    placements: u64,
+    fault: &pid_parse::StreamChainFault,
+) -> String {
+    format!(
+        "{whose}the symbol file {symbol}, which {placements} placement(s) on the page are \
+         drawn from, is damaged: {}",
+        fault.describe()
+    )
+}
+
+/// The sentence for a damaged symbol file no placement is drawn from.
+fn not_drawn_sentence(
+    whose: &str,
+    symbol: &str,
+    placements: u64,
+    why: pid_parse::symbol_library::SymbolNotDrawn,
+    fault: &pid_parse::StreamChainFault,
+) -> String {
+    format!(
+        "{whose}the symbol file {symbol} is damaged and the {placements} placement(s) on the \
+         page that name it are not drawn, each counted as a missing symbol: {}; {}",
+        why.describe(),
+        fault.describe_framing()
+    )
+}
+
+/// One stored member a ZIP: the bytes of a `RefData~*.zip` that holds
+/// `payload` under `name`, the way a backup package keeps a symbol library.
+fn stored_zip(name: &str, payload: &[u8]) -> Vec<u8> {
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+    let name = name.as_bytes();
+    let crc = crc32(payload);
+    let size = u32::try_from(payload.len()).expect("member fits in a zip32 size");
+    let name_len = u16::try_from(name.len()).expect("name fits in a zip name length");
+    let mut out = Vec::new();
+    let push16 = |out: &mut Vec<u8>, value: u16| out.extend_from_slice(&value.to_le_bytes());
+    let push32 = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
+    push32(&mut out, 0x0403_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    out.extend_from_slice(name);
+    out.extend_from_slice(payload);
+    let cd_at = u32::try_from(out.len()).expect("zip offset");
+    push32(&mut out, 0x0201_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, 0);
+    push32(&mut out, 0);
+    out.extend_from_slice(name);
+    let cd_size = u32::try_from(out.len()).expect("zip size") - cd_at;
+    push32(&mut out, 0x0605_4b50);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 1);
+    push16(&mut out, 1);
+    push32(&mut out, cd_size);
+    push32(&mut out, cd_at);
+    push16(&mut out, 0);
+    out
 }
 
 /// Every suspect count of the page's account, by code, over the page and
@@ -2829,26 +2966,26 @@ fn a_placement_with_no_cached_body_is_drawn_from_the_library_without_a_word() {
 }
 
 /// A symbol file whose record chain stops is said where a placement is
-/// drawn from it.
+/// drawn from it, and is drawn as far as it reads.
 ///
-/// The reader of a `.sym` takes a sheet only where its own walk of it ends
-/// on the stream's last byte, so a sheet with a length of zero in the
-/// middle gives the body nothing and the placement is drawn from the
-/// sheets that were read. The parser says so of the file
+/// The reader of a `.sym` reads a sheet by the walk a drawing's own sheets
+/// are read by: where the chain stops, the records before the stop are the
+/// sheet's and nothing after them is read. The parser says so of the file
 /// (`SymbolGeometry::chain_faults`); a page drawn from such a body has to
 /// say so too. The copy whose gauge has no cached body, with a library
-/// whose gauge has one length of its fullest sheet set to zero: the program
-/// prints exactly one warning, which names the symbol file and says the
-/// reader's own sentence of the stream — its path, where the chain stops,
-/// what is left unread — and the account files the file once as a suspect
-/// item of the drawing's. The exit code is the sound library's.
+/// whose gauge has the length of the middle record of its normal view set
+/// to zero: the program prints exactly one warning, which names the symbol
+/// file and says the reader's own sentence of the stream — its path, where
+/// the chain stops, what is left unread — and the account files the file
+/// once as a suspect item of the drawing's. The exit code is the sound
+/// library's.
 ///
-/// What the page then draws of the gauge is not less, it is other. The
-/// file keeps its body on two sheets: `/Sheet6`, the normal view, whose one
-/// displayed stroke is the gauge's circle, and `/Sheet68`, the same circle
-/// and the lettering `PG`. With `/Sheet6` unread the body is `/Sheet68`
-/// alone, and the page draws the circle and a `PG` the sound file does not
-/// letter; every other primitive of the page is the same.
+/// What the page draws of the gauge is the strokes the chain read. The
+/// gauge's circle is the first record of `/Sheet6`, so the page is the
+/// sound file's, primitive for primitive. Until 2026-11-12 the reader took
+/// a sheet whole or not at all: `/Sheet6` was left out, the file's other
+/// sheet stood in for it, and the page drew the circle and a `PG` the sound
+/// file does not letter.
 ///
 /// The fixture as committed, with the same damaged library, says nothing
 /// and files nothing: it draws the gauge from the body it caches, and a
@@ -2856,7 +2993,8 @@ fn a_placement_with_no_cached_body_is_drawn_from_the_library_without_a_word() {
 #[test]
 fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() {
     let case = "symbol-chain-stops";
-    let (bytes, fault) = a_damaged_gauge(a_length_of_zero);
+    let (bytes, faults) = a_damaged_gauge(&[("/Sheet6", a_length_of_zero_in_the_middle)]);
+    let fault = &faults[0];
     let library = a_library_of_the_gauge(case, &bytes);
     let sentence = fault.describe();
     assert!(
@@ -2895,36 +3033,41 @@ fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() 
             found.domain,
             found.symbol.as_str(),
             found.placements,
+            found.not_drawn,
             &found.fault
         ),
-        (LedgerDomain::Drawing, GAUGE.join("\\").as_str(), 1, &fault)
+        (
+            LedgerDomain::Drawing,
+            GAUGE.join("\\").as_str(),
+            1,
+            None,
+            fault
+        )
     );
     // What the damaged file changes of the page's suspects, against the
-    // same drawing with the sound file: the file itself, once.
+    // same drawing with the sound file: the file itself, once — by the
+    // codes, and in the one number the program prints and a gate reads.
     let (sound_model, sound) = laid_out_with(
         &drawing,
         &a_library_of_the_gauge("symbol-chain-stops-sound", &the_gauge()),
     );
-    let mut expected = suspects(&sound);
-    *expected.entry("symbol_file_chain_fault").or_insert(0) += 1;
-    assert_eq!(suspects(&account), expected, "the suspects of the page");
-    // The count a gate reads, and the program prints, is the summary's:
-    // one suspect more than with the sound file.
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 1)]),
+        "the suspects of the page"
+    );
     assert_eq!(
         account.summary().suspect,
         sound.summary().suspect + 1,
-        "the summary with the damaged file, `{}`, against the sound file's, `{}`",
+        "{} against {}",
         account.summary(),
         sound.summary()
     );
-    // And of the page: the gauge is drawn from the sheet that was read.
+    // And of the page: the gauge is the strokes its chain read, which are
+    // the sound file's — its circle, and no `PG` off the file's other sheet.
     assert_eq!(the_gauge_as_drawn(&sound_model), ["circle"]);
-    assert_eq!(the_gauge_as_drawn(&model), ["circle", "text \"PG\""]);
-    assert_eq!(
-        all_but_the_gauge(&model),
-        all_but_the_gauge(&sound_model),
-        "the rest of the page"
-    );
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
     let said = export_with_a_library(case, &drawing, &library, "stopped.pdf");
     let warned = warnings(&said.stderr);
     assert_eq!(
@@ -2947,22 +3090,18 @@ fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() 
 
     assert_eq!(
         model.ledger.symbol_chain_fault_warnings(),
-        [format!(
-            "the symbol file {}, which 1 placement(s) on the page are drawn from, is damaged: {}",
-            GAUGE.join("\\"),
-            fault.describe()
-        )],
+        [drawn_from_sentence("", &GAUGE.join("\\"), 1, fault)],
         "the sentence the program prints after the drawing's path"
     );
-    if said.code == Some(0) {
-        // The export ran to its end, so the program printed its summary:
-        // the account's own, with the file among its suspects.
-        assert_eq!(
-            ledger_count(&said, "suspect"),
-            account.summary().suspect,
-            "the program's summary is not the account's\n{said}"
-        );
-    }
+    assert_eq!(
+        warned[0],
+        format!(
+            "warning: {}: {}",
+            drawing.display(),
+            model.ledger.symbol_chain_fault_warnings()[0]
+        )
+    );
+    the_programs_suspects_are_the_accounts(&said, &account);
 
     // Not drawn from it: the fixture as committed, the same library.
     let (_, committed) = laid_out_with(&flash_b(), &library);
@@ -2975,20 +3114,211 @@ fn a_symbol_file_whose_chain_stops_is_said_where_a_placement_is_drawn_from_it() 
     );
 }
 
-/// A fault the symbol reader reads through is said all the same.
+/// What a page makes of a placement whose library file is damaged in a way
+/// that leaves nothing of its body to draw as the sound file's: `damages`
+/// made to the gauge, the copy of the fixture whose gauge has no cached
+/// body laid out against a library of that file.
 ///
-/// The reader of a `.sym` masks a type word to its class before it reads
-/// the record, so a record whose type word carries the `0x4000` flag —
-/// which the chain walk stops on, as the native reader does — is read like
-/// any other: the sheet is taken whole, and the page drawn from the file is
-/// the page drawn from the sound one, primitive for primitive. The file is
-/// damaged all the same, and nothing on the page says that it lost nothing
-/// by it: the file is filed and said exactly as the one whose sheet is left
-/// out of the body.
+/// The placement is not drawn. It leaves the box of a missing symbol and
+/// counts as one; the file is named among the page's missing symbols, as
+/// one that is there and damaged; the account files the placement
+/// (`symbol_missing`) and the file, once a damaged stream
+/// (`symbol_file_chain_fault`); the program says one line a stream, which
+/// says that the placement is not drawn and why. Everything else on the
+/// page is what the sound library draws, and the exit code is its.
+fn export_with_a_gauge_that_is_not_drawn(
+    case: &str,
+    damages: &[GaugeDamage],
+    why: pid_parse::symbol_library::SymbolNotDrawn,
+) {
+    let (bytes, faults) = a_damaged_gauge(damages);
+    let library = a_library_of_the_gauge(case, &bytes);
+    let drawing = flash_b_without_the_gauges_cached_body(case);
+    let (model, account) = laid_out_with(&drawing, &library);
+    let (sound_model, sound) = laid_out_with(
+        &drawing,
+        &a_library_of_the_gauge(&format!("{case}-sound"), &the_gauge()),
+    );
+
+    // Not drawn, and nothing drawn in its place: no primitive of the page
+    // is the gauge's, and the rest of the page is the sound library's.
+    assert_eq!(the_gauge_as_drawn(&sound_model), ["circle"]);
+    assert_eq!(
+        the_gauge_as_drawn(&model),
+        Vec::<String>::new(),
+        "{case}: the gauge is not drawn"
+    );
+    assert_eq!(
+        all_but_the_gauge(&model),
+        all_but_the_gauge(&sound_model),
+        "{case}: the rest of the page"
+    );
+    assert_eq!(
+        (
+            drawn_from(&account, PlacementSource::Library),
+            drawn_from(&account, PlacementSource::Missing),
+            drawn_from(&account, PlacementSource::Cached),
+        ),
+        (
+            drawn_from(&sound, PlacementSource::Library) - 1,
+            drawn_from(&sound, PlacementSource::Missing) + 1,
+            drawn_from(&sound, PlacementSource::Cached),
+        ),
+        "{case}: the gauge's placement counts as a missing symbol's"
+    );
+    // The box of a missing symbol, and its name with what is wrong with it.
+    assert_eq!(
+        model.missing_boxes.len(),
+        sound_model.missing_boxes.len() + 1,
+        "{case}: one box more"
+    );
+    let named: Vec<&String> = model
+        .missing_symbols
+        .iter()
+        .filter(|name| !sound_model.missing_symbols.contains(name))
+        .collect();
+    assert_eq!(
+        named,
+        [&format!(
+            "{} (the library's file is damaged and is not drawn from)",
+            GAUGE.join("\\").to_ascii_lowercase()
+        )],
+        "{case}: the missing symbols the damaged file adds"
+    );
+
+    // The account: the placement, and the file once a damaged stream.
+    let streams = u64::try_from(faults.len()).expect("a count");
+    let filed: Vec<(String, u64, Option<u64>)> = faults
+        .iter()
+        .map(|fault| {
+            (
+                format!("{}:{}", GAUGE.join("\\"), fault.stream_path),
+                1,
+                Some(fault.unread_bytes as u64),
+            )
+        })
+        .collect();
+    assert_eq!(
+        symbol_files_filed(&account)
+            .into_iter()
+            .map(|(site, count, bytes)| (site.to_string(), count, bytes))
+            .collect::<Vec<_>>(),
+        filed,
+        "{case}: the symbol file, filed once a damaged stream"
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(
+            &sound,
+            &[("symbol_file_chain_fault", streams), ("symbol_missing", 1)]
+        ),
+        "{case}: the suspects of the page"
+    );
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + streams + 1,
+        "{case}: {} against {}",
+        account.summary(),
+        sound.summary()
+    );
+    let found: Vec<_> = model
+        .ledger
+        .symbol_chain_faults
+        .iter()
+        .map(|found| {
+            (
+                found.domain,
+                found.symbol.as_str(),
+                found.placements,
+                found.not_drawn,
+                &found.fault,
+            )
+        })
+        .collect();
+    let gauge = GAUGE.join("\\");
+    let expected: Vec<_> = faults
+        .iter()
+        .map(|fault| (LedgerDomain::Drawing, gauge.as_str(), 1, Some(why), fault))
+        .collect();
+    assert_eq!(found, expected, "{case}: what the layout found");
+
+    // The program: one line a damaged stream, each the library's sentence.
+    let sentences: Vec<String> = faults
+        .iter()
+        .map(|fault| not_drawn_sentence("", &gauge, 1, why, fault))
+        .collect();
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        sentences,
+        "{case}: the sentences"
+    );
+    let said = export_with_a_library(case, &drawing, &library, "not-drawn.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    let warned = warnings(&said.stderr);
+    eprintln!("{case}: pid_plot said: {warned:#?}");
+    assert_eq!(
+        warned,
+        sentences
+            .iter()
+            .map(|sentence| format!("warning: {}: {sentence}", drawing.display()))
+            .collect::<Vec<_>>(),
+        "{case}: one warning a damaged stream\n{said}"
+    );
+    for line in &warned {
+        for needle in [
+            "PG-Pressure Gauge.sym",
+            "are not drawn",
+            "missing symbol",
+            why.describe(),
+        ] {
+            assert!(
+                line.contains(needle),
+                "{case}: the warning does not say {needle:?}\n{said}"
+            );
+        }
+    }
+}
+
+/// The gauge's normal view read short of its first record, the circle.
+///
+/// The first record of `/Sheet6` carries the `0x4000` flag in its type
+/// word, which no record opens with: the chain stops on it, as the native
+/// reader does, and nothing of the sheet is read. The symbol reader used to
+/// mask a type word to its class and read the sheet through the flag, so
+/// the two readers gave two answers to one fault; they give one now. The
+/// sheet keeps its place as the body's normal view, with nothing to show —
+/// the file's other sheet, a circle and `PG`, is not drawn in its stead,
+/// and the gauge is not drawn.
 #[test]
-fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
-    let case = "symbol-chain-read-through";
-    let (bytes, fault) = a_damaged_gauge(a_flagged_type_word);
+fn a_symbol_file_whose_normal_view_reads_nothing_is_not_drawn_and_said() {
+    export_with_a_gauge_that_is_not_drawn(
+        "symbol-view-reads-nothing",
+        &[("/Sheet6", a_flagged_first_type_word)],
+        pid_parse::symbol_library::SymbolNotDrawn::NothingToShow,
+    );
+}
+
+/// The gauge's normal view stopped on a flagged type word, past its circle.
+///
+/// The middle record of `/Sheet6` carries the `0x4000` flag in its type
+/// word. The chain stops on it — a word no record opens with — and the
+/// records before it are the sheet's: the circle is the first of them, so
+/// the gauge is drawn, and the page is the sound library's primitive for
+/// primitive. The file is damaged all the same, and nothing on the page
+/// says that it lost nothing by it: the file is filed and said exactly as
+/// the one whose chain stops on a length.
+///
+/// Until 2026-11-12 the reader of a `.sym` masked a type word to its class
+/// and read the sheet on through the flag, where the chain walk — and the
+/// native reader — stop: the page was this one, and the two readers gave
+/// two answers to one fault. They give one now. The same flag on the
+/// sheet's first record leaves nothing to show, and that gauge is not
+/// drawn (the case above).
+#[test]
+fn a_symbol_file_whose_normal_view_stops_on_a_flagged_word_is_drawn_as_far_as_it_reads() {
+    let case = "symbol-chain-flagged-word";
+    let (bytes, faults) = a_damaged_gauge(&[("/Sheet6", a_flagged_type_word_in_the_middle)]);
+    let fault = &faults[0];
     assert!(
         fault.describe().contains("is not one a record opens with"),
         "{}",
@@ -2998,8 +3328,10 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
     let (model, account) = laid_out_with(&drawing, &a_library_of_the_gauge(case, &bytes));
     let (sound_model, sound) = laid_out_with(
         &drawing,
-        &a_library_of_the_gauge("symbol-chain-read-through-sound", &the_gauge()),
+        &a_library_of_the_gauge("symbol-chain-flagged-word-sound", &the_gauge()),
     );
+    assert_eq!(drawn_from(&account, PlacementSource::Library), 1);
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
     assert_eq!(model.primitives, sound_model.primitives, "the page");
     assert_eq!(
         symbol_files_filed(&account),
@@ -3009,9 +3341,11 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
             Some(fault.unread_bytes as u64)
         )]
     );
-    let mut expected = suspects(&sound);
-    *expected.entry("symbol_file_chain_fault").or_insert(0) += 1;
-    assert_eq!(suspects(&account), expected, "the suspects of the page");
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 1)]),
+        "the suspects of the page"
+    );
     // The count a gate reads is the summary's: one suspect more, for a
     // page that is the sound file's primitive for primitive.
     assert_eq!(
@@ -3020,6 +3354,24 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
         "the summary with the damaged file, `{}`, against the sound file's, `{}`",
         account.summary(),
         sound.summary()
+    );
+    let found = &model.ledger.symbol_chain_faults;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        (
+            found[0].domain,
+            found[0].symbol.as_str(),
+            found[0].placements,
+            found[0].not_drawn,
+            &found[0].fault
+        ),
+        (
+            LedgerDomain::Drawing,
+            GAUGE.join("\\").as_str(),
+            1,
+            None,
+            fault
+        )
     );
     assert_eq!(
         model.ledger.symbol_chain_fault_warnings(),
@@ -3032,29 +3384,182 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
     assert!(sound_model.ledger.symbol_chain_fault_warnings().is_empty());
 }
 
-/// A symbol file with two streams that do not hold is said once for each.
+/// The gauge's root cluster read short.
+///
+/// `/PSMcluster0` holds the file's layer table and its view sets, which say
+/// that `/Sheet6` is the normal view and that the heat-trace layer of it is
+/// off. With the length of its middle record set to zero the chain stops
+/// there and the records after it — the view set of sheet 6 among them —
+/// are not read. Until 2026-11-12 this stream was read through a walker of
+/// its own that then gave nothing at all, no layer and no view set: the
+/// gauge drew two circles, and the body listed no fault, so the page said
+/// nothing and filed nothing. The fault is listed now, by the walk every
+/// other stream is read by, and a cluster read short draws nothing.
+#[test]
+fn a_symbol_file_whose_root_cluster_stops_is_not_drawn_and_said() {
+    export_with_a_gauge_that_is_not_drawn(
+        "symbol-cluster-stops",
+        &[("/PSMcluster0", a_length_of_zero_in_the_middle)],
+        pid_parse::symbol_library::SymbolNotDrawn::ClusterShort,
+    );
+}
+
+/// A fault of the root cluster that loses no record: the stream opens with
+/// another word than the chain magic, and its chain reads to the end.
+///
+/// The layer table and the view sets are the records that chain reads, so
+/// the gauge is the sound file's — one circle, and the whole page primitive
+/// for primitive the sound library's. The file is damaged all the same:
+/// one warning, one item. (The walker this stream used to be read through
+/// asked for the magic and gave nothing without it: two circles, and not a
+/// word.)
+#[test]
+fn a_root_cluster_with_another_first_word_is_drawn_whole_and_said() {
+    let case = "symbol-cluster-magic";
+    let (bytes, faults) = a_damaged_gauge(&[("/PSMcluster0", another_first_word)]);
+    let fault = &faults[0];
+    assert!(
+        fault.stop.is_none() && fault.wrong_magic.is_some(),
+        "{fault:?}"
+    );
+    let library = a_library_of_the_gauge(case, &bytes);
+    let drawing = flash_b_without_the_gauges_cached_body(case);
+    let (model, account) = laid_out_with(&drawing, &library);
+    let (sound_model, sound) = laid_out_with(
+        &drawing,
+        &a_library_of_the_gauge("symbol-cluster-magic-sound", &the_gauge()),
+    );
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+    assert_eq!(
+        symbol_files_filed(&account),
+        [(
+            format!("{}:/PSMcluster0", GAUGE.join("\\")).as_str(),
+            1,
+            Some(0)
+        )]
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 1)])
+    );
+    assert_eq!(account.summary().suspect, sound.summary().suspect + 1);
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        [drawn_from_sentence("", &GAUGE.join("\\"), 1, fault)]
+    );
+    let said = export_with_a_library(case, &drawing, &library, "magic.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    assert_eq!(
+        warnings(&said.stderr),
+        [format!(
+            "warning: {}: {}",
+            drawing.display(),
+            drawn_from_sentence("", &GAUGE.join("\\"), 1, fault)
+        )],
+        "a root cluster whose first word is wrong is exactly one warning\n{said}"
+    );
+}
+
+/// One symbol file with two damaged streams is filed and said once a
+/// stream.
+///
+/// The middle record of `/Sheet6` and the first of `/Sheet68` each state a
+/// length of zero. The normal view still reads its circle, so the gauge is
+/// drawn and the page is the sound library's; the file is one placement's
+/// and two streams', and the account and the program list both, in the
+/// order of the streams' paths.
+#[test]
+fn a_symbol_file_with_two_damaged_streams_is_filed_and_said_once_a_stream() {
+    let case = "symbol-two-streams";
+    let (bytes, faults) = a_damaged_gauge(&[
+        ("/Sheet6", a_length_of_zero_in_the_middle),
+        ("/Sheet68", a_length_of_zero_on_the_first_record),
+    ]);
+    let library = a_library_of_the_gauge(case, &bytes);
+    let drawing = flash_b_without_the_gauges_cached_body(case);
+    let (model, account) = laid_out_with(&drawing, &library);
+    let (sound_model, sound) = laid_out_with(
+        &drawing,
+        &a_library_of_the_gauge("symbol-two-streams-sound", &the_gauge()),
+    );
+    assert_eq!(drawn_from(&account, PlacementSource::Library), 1);
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+    let gauge = GAUGE.join("\\");
+    assert_eq!(
+        symbol_files_filed(&account),
+        [
+            (
+                format!("{gauge}:/Sheet6").as_str(),
+                1,
+                Some(faults[0].unread_bytes as u64)
+            ),
+            (
+                format!("{gauge}:/Sheet68").as_str(),
+                1,
+                Some(faults[1].unread_bytes as u64)
+            ),
+        ],
+        "one item a damaged stream"
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 2)])
+    );
+    assert_eq!(account.summary().suspect, sound.summary().suspect + 2);
+    let sentences = [
+        drawn_from_sentence("", &gauge, 1, &faults[0]),
+        drawn_from_sentence("", &gauge, 1, &faults[1]),
+    ];
+    assert_eq!(model.ledger.symbol_chain_fault_warnings(), sentences);
+    let said = export_with_a_library(case, &drawing, &library, "two.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    assert_eq!(
+        warnings(&said.stderr),
+        sentences
+            .iter()
+            .map(|sentence| format!("warning: {}: {sentence}", drawing.display()))
+            .collect::<Vec<_>>(),
+        "one warning a damaged stream\n{said}"
+    );
+}
+
+/// A symbol file damaged in two streams no stroke of the page is read from
+/// is said once for each.
 ///
 /// The parser reports every chain stream of a `.sym` whose framing does
 /// not hold, and a page drawn from the file says each: one warning and one
 /// suspect item a file and stream. The gauge here has a length of zero in
 /// the middle of `/Sheet68`, a sheet the sound file is not drawn from, and
-/// in the middle of `/StyleCluster`, its pens: neither changes what the
-/// page draws of it — the page is the sound file's, primitive for
+/// in the middle of `/StyleCluster`, its pens. Neither is the normal view
+/// or the root cluster, so the gauge is drawn, and neither changes what
+/// the page draws of it — the page is the sound file's, primitive for
 /// primitive — and each is one line on stderr and one item of the
-/// account, two suspects more than the sound file's page counts.
+/// account, two suspects more than the sound file's page counts. (The case
+/// above damages the normal view itself.)
 #[test]
-fn a_symbol_file_with_two_damaged_streams_is_said_once_for_each() {
-    let case = "symbol-two-streams";
-    let (bytes, faults) = a_gauge_damaged_in(&["/Sheet68", "/StyleCluster"], a_length_of_zero);
+fn a_symbol_file_whose_spare_sheet_and_pens_are_damaged_is_said_once_for_each() {
+    let case = "symbol-spare-sheet-and-pens";
+    let (bytes, faults) = a_damaged_gauge(&[
+        ("/Sheet68", a_length_of_zero_in_the_middle),
+        ("/StyleCluster", a_length_of_zero_in_the_middle),
+    ]);
     assert_eq!(faults.len(), 2);
+    assert!(
+        faults.iter().all(|fault| fault.stop.is_some()),
+        "{faults:?}"
+    );
     let file = GAUGE.join("\\");
     let drawing = flash_b_without_the_gauges_cached_body(case);
     let library = a_library_of_the_gauge(case, &bytes);
     let (model, account) = laid_out_with(&drawing, &library);
     let (sound_model, sound) = laid_out_with(
         &drawing,
-        &a_library_of_the_gauge("symbol-two-streams-sound", &the_gauge()),
+        &a_library_of_the_gauge("symbol-spare-sheet-and-pens-sound", &the_gauge()),
     );
+    assert_eq!(drawn_from(&account, PlacementSource::Library), 1);
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
     assert_eq!(model.primitives, sound_model.primitives, "the page");
 
     // The account: the file once a stream, each with what its own chain
@@ -3103,6 +3608,7 @@ fn a_symbol_file_with_two_damaged_streams_is_said_once_for_each() {
                 found.domain == LedgerDomain::Drawing
                     && found.symbol == file
                     && found.placements == 1
+                    && found.not_drawn.is_none()
                     && &found.fault == fault
             }),
             "{} is not among the findings: {found:?}",
@@ -3142,14 +3648,309 @@ fn a_symbol_file_with_two_damaged_streams_is_said_once_for_each() {
     }
 }
 
+/// A symbol library kept inside a `RefData~*.zip`, as a backup package
+/// keeps it: a damaged member is drawn from and said like a damaged file
+/// of a directory.
+///
+/// The archive is the only source — no directory root — and holds the
+/// gauge under the path a library root would. With the middle record of
+/// the member's `/Sheet6` stopped, the copy whose gauge has no cached body
+/// draws the gauge from the member, the page is the page drawn from the
+/// sound archive, the account files the file once, and the program says
+/// the one line it says for a file on disk.
+#[test]
+fn a_damaged_symbol_file_inside_an_archive_is_drawn_from_and_said() {
+    let case = "symbol-in-an-archive";
+    let (bytes, faults) = a_damaged_gauge(&[("/Sheet6", a_length_of_zero_in_the_middle)]);
+    let archive = |tag: &str, bytes: &[u8]| -> PathBuf {
+        let path = scratch(case).join(tag).join("RefData~4~681.zip");
+        std::fs::create_dir_all(path.parent().expect("a directory"))
+            .unwrap_or_else(|error| panic!("mkdir for {}: {error}", path.display()));
+        std::fs::write(&path, stored_zip(&GAUGE.join("/"), bytes))
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        path
+    };
+    let damaged = archive("damaged", &bytes);
+    let sound_archive = archive("sound", &the_gauge());
+    let drawing = flash_b_without_the_gauges_cached_body(case);
+    let (sound_model, sound) = laid_out(&drawing, &fixtures(), Vec::new(), vec![sound_archive]);
+    assert_eq!(
+        (
+            drawn_from(&sound, PlacementSource::Cached),
+            drawn_from(&sound, PlacementSource::Library)
+        ),
+        (64, 1),
+        "the gauge is drawn from the archive's member"
+    );
+    assert!(sound_model.ledger.symbol_chain_faults.is_empty());
+    let (model, account) = laid_out(&drawing, &fixtures(), Vec::new(), vec![damaged.clone()]);
+    assert_eq!(drawn_from(&account, PlacementSource::Library), 1);
+    assert_eq!(the_gauge_as_drawn(&model), ["circle"]);
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+    let gauge = GAUGE.join("\\");
+    assert_eq!(
+        symbol_files_filed(&account),
+        [(
+            format!("{gauge}:/Sheet6").as_str(),
+            1,
+            Some(faults[0].unread_bytes as u64)
+        )]
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 1)])
+    );
+    assert_eq!(account.summary().suspect, sound.summary().suspect + 1);
+    let sentence = drawn_from_sentence("", &gauge, 1, &faults[0]);
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        std::slice::from_ref(&sentence)
+    );
+    let said = export_with(case, &drawing, &fixtures(), &damaged, "archived.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    assert_eq!(
+        warnings(&said.stderr),
+        [format!("warning: {}: {sentence}", drawing.display())],
+        "a damaged member of an archive, drawn from, is exactly one warning\n{said}"
+    );
+}
+
 /// The border template `D06` wears, as `test-file/Ref/Template Files`
 /// keeps it.
 const TEMPLATE: &str = "CPECCHB-SQ-A2.igr";
 
-/// A symbol that template places twice, down its sign-off column. The
-/// template names it by a path on the machine its title block was authored
-/// on, so a library answers by the file's name alone.
+/// `test-file/Ref/Template Files/CPECCHB-SQ-A2.igr`, the border template
+/// `D06.pid` wears.
+fn d06_template() -> PathBuf {
+    fixtures()
+        .join("Ref")
+        .join("Template Files")
+        .join("CPECCHB-SQ-A2.igr")
+}
+
+/// A symbol that template places, by the file name of the path its author's
+/// machine kept it under (`C:\Users\…\Temp\hqz.sym`). A path like that names
+/// no library: a root that holds exactly one file of the name supplies it.
 const TEMPLATE_SYMBOL: &str = "hqz.sym";
+
+/// A placement of the border template drawn from a damaged symbol file is
+/// said and filed as the template's.
+///
+/// A template is a drawing, and caches the body of every symbol it places:
+/// no page of the corpora draws a template's placement from the library. To
+/// reach it, a corpus of this case's own holds a copy of `D06.pid`'s
+/// template in which the placements of `hqz.sym` name no cached body, and
+/// the library is one file of that name — the committed gauge.
+///
+/// With the sound file the placements are drawn from the library and not a
+/// word is said. With the middle record of the file's normal view stopped
+/// they are drawn as far as it reads — the same page — and the file is
+/// said and filed once, in the furniture's domain, as the border
+/// template's. With the file's root cluster stopped they are not drawn:
+/// the furniture's account files them as missing symbols beside the file,
+/// the template's own list of placements says the body is missing while
+/// the file is there, and the drawing's own missing symbols and their boxes
+/// are what they were — a template's misses are not the drawing's.
+#[test]
+fn a_template_placement_drawn_from_a_damaged_symbol_file_is_said_as_the_templates() {
+    let case = "symbol-of-the-template";
+    let corpus = scratch(case).join("corpus");
+    let templates = corpus.join("Ref").join("Template Files");
+    std::fs::create_dir_all(&templates)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", templates.display()));
+    let placements =
+        without_the_cached_bodies_of(&d06_template(), TEMPLATE_SYMBOL, &templates.join(TEMPLATE))
+            .len();
+    assert!(
+        placements >= 1,
+        "the template places {TEMPLATE_SYMBOL}: {placements} placement(s)"
+    );
+    let placed = u64::try_from(placements).expect("a count");
+    let a_library = |tag: &str, bytes: &[u8]| -> PathBuf {
+        let root = scratch(case).join(tag);
+        std::fs::create_dir_all(&root)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", root.display()));
+        std::fs::write(root.join(TEMPLATE_SYMBOL), bytes)
+            .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
+        root
+    };
+    let furniture_from = |account: &ExportLedger, source: PlacementSource| {
+        account
+            .furniture
+            .bodies
+            .placements
+            .get(&source)
+            .copied()
+            .unwrap_or(0)
+    };
+    let drawing = d06();
+
+    // The committed template: every placement of it from its own cache.
+    let (_, committed) = laid_out(
+        &drawing,
+        &fixtures(),
+        vec![a_library("unused", &the_gauge())],
+        Vec::new(),
+    );
+    let cached = furniture_from(&committed, PlacementSource::Cached);
+    assert!(
+        cached >= placed,
+        "{cached} cached placement(s) of the template"
+    );
+    assert_eq!(furniture_from(&committed, PlacementSource::Library), 0);
+
+    // The copy, with the sound file: drawn from the library, not a word.
+    let sound_library = a_library("sound", &the_gauge());
+    let (sound_model, sound) = laid_out(&drawing, &corpus, vec![sound_library.clone()], Vec::new());
+    assert_eq!(
+        (
+            furniture_from(&sound, PlacementSource::Cached),
+            furniture_from(&sound, PlacementSource::Library)
+        ),
+        (cached - placed, placed),
+        "the template's placements of {TEMPLATE_SYMBOL} are drawn from the library"
+    );
+    assert!(sound_model.ledger.symbol_chain_faults.is_empty());
+    let silent = export_with(case, &drawing, &corpus, &sound_library, "sound.pdf");
+    assert!(
+        warnings(&silent.stderr).is_empty(),
+        "a sound symbol file of the template drew a warning\n{silent}"
+    );
+
+    // The middle record of the file's normal view stopped: drawn as far as
+    // it reads, said and filed as the template's.
+    let (bytes, faults) = a_damaged_gauge(&[("/Sheet6", a_length_of_zero_in_the_middle)]);
+    let library = a_library("stopped", &bytes);
+    let (model, account) = laid_out(&drawing, &corpus, vec![library.clone()], Vec::new());
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+    assert_eq!(furniture_from(&account, PlacementSource::Library), placed);
+    assert_eq!(model.ledger.symbol_chain_faults.len(), 1);
+    let found = &model.ledger.symbol_chain_faults[0];
+    assert_eq!(
+        (
+            found.domain,
+            found.placements,
+            found.not_drawn,
+            &found.fault
+        ),
+        (LedgerDomain::Furniture, placed, None, &faults[0])
+    );
+    assert!(
+        found.symbol.to_ascii_lowercase().ends_with(TEMPLATE_SYMBOL),
+        "{}",
+        found.symbol
+    );
+    let symbol = found.symbol.clone();
+    assert_eq!(
+        symbol_files_filed_in(&account.furniture),
+        [(
+            format!("{symbol}:/Sheet6").as_str(),
+            1,
+            Some(faults[0].unread_bytes as u64)
+        )],
+        "filed in the furniture's domain"
+    );
+    assert!(
+        symbol_files_filed(&account).is_empty(),
+        "and not the drawing's"
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(&sound, &[("symbol_file_chain_fault", 1)])
+    );
+    assert_eq!(account.summary().suspect, sound.summary().suspect + 1);
+    let sentence = drawn_from_sentence("in the border template, ", &symbol, placed, &faults[0]);
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        std::slice::from_ref(&sentence)
+    );
+    let said = export_with(case, &drawing, &corpus, &library, "stopped.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    assert_eq!(
+        warnings(&said.stderr),
+        [format!("warning: {}: {sentence}", drawing.display())],
+        "a damaged symbol file of the template is exactly one warning\n{said}"
+    );
+
+    // The file's root cluster stopped: the placements are not drawn.
+    let (bytes, faults) = a_damaged_gauge(&[("/PSMcluster0", a_length_of_zero_in_the_middle)]);
+    let library = a_library("cluster", &bytes);
+    let (model, account) = laid_out(&drawing, &corpus, vec![library.clone()], Vec::new());
+    let why = pid_parse::symbol_library::SymbolNotDrawn::ClusterShort;
+    assert_eq!(
+        (
+            furniture_from(&account, PlacementSource::Library),
+            furniture_from(&account, PlacementSource::Missing)
+        ),
+        (0, furniture_from(&sound, PlacementSource::Missing) + placed),
+        "the template's placements count as missing symbols'"
+    );
+    assert_eq!(
+        suspects(&account),
+        suspects_with(
+            &sound,
+            &[("symbol_file_chain_fault", 1), ("symbol_missing", placed)]
+        )
+    );
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + 1 + placed
+    );
+    let template = model
+        .template
+        .as_ref()
+        .expect("the page wears its template");
+    let of_the_symbol: Vec<_> = template
+        .symbols
+        .iter()
+        .filter(|placed| placed.key.to_ascii_lowercase().ends_with(TEMPLATE_SYMBOL))
+        .map(|placed| (placed.body, placed.library_available, placed.extent_mm))
+        .collect();
+    assert_eq!(
+        of_the_symbol,
+        vec![(pid_plot::model::SymbolBodySource::Missing, true, None); placements],
+        "the template's own list: no body drawn, of a file that is there"
+    );
+    // A template's misses are not the drawing's.
+    assert_eq!(model.missing_symbols, sound_model.missing_symbols);
+    assert_eq!(model.missing_boxes, sound_model.missing_boxes);
+    // Nothing of the gauge is on the page, and everything else is.
+    let without_the_symbol = |model: &PaperModel| -> Vec<PaperPrimitive> {
+        model
+            .primitives
+            .iter()
+            .filter(|primitive| {
+                !primitive
+                    .symbol
+                    .as_deref()
+                    .is_some_and(|named| named.to_ascii_lowercase().ends_with(TEMPLATE_SYMBOL))
+            })
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        without_the_symbol(&model),
+        model.primitives,
+        "nothing drawn of it"
+    );
+    assert_eq!(
+        model.primitives,
+        without_the_symbol(&sound_model),
+        "the rest of the page"
+    );
+    let sentence = not_drawn_sentence("in the border template, ", &symbol, placed, why, &faults[0]);
+    assert_eq!(
+        model.ledger.symbol_chain_fault_warnings(),
+        std::slice::from_ref(&sentence)
+    );
+    let said = export_with(case, &drawing, &corpus, &library, "cluster.pdf");
+    the_programs_suspects_are_the_accounts(&said, &account);
+    assert_eq!(
+        warnings(&said.stderr),
+        [format!("warning: {}: {sentence}", drawing.display())],
+        "a symbol file of the template that is not drawn from is exactly one warning\n{said}"
+    );
+}
 
 /// A corpus of `case`'s own that holds one border template — [`TEMPLATE`]
 /// with no cached body for its placements of [`TEMPLATE_SYMBOL`]
@@ -3182,8 +3983,8 @@ fn of_the_templates_symbol(primitive: &PaperPrimitive) -> bool {
     })
 }
 
-/// A damaged symbol file that a border template's placement is drawn from
-/// is said as the template's.
+/// A damaged symbol file of the border template is named as the template
+/// names it, and filed among the template's items alone.
 ///
 /// A template is a drawing, and a symbol it places is drawn as any other:
 /// from the body the template caches, and from the symbol library only for
@@ -3205,8 +4006,14 @@ fn of_the_templates_symbol(primitive: &PaperPrimitive) -> bool {
 /// title block was authored on. A placement that names no reference share
 /// is found by its file name alone, and the library does not say which
 /// file answered.
+///
+/// (The case above damages the gauge's normal view and its root cluster.
+/// This one holds what stands around them: that the page wears the copy
+/// of the template, which differs from the committed one in those two
+/// placements alone; how many placements the template has and where each
+/// is drawn from; and the name the file is filed and said under.)
 #[test]
-fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_templates() {
+fn a_damaged_symbol_file_of_the_template_is_named_as_the_template_names_it() {
     let case = "symbol-template";
     let (corpus, named) = a_corpus_whose_template_draws_from_the_library(case);
     let drawing = d06();
@@ -3215,7 +4022,7 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
     // from the library, and nothing is said.
     let sound_library =
         a_library_holding("symbol-template-sound", &[TEMPLATE_SYMBOL], &the_gauge());
-    let (sound_model, sound) = laid_out_against(&drawing, &corpus, &sound_library);
+    let (sound_model, sound) = laid_out(&drawing, &corpus, vec![sound_library.clone()], Vec::new());
     let template = sound_model
         .template
         .as_ref()
@@ -3269,10 +4076,10 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
     );
 
     // The same file with a stream that does not hold.
-    let (bytes, faults) = a_gauge_damaged_in(&["/Sheet68"], a_length_of_zero);
+    let (bytes, faults) = a_damaged_gauge(&[("/Sheet68", a_length_of_zero_in_the_middle)]);
     let fault = &faults[0];
     let library = a_library_holding(case, &[TEMPLATE_SYMBOL], &bytes);
-    let (model, account) = laid_out_against(&drawing, &corpus, &library);
+    let (model, account) = laid_out(&drawing, &corpus, vec![library.clone()], Vec::new());
     assert_eq!(model.primitives, sound_model.primitives, "the page");
     assert_eq!(
         symbol_files_filed_in(&account.furniture),
@@ -3300,9 +4107,10 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
             found.domain,
             found.symbol.as_str(),
             found.placements,
+            found.not_drawn,
             &found.fault
         ),
-        (LedgerDomain::Furniture, named.as_str(), 2, fault)
+        (LedgerDomain::Furniture, named.as_str(), 2, None, fault)
     );
     let sentence = format!(
         "in the border template, the symbol file {named}, which 2 placement(s) on the page are \
@@ -3326,7 +4134,7 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
 
     // The program: one line, the library's sentence, and the sound file's
     // exit code; with the sound file, not a word.
-    let said = export_against(case, &drawing, &corpus, &library, "template.pdf");
+    let said = export_with(case, &drawing, &corpus, &library, "template.pdf");
     let warned = warnings(&said.stderr);
     assert_eq!(
         warned,
@@ -3341,7 +4149,7 @@ fn a_damaged_symbol_file_a_templates_placement_is_drawn_from_is_said_as_the_temp
             "the program's summary is not the account's\n{said}"
         );
     }
-    let silent = export_against(
+    let silent = export_with(
         "symbol-template-sound",
         &drawing,
         &corpus,

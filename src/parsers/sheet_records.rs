@@ -2526,6 +2526,29 @@ impl SheetChain {
     pub fn is_sound(&self) -> bool {
         self.stop.is_none() && self.wrong_magic().is_none() && !self.count_differs()
     }
+
+    /// Whether the walk read the stream short of its records: it stopped
+    /// before the stream's end, or it reached the end with fewer live
+    /// records than the header states.
+    ///
+    /// The second is what a stream cut off at a record boundary reads as —
+    /// the walk ends cleanly on the new last byte, and only the count says
+    /// records are gone. It is also what a header that counts one too many
+    /// reads as, and nothing in the stream tells the two apart; a reader
+    /// that must not take a short stream for a whole one takes both for
+    /// short.
+    ///
+    /// Not short, though [`Self::is_sound`] is false: a first word that is
+    /// not the magic over a chain that reaches the end, and a header that
+    /// counts fewer live records than the chain holds. Neither left a
+    /// record unread.
+    #[must_use]
+    pub fn is_short(&self) -> bool {
+        self.stop.is_some()
+            || self.stated_records.is_some_and(|stated| {
+                usize::try_from(stated).is_ok_and(|stated| self.live_records < stated)
+            })
+    }
 }
 
 /// Every offset a record starts at in a chain stream that walks to its last
@@ -8693,7 +8716,9 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 //   boxes and one 14-byte entry per member: the member's oid, its range
 //   box, and a word that is `0x8000` on the `0x0019 KeyPoint Constraint`
 //   records that pin one curve's end to the next one's start and `0x0000` /
-//   `0x0005` on the curves. Every curve member of the eight sheet records
+//   `0x0005` on the curves. After the entries the record closes, in one of
+//   two ways: `00 02 00 00` on a sheet, `00 03 00 00` and one `u32` a
+//   member in a symbol cache. Every curve member of the eight sheet records
 //   the corpora hold is a live `igLine2d` or `igArc2d` of the same stream
 //   whose owner is the string's oid and whose layer and style id are the
 //   string's — so the members, which decode and emit on their own, already
@@ -8761,6 +8786,50 @@ const IGGROUP_MEMBERS_AT: usize = 28;
 /// The word a `ComplexString` member entry carries when the member is a
 /// constraint between two of its curves rather than a curve.
 pub const IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER: u16 = 0x8000;
+
+/// How a `ComplexString` closes on a sheet: these four bytes after its last
+/// member entry, and nothing after them.
+const IGCOMPLEXSTRING2D_CLOSE_ON_A_SHEET: [u8; 4] = [0x00, 0x02, 0x00, 0x00];
+/// How a `ComplexString` closes in a symbol cache: these four bytes after
+/// its last member entry, and then one `u32` a member.
+const IGCOMPLEXSTRING2D_CLOSE_IN_A_CACHE: [u8; 4] = [0x00, 0x03, 0x00, 0x00];
+
+/// Whether `trailing` — what a `ComplexString`'s payload holds after its
+/// `count` member entries — is one of the two ways a string closes.
+///
+/// This is what tells a string from a run of bytes read as one. A record's
+/// length and its member count are stated apart, and a string was held only
+/// to a count the payload has room for: any payload long enough passed,
+/// with whatever was left over for a trailer. A walk that a wrong length
+/// has sent off the record boundaries reads such payloads — on one sheet of
+/// the plant backup, 28 bytes into each of two `DependencyObject` records,
+/// a type word `0x0021`, a length of 65 536 and a count of 256, with 61 919
+/// bytes after the entries — and four of the 1 371 448 records such walks
+/// read off the corpora's chains decoded so.
+///
+/// Every `ComplexString` on a chain of the corpora closes in one of these
+/// two ways, 34 records of 885 documents: the eight on sheets in the first
+/// (strings of 3, 5, 8 and 11 members), the 26 in the `PSMcluster0` of a
+/// symbol cache in the second (3, 4 and 8 members, and so 16, 20 and 36
+/// bytes; every one of those `u32` is zero, which is not held). No style
+/// table holds a string. What the two forms state is not decoded; that the
+/// length of the second follows the count is what the three sizes show.
+///
+/// A Group's closing is not held the same way. Its records on sheets all
+/// close `00 02 00 00`, but 259 more live in style tables, read by
+/// `style_link`, and two of those close `00 00 00 00`.
+fn igcomplexstring_closes(trailing: &[u8], count: usize) -> bool {
+    let Some((close, after)) = trailing.split_first_chunk::<4>() else {
+        return false;
+    };
+    if *close == IGCOMPLEXSTRING2D_CLOSE_ON_A_SHEET {
+        after.is_empty()
+    } else if *close == IGCOMPLEXSTRING2D_CLOSE_IN_A_CACHE {
+        count.checked_mul(4) == Some(after.len())
+    } else {
+        false
+    }
+}
 
 /// One member entry of a [`SheetIgComplexString2dDecoded`] or a
 /// [`SheetIgGroupDecoded`].
@@ -8833,8 +8902,11 @@ pub struct SheetIgComplexString2dDecoded {
     /// The members, in on-disk order: the curves first, then the constraints
     /// that join them.
     pub members: Vec<SheetAssociationMember>,
-    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
-    /// sheet.
+    /// The bytes after the last member entry, verbatim: how the record
+    /// closes, which is one of two ways and is what a record is held to.
+    /// `00 02 00 00` on a sheet; `00 03 00 00` and then one `u32` a member
+    /// in a symbol cache, where every such `u32` of the corpora is zero.
+    /// What either states is not decoded.
     pub trailing: Vec<u8>,
 }
 
@@ -8920,9 +8992,15 @@ fn association_members(
 ///
 /// At each record the chain starts: type code
 /// [`PSM_TYPE_CODE_IGCOMPLEXSTRING2D`]; a member count of at least one whose
-/// entries the payload has room for; a finite range scale before them. The
-/// count is bounded by the payload, not by a constant: a string is as long
-/// as the record that holds it.
+/// entries the payload has room for; a finite range scale before them; and
+/// after them the record's closing, which is four bytes on a sheet and four
+/// bytes with a `u32` a member in a symbol cache
+/// ([`SheetIgComplexString2dDecoded::trailing`]). The count is bounded by
+/// the payload, not by a constant: a string is as long as the record that
+/// holds it — and no longer, which is what the closing holds it to. A
+/// payload with room for its count and anything at all after the entries
+/// was a string until 2026-11-12, and four runs of bytes a walk reads off
+/// a chain of the plant backup decoded as one.
 pub fn decode_igcomplexstrings(data: &[u8]) -> Vec<SheetIgComplexString2dDecoded> {
     IgComplexString2dDecoder.scan(data)
 }
@@ -8983,9 +9061,12 @@ impl PsmRecordDecoder for IgComplexString2dDecoder {
             return None;
         }
         let members = association_members(payload, IGCOMPLEXSTRING2D_MEMBERS_AT, count)?;
-        let trailing = payload
-            .get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
-            .to_vec();
+        let trailing =
+            payload.get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?;
+        if !igcomplexstring_closes(trailing, count) {
+            return None;
+        }
+        let trailing = trailing.to_vec();
         Some(SheetIgComplexString2dDecoded {
             byte_range: offset..end,
             type_flags: header.type_flags,
@@ -9076,6 +9157,20 @@ mod association_family_tests {
         0x00, 0x00, 0x45, 0x00, 0x00, 0x00, 0xb3, 0x31, 0xed, 0xff, 0xd9, 0x31, 0x60, 0x0e, 0x00,
         0x00, 0x46, 0x00, 0x00, 0x00, 0xc6, 0x31, 0x4c, 0x0e, 0xc7, 0x31, 0x4d, 0x0e, 0x00, 0x80,
         0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// `CPE-SQ-A0.igr`'s `/JSite16/PSMcluster0 +1789`, oid 33, payload
+    /// verbatim: a string kept in a symbol cache — two curves and the
+    /// constraint that joins them — which closes the way the strings of a
+    /// cache do, `00 03 00 00` and a `u32` a member.
+    const STRING_IN_A_CACHE: [u8; 91] = [
+        0x21, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xf0, 0x3f, 0x22, 0x00, 0x00, 0x00, 0xb4, 0xff, 0xf2, 0xff, 0x00, 0x00, 0x0e, 0x00,
+        0x05, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf1, 0xff, 0x4c, 0x00, 0x0e, 0x00, 0x05,
+        0x00, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x80,
+        0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
     ];
 
     /// `A01.pid`'s `/JSite204/Sheet6 +2872`, oid 311, payload verbatim: the
@@ -9310,6 +9405,140 @@ mod association_family_tests {
         let mut payload = GROUP_OF_TWO.to_vec();
         payload[IGGROUP_COUNT_AT] = 0;
         assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
+    }
+
+    /// A string closes in one of two ways after its last member entry —
+    /// four bytes on a sheet, four bytes and a `u32` a member in a symbol
+    /// cache — and a record that closes in neither is no string.
+    #[test]
+    fn a_string_closes_as_a_sheets_or_as_a_caches() {
+        let decode = |payload: &[u8]| {
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, payload), 0)
+        };
+        let on_a_sheet = decode(&STRING_OF_TWO).expect("a sheet's string decodes");
+        assert_eq!(on_a_sheet.trailing, [0x00, 0x02, 0x00, 0x00]);
+
+        let in_a_cache = decode(&STRING_IN_A_CACHE).expect("a cache's string decodes");
+        assert_eq!(
+            (
+                in_a_cache.oid,
+                in_a_cache.parent_ref,
+                in_a_cache.sheet_layer_ref
+            ),
+            (33, 29, 32)
+        );
+        assert_eq!((in_a_cache.index, in_a_cache.range_scale), (10, 1.0));
+        assert_eq!(
+            in_a_cache
+                .members
+                .iter()
+                .map(|member| (member.oid, member.range_box, member.word))
+                .collect::<Vec<_>>(),
+            [
+                (34, [-76, -14, 0, 14], 0x0005),
+                (35, [0, -15, 76, 14], 0x0005),
+                (36, [0, 0, 0, 1], IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER),
+            ]
+        );
+        let mut closing = vec![0x00, 0x03, 0x00, 0x00];
+        closing.extend_from_slice(&[0; 12]);
+        assert_eq!(in_a_cache.trailing, closing);
+
+        // The three members of the sheet's string, under each closing in
+        // turn.
+        let entries = &STRING_OF_TWO[..IGCOMPLEXSTRING2D_MEMBERS_AT + 3 * ASSOCIATION_MEMBER_LEN];
+        let closed_with = |closing: &[u8]| {
+            let mut payload = entries.to_vec();
+            payload.extend_from_slice(closing);
+            decode(&payload)
+        };
+        assert!(closed_with(&[0, 2, 0, 0]).is_some());
+        // What the `u32` a member states is not decoded, and not held to
+        // the zero the corpora's are.
+        assert!(closed_with(&[0, 3, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]).is_some());
+        for (closing, what) in [
+            (&[][..], "no closing"),
+            (&[0, 2, 0][..], "a closing cut short"),
+            (&[0, 2, 0, 0, 0][..], "a byte after a sheet's closing"),
+            (
+                &[0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a sheet's closing with a word a member",
+            ),
+            (&[0, 3, 0, 0][..], "a cache's closing with no word"),
+            (
+                &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a cache's closing a word short",
+            ),
+            (
+                &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a cache's closing a word long",
+            ),
+            (&[0, 4, 0, 0][..], "another second byte"),
+            (&[1, 2, 0, 0][..], "another first byte"),
+            (&[0, 2, 0, 1][..], "another last byte"),
+            (&[0, 0, 0, 0][..], "four bytes of zero"),
+        ] {
+            assert!(
+                closed_with(closing).is_none(),
+                "{what} is taken for a string"
+            );
+        }
+    }
+
+    /// A count below the record's own leaves entries of the record behind
+    /// it, and they close nothing: the string of three read as one of two
+    /// has its third entry and its closing, 18 bytes, where a closing
+    /// stands.
+    #[test]
+    fn a_count_that_leaves_entries_behind_is_refused() {
+        for count in [1, 2] {
+            let mut payload = STRING_OF_TWO.to_vec();
+            payload[IGCOMPLEXSTRING2D_COUNT_AT] = count;
+            assert!(
+                decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                    .is_none(),
+                "a count of {count} on a record of three"
+            );
+        }
+    }
+
+    /// What four length changes led a walk to on one sheet of the plant
+    /// backup (`G井场进站生产收球筒`'s `/Sheet6`): 28 bytes into a
+    /// `DependencyObject`, a type word `0x0021` and a length of 65 536, with
+    /// a `u32` of 256 where a string keeps its count and zero, or a
+    /// denormal, where it keeps its scale. The payload has room for 256
+    /// entries and the scale is finite, which is all a string was held to
+    /// until 2026-11-12. What follows the entries is 61 919 bytes of the
+    /// stream, and a string closes in four, or in four and a word a member.
+    #[test]
+    fn a_run_of_bytes_with_room_for_its_count_is_no_string() {
+        for scale in [0.0_f64, 5.4e-312] {
+            let mut payload: Vec<u8> = (0..65_536_u32)
+                .map(|i| (i.wrapping_mul(31) >> 3) as u8)
+                .collect();
+            payload[12..14].copy_from_slice(&3_u16.to_le_bytes());
+            payload[IGCOMPLEXSTRING2D_COUNT_AT..IGCOMPLEXSTRING2D_COUNT_AT + 4]
+                .copy_from_slice(&256_u32.to_le_bytes());
+            payload[IGCOMPLEXSTRING2D_COUNT_AT + 4..IGCOMPLEXSTRING2D_COUNT_AT + 12]
+                .copy_from_slice(&scale.to_le_bytes());
+            let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload);
+            assert!(
+                decode_igcomplexstring_at(&record, 0).is_none(),
+                "scale {scale:e}: 61 919 bytes after the entries"
+            );
+            assert!(decode_igcomplexstrings(&chain_stream(&record)).is_empty());
+
+            // The closing is the whole of what refuses it: the same bytes,
+            // cut off after their 256 entries and closed as a sheet's
+            // string closes, are a string by every rule the decoder has.
+            let mut closed =
+                payload[..IGCOMPLEXSTRING2D_MEMBERS_AT + 256 * ASSOCIATION_MEMBER_LEN].to_vec();
+            closed.extend_from_slice(&[0x00, 0x02, 0x00, 0x00]);
+            let string =
+                decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &closed), 0)
+                    .expect("closed as a string closes");
+            assert_eq!(string.members.len(), 256);
+        }
     }
 
     #[test]
@@ -11139,6 +11368,69 @@ mod tests {
         let refused = refused_smartframes(&stream);
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0].byte_range, second..stream.len());
+    }
+
+    /// A chain is short when records are left unread: the walk stopped, or
+    /// it ended with fewer live records than the header states. A wrong
+    /// magic and a header that counts too few are faults that lose nothing.
+    #[test]
+    fn a_chain_is_short_when_records_are_left_unread() {
+        let frame = smart_frame_record(22);
+        let stream = |stated: u32, records: usize| {
+            let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+            stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+            stream[4..8].copy_from_slice(&stated.to_le_bytes());
+            for _ in 0..records {
+                stream.extend_from_slice(&frame);
+            }
+            stream
+        };
+        let sound = stream(2, 2);
+        let chain = SheetChain::walk(&sound);
+        assert!(chain.is_sound() && !chain.is_short());
+
+        // Stopped: a length of zero, stray bytes after the last record, a
+        // stream shorter than its header.
+        let mut zero = sound.clone();
+        let second = SHEET_STREAM_HEADER_LEN + frame.len();
+        zero[second + 2..second + 6].copy_from_slice(&0u32.to_le_bytes());
+        let mut stray = sound.clone();
+        stray.extend_from_slice(&[0xEE; 4]);
+        for (stopped, what) in [
+            (zero.as_slice(), "a length of zero"),
+            (stray.as_slice(), "stray bytes"),
+            (&sound[..5], "five bytes"),
+        ] {
+            let chain = SheetChain::walk(stopped);
+            assert!(chain.stop.is_some() && chain.is_short(), "{what}");
+        }
+
+        // Not stopped, and short all the same: cut off at a record
+        // boundary; a header that counts one more than the chain holds.
+        for (short, what) in [
+            (sound[..second].to_vec(), "cut off before the second record"),
+            (stream(3, 2), "a count one too many"),
+        ] {
+            let chain = SheetChain::walk(&short);
+            assert!(
+                chain.stop.is_none() && !chain.is_sound() && chain.is_short(),
+                "{what}"
+            );
+        }
+
+        // Faults that leave no record unread.
+        let mut magic = sound.clone();
+        magic[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        for (whole, what) in [
+            (magic, "a wrong magic"),
+            (stream(1, 2), "a count one too few"),
+        ] {
+            let chain = SheetChain::walk(&whole);
+            assert!(!chain.is_sound() && !chain.is_short(), "{what}");
+        }
+
+        // An empty stream has nothing to be short of.
+        assert!(!SheetChain::walk(&[]).is_short());
     }
 
     /// A family decodes the records its stream's chain starts, and nothing

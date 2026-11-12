@@ -421,18 +421,19 @@ pub struct ChainFaultRecord {
 }
 
 /// One chain stream of a symbol file whose framing does not hold, in a file
-/// a placement of the page is drawn from, and the domain of that placement.
+/// a placement of the page takes its body from, and the domain of that
+/// placement.
 ///
-/// The placement is drawn from whatever the symbol reader took of the
-/// file, and the reader takes a sheet only where its own walk of it ends
-/// on the stream's last byte. On the committed pressure gauge, whose
-/// `/Sheet6` is its normal view: a length of zero, stray bytes at the end
-/// or a wrong magic leave that sheet out, the body is then the file's
-/// other sheet, and the page draws the gauge's circle and a `PG` the sound
-/// file does not letter; a type word with the `0x4000` flag or a header
-/// count that is off is a fault that walk does not see, and the body is
-/// the sound file's. The page cannot tell which: the account says the
-/// file is damaged, as a suspect item, and `pid_plot` does, on stderr.
+/// The symbol reader reads such a stream as far as its chain holds, by the
+/// walk a drawing's own sheets are read by, and what it draws of the file
+/// is part of what the sound file draws or nothing
+/// (`pid_parse::symbol_library::SymbolGeometry::displayed`): a sheet read
+/// short draws the strokes before the stop; a fault that loses no record —
+/// a wrong magic, a header that counts too few — draws the sound file's
+/// body. Where the part cannot be had ([`Self::not_drawn`]) the placement
+/// is not drawn and counts as a symbol the library does not hold. The page
+/// cannot show which of these it is: the account says the file is damaged,
+/// as a suspect item, and `pid_plot` does, on stderr.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolChainFault {
     /// The drawing's own placement, or the border template's.
@@ -440,39 +441,61 @@ pub struct SymbolChainFault {
     /// The symbol file, as the placement names it below the library's
     /// `Symbols` directory.
     pub symbol: String,
-    /// How many placements of the page are drawn from the file.
+    /// How many placements of the page take their body from the file:
+    /// drawn from it, or — with [`Self::not_drawn`] — left undrawn for it.
     pub placements: u64,
+    /// Why those placements are not drawn, when the damage leaves no part
+    /// of the body that can be drawn as the sound file's. Each of them is
+    /// then one [`DropReason::SymbolMissing`] of the account as well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_drawn: Option<pid_parse::symbol_library::SymbolNotDrawn>,
     /// What the parser found wrong with the stream.
     pub fault: pid_parse::StreamChainFault,
 }
 
+/// A symbol file with chain streams that do not hold, as a page's
+/// placements met it: what [`LayoutLedger::note_symbol_chain_faults`] files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolFileFaults {
+    /// The symbol file, as the placements name it below the library's
+    /// `Symbols` directory.
+    pub symbol: String,
+    /// How many placements of the page take their body from the file.
+    pub placements: u64,
+    /// Why they are not drawn, when they are not.
+    pub not_drawn: Option<pid_parse::symbol_library::SymbolNotDrawn>,
+    /// The faults the file's body lists, one a stream.
+    pub faults: Vec<pid_parse::StreamChainFault>,
+}
+
 impl LayoutLedger {
     /// File the symbol files with a chain stream that does not hold that
-    /// `domain`'s placements are drawn from: one suspect
+    /// `domain`'s placements take their body from: one suspect
     /// [`DropReason::SymbolFileChainFault`] item a
     /// file and stream, with the bytes its chain left unread, and the
     /// finding itself in [`Self::symbol_chain_faults`]. `faults` is one
-    /// entry a symbol file: its name, how many placements are drawn from
-    /// it, and the faults its body carries.
+    /// entry a symbol file: its name, how many placements take their body
+    /// from it, whether they are drawn, and the faults its body carries.
     pub fn note_symbol_chain_faults(
         &mut self,
         domain: LedgerDomain,
-        faults: impl IntoIterator<Item = (String, u64, Vec<pid_parse::StreamChainFault>)>,
+        faults: impl IntoIterator<Item = SymbolFileFaults>,
     ) {
-        for (symbol, placements, of_the_file) in faults {
-            for fault in of_the_file {
+        for file in faults {
+            for fault in file.faults {
                 self.parse.get_mut(domain).push_record(
                     ParseRecord::new(
                         DropReason::SymbolFileChainFault,
-                        format!("{symbol}:{}", fault.stream_path),
+                        format!("{}:{}", file.symbol, fault.stream_path),
                         1,
                     )
                     .of_bytes(u64::try_from(fault.unread_bytes).unwrap_or(u64::MAX)),
                 );
                 self.symbol_chain_faults.push(SymbolChainFault {
                     domain,
-                    symbol: symbol.clone(),
-                    placements,
+                    symbol: file.symbol.clone(),
+                    placements: file.placements,
+                    not_drawn: file.not_drawn,
                     fault,
                 });
             }
@@ -480,13 +503,15 @@ impl LayoutLedger {
     }
 
     /// One sentence per symbol file and stream whose chain does not hold
-    /// and that a placement of the page is drawn from: the file, how many
-    /// placements, and the reader's own sentence of the stream — its path,
-    /// where its chain stops and what is left unread. One in the border
-    /// template's placements says that it is the template's. Empty for a
-    /// page whose symbol files are sound, and for one that draws every
-    /// placement from the body its drawing caches — which is every page of
-    /// every corpus this crate is tested on.
+    /// and that a placement of the page takes its body from: the file, how
+    /// many placements, and the reader's own sentence of the stream — its
+    /// path, where its chain stops and what is left unread. Where the
+    /// damage leaves nothing of the body that can be drawn as the sound
+    /// file's, the sentence says that the placements are not drawn, and
+    /// why. One in the border template's placements says that it is the
+    /// template's. Empty for a page whose symbol files are sound, and for
+    /// one that draws every placement from the body its drawing caches —
+    /// which is every page of every corpus this crate is tested on.
     #[must_use]
     pub fn symbol_chain_fault_warnings(&self) -> Vec<String> {
         self.symbol_chain_faults
@@ -496,13 +521,24 @@ impl LayoutLedger {
                     LedgerDomain::Drawing => "",
                     LedgerDomain::Furniture => "in the border template, ",
                 };
-                format!(
-                    "{whose}the symbol file {}, which {} placement(s) on the page are drawn \
-                     from, is damaged: {}",
-                    found.symbol,
-                    found.placements,
-                    found.fault.describe()
-                )
+                match found.not_drawn {
+                    None => format!(
+                        "{whose}the symbol file {}, which {} placement(s) on the page are \
+                         drawn from, is damaged: {}",
+                        found.symbol,
+                        found.placements,
+                        found.fault.describe()
+                    ),
+                    Some(why) => format!(
+                        "{whose}the symbol file {} is damaged and the {} placement(s) on the \
+                         page that name it are not drawn, each counted as a missing symbol: \
+                         {}; {}",
+                        found.symbol,
+                        found.placements,
+                        why.describe(),
+                        found.fault.describe_framing()
+                    ),
+                }
             })
             .collect()
     }
@@ -2771,6 +2807,83 @@ mod tests {
         assert!(said[0].contains("no border frame was read"), "{}", said[0]);
     }
 
+    /// A damaged symbol file no part of whose body can be drawn: one item
+    /// a damaged stream, as for a file that is drawn from, and one sentence
+    /// a stream that says the placements are not drawn, and why.
+    #[test]
+    fn a_damaged_symbol_file_that_is_not_drawn_from_says_so_once_a_stream() {
+        use pid_parse::symbol_library::SymbolNotDrawn;
+
+        let cluster = a_fault("/PSMcluster0", 3_000, 1_000);
+        let sheet = a_fault("/Sheet6", 2_000, 600);
+        let mut ledger = LayoutLedger::default();
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Furniture,
+            [SymbolFileFaults {
+                symbol: "Gauge.sym".to_string(),
+                placements: 2,
+                not_drawn: Some(SymbolNotDrawn::ClusterShort),
+                faults: vec![cluster.clone(), sheet.clone()],
+            }],
+        );
+        let mut items: Vec<_> = ledger
+            .parse
+            .get(LedgerDomain::Furniture)
+            .items
+            .iter()
+            .map(|item| (item.reason, item.stream.clone(), item.count, item.bytes))
+            .collect();
+        items.sort();
+        assert_eq!(
+            items,
+            [
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/PSMcluster0".to_string(),
+                    1,
+                    Some(2_000)
+                ),
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/Sheet6".to_string(),
+                    1,
+                    Some(1_400)
+                ),
+            ],
+            "one item a damaged stream"
+        );
+        assert!(ledger.parse.get(LedgerDomain::Drawing).items.is_empty());
+        assert_eq!(
+            ledger
+                .symbol_chain_faults
+                .iter()
+                .map(|found| (found.placements, found.not_drawn))
+                .collect::<Vec<_>>(),
+            [(2, Some(SymbolNotDrawn::ClusterShort)); 2]
+        );
+        let said = ledger.symbol_chain_fault_warnings();
+        assert_eq!(
+            said,
+            [&cluster, &sheet].map(|fault| format!(
+                "in the border template, the symbol file Gauge.sym is damaged and the 2 \
+                 placement(s) on the page that name it are not drawn, each counted as a \
+                 missing symbol: {}; {}",
+                SymbolNotDrawn::ClusterShort.describe(),
+                fault.describe_framing()
+            ))
+        );
+        for sentence in &said {
+            assert!(
+                !sentence.contains("are drawn from") && !sentence.contains("what the stream draws"),
+                "{sentence}"
+            );
+        }
+        assert!(
+            said[0].contains("/PSMcluster0") && said[1].contains("/Sheet6"),
+            "{said:#?}"
+        );
+    }
+
     /// A symbol file with a chain that does not hold, drawn from: one item
     /// a file and stream in the domain of the placement, and one sentence
     /// that names the file and says the reader's own of the stream.
@@ -2778,23 +2891,26 @@ mod tests {
     fn a_damaged_symbol_file_is_filed_and_said_once_a_stream() {
         let fault = a_fault("/Sheet6", 2_000, 600);
         let mut ledger = LayoutLedger::default();
+        let file = |symbol: &str, placements, faults| SymbolFileFaults {
+            symbol: symbol.to_string(),
+            placements,
+            not_drawn: None,
+            faults,
+        };
         ledger.note_symbol_chain_faults(
             LedgerDomain::Drawing,
-            [(
-                r"Piping\Valves\Gate Valve.sym".to_string(),
+            [file(
+                r"Piping\Valves\Gate Valve.sym",
                 3,
                 vec![fault.clone()],
             )],
         );
         ledger.note_symbol_chain_faults(
             LedgerDomain::Furniture,
-            [("Logo.sym".to_string(), 1, vec![fault.clone()])],
+            [file("Logo.sym", 1, vec![fault.clone()])],
         );
         // A file with no fault files nothing.
-        ledger.note_symbol_chain_faults(
-            LedgerDomain::Drawing,
-            [("Sound.sym".to_string(), 9, Vec::new())],
-        );
+        ledger.note_symbol_chain_faults(LedgerDomain::Drawing, [file("Sound.sym", 9, Vec::new())]);
         let items = |domain| {
             ledger
                 .parse
@@ -2860,11 +2976,12 @@ mod tests {
         let mut ledger = LayoutLedger::default();
         ledger.note_symbol_chain_faults(
             LedgerDomain::Drawing,
-            [(
-                "Gauge.sym".to_string(),
-                2,
-                vec![sheet.clone(), pens.clone()],
-            )],
+            [SymbolFileFaults {
+                symbol: "Gauge.sym".to_string(),
+                placements: 2,
+                not_drawn: None,
+                faults: vec![sheet.clone(), pens.clone()],
+            }],
         );
         let items: Vec<_> = ledger
             .parse
@@ -2898,12 +3015,14 @@ mod tests {
                     domain: LedgerDomain::Drawing,
                     symbol: "Gauge.sym".to_string(),
                     placements: 2,
+                    not_drawn: None,
                     fault: sheet.clone(),
                 },
                 SymbolChainFault {
                     domain: LedgerDomain::Drawing,
                     symbol: "Gauge.sym".to_string(),
                     placements: 2,
+                    not_drawn: None,
                     fault: pens.clone(),
                 },
             ]
