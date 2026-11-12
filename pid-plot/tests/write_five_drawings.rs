@@ -8,6 +8,8 @@ use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
 use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
 
+#[path = "support/exported_page.rs"]
+mod exported_page;
 #[path = "../src/scratch.rs"]
 mod scratch;
 
@@ -49,10 +51,12 @@ fn five_drawings_round_trip_through_pdf() {
     let plot_dir = corpus.join("plot");
     std::fs::create_dir_all(&plot_dir).unwrap_or_else(|error| panic!("mkdir plot: {error}"));
 
-    for (name, model) in &models {
+    let exports = scratch::ScratchDir::new("five-drawings-pid-plot");
+    for (index, (name, model)) in models.iter().enumerate() {
         // The page is kept under `plot`, so its faces are prepared for this
         // sheet by itself, as `pid_plot` prepares them: prepared for the five
-        // together it would be other bytes than that program writes.
+        // together it would be other bytes than that program writes. That
+        // the page kept is the program's is held below, before it is kept.
         let prepared =
             prepare_fonts(&[model], &dirs).unwrap_or_else(|error| panic!("{name}: fonts: {error}"));
         let fonts: Vec<PlotFont<'_>> = prepared
@@ -64,6 +68,18 @@ fn five_drawings_round_trip_through_pdf() {
             })
             .collect();
         let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let exported = exported_page::pid_plot_page(
+            &corpus.join(format!("{name}.pid")),
+            &corpus,
+            &dirs,
+            &exports.join(format!("{index}.pdf")),
+        );
+        exported_page::assert_is_the_page_pid_plot_writes(
+            name,
+            "keeps under plot",
+            &pdf,
+            &exported,
+        );
         let out = plot_dir.join(format!("{name}.pdf"));
         std::fs::write(&out, &pdf)
             .unwrap_or_else(|error| panic!("write {}: {error}", out.display()));

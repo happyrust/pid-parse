@@ -75,8 +75,12 @@ use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::read::{SheetEdge, read_plot_sequence};
 use pid_plot::write::{PlotFont, write_plot};
 
+#[path = "support/exported_page.rs"]
+mod exported_page;
 #[path = "support/marked_labels.rs"]
 mod marked_labels;
+#[path = "../src/scratch.rs"]
+mod scratch;
 
 /// One number a page is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1178,9 +1182,11 @@ fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them
         );
         return;
     }
-    let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus)
+    let drawing = corpus.join(format!("{name}.pid"));
+    let model = lay_out_drawing(&drawing, &corpus)
         .unwrap_or_else(|error| panic!("{name}: layout: {error}"));
-    let prepared = prepare_fonts(&[&model], &font_search_dirs(&corpus)).expect("fonts");
+    let dirs = font_search_dirs(&corpus);
+    let prepared = prepare_fonts(&[&model], &dirs).expect("fonts");
     let fonts: Vec<PlotFont<'_>> = prepared
         .iter()
         .map(|face| PlotFont {
@@ -1191,8 +1197,12 @@ fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them
         .collect();
     let reference = PageInk::read(&std::fs::read(&reference_path).expect("the reference"))
         .unwrap_or_else(|error| panic!("{name}: {error}"));
-    let ours = PageInk::read(&write_plot(&model, &fonts).expect("write"))
-        .unwrap_or_else(|error| panic!("{name}: ours: {error}"));
+    let our_pdf = write_plot(&model, &fonts).expect("write");
+    // The page read here is the page `pid_plot` writes for the drawing.
+    let exports = scratch::ScratchDir::new("ink-boxed-labels-pid-plot");
+    let exported = exported_page::pid_plot_page(&drawing, &corpus, &dirs, &exports.join("a2.pdf"));
+    exported_page::assert_is_the_page_pid_plot_writes(name, "reads", &our_pdf, &exported);
+    let ours = PageInk::read(&our_pdf).unwrap_or_else(|error| panic!("{name}: ours: {error}"));
     let whole = compare_plots_with_model(&reference.ink, &ours.ink, &[], &[], &model);
     // How far below the reference's each of the four is lettered.
     let down: Vec<(&str, f64)> = whole
@@ -1245,12 +1255,15 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
 
     let mut printed = String::new();
     let mut failures: Vec<String> = Vec::new();
-    for (sheet, model) in SHEETS.iter().zip(&models) {
+    let exports = scratch::ScratchDir::new("ink-pid-plot");
+    for (index, (sheet, model)) in SHEETS.iter().zip(&models).enumerate() {
         let reference_pdf = std::fs::read(corpus.join(format!("{}.pdf", sheet.name)))
             .unwrap_or_else(|error| panic!("{}: reference: {error}", sheet.name));
         // The faces are prepared for this sheet by itself, as `pid_plot` and
         // the acceptance gate prepare them, so the page read here is the
-        // page that gate delivers.
+        // page that gate delivers — which is held just below, not taken on
+        // trust: prepared for the eleven together the page reads the same
+        // ink and is other bytes.
         let prepared = prepare_fonts(&[model], &dirs).expect("fonts");
         let fonts: Vec<PlotFont<'_>> = prepared
             .iter()
@@ -1262,6 +1275,15 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
             .collect();
         let our_pdf = write_plot(model, &fonts)
             .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name));
+        // What is read below is the page `pid_plot` writes for this drawing,
+        // byte for byte: the page the acceptance gate verifies and delivers.
+        let exported = exported_page::pid_plot_page(
+            &corpus.join(format!("{}.pid", sheet.name)),
+            &corpus,
+            &dirs,
+            &exports.join(format!("{index}.pdf")),
+        );
+        exported_page::assert_is_the_page_pid_plot_writes(sheet.name, "reads", &our_pdf, &exported);
         let reading = read_page(sheet, model, &reference_pdf, &our_pdf);
         let page = table(sheet, &reading);
         eprint!("{page}");
