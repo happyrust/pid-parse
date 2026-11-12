@@ -370,6 +370,94 @@ fn a_header_that_disagrees_with_its_chain_is_said_and_the_stream_is_still_read()
     assert!(!warnings[0].contains("draws"), "{}", warnings[0]);
 }
 
+/// The other way round: a header that counts one record fewer than its
+/// chain holds. The chain reaches the stream's end, so nothing is unread
+/// and the stream is read as on the intact drawing; the line says how many
+/// records the reader read and what the header states, and does not say
+/// the header states "more, which the stream does not hold" — it states
+/// fewer. Until 2026-11-12 no case held this branch of the sentence.
+#[test]
+fn a_header_that_counts_fewer_records_than_its_chain_holds_is_said_as_it_is() {
+    let scratch = Scratch::new("count-fewer");
+    let package = PidParser::new()
+        .parse_package(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let mut broken = package
+        .get_stream(SHEET)
+        .unwrap_or_else(|| panic!("{FIXTURE} has a {SHEET}"))
+        .data
+        .clone();
+    let stated = u32::from_le_bytes([broken[4], broken[5], broken[6], broken[7]]);
+    assert!(stated > 1, "{SHEET} holds more than one live record");
+    assert_eq!(
+        live_before(&broken, broken.len()),
+        stated as usize,
+        "the fixture's header counts the live records its chain holds"
+    );
+    broken[4..8].copy_from_slice(&(stated - 1).to_le_bytes());
+    let copy = copy_with_stream(&scratch.0, "count-fewer.pid", SHEET, broken.clone());
+
+    let (_, intact) = publish(Path::new(FIXTURE), &scratch.0.join("intact"));
+    let (code, stderr) = publish(&copy, &scratch.0.join("count-fewer"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        label_values_reached(&stderr),
+        label_values_reached(&intact),
+        "the stream is read as on the intact drawing"
+    );
+    let warned = warnings(&stderr);
+    assert_eq!(warned.len(), 1, "one warning: {stderr}");
+    let said = format!(
+        "the publish reader read the {stated} live record(s) the chain reached; the header \
+         states {}",
+        stated - 1
+    );
+    for needle in [
+        copy.display().to_string(),
+        format!("the record chain of {SHEET} does not hold"),
+        format!(
+            "{stated} live record(s) where the header states {}",
+            stated - 1
+        ),
+        said.clone(),
+    ] {
+        assert!(warned[0].contains(&needle), "`{needle}` in: {}", warned[0]);
+    }
+    assert!(
+        warned[0].ends_with(&said),
+        "the line ends with what the header states: {}",
+        warned[0]
+    );
+    for not_said in ["more, which the stream does not hold", "draws", "stop"] {
+        assert!(
+            !warned[0].contains(not_said),
+            "`{not_said}` in: {}",
+            warned[0]
+        );
+    }
+
+    // The library says the same fault, from the one read that makes the
+    // drawing: a chain that reaches the end, with a count that differs.
+    let read = read_publish_from_pid(&copy).expect("the copy reads");
+    assert!(read.drawing.is_ok(), "the copy still states its drawing");
+    assert_eq!(read.chain_faults.len(), 1, "{:?}", read.chain_faults);
+    let fault = &read.chain_faults[0];
+    assert_eq!(
+        fault.fault,
+        StreamChainFault::of_stream(SHEET, &broken).expect("the count differs")
+    );
+    assert!(fault.fault.stop.is_none() && fault.fault.count_differs());
+    assert_eq!(
+        (fault.fault.live_records_read, fault.fault.stated_records),
+        (stated as usize, Some(stated - 1))
+    );
+    assert_eq!(
+        warned[0],
+        format!("warning: {}: {}", copy.display(), fault.describe()),
+        "the line is the library's sentence"
+    );
+}
+
 /// A style table holds no record the publish reader keeps. One whose chain
 /// stops is still said — the file is damaged — and the line says that
 /// nothing the chain read is missing from the XML, which is the intact
