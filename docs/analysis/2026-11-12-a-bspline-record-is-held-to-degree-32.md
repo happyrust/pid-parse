@@ -186,18 +186,22 @@ recording3-after.txt:        1771 lines (112 records, 885 geometries, 774 symbol
 double，长半轴与轴比各自不超过 10⁹ 时顶点可以到 10¹⁸；那是原有行为，这次没有动，建议与成员一侧同一次改，
 让一条弧作为记录和作为成员是同一个结论。
 
-**两条线并到一起时要动的两处：**
+**两条线并到一起时**（拿这条线的尖端与 #52 的 `1a9d6bd` 试并过：`git merge-tree --write-tree`，不动工作区；
+再把试并出来的 `src/parsers/sheet_records.rs` 与 `src/model/sheet.rs` 临时放进工作区跑了一遍库内用例）：
 
-1. `bspcurve_geometry` 在 #52 上被拆成 `bspcurve_geometry_from(payload, at)`（记录与 `0x7F` 成员共用）。这里
-   改的那一行在拆出去的函数体里，会有文本冲突：把 `节点数 > 极点数 + 1 + crate::bspline::MAX_DEGREE` 放进
-   `bspcurve_geometry_from`，`IGBOUNDARY2D_MAX_BSPLINE_DEGREE` 换成 `crate::bspline::MAX_DEGREE`。
-2. #52 的用例 `igboundary2d_bspline_member_must_be_a_curve` 里有一条
-   `refused("weights of 1e308 on poles at the corners of the coordinate domain", …)`，理由是「极点乘权溢出，
-   顶点不是数」。权归到同一个量级之后这条理由不成立了：同样的输入现在采样出 9 个有限的点，最大的坐标是
-   999 999 999.999 999 9，全部在坐标域内，于是这个成员**会解码**，那条断言会红。并入时把它改成「解码成
-   9 段、都在坐标域内」，与紧挨着它的「权为 1」那两条同一个结论。成员一侧「顶点必须是坐标域内的有限点」那条
-   规则留着无妨，但对正权的 B 样条成员，极点在域内时顶点是极点的凸组合，只有落在域边界上的极点才可能因为
-   舍入差一个 ulp。
+1. **源码没有文本冲突。** `bspcurve_geometry` 在 #52 上被拆成 `bspcurve_geometry_from(payload, at)`（记录与
+   `0x7F` 成员共用），这里改的那一行被 git 自动并进了拆出去的函数体，于是成员也过同一条次数规则。冲突只在
+   `AGENTS.md` 与 `CHANGELOG.md`（两边都在同样的位置加了段落，两边都留）。并完之后
+   `IGBOUNDARY2D_MAX_BSPLINE_DEGREE` 与 `bspline::MAX_DEGREE` 是两个同值的常数，建议前者直接换成后者。
+2. **有一条用例会红**：试并的树上库内用例 1 428 过、1 败，败的是 #52 的
+   `igboundary2d_bspline_member_must_be_a_curve`，停在
+   `refused("weights of 1e308 on poles at the corners of the coordinate domain", …)`。那条断言的理由是「极点
+   乘权溢出，顶点不是数」；权归到同一个量级之后这个理由不成立了——同样的输入现在采样出 9 个有限的点，最大的
+   坐标是 999 999 999.999 999 9，全部在坐标域内，于是这个成员**会解码**。并入时把它改成「解码成 9 段、都在
+   坐标域内」，与紧挨着它的「不带权」「权为 1」两条同一个结论：把 `&[1e308; 4][..]`（另一头的
+   `&[5e-324; 4][..]` 也可以一起）加进那个循环，去掉那条 `refused`。照这样改过之后，试并的树上库内用例
+   1 429 条全过。成员一侧「顶点必须是坐标域内的有限点」那条规则留着无妨，但对正权的 B 样条成员，极点在域内时
+   顶点是极点的凸组合，只有正好落在域边界上的极点才可能因为舍入差一个 ulp；它不再有溢出这个见证。
 
 ## 8. 看到了、没有动的
 
