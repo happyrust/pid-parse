@@ -728,7 +728,11 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   frame only when the width and the height are lengths — above zero
   and normal numbers, not the denormals a count reads as — whose
   quotient is a normal number too, and the stated ratio lies within a
-  millionth (relative) of it. All 178 frames of the corpora's chains
+  millionth (relative) of it (the tolerance has a case of its own in
+  `sheet_records.rs` since 2026-11-12: nine parts in ten million off
+  is a frame's ratio, eleven is not, either side of the quotient; ten
+  times as wide, nothing in the parser crate failed before). All 178
+  frames of the corpora's chains
   agree to 5e-16, and the smallest is a micrometre square; none of the
   102 does, nor any of the 179 places off a chain where a walk could
   read a frame's type word at all, whatever length led it there.

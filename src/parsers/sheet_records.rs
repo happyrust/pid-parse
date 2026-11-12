@@ -10336,6 +10336,49 @@ mod tests {
         }
     }
 
+    /// How near the height over the width the stated ratio has to lie: a
+    /// millionth of that quotient, either way. The frames of the corpora's
+    /// chains agree to 5e-16, so the tolerance is not what lets a real
+    /// frame through; it is the line a copy made to be refused has to
+    /// cross — `pid-plot`'s refused-frame cases write a ratio three parts
+    /// in a million off — and until 2026-11-12 nothing in this crate held
+    /// it: ten times as wide, every test here passed. Held on both sides
+    /// of the line, above the quotient and below it, so that neither a
+    /// wider nor a narrower tolerance goes unnoticed.
+    #[test]
+    fn a_frames_ratio_is_held_to_a_millionth_of_its_extents_quotient() {
+        let ratio_at = PSM_ENVELOPE_LEN + IGSMARTFRAME_ASPECT_AT;
+        let quotient = 0.594_f64 / 0.841;
+        let off_by = |parts: f64| {
+            let mut record = smart_frame_record(22);
+            record[ratio_at..ratio_at + 8]
+                .copy_from_slice(&(quotient * (1.0 + parts)).to_le_bytes());
+            record
+        };
+        for parts in [0.0, 5e-7, -5e-7, 9e-7, -9e-7] {
+            let record = off_by(parts);
+            assert!(
+                decode_smartframe_at(&record, 0).is_some(),
+                "a ratio {parts:e} off the quotient is a frame's"
+            );
+            assert_eq!(smartframe_refusal_at(&record, 0), None, "{parts:e}");
+        }
+        for parts in [1.1e-6, -1.1e-6, 2e-6, -2e-6, 3e-6, -3e-6, 1e-5, -1e-5] {
+            let record = off_by(parts);
+            assert!(
+                decode_smartframe_at(&record, 0).is_none(),
+                "a ratio {parts:e} off the quotient is not a frame's"
+            );
+            let refused = smartframe_refusal_at(&record, 0)
+                .unwrap_or_else(|| panic!("{parts:e}: a live frame record is one or the other"));
+            assert!(
+                matches!(refused.why, SmartFrameRefusal::RatioNotTheExtents { .. }),
+                "{parts:e}: {:?}",
+                refused.why
+            );
+        }
+    }
+
     /// What a walk that has left the record boundaries took for a frame.
     /// A length 32 bytes too long sends the walk into the text of a label
     /// (`A井场`'s `/Sheet6`, the record at `+12725` stating 88 bytes for
