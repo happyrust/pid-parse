@@ -5783,15 +5783,174 @@ const IGSMARTFRAME_MIN_PAGE_M: f64 = 0.05;
 /// height of 3.7e62 m. The smallest frame the chains hold is a micrometre
 /// square; none states a side of zero
 /// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
-fn smart_frame_extent_states_its_ratio(width_m: f64, height_m: f64, aspect_ratio: f64) -> bool {
+///
+/// `None` for an extent a frame states; otherwise the part of the rule it
+/// fails, for a caller that has to say why a record is refused.
+fn smart_frame_extent_refusal(
+    width_m: f64,
+    height_m: f64,
+    aspect_ratio: f64,
+) -> Option<SmartFrameRefusal> {
     let is_length = |metres: f64| metres.is_normal() && metres > 0.0;
-    if !is_length(width_m) || !is_length(height_m) || !aspect_ratio.is_finite() {
-        return false;
+    if !is_length(width_m) || !is_length(height_m) {
+        return Some(SmartFrameRefusal::NotLengths { width_m, height_m });
     }
     let stated_by_extent = height_m / width_m;
-    stated_by_extent.is_normal()
+    if !stated_by_extent.is_normal() {
+        return Some(SmartFrameRefusal::NoQuotient { width_m, height_m });
+    }
+    let agrees = aspect_ratio.is_finite()
         && (aspect_ratio - stated_by_extent).abs()
-            <= IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent
+            <= IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent;
+    (!agrees).then_some(SmartFrameRefusal::RatioNotTheExtents {
+        width_m,
+        height_m,
+        aspect_ratio,
+    })
+}
+
+/// Why a live `igSmartFrame2d` record is not a frame the decoder takes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SmartFrameRefusal {
+    /// The payload is shorter than the 156 bytes that reach the ratio a
+    /// frame states.
+    ShortPayload {
+        /// The payload's length in bytes.
+        payload_len: usize,
+    },
+    /// The width or the height the record states is not a length: not
+    /// finite, zero or below, or a denormal.
+    NotLengths {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+    },
+    /// The height over the width is no number a ratio can be held to: the
+    /// quotient overflows, or is rounded away to nothing.
+    NoQuotient {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+    },
+    /// The ratio the record states is not its height over its width, to a
+    /// millionth of that quotient.
+    RatioNotTheExtents {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+        /// The ratio at payload `+148`.
+        aspect_ratio: f64,
+    },
+}
+
+impl SmartFrameRefusal {
+    /// The reason as the clause of a sentence about the record: `it states
+    /// a width of 0 m and a height of 0.42 m, and a frame's sides are
+    /// lengths above zero`.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match *self {
+            Self::ShortPayload { payload_len } => format!(
+                "its payload is {payload_len} byte(s), fewer than the \
+                 {IGSMARTFRAME_MIN_PAYLOAD} that reach the ratio a frame states"
+            ),
+            Self::NotLengths { width_m, height_m } => format!(
+                "it states a width of {} m and a height of {} m, and a frame's sides are \
+                 lengths above zero",
+                written_short(width_m),
+                written_short(height_m)
+            ),
+            Self::NoQuotient { width_m, height_m } => format!(
+                "its height over its width, {} m over {} m, is no number a ratio can be held \
+                 to",
+                written_short(height_m),
+                written_short(width_m)
+            ),
+            Self::RatioNotTheExtents {
+                width_m,
+                height_m,
+                aspect_ratio,
+            } => format!(
+                "it states a ratio of {aspect_ratio:.9} where its height over its width, \
+                 {height_m:.6} m over {width_m:.6} m, is {:.9}",
+                height_m / width_m
+            ),
+        }
+    }
+}
+
+/// A double as a sentence writes it: the shortest decimal that reads back
+/// the same, with an exponent where the plain digits would run to dozens —
+/// what lies in a refused frame is as often 3.8e-313 as 0.42.
+fn written_short(value: f64) -> String {
+    if value == 0.0 || (1e-4..1e6).contains(&value.abs()) {
+        format!("{value}")
+    } else {
+        format!("{value:e}")
+    }
+}
+
+/// A live `igSmartFrame2d` record that [`decode_smartframes`] does not take
+/// for a frame, and why.
+///
+/// The rule that refuses it is what tells a frame from the bytes a walk
+/// reads off a broken chain, and a real frame can fail it: a ratio written
+/// wrong, a side of zero. A drawing whose own border frame is one of these
+/// is laid out as a sheet with no frame, which a caller that lays out a
+/// page says ([`refused_smartframes`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetSmartFrameRefused {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Object identifier, when the payload reaches one.
+    pub oid: Option<u32>,
+    /// The state the record's two flag words put it in, when the payload
+    /// reaches them: an embedded or a linked frame is one whose extent
+    /// would have been a page.
+    pub state: Option<SheetSmartFrame2dState>,
+    /// Which part of the frame rule the record fails.
+    pub why: SmartFrameRefusal,
+}
+
+/// Every live `igSmartFrame2d` record of a chain stream that the frame
+/// decoder refuses, with why: the records [`decode_smartframes`] leaves
+/// out. Empty on every chain stream of the corpora, whose 91 live frames
+/// all decode (`tests/sheet_chain_faults.rs`).
+#[must_use]
+pub fn refused_smartframes(data: &[u8]) -> Vec<SheetSmartFrameRefused> {
+    SheetChain::walk(data)
+        .starts
+        .iter()
+        .filter_map(|&at| smartframe_refusal_at(data, at))
+        .collect()
+}
+
+/// Why the live `igSmartFrame2d` record at `offset` is not a frame.
+///
+/// `None` where the record is one — [`decode_smartframe_at`] takes it — and
+/// where no live record of that type starts whose payload the stream
+/// holds. Panic-free on arbitrary input.
+#[must_use]
+pub fn smartframe_refusal_at(data: &[u8], offset: usize) -> Option<SheetSmartFrameRefused> {
+    read_smartframe_at(data, offset)?.err()
+}
+
+/// The state the native reader's rules put a frame with these two flag
+/// words in.
+fn smart_frame_state(content_flags: u32, link_flags: u32) -> SheetSmartFrame2dState {
+    if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
+        SheetSmartFrame2dState::Empty
+    } else if link_flags & IGSMARTFRAME_LINKED == 0 && link_flags & IGSMARTFRAME_LOCALLY_LINKED == 0
+    {
+        SheetSmartFrame2dState::Embedded
+    } else if link_flags & IGSMARTFRAME_LOCALLY_LINKED != 0 {
+        SheetSmartFrame2dState::LocallyLinked
+    } else {
+        SheetSmartFrame2dState::Linked
+    }
 }
 
 /// Which of the native reader's three states a frame is in.
@@ -5920,96 +6079,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSmartFrame2dDecoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
-            return None;
-        }
-        let payload_len = usize::try_from(header.bytes_to_follow).ok()?;
-        if payload_len < IGSMARTFRAME_MIN_PAYLOAD {
-            return None;
-        }
-        let payload_end = header.body_start.checked_add(payload_len)?;
-        let payload = data.get(header.body_start..payload_end)?;
-
-        let u32_at = |at: usize| -> Option<u32> {
-            payload
-                .get(at..at + 4)
-                .and_then(|s| <[u8; 4]>::try_from(s).ok())
-                .map(u32::from_le_bytes)
-        };
-        let f64_at = |at: usize| -> Option<f64> {
-            payload
-                .get(at..at + 8)
-                .and_then(|s| <[u8; 8]>::try_from(s).ok())
-                .map(f64::from_le_bytes)
-        };
-
-        let content_flags = u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)?;
-        let link_flags = u32_at(IGSMARTFRAME_LINK_FLAGS_AT)?;
-        let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
-        let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
-        let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
-        let range_origin_m = [
-            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT)?,
-            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT + 8)?,
-        ];
-        let range_origin_m = range_origin_m
-            .iter()
-            .all(|v| v.is_finite())
-            .then_some(range_origin_m);
-        // The record states its extent twice over, and a frame's two
-        // statements agree. The three doubles of a run of bytes that is not
-        // a frame do not: this is what tells the 102 "frames" a walk read
-        // off the corpora's chains after a wrong length from the 178 the
-        // chains hold.
-        if !smart_frame_extent_states_its_ratio(extent_width_m, extent_height_m, aspect_ratio) {
-            return None;
-        }
-
-        let content_transform = (|| {
-            let at = IGSMARTFRAME_CONTENT_TRANSFORM_AT;
-            let values: Vec<f64> = (0..7)
-                .map(|index| f64_at(at + 8 * index))
-                .collect::<Option<_>>()?;
-            values
-                .iter()
-                .all(|v| v.is_finite())
-                .then(|| SmartFrameContentTransform {
-                    linear: [values[0], values[1], values[2], values[3]],
-                    translation_m: [values[4], values[5]],
-                    scale: values[6],
-                })
-        })();
-
-        let state = if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
-            SheetSmartFrame2dState::Empty
-        } else if link_flags & IGSMARTFRAME_LINKED == 0
-            && link_flags & IGSMARTFRAME_LOCALLY_LINKED == 0
-        {
-            SheetSmartFrame2dState::Embedded
-        } else if link_flags & IGSMARTFRAME_LOCALLY_LINKED != 0 {
-            SheetSmartFrame2dState::LocallyLinked
-        } else {
-            SheetSmartFrame2dState::Linked
-        };
-
-        Some(SheetIgSmartFrame2dDecoded {
-            byte_range: offset..payload_end,
-            type_code: header.type_code,
-            type_flags: header.type_flags,
-            bytes_to_follow: header.bytes_to_follow,
-            oid: u32_at(0)?,
-            parent_ref: u32_at(4)?,
-            sheet_layer_ref: u32_at(8)?,
-            content_flags,
-            link_flags,
-            state,
-            range_origin_m,
-            extent_width_m,
-            extent_height_m,
-            aspect_ratio,
-            content_transform,
-        })
+        read_smartframe_at(data, offset)?.ok()
     }
 
     fn advance_of(&self, record: &SheetIgSmartFrame2dDecoded) -> usize {
@@ -6018,6 +6088,105 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             .end
             .saturating_sub(record.byte_range.start)
     }
+}
+
+/// The live `igSmartFrame2d` record at `offset`, read once for both
+/// answers: the frame, or why the record is not one. `None` where no live
+/// record of the type starts whose payload the stream holds.
+fn read_smartframe_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<Result<SheetIgSmartFrame2dDecoded, SheetSmartFrameRefused>> {
+    let header = parse_live_psm_header(data, offset)?;
+    if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
+        return None;
+    }
+    let payload_len = usize::try_from(header.bytes_to_follow).ok()?;
+    let payload_end = header.body_start.checked_add(payload_len)?;
+    let payload = data.get(header.body_start..payload_end)?;
+
+    let u32_at = |at: usize| -> Option<u32> {
+        payload
+            .get(at..at + 4)
+            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+            .map(u32::from_le_bytes)
+    };
+    let f64_at = |at: usize| -> Option<f64> {
+        payload
+            .get(at..at + 8)
+            .and_then(|s| <[u8; 8]>::try_from(s).ok())
+            .map(f64::from_le_bytes)
+    };
+    let refused = |why: SmartFrameRefusal| SheetSmartFrameRefused {
+        byte_range: offset..payload_end,
+        oid: u32_at(0),
+        state: u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)
+            .zip(u32_at(IGSMARTFRAME_LINK_FLAGS_AT))
+            .map(|(content, link)| smart_frame_state(content, link)),
+        why,
+    };
+    if payload_len < IGSMARTFRAME_MIN_PAYLOAD {
+        return Some(Err(refused(SmartFrameRefusal::ShortPayload {
+            payload_len,
+        })));
+    }
+
+    let content_flags = u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)?;
+    let link_flags = u32_at(IGSMARTFRAME_LINK_FLAGS_AT)?;
+    let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
+    let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
+    let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
+    let range_origin_m = [
+        f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT)?,
+        f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT + 8)?,
+    ];
+    let range_origin_m = range_origin_m
+        .iter()
+        .all(|v| v.is_finite())
+        .then_some(range_origin_m);
+    // The record states its extent twice over, and a frame's two
+    // statements agree. The three doubles of a run of bytes that is not
+    // a frame do not: this is what tells the 102 "frames" a walk read
+    // off the corpora's chains after a wrong length from the 178 the
+    // chains hold.
+    if let Some(why) = smart_frame_extent_refusal(extent_width_m, extent_height_m, aspect_ratio) {
+        return Some(Err(refused(why)));
+    }
+
+    let content_transform = (|| {
+        let at = IGSMARTFRAME_CONTENT_TRANSFORM_AT;
+        let values: Vec<f64> = (0..7)
+            .map(|index| f64_at(at + 8 * index))
+            .collect::<Option<_>>()?;
+        values
+            .iter()
+            .all(|v| v.is_finite())
+            .then(|| SmartFrameContentTransform {
+                linear: [values[0], values[1], values[2], values[3]],
+                translation_m: [values[4], values[5]],
+                scale: values[6],
+            })
+    })();
+
+    let state = smart_frame_state(content_flags, link_flags);
+
+    Some(Ok(SheetIgSmartFrame2dDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid: u32_at(0)?,
+        parent_ref: u32_at(4)?,
+        sheet_layer_ref: u32_at(8)?,
+        content_flags,
+        link_flags,
+        state,
+        range_origin_m,
+        extent_width_m,
+        extent_height_m,
+        aspect_ratio,
+        content_transform,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -10333,6 +10502,123 @@ mod tests {
         })
         .collect();
         assert!(taken.is_empty(), "taken for a frame: {taken:#?}");
+    }
+
+    /// A live frame record the decoder refuses says which part of the rule
+    /// it fails, with the record's own numbers, and what state its flag
+    /// words put it in: what a page laid out without its frame is told.
+    /// The same read gives the decoder its frame, so the two answers are
+    /// one or the other of every live frame record and never both.
+    #[test]
+    fn a_refused_frame_says_which_part_of_the_rule_it_fails() {
+        // The record as built is a frame: nothing to say.
+        let frame = smart_frame_record(22);
+        assert!(decode_smartframe_at(&frame, 0).is_some());
+        assert_eq!(smartframe_refusal_at(&frame, 0), None);
+
+        let with = |width: f64, height: f64, ratio: f64| {
+            let mut record = smart_frame_record(22);
+            for (at, value) in [
+                (IGSMARTFRAME_WIDTH_AT, width),
+                (IGSMARTFRAME_HEIGHT_AT, height),
+                (IGSMARTFRAME_ASPECT_AT, ratio),
+            ] {
+                let at = PSM_ENVELOPE_LEN + at;
+                record[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            record
+        };
+        for (record, why, said) in [
+            (
+                with(0.0, 0.594, 0.706_302),
+                SmartFrameRefusal::NotLengths {
+                    width_m: 0.0,
+                    height_m: 0.594,
+                },
+                "it states a width of 0 m and a height of 0.594 m, and a frame's sides are \
+                 lengths above zero",
+            ),
+            (
+                with(1e-200, 1e200, 1.0),
+                SmartFrameRefusal::NoQuotient {
+                    width_m: 1e-200,
+                    height_m: 1e200,
+                },
+                "its height over its width, 1e200 m over 1e-200 m, is no number a ratio can be \
+                 held to",
+            ),
+            (
+                with(0.841, 0.594, 0.5),
+                SmartFrameRefusal::RatioNotTheExtents {
+                    width_m: 0.841,
+                    height_m: 0.594,
+                    aspect_ratio: 0.5,
+                },
+                "it states a ratio of 0.500000000 where its height over its width, 0.594000 m \
+                 over 0.841000 m, is 0.706302021",
+            ),
+        ] {
+            assert!(decode_smartframe_at(&record, 0).is_none(), "{said}");
+            let refused = smartframe_refusal_at(&record, 0).expect(said);
+            assert_eq!(refused.why, why);
+            assert_eq!(refused.why.describe(), said);
+            assert_eq!(
+                (refused.byte_range.clone(), refused.oid, refused.state),
+                (
+                    0..record.len(),
+                    Some(22),
+                    Some(SheetSmartFrame2dState::Linked)
+                ),
+                "{said}"
+            );
+        }
+
+        // A record cut short of the ratio: refused for its length, its oid
+        // and its flag words still read.
+        let short = IGSMARTFRAME_MIN_PAYLOAD - 1;
+        let mut cut = frame[..PSM_ENVELOPE_LEN + short].to_vec();
+        cut[2..6].copy_from_slice(&(short as u32).to_le_bytes());
+        let refused = smartframe_refusal_at(&cut, 0).expect("a short record");
+        assert_eq!(
+            refused.why,
+            SmartFrameRefusal::ShortPayload { payload_len: short }
+        );
+        assert_eq!(
+            refused.why.describe(),
+            "its payload is 155 byte(s), fewer than the 156 that reach the ratio a frame states"
+        );
+        assert_eq!(
+            (refused.oid, refused.state),
+            (Some(22), Some(SheetSmartFrame2dState::Linked))
+        );
+
+        // What is no live frame record at all gets neither answer: another
+        // type code, a superseded copy, a payload the stream does not hold.
+        let mut other = frame.clone();
+        other[0] = 0x18;
+        let mut superseded = frame.clone();
+        superseded[1] |= 0x80;
+        for (record, what) in [
+            (other, "another type code"),
+            (superseded, "a superseded copy"),
+            (frame[..frame.len() - 1].to_vec(), "a record cut off"),
+        ] {
+            assert!(decode_smartframe_at(&record, 0).is_none(), "{what}");
+            assert_eq!(smartframe_refusal_at(&record, 0), None, "{what}");
+        }
+
+        // On a chain: the refused record of a stream of two frames, and
+        // nothing for the one that decodes.
+        let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&2u32.to_le_bytes());
+        stream.extend_from_slice(&frame);
+        let second = stream.len();
+        stream.extend_from_slice(&with(0.0, 0.594, 0.706_302));
+        assert_eq!(decode_smartframes(&stream).len(), 1);
+        let refused = refused_smartframes(&stream);
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].byte_range, second..stream.len());
     }
 
     /// A family decodes the records its stream's chain starts, and nothing

@@ -546,6 +546,26 @@ impl ExportLedger {
                 count: 1,
             });
         }
+        // A border frame of the drawing's own sheet that the frame rule
+        // refuses: the page is laid out without it. The record is the
+        // site, with why it is refused; its stream's parse account counts
+        // the record itself among the refused.
+        if !ledger.frames_refused.is_empty() {
+            let count = u64::try_from(ledger.frames_refused.len()).unwrap_or(u64::MAX);
+            page.dropped.insert(DropReason::PageFrameRefused, count);
+            for refused in &ledger.frames_refused {
+                page.suspect_sites.push(SuspectSite {
+                    reason: DropReason::PageFrameRefused,
+                    stream: Some(refused.stream.clone()),
+                    oid: refused.oid,
+                    bytes: None,
+                    type_code: Some(pid_parse::parsers::sheet_records::PSM_TYPE_CODE_IGSMARTFRAME),
+                    family: Some("igSmartFrame2d".to_string()),
+                    name: Some(refused.why.clone()),
+                    count: 1,
+                });
+            }
+        }
         // A template candidate that could not be read or parsed is the other
         // page-level suspect drop; its site is the candidate's own name.
         let unreadable = u64::try_from(ledger.template_unreadable.len()).unwrap_or(u64::MAX);

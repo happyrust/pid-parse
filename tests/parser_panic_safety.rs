@@ -73,8 +73,9 @@ use pid_parse::parsers::sheet_records::{
     decode_igsym_boundary_at, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
     decode_igtextboxes, decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
     decode_standard_relations, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, sheet_record_starts, IgLine2dDecoder,
-    PsmRecordDecoder, SheetChain, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_variables, decode_variables_at, parse_psm_header, refused_smartframes,
+    sheet_record_starts, smartframe_refusal_at, IgLine2dDecoder, PsmRecordDecoder, SheetChain,
+    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -362,6 +363,9 @@ fn exercise_all_parsers(input: &[u8]) {
     // read out of this, so a malformed frame must fail the record rather
     // than the parse.
     let _ = decode_smartframes(input);
+    // The other answer of the same read: the live frame records the
+    // decoder refuses, each with why.
+    let _ = refused_smartframes(input);
     // The four families no sheet chain holds a record of (`0x0030`,
     // `0x0010`, and `0x3FE6`, which is no type code at all) are retired and
     // have no entry point here: their matchers left the library for the
@@ -465,6 +469,11 @@ const AT_ENTRIES: &[AtEntry] = &[
     }),
     ("decode_smartframe_at", Some(0x003D), |data, at| {
         let _ = decode_smartframe_at(data, at);
+    }),
+    // The frame decoder's other answer, read by the same function. Its
+    // type code is planted by the row above.
+    ("smartframe_refusal_at", None, |data, at| {
+        let _ = smartframe_refusal_at(data, at);
     }),
     ("decode_standard_relation_at", Some(0x006F), |data, at| {
         let _ = decode_standard_relation_at(data, at);

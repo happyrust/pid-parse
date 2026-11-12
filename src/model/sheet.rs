@@ -1919,6 +1919,39 @@ impl StreamChainFault {
     }
 }
 
+/// A live `igSmartFrame2d` record of one of a document's `Sheet*` streams
+/// that the frame decoder refuses
+/// ([`crate::parsers::sheet_records::refused_smartframes`]).
+///
+/// A frame record is taken for a frame only when the ratio it states is
+/// the height over the width it states and the two are lengths: that is
+/// what tells a frame from the bytes a walk reads off a broken chain. A
+/// drawing's own border frame that fails the rule — a ratio written wrong,
+/// a side of zero — states no page and places nothing, and the drawing is
+/// laid out as a sheet with no frame is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefusedSmartFrame {
+    /// Path of the stream the record is in.
+    pub stream_path: String,
+    /// The record, and which part of the frame rule it fails.
+    pub refused: crate::parsers::sheet_records::SheetSmartFrameRefused,
+}
+
+impl RefusedSmartFrame {
+    /// Whether the record could have stated the sheet's page: one whose
+    /// flag words read as an embedded or a linked frame, or cannot be read.
+    /// An empty frame and one linked inside the drawing state no page when
+    /// they decode.
+    #[must_use]
+    pub fn may_state_a_page(&self) -> bool {
+        use crate::parsers::sheet_records::SheetSmartFrame2dState as State;
+        !matches!(
+            self.refused.state,
+            Some(State::Empty | State::LocallyLinked)
+        )
+    }
+}
+
 /// Stable text run DTO for Sheet streams.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SheetText {

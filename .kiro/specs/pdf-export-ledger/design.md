@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 50]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 27 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`；第八轮加了可疑的 `symbol_file_chain_fault`）。
+- `DropReason::ALL: [DropReason; 51]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 28 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`；第八轮加了可疑的 `symbol_file_chain_fault`；解析线第六轮加了可疑的 `page_frame_refused`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -564,6 +564,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
 | `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；只在读到图框时成立（2026-11-12 加） |
 | `paper_unlike_the_template_name` | `lay_out_drawing` 定页面时没有读到图框、`paper_is_the_named_sheet` 不成立：页面仍是纸张，`LayoutLedger::paper_unlike_the_name` 记下两个尺寸（微米）；汇总时页级记 1 项、来源记 `PaperBesideAName::sides()`；`LayoutLedger::page_warnings` 给那一行 `warning:`（2026-11-12 第七轮加） |
+| `page_frame_refused` | `lay_out_drawing` 收尾时读 `PidDocument::refused_smart_frames`，留下根存储图纸流上、`RefusedSmartFrame::may_state_a_page()` 为真的记录，连同页面的去向（`PageWithoutTheFrame`：纸张 / 模板名 / 另一条图框 / 都没有）记进 `LayoutLedger::frames_refused`；汇总时页级每条记 1 项，来源记流、oid、类型码 `0x003D` 与原因；`LayoutLedger::page_warnings` 给那一行 `warning:`，并在这种页上不再另起「纸张不是模板名的页幅」那一句（那一句说的「没有读到图框」不属实），两个尺寸并进本句（2026-11-12 解析线第六轮加） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models

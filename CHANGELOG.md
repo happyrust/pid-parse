@@ -17,6 +17,8 @@
 
 **发布时的断链进索引、告警措辞属实。** 整包发布把每条断链写进 `_Index.json` 的 `problems`（就是 stderr 那一句，以 zip 和成员开头）；键集合不变（24 个），`failed` 不动，退出码仍只看 `failed` 与门禁。完好的包索引逐字节不变（53 张图的包与 `TEST02_p`，改动前后各发布一次比过）。发布线的告警不再借用出图的那一句「what the stream draws may be incomplete」：`StreamChainFault` 新增 `describe_framing()`（只说分帧），`PublishChainFault::describe()` 在它后面说发布读取器少了什么，用链自己的数——停点之前读到几条活记录、其中几条是属性行 / 文字框 / 依赖对象 / 符号放置（这些都不在 XML 里）、头部声明的另外几条没有读。`/Unclustered Dynamic Attributes` 断在第一条记录上时，原先那一行说「读到的东西 XML 里一条不缺」，紧接着就是 `no P&IDAttributes row carries a DrawingNo`、退出 1；现在说「停点之前没有读到活记录，头部声明的 231 条都没读」。读 `_Index.json` 的代码查过：本仓库与 `D:\work\plant-code` 下其他工程里没有程序读 `problems` 的内容（测试只查键在不在），见分析文档 §19.3。
 
+**图纸自己的页框被拒时说出来。** 页框判定拒掉的可以是真页框（比值写错、宽为 0）；图纸随即按「没有图框」排，页面看上去是一张完整的导出，偏了三分之一毫米，stderr 一个字都没有。现在解码器说出拒收的是规则的哪一部分（`refused_smartframes` / `smartframe_refusal_at`，与解码同一次读取；`PidDocument::refused_smart_frames`），`pid_plot` 对图纸自己的图纸流上每条被拒的页框打一行 `warning:`——流、记录的偏移与 oid、原因、页面是按什么排的（纸张 / 模板名 / 另一条图框 / 都没有）——页级账本记一项新的可疑码 `page_frame_refused`（码表 50 → 51 个，28 可疑 / 23 有意），解析层那一项 `record_refused` 照旧；退出码不变。宽为 0 的真页框在工单 1 之后就是被拒的一种，走同一条路，有单独的用例。`cli_pid_plot.rs` 30 → 32 条（先红：页级账本为空）。两本账的基线与金样没有动。合并了集成分支 `316c492`（显示次序线第八轮）之后做的。
+
 ### 第八轮的两张工单：标签与原点标记的先后没有规则可立；符号文件断链时页面出声（2026-11-12）
 
 **工单一：`一级闪蒸分离器A` 上标签 `P` 的原点标记与参考图同次序——量过，不改页面（`5c0f7e3`）。** 按墨门禁里有两行

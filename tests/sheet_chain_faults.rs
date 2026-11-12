@@ -45,8 +45,8 @@ use pid_parse::parsers::sheet_records::{
     decode_igellipticalarc_at, decode_iggroup_at, decode_igline_at, decode_iglinestring_at,
     decode_igpoint_at, decode_igrectangle_at, decode_igsymbol_at, decode_igtextbox_at,
     decode_smartframe_at, decode_smartframes, parse_psm_header, psm_type_word_opens_a_record,
-    sheet_record_starts, PsmHeader, PsmRecordDecoder, SheetChain, PSM_TYPE_CODE_IGSMARTFRAME,
-    SHEET_STREAM_MAGIC,
+    refused_smartframes, sheet_record_starts, PsmHeader, PsmRecordDecoder, SheetChain,
+    PSM_TYPE_CODE_IGSMARTFRAME, SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
@@ -1826,6 +1826,14 @@ fn leave_the_chain(
             );
         }
     }
+    // The same said the other way, by the entry point a page's layout asks:
+    // no frame of an intact stream is refused, so no intact drawing is told
+    // its page was laid out without its frame.
+    assert_eq!(
+        refused_smartframes(data),
+        Vec::new(),
+        "{label}: a frame record the decoder refuses"
+    );
     for at in 8..data.len().saturating_sub(1) {
         if data[at..at + 2] != PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes()
             || starts.binary_search(&at).is_ok()

@@ -1681,6 +1681,34 @@ pub fn lay_out_with_symbol_roots(
             um: frame.map(crate::ledger::micrometres),
         });
     }
+    // A border frame of the drawing's own sheet that the frame rule refuses
+    // gave no page and places nothing: the sheet was laid out above as one
+    // with no frame, unless another frame of it decodes. Which record, why,
+    // and what the page is without it are said and filed. A frame in a
+    // nested storage is no page of the drawing's, and one whose flag words
+    // read as empty or as linked inside the drawing states none when it
+    // decodes; those stay with the refused records of their streams.
+    let page_without_the_frame = match (sheet_rectangle, stated_paper, frame_mm) {
+        (crate::ledger::SheetRectangle::Frame, ..) => {
+            crate::ledger::PageWithoutTheFrame::AnotherFrame
+        }
+        (_, Some(_), _) => crate::ledger::PageWithoutTheFrame::Paper,
+        (_, None, Some(_)) => crate::ledger::PageWithoutTheFrame::TemplateName,
+        (_, None, None) => crate::ledger::PageWithoutTheFrame::Unstated,
+    };
+    ledger.frames_refused = doc
+        .refused_smart_frames
+        .iter()
+        .filter(|frame| frame.stream_path.matches('/').count() == 1 && frame.may_state_a_page())
+        .map(|frame| crate::ledger::FrameRefused {
+            stream: frame.stream_path.clone(),
+            record: u64::try_from(frame.refused.byte_range.start).unwrap_or(u64::MAX),
+            oid: frame.refused.oid,
+            why: frame.refused.why.describe(),
+            page: page_without_the_frame,
+            page_um: page_mm.map(|page| page.map(crate::ledger::micrometres)),
+        })
+        .collect();
     // What the sheets' lists place nowhere is painted all the same, and
     // said: a suspect item of the account and a line on `pid_plot`'s stderr.
     ledger.note_unplaced(unplaced_records(&primitives, &orders));
@@ -7787,7 +7815,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 50 codes has to be reachable and has to be *recorded*
+    // Every one of the 51 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -8964,6 +8992,60 @@ mod tests {
                     .next()
                     .expect("one page-level item")
             }
+            DropReason::PageFrameRefused => {
+                // A page laid out without its drawing's border frame, which
+                // the frame rule refused: nothing is left undrawn, and the
+                // page account files the record once, with why.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [594.0, 420.0],
+                );
+                model.ledger.frames_refused = vec![crate::ledger::FrameRefused {
+                    stream: "/Sheet6".to_string(),
+                    record: 2_048,
+                    oid: Some(22),
+                    why: "it states a width of 0 m and a height of 0.42 m, and a frame's \
+                          sides are lengths above zero"
+                        .to_string(),
+                    page: crate::ledger::PageWithoutTheFrame::Paper,
+                    page_um: Some([594_000, 420_000]),
+                }];
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                let site = &assembled.page.suspect_sites[0];
+                assert_eq!(
+                    (site.stream.as_deref(), site.oid, site.type_code),
+                    (Some("/Sheet6"), Some(22), Some(0x003D))
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                assert_eq!(
+                    assembled.drawing.primitives.on_page, 1,
+                    "the stroke is drawn"
+                );
+                assert_eq!(
+                    model.ledger.page_warnings(),
+                    [
+                        "the border frame of /Sheet6, the record at +2048, oid 22, is refused: it \
+                      states a width of 0 m and a height of 0.42 m, and a frame's sides are \
+                      lengths above zero; the sheet is laid out as one with no frame: the page \
+                      is the paper its sheet states, 594.000 x 420.000 mm, and nothing is \
+                      placed by the frame: the drawing's ink and its border template lie \
+                      where they do without the frame's offsets"
+                    ]
+                );
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
         }
     }
 
@@ -9218,7 +9300,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 50, "the appendix's 50 rows");
+        assert_eq!(DropReason::all().len(), 51, "the appendix's 51 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.

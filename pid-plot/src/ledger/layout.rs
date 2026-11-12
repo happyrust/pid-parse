@@ -136,6 +136,50 @@ pub struct LayoutLedger {
     /// that sentence says this too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_for_want_of_a_paper: Option<PageInstead>,
+    /// The border frames of the drawing's own sheets that the frame rule
+    /// refuses, each with why and with what the page is without it: the
+    /// sheet is then laid out as one with no frame. Each is one suspect
+    /// [`DropReason::PageFrameRefused`] of the page account, beside the
+    /// refused record its stream's parse account counts, and `pid_plot`
+    /// says it ([`Self::page_warnings`]). Empty on every page of every
+    /// corpus this crate is tested on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames_refused: Vec<FrameRefused>,
+}
+
+/// What a page is when a border frame of its drawing is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageWithoutTheFrame {
+    /// The paper the drawing's sheet states.
+    Paper,
+    /// The size the name of the drawing's template stands for.
+    TemplateName,
+    /// Another border frame of the drawing gives the page, and places what
+    /// a frame places: the refused record is not the sheet's only frame.
+    AnotherFrame,
+    /// Nothing states a size: the page is fitted to what is drawn.
+    Unstated,
+}
+
+/// A border frame of a drawing's own sheet that the frame rule refuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameRefused {
+    /// The sheet stream the record is in.
+    pub stream: String,
+    /// Where the record starts in the stream.
+    pub record: u64,
+    /// The record's oid, when its payload reaches one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid: Option<u32>,
+    /// Which part of the frame rule the record fails, as the decoder words
+    /// it (`pid_parse::parsers::sheet_records::SmartFrameRefusal::describe`).
+    pub why: String,
+    /// What the page is without the frame.
+    pub page: PageWithoutTheFrame,
+    /// That page's `[width, height]` in micrometres, when it has a size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_um: Option<[u64; 2]>,
 }
 
 /// The rectangle a drawing has for its sheet beside the paper: what a page
@@ -427,16 +471,67 @@ impl LayoutLedger {
         self.unplaced = unplaced;
     }
 
-    /// What is to be said of the page itself. One sentence when the paper
+    /// What is to be said of the page itself. One sentence for each border
+    /// frame of the drawing's own sheet that the frame rule refuses: the
+    /// stream, the record, why it is refused, and what the page is laid
+    /// out by without it. One sentence when the paper
     /// the sheet states was refused for not being the border frame's, with
     /// the paper, the frame's rectangle and that the page is the frame's.
     /// One sentence when no frame was read and the paper is not the size
     /// the template's name states, with both sizes and that the page is the
-    /// paper: a name refuses nothing. Empty for a page written on the paper
+    /// paper: a name refuses nothing. Where a frame was refused that last
+    /// sentence is not started — "no border frame was read" is not what
+    /// happened — and the frame's sentence says the two sizes instead.
+    /// Empty for a page written on the paper
     /// its sheet states with nothing to say against it, which is every page
     /// of every corpus this crate is tested on.
     #[must_use]
     pub fn page_warnings(&self) -> Vec<String> {
+        let frames = self.frames_refused.iter().map(|refused| {
+            let oid = refused
+                .oid
+                .map_or_else(String::new, |oid| format!(", oid {oid}"));
+            let size = refused
+                .page_um
+                .map_or_else(String::new, |um| format!(", {}", sides_mm(um)));
+            let laid_out = match refused.page {
+                PageWithoutTheFrame::AnotherFrame => format!(
+                    "another border frame of the drawing states its sheet{size}, and the page \
+                     is laid out by that one"
+                ),
+                page => {
+                    let page = match page {
+                        PageWithoutTheFrame::Paper => {
+                            let named = self.paper_unlike_the_name.map_or_else(
+                                String::new,
+                                |beside| {
+                                    format!(
+                                        ", which is not the size its template's name states, {}",
+                                        sides_mm(beside.named_um)
+                                    )
+                                },
+                            );
+                            format!("the page is the paper its sheet states{size}{named}")
+                        }
+                        PageWithoutTheFrame::TemplateName => {
+                            format!("the page is the size its template's name states{size}")
+                        }
+                        _ => "no paper and no template name states its page, which is \
+                              fitted to what is drawn"
+                            .to_string(),
+                    };
+                    format!(
+                        "the sheet is laid out as one with no frame: {page}, and nothing is \
+                         placed by the frame: the drawing's ink and its border template lie \
+                         where they do without the frame's offsets"
+                    )
+                }
+            };
+            format!(
+                "the border frame of {}, the record at +{}{oid}, is refused: {}; {laid_out}",
+                refused.stream, refused.record, refused.why
+            )
+        });
         let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
         let refused = self.paper_refused.iter().map(|refused| {
             format!(
@@ -447,16 +542,20 @@ impl LayoutLedger {
                 sides_mm(refused.frame_um)
             )
         });
-        let beside_a_name = self.paper_unlike_the_name.iter().map(|beside| {
-            format!(
-                "the paper its sheet states, {}, is not the size its template's name \
-                 states, {}, and no border frame was read to say which the sheet is: a \
-                 name is a label and the paper a reading, so the page is the paper",
-                sides_mm(beside.paper_um),
-                sides_mm(beside.named_um)
-            )
-        });
-        refused.chain(beside_a_name).collect()
+        let beside_a_name = self
+            .paper_unlike_the_name
+            .iter()
+            .filter(|_| self.frames_refused.is_empty())
+            .map(|beside| {
+                format!(
+                    "the paper its sheet states, {}, is not the size its template's name \
+                     states, {}, and no border frame was read to say which the sheet is: a \
+                     name is a label and the paper a reading, so the page is the paper",
+                    sides_mm(beside.paper_um),
+                    sides_mm(beside.named_um)
+                )
+            });
+        frames.chain(refused).chain(beside_a_name).collect()
     }
 
     /// One sentence per stream and reason for the records that draw on the
