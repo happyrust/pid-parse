@@ -199,6 +199,14 @@
 别的根里的文件顶替坏了的文件，和别的图纸顶替坏了的图纸是一回事；现在读短的副本结束查找，它就是库的答案
 （带着故障，画不画由 `displayed` 定）。`a_damaged_copy_is_not_passed_over_for_another_roots`，先红：故障表是空的。
 
+那条用例只走两个目录。查找里目录一段循环、压缩包一段循环，各有一句「读短的副本就是答案」；独立审查把压缩包
+那一句改回去，全部用例照过（建议 N1）。2026-11-13 补了库内的一条
+`a_copy_read_short_in_an_archive_is_not_passed_over_for_the_next_source`：两个 `RefData~*.zip`，读短的副本在前
+则答案是它（故障表一条、没有图元、`PickAmongShortSheets`），完好的在前则答案是完好的；只凭文件名找时一样；
+目录在压缩包之前、目录里是读短的副本时答案是目录里的那一份。把压缩包那一句改回去，这一条红（故障表是空的——
+答案成了第二个压缩包里的完好文件）。图纸被清空成 0 字节的副本同理不被跳过，见第三节末与
+`a_copy_with_an_emptied_sheet_is_not_passed_over_either`。
+
 ## 八、页面与账本
 
 `pid-plot` 的 `push_symbol_instance` 改用 `displayed()`：

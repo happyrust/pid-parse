@@ -4361,6 +4361,115 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// A library of several sources that hold the symbol a placement names,
+    /// archives among them. A copy read short is the library's answer out of
+    /// an archive as out of a directory: the search does not go on to the
+    /// next source for a file to draw in its place.
+    ///
+    /// The copy is `Circle.sym` with the one record of `/Sheet12`, its
+    /// circle, behind a stop. Nothing of it is read, so it holds no
+    /// primitive — which is also what a sound file with nothing to draw
+    /// holds, and from such a file the search does go on. The two are told
+    /// apart by what was read short, in the loop over the directories and in
+    /// the loop over the archives alike. The directories' has its case in
+    /// `tests/sym_file_chain_faults.rs`; until 2026-11-13 the archives' had
+    /// none, and reading on from a short copy there passed every test.
+    #[cfg(feature = "refdata-archive")]
+    #[test]
+    fn a_copy_read_short_in_an_archive_is_not_passed_over_for_the_next_source() {
+        use crate::writer::{PidWriter, StreamReplacement, WritePlan};
+
+        const MEMBER: &str = "Design/Annotation/Graphics/Circle.sym";
+        let sound = std::fs::read(symbols_root().join(MEMBER))
+            .expect("Circle.sym is committed under test-file/symbols");
+        let package = PidPackage::from_bytes(&sound).expect("Circle.sym parses");
+        let mut sheet = package.streams["/Sheet12"].data.clone();
+        let starts = SheetChain::walk(&sheet).starts;
+        assert_eq!(starts.len(), 1, "the one record of /Sheet12");
+        sheet[starts[0] + 2..starts[0] + 6].copy_from_slice(&0u32.to_le_bytes());
+        let fault = crate::model::StreamChainFault::of_stream("/Sheet12", &sheet)
+            .expect("a length of zero stops the chain");
+        let short = PidWriter::write_to_bytes(
+            &package,
+            &WritePlan {
+                stream_replacements: vec![StreamReplacement {
+                    path: "/Sheet12".to_string(),
+                    new_data: sheet,
+                }],
+                ..WritePlan::default()
+            },
+        )
+        .expect("the copy read short is written");
+
+        let short_archive = archive_root("short-copy", &[(MEMBER, short.clone())]);
+        let sound_archive = archive_root("sound-copy", &[(MEMBER, sound)]);
+        let is_the_short_copy = |body: &SymbolGeometry, where_from: &str| {
+            assert_eq!(body.chain_faults, vec![fault.clone()], "{where_from}");
+            assert!(
+                body.primitives.is_empty(),
+                "{where_from}: {:?}",
+                body.primitives
+            );
+            assert_eq!(
+                body.displayed().map(|shown| shown.len()),
+                Err(SymbolNotDrawn::PickAmongShortSheets),
+                "{where_from}"
+            );
+        };
+        let no_roots = Vec::<PathBuf>::new;
+
+        // Two archives, the copy read short in the first: it is the answer,
+        // nothing of it read.
+        let mut library = SymbolLibrary::with_roots(no_roots())
+            .with_archives([short_archive.clone(), sound_archive.clone()]);
+        is_the_short_copy(
+            library
+                .resolve(CIRCLE_UNC)
+                .expect("the first archive's copy"),
+            "the first of two archives",
+        );
+
+        // The other way round the sound copy is the answer, and the one read
+        // short is not read at all.
+        let mut library = SymbolLibrary::with_roots(no_roots())
+            .with_archives([sound_archive.clone(), short_archive.clone()]);
+        let body = library
+            .resolve(CIRCLE_UNC)
+            .expect("the first archive's copy");
+        assert!(body.chain_faults.is_empty(), "{:?}", body.chain_faults);
+        assert_eq!(body.displayed().map(|shown| shown.len()), Ok(1));
+
+        // By the file's name alone, as a title block's placement names its
+        // symbol: the same answer.
+        let mut by_name = SymbolLibrary::with_roots(no_roots())
+            .with_archives([short_archive.clone(), sound_archive.clone()]);
+        is_the_short_copy(
+            by_name
+                .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\Circle.sym")
+                .expect("found by its name"),
+            "the first of two archives, by name",
+        );
+
+        // A directory ahead of an archive: directories are searched first,
+        // and the directory's copy read short is the answer whatever the
+        // archive holds.
+        let root = scratch_root("short-copy-root");
+        let nested = root.join("Design").join("Annotation").join("Graphics");
+        std::fs::create_dir_all(&nested).expect("nested root");
+        std::fs::write(nested.join("Circle.sym"), &short).expect("the copy read short");
+        let mut library =
+            SymbolLibrary::with_roots([root.clone()]).with_archives([sound_archive.clone()]);
+        is_the_short_copy(
+            library.resolve(CIRCLE_UNC).expect("the directory's copy"),
+            "a directory ahead of an archive",
+        );
+
+        for archive in [short_archive, sound_archive] {
+            std::fs::remove_dir_all(archive.parent().expect("the archive's directory")).ok();
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[cfg(feature = "refdata-archive")]
     #[test]
     fn an_unreadable_archive_is_a_miss_like_any_other() {
