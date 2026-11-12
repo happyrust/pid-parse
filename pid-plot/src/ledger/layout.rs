@@ -2317,6 +2317,83 @@ mod tests {
         );
     }
 
+    /// A symbol file with two streams that do not hold is two items and
+    /// two sentences, one a stream: each stream is filed with what its own
+    /// chain left unread and said in the reader's own sentence of it, of
+    /// the one file and the one count of placements.
+    #[test]
+    fn a_symbol_file_with_two_damaged_streams_is_filed_and_said_once_for_each() {
+        let sheet = a_fault("/Sheet68", 127, 78);
+        let pens = a_fault("/StyleCluster", 3_584, 2_690);
+        let mut ledger = LayoutLedger::default();
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Drawing,
+            [(
+                "Gauge.sym".to_string(),
+                2,
+                vec![sheet.clone(), pens.clone()],
+            )],
+        );
+        let items: Vec<_> = ledger
+            .parse
+            .get(LedgerDomain::Drawing)
+            .items
+            .iter()
+            .map(|item| (item.reason, item.stream.as_str(), item.count, item.bytes))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/Sheet68",
+                    1,
+                    Some(49)
+                ),
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/StyleCluster",
+                    1,
+                    Some(894)
+                ),
+            ]
+        );
+        assert!(ledger.parse.get(LedgerDomain::Furniture).items.is_empty());
+        assert_eq!(
+            ledger.symbol_chain_faults,
+            [
+                SymbolChainFault {
+                    domain: LedgerDomain::Drawing,
+                    symbol: "Gauge.sym".to_string(),
+                    placements: 2,
+                    fault: sheet.clone(),
+                },
+                SymbolChainFault {
+                    domain: LedgerDomain::Drawing,
+                    symbol: "Gauge.sym".to_string(),
+                    placements: 2,
+                    fault: pens.clone(),
+                },
+            ]
+        );
+        assert_eq!(
+            ledger.symbol_chain_fault_warnings(),
+            [
+                format!(
+                    "the symbol file Gauge.sym, which 2 placement(s) on the page are drawn \
+                     from, is damaged: {}",
+                    sheet.describe()
+                ),
+                format!(
+                    "the symbol file Gauge.sym, which 2 placement(s) on the page are drawn \
+                     from, is damaged: {}",
+                    pens.describe()
+                ),
+            ]
+        );
+        assert_ne!(sheet.describe(), pens.describe());
+    }
+
     #[test]
     fn a1_nested_storages_are_counted_as_body_cache_records() {
         let sites = vec![a_site("/JSite12", 3), a_site("/JSite13", 0)];

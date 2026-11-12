@@ -45,7 +45,8 @@
 //! saying nothing of the sound file and to one warning of the damaged one —
 //! the file, the stream, where its chain stops — and the page's account to
 //! one suspect item; the fixture as committed, which draws the gauge from
-//! its cache, is held to saying nothing whatever the library holds.
+//! its cache, is held to saying nothing whatever the library holds. A gauge
+//! with two damaged streams is held to a warning and an item for each.
 //!
 //! The usage, missing-drawing and corpus cases need no typeface and assert on
 //! every machine. The export embeds the faces `D06.pid` letters in, so it runs
@@ -3006,4 +3007,114 @@ fn a_symbol_file_fault_the_symbol_reader_reads_through_is_said_all_the_same() {
         )]
     );
     assert!(sound_model.ledger.symbol_chain_fault_warnings().is_empty());
+}
+
+/// A symbol file with two streams that do not hold is said once for each.
+///
+/// The parser reports every chain stream of a `.sym` whose framing does
+/// not hold, and a page drawn from the file says each: one warning and one
+/// suspect item a file and stream. The gauge here has a length of zero in
+/// the middle of `/Sheet68`, a sheet the sound file is not drawn from, and
+/// in the middle of `/StyleCluster`, its pens: neither changes what the
+/// page draws of it — the page is the sound file's, primitive for
+/// primitive — and each is one line on stderr and one item of the
+/// account, two suspects more than the sound file's page counts.
+#[test]
+fn a_symbol_file_with_two_damaged_streams_is_said_once_for_each() {
+    let case = "symbol-two-streams";
+    let (bytes, faults) = a_gauge_damaged_in(&["/Sheet68", "/StyleCluster"], a_length_of_zero);
+    assert_eq!(faults.len(), 2);
+    let file = GAUGE.join("\\");
+    let drawing = flash_b_without_the_gauges_cached_body(case);
+    let library = a_library_of_the_gauge(case, &bytes);
+    let (model, account) = laid_out_with(&drawing, &library);
+    let (sound_model, sound) = laid_out_with(
+        &drawing,
+        &a_library_of_the_gauge("symbol-two-streams-sound", &the_gauge()),
+    );
+    assert_eq!(model.primitives, sound_model.primitives, "the page");
+
+    // The account: the file once a stream, each with what its own chain
+    // left unread.
+    let mut filed: Vec<(String, u64, Option<u64>)> = symbol_files_filed(&account)
+        .into_iter()
+        .map(|(site, count, bytes)| (site.to_string(), count, bytes))
+        .collect();
+    filed.sort_unstable();
+    let mut each_stream: Vec<(String, u64, Option<u64>)> = faults
+        .iter()
+        .map(|fault| {
+            (
+                format!("{file}:{}", fault.stream_path),
+                1,
+                Some(fault.unread_bytes as u64),
+            )
+        })
+        .collect();
+    each_stream.sort_unstable();
+    assert_eq!(filed, each_stream, "the symbol file, filed once a stream");
+    assert_ne!(
+        each_stream[0].2, each_stream[1].2,
+        "the two chains leave the same number of bytes unread, so one count would pass for both"
+    );
+    let mut expected = suspects(&sound);
+    *expected.entry("symbol_file_chain_fault").or_insert(0) += 2;
+    assert_eq!(suspects(&account), expected, "the suspects of the page");
+    assert_eq!(
+        account.summary().suspect,
+        sound.summary().suspect + 2,
+        "the summary with the damaged file, `{}`, against the sound file's, `{}`",
+        account.summary(),
+        sound.summary()
+    );
+
+    // The findings and their sentences: one a stream, of the one file and
+    // its one placement.
+    let found = &model.ledger.symbol_chain_faults;
+    assert_eq!(found.len(), 2, "{found:?}");
+    let sentences = model.ledger.symbol_chain_fault_warnings();
+    assert_eq!(sentences.len(), 2, "{sentences:?}");
+    for fault in &faults {
+        assert!(
+            found.iter().any(|found| {
+                found.domain == LedgerDomain::Drawing
+                    && found.symbol == file
+                    && found.placements == 1
+                    && &found.fault == fault
+            }),
+            "{} is not among the findings: {found:?}",
+            fault.stream_path
+        );
+        let sentence = format!(
+            "the symbol file {file}, which 1 placement(s) on the page are drawn from, is damaged: {}",
+            fault.describe()
+        );
+        assert!(
+            sentences.contains(&sentence),
+            "nothing says {sentence:?}: {sentences:?}"
+        );
+    }
+
+    // The program: a line a stream, each the library's sentence.
+    let said = export_with_a_library(case, &drawing, &library, "two-streams.pdf");
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned.len(),
+        2,
+        "a symbol file with two damaged streams is exactly two warnings\n{said}"
+    );
+    for sentence in &sentences {
+        let line = format!("warning: {}: {sentence}", drawing.display());
+        assert!(
+            warned.contains(&line.as_str()),
+            "the program does not print {line:?}\n{said}"
+        );
+    }
+    if said.code == Some(0) {
+        assert_eq!(
+            ledger_count(&said, "suspect"),
+            account.summary().suspect,
+            "the program's summary is not the account's\n{said}"
+        );
+    }
 }
