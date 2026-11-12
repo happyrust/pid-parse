@@ -14,7 +14,14 @@
 //! ```text
 //! cargo run --example probe_what_each_boundary_decodes_as > before.txt   # on the old build
 //! cargo run --example probe_what_each_boundary_decodes_as > after.txt    # on the new one
+//! cargo run --example probe_what_each_boundary_decodes_as -- --members > members.txt
 //! ```
+//!
+//! `--members` prints a line for each member instead — the segments of a
+//! record that share a tag offset — with the member's tag, whether a conic
+//! member is a circle's or an ellipse's, and a hash of the bits of its
+//! vertices: a change meant for one kind of member can then be held to
+//! having moved no other.
 //!
 //! With no directory it reads what
 //! `probe_what_curve_each_boundary_member_relists` reads: `test-file` and,
@@ -27,6 +34,14 @@
 //! members: 111 distinct documents, 1 703 records before and 1 743 after;
 //! all 1 703 lines the same, the 40 new ones the logo fills of `A0-W` to
 //! `A3-W`, `.igr` and `.pid`.
+//!
+//! The same day, when an arc of an ellipse took the vertices its own record
+//! is drawn as instead of chords of a quarter radian: of 5 969 members the
+//! 5 937 that are no ellipse's arc the same to the bit — 5 513 lines, 13
+//! point runs, the circle, all 378 arcs of a circle, 32 B-splines — and the
+//! 32 that are, changed (a stripe's from one chord to eight segments, a
+//! cap's from eight chords to 24); by record, 1 711 the same and 32
+//! changed, all of them among the 40 that were new that day.
 
 use pid_parse::parsers::sheet_records::decode_igboundaries;
 use std::collections::BTreeSet;
@@ -69,9 +84,38 @@ fn documents_under(dir: &Path, files: &mut Vec<PathBuf>, archives: &mut Vec<Path
     }
 }
 
+/// What kind of member opens at `tag_offset` of a boundary's payload: its
+/// tag byte, and for a conic whether it is a circle's — the major semi-axis
+/// `(radius, 0)`, the ratio one — or an ellipse's.
+fn member_kind(payload: &[u8], tag_offset: usize) -> String {
+    let double = |at: usize| {
+        payload
+            .get(at..at + 8)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(f64::from_le_bytes)
+    };
+    match payload.get(tag_offset).copied() {
+        // An arc: two parameters, the centre, the major semi-axis vector at
+        // `+33`, the ratio at `+49`. A whole ellipse: the centre, the vector
+        // at `+17`, the ratio at `+33`.
+        Some(tag @ (0x74 | 0x73)) => {
+            let vector = if tag == 0x74 { 33 } else { 17 };
+            let circle = double(tag_offset + vector + 8) == Some(0.0)
+                && double(tag_offset + vector + 16) == Some(1.0);
+            format!(
+                "0x{tag:02X} of {}",
+                if circle { "a circle" } else { "an ellipse" }
+            )
+        }
+        Some(tag) => format!("0x{tag:02X}"),
+        None => "no tag".to_string(),
+    }
+}
+
 /// One line for each boundary the library decodes on the document's sheet
-/// chains.
-fn lines_of(label: &str, bytes: &[u8], lines: &mut Vec<String>) {
+/// chains — or, with `by_member`, one for each member of each: the segments
+/// that share a tag offset.
+fn lines_of(label: &str, bytes: &[u8], by_member: bool, lines: &mut Vec<String>) {
     let Ok(package) = pid_parse::PidPackage::from_bytes(bytes) else {
         lines.push(format!("{label}|DOES NOT PARSE"));
         return;
@@ -90,6 +134,41 @@ fn lines_of(label: &str, bytes: &[u8], lines: &mut Vec<String>) {
             continue;
         }
         for record in decode_igboundaries(raw.data.as_slice()) {
+            if by_member {
+                let payload = raw
+                    .data
+                    .get(record.byte_range.start + 6..record.byte_range.end)
+                    .unwrap_or_default();
+                let mut at = 0usize;
+                while at < record.segments.len() {
+                    let tag_offset = record.segments[at].tag_offset;
+                    let run = record.segments[at..]
+                        .iter()
+                        .take_while(|segment| segment.tag_offset == tag_offset)
+                        .count();
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    for segment in &record.segments[at..at + run] {
+                        for value in [
+                            segment.start.0,
+                            segment.start.1,
+                            segment.end.0,
+                            segment.end.1,
+                        ] {
+                            value.to_bits().hash(&mut hasher);
+                        }
+                    }
+                    lines.push(format!(
+                        "{name}#{len:x}{hash:016x}|{stream}|+{}|oid {} member +{tag_offset}|{run} \
+                         segment(s)|{}|{:016x}",
+                        record.byte_range.start,
+                        record.oid,
+                        member_kind(payload, tag_offset),
+                        hasher.finish()
+                    ));
+                    at += run;
+                }
+                continue;
+            }
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             format!("{record:?}").hash(&mut hasher);
             for segment in &record.segments {
@@ -122,7 +201,15 @@ fn lines_of(label: &str, bytes: &[u8], lines: &mut Vec<String>) {
 }
 
 fn main() {
-    let mut dirs: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let mut by_member = false;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for arg in std::env::args().skip(1) {
+        if arg == "--members" {
+            by_member = true;
+        } else {
+            dirs.push(PathBuf::from(arg));
+        }
+    }
     if dirs.is_empty() {
         dirs.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file"));
         if let Some(dir) = std::env::var_os("PID_TEST_DATA_DIR") {
@@ -151,7 +238,7 @@ fn main() {
                 continue;
             }
             documents += 1;
-            lines_of(&path.display().to_string(), &bytes, &mut lines);
+            lines_of(&path.display().to_string(), &bytes, by_member, &mut lines);
         }
         for archive in &archives {
             for extension in ["igr", "pid"] {
@@ -167,7 +254,12 @@ fn main() {
                         continue;
                     }
                     documents += 1;
-                    lines_of(&member.label().display().to_string(), &bytes, &mut lines);
+                    lines_of(
+                        &member.label().display().to_string(),
+                        &bytes,
+                        by_member,
+                        &mut lines,
+                    );
                 }
             }
         }
@@ -177,7 +269,12 @@ fn main() {
         println!("{line}");
     }
     eprintln!(
-        "{documents} distinct document(s), {} decoded igBoundary2d",
-        lines.len()
+        "{documents} distinct document(s), {} {}",
+        lines.len(),
+        if by_member {
+            "member(s) of the igBoundary2d the library decodes"
+        } else {
+            "decoded igBoundary2d"
+        }
     );
 }

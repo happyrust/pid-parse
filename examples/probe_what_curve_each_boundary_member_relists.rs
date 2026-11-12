@@ -24,7 +24,7 @@
 //! |---|---|---|
 //! | `0x67` | start, end | `igLine2d` |
 //! | `0x68` | `u32` count, two bytes, the points | `igLineString2d` |
-//! | `0x73` | centre, major semi-axis vector, ratio, a byte | `igCircle2d` (the vector `(radius, 0)`, the ratio one) |
+//! | `0x73` | centre, major semi-axis vector, ratio, a byte | `igEllipse2d`; `igCircle2d` as the ellipse of vector `(radius, 0)` and ratio one, which is every one the corpora hold |
 //! | `0x74` | two parameters, centre, major semi-axis vector, ratio, direction byte | `igEllipticalArc2d`; `igArc2d` as the ellipse of vector `(radius, 0)` and ratio one |
 //! | `0x7F` | `u32 N`, poles, weight flag and weights, `u32 M`, knots, a double, four bytes | `igBspCurve2d` |
 //!
@@ -84,11 +84,31 @@
 //!   kind is its ring's first vertex, which is how an anchor came to be
 //!   read "outside the ring" on the 21 fills of `CPECCHBA2.igr` and
 //!   `qsmcqtaz13A2.igr`.
+//! * **The fill's edge**: the library flattens a curved member after the
+//!   way its record is drawn. All 32 arcs of the ellipse and all 32
+//!   B-splines run through the very vertices of the polyline a sheet draws
+//!   their `igEllipticalArc2d` or `igBspCurve2d` as; an arc of the ellipse
+//!   is then 0.0042 mm off the ellipse at most (0.0366 mm while it was cut
+//!   into chords of a quarter radian, and the 14° arc of a stripe one
+//!   straight line). The arc of a circle is drawn as a true arc and filled
+//!   to chords: at most 0.0463 mm off its arc, on the outer edge of the
+//!   `-W` crescent (radius 6.7228 mm, fifteen chords), which is drawn with
+//!   a 0.13 mm pen. Of the 379 conic members that are a circle's, 49 name a
+//!   record whose pen resolves, and the chords of all 49 lie within half
+//!   that pen's width of the arc (0.71 of it at most).
+//! * **The fill's area** against the area inside its members' own curves —
+//!   a conic at 4 096 steps, a B-spline at 256 to a span — over the 127
+//!   records with a conic member whose loop chains: at most 0.21% short
+//!   where the record holds an arc of the ellipse (a cap of the logo,
+//!   9.746 836 for 9.766 983 mm²), at most 1.71% short where its conics are
+//!   all a circle's (the crescent, 40.638 130 for 41.344 461 mm²). `D04`'s
+//!   oid 131 is not compared: two of its members stand 2.6 mm apart.
 //! * **Symbol caches**: the boundaries of the drawings' `/JSite*/PSMcluster0`
 //!   are read by another reader of the library, and are only counted here:
 //!   200 live records, all 200 read by the same grammar to the last byte —
 //!   191 of one loop and 9 of two; 171 circles, 89 lines, 54 arcs and 6
-//!   point runs for members.
+//!   point runs for members, every circle and every arc with the major
+//!   semi-axis `(r, 0)` and the ratio one.
 //! * **What it does not explain**: the two bytes after a loop's member count
 //!   (`02 01` on 1 688 loops, `03 01` on 40, `00 00` on 13, `01 01` on 2,
 //!   `02 00` and `04 01` on one each), the flag byte before the reference
@@ -99,8 +119,10 @@
 //!
 //! It exits non-zero when a record is not read to its last byte, the
 //! library refuses one, a member lies on no record its boundary names, the
-//! direction bit disagrees with the way a member runs, or the anchor rule
-//! fails.
+//! direction bit disagrees with the way a member runs, the anchor rule
+//! fails, a member whose record is drawn as a polyline is not flattened to
+//! that polyline's vertices, or a conic member is flattened farther from
+//! its curve than half the pen its record is drawn with.
 
 use pid_parse::parsers::sheet_records::{
     decode_igarc_at, decode_igboundary_at, decode_igbspcurve_at, decode_igcircle_at,
@@ -169,6 +191,14 @@ impl Member {
 
     /// Points along the member, from its start to its end.
     fn points(&self) -> Vec<P> {
+        self.curve(64)
+    }
+
+    /// The member's own curve, from its start to its end: a conic at
+    /// `steps` equal steps of its parameter, a B-spline sampled at a
+    /// sixteenth as many to a span (sixteen for [`Member::points`]), a line
+    /// or a run as it is.
+    fn curve(&self, steps: u32) -> Vec<P> {
         match self {
             Member::Line { start, end } => vec![*start, *end],
             Member::Run { points } => points.clone(),
@@ -183,8 +213,11 @@ impl Member {
                 } else {
                     std::f64::consts::TAU
                 };
-                (0..=64)
-                    .map(|i| ellipse_at(*center, *major, *ratio, turn * f64::from(i) / 64.0))
+                (0..=steps)
+                    .map(|i| {
+                        let t = turn * f64::from(i) / f64::from(steps);
+                        ellipse_at(*center, *major, *ratio, t)
+                    })
                     .collect()
             }
             Member::Arc {
@@ -196,9 +229,10 @@ impl Member {
                 flag,
             } => {
                 let sweep = arc_sweep(*start, *end, *flag);
-                (0..=64)
+                (0..=steps)
                     .map(|i| {
-                        ellipse_at(*center, *major, *ratio, start + sweep * f64::from(i) / 64.0)
+                        let t = start + sweep * f64::from(i) / f64::from(steps);
+                        ellipse_at(*center, *major, *ratio, t)
                     })
                     .collect()
             }
@@ -206,9 +240,54 @@ impl Member {
                 poles,
                 weights,
                 knots,
-            } => pid_parse::bspline::sample(poles, weights, knots, 16),
+            } => pid_parse::bspline::sample(poles, weights, knots, (steps / 16).max(16) as usize),
         }
     }
+}
+
+/// What a conic member's major semi-axis vector and ratio say it is.
+fn conic_shape(major: P, ratio: f64) -> &'static str {
+    if major.1 == 0.0 && ratio == 1.0 {
+        "major semi-axis (r, 0), ratio 1"
+    } else if (ratio - 1.0).abs() < 1e-12 {
+        "a circle whose major semi-axis is off +X"
+    } else {
+        "an ellipse"
+    }
+}
+
+/// The area a fill paints: its first loop's, less that of every later one.
+fn fill_area(loops: &[Vec<P>]) -> f64 {
+    loops
+        .iter()
+        .enumerate()
+        .map(|(index, ring)| {
+            let area = signed_area(ring).abs();
+            if index == 0 {
+                area
+            } else {
+                -area
+            }
+        })
+        .sum()
+}
+
+/// How far `point` stands from the nearest segment of `polyline`.
+fn distance_to_polyline(point: P, polyline: &[P]) -> f64 {
+    polyline
+        .windows(2)
+        .map(|pair| {
+            let (a, b) = (pair[0], pair[1]);
+            let d = (b.0 - a.0, b.1 - a.1);
+            let length_squared = d.0 * d.0 + d.1 * d.1;
+            let along = if length_squared > 0.0 {
+                (((point.0 - a.0) * d.0 + (point.1 - a.1) * d.1) / length_squared).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (point.0 - (a.0 + along * d.0)).hypot(point.1 - (a.1 + along * d.1))
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// `C + cos t · major + sin t · minor`, `minor` the major semi-axis turned a
@@ -754,10 +833,34 @@ struct Totals {
     open_loops: Vec<String>,
     other_flags: Vec<String>,
     worst_spline: f64,
+    /// The fill's edge against the member's own curve, by kind of conic: the
+    /// farthest a point of the curve stands from the segments the library
+    /// flattened the member to, the major semi-axis of that member (the
+    /// radius, when it is a circle's), where, and the width in metres of
+    /// the pen the record it names is stroked with.
+    chord_gaps: BTreeMap<&'static str, (f64, f64, String, Option<f64>)>,
+    /// The same gap against the pen, over the conic members whose record
+    /// resolves a pen: how many, how many lie within half the pen's width
+    /// of their curve, and the widest gap as a share of that half width.
+    pens: BTreeMap<&'static str, (usize, usize, f64)>,
+    /// Members that name a record a sheet draws as a polyline, by that
+    /// record's family (`igEllipticalArc2d`, `igBspCurve2d`): how many, how
+    /// many the library flattened to the very vertices of that polyline,
+    /// and the farthest one of its vertices stands from the fill's edge.
+    stroked: BTreeMap<&'static str, (usize, usize, f64)>,
+    /// The area a record fills against the area inside its members' own
+    /// curves, by the kind of conic the record holds: how many records, the
+    /// widest difference as a share of the latter (negative when the fill
+    /// is short), both areas in m², and where.
+    fill_short: BTreeMap<&'static str, (usize, f64, f64, f64, String)>,
+    /// Records with a conic member whose loop does not chain, so that there
+    /// is no area to compare.
+    fill_not_compared: Vec<String>,
     /// Live boundaries in symbol caches, and how many the grammar reads.
     cached: usize,
     cached_read: usize,
     cached_tags: BTreeMap<u8, usize>,
+    cached_conics: BTreeMap<String, usize>,
     cached_loops: BTreeMap<usize, usize>,
     cached_unread: Vec<String>,
     /// What fails the probe.
@@ -776,6 +879,8 @@ fn walk_document(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let show = verbose.is_some_and(|part| name.contains(part));
+    // The pens of the document's records, resolved when a member asks.
+    let mut styles: Option<pid_parse::style_link::LineStyleIndex> = None;
     for (stream, raw) in &package.streams {
         let leaf = stream.rsplit('/').next().unwrap_or_default();
         if leaf == "PSMcluster0" && stream.starts_with("/JSite") {
@@ -803,6 +908,17 @@ fn walk_document(
                         for lp in &read.loops {
                             for (_, member) in &lp.members {
                                 *t.cached_tags.entry(member.tag()).or_default() += 1;
+                                if let Member::Arc { major, ratio, .. }
+                                | Member::Ellipse { major, ratio, .. } = member
+                                {
+                                    *t.cached_conics
+                                        .entry(format!(
+                                            "0x{:02X} {}",
+                                            member.tag(),
+                                            conic_shape(*major, *ratio)
+                                        ))
+                                        .or_default() += 1;
+                                }
                             }
                         }
                         *t.cached_loops.entry(read.loops.len()).or_default() += 1;
@@ -887,6 +1003,7 @@ fn walk_document(
             // from one another.
             let mut rings: Vec<Vec<P>> = Vec::new();
             let mut open = Vec::new();
+            let mut widest_gap = 0.0f64;
             for (index, lp) in read.loops.iter().enumerate() {
                 let mut ring: Vec<P> = Vec::new();
                 let mut gap = 0.0f64;
@@ -902,15 +1019,12 @@ fn walk_document(
                     if let Member::Arc { major, ratio, .. } | Member::Ellipse { major, ratio, .. } =
                         member
                     {
-                        let shape = if major.1 == 0.0 && *ratio == 1.0 {
-                            "major semi-axis (r, 0), ratio 1"
-                        } else if (*ratio - 1.0).abs() < 1e-12 {
-                            "a circle whose major semi-axis is off +X"
-                        } else {
-                            "an ellipse"
-                        };
                         *t.conics
-                            .entry(format!("0x{:02X} {shape}", member.tag()))
+                            .entry(format!(
+                                "0x{:02X} {}",
+                                member.tag(),
+                                conic_shape(*major, *ratio)
+                            ))
                             .or_default() += 1;
                     }
                 }
@@ -920,6 +1034,7 @@ fn walk_document(
                 if gap > 1e-9 {
                     open.push(format!("loop {index} by {gap:.3e} m"));
                 }
+                widest_gap = widest_gap.max(gap);
                 let turn = if signed_area(&ring) > 0.0 {
                     "counter-clockwise"
                 } else {
@@ -942,6 +1057,70 @@ fn walk_document(
             }
             if !open.is_empty() {
                 t.open_loops.push(format!("{site}: {}", open.join(", ")));
+            }
+
+            // What the record fills — the ring the library flattens it to —
+            // against the area inside its members' own curves. Only where
+            // the members run on from one another to within a tenth of a
+            // millimetre: a loop that does not chain encloses no area to
+            // compare (`D04`'s one such record leaves 2.6 mm between two
+            // members).
+            let conics: Vec<bool> = members
+                .iter()
+                .filter_map(|(_, member)| match member {
+                    Member::Arc { major, ratio, .. } | Member::Ellipse { major, ratio, .. } => {
+                        Some(major.1 == 0.0 && *ratio == 1.0)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let mut fills_line = None;
+            if !conics.is_empty() && widest_gap > 1e-4 {
+                t.fill_not_compared.push(format!(
+                    "{site}: its members leave {:.3} mm between two of them",
+                    widest_gap * 1e3
+                ));
+            } else if let (false, Some(decoded)) = (conics.is_empty(), library.as_ref()) {
+                let own: Vec<Vec<P>> = read
+                    .loops
+                    .iter()
+                    .map(|lp| {
+                        lp.members
+                            .iter()
+                            .flat_map(|(_, member)| {
+                                let mut points = member.curve(4096);
+                                points.pop();
+                                points
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let filled: Vec<Vec<P>> = decoded
+                    .loops()
+                    .map(|segments| segments.iter().map(|segment| segment.start).collect())
+                    .collect();
+                let (own, filled) = (fill_area(&own), fill_area(&filled));
+                let kind = if conics.iter().all(|circle| *circle) {
+                    "a record whose conic members are all a circle's"
+                } else {
+                    "a record that holds the arc of an ellipse"
+                };
+                let share = (filled - own) / own;
+                let entry = t
+                    .fill_short
+                    .entry(kind)
+                    .or_insert((0, 0.0, 0.0, 0.0, String::new()));
+                entry.0 += 1;
+                if share.abs() > entry.1.abs() {
+                    (entry.1, entry.2, entry.3, entry.4) = (share, filled, own, site.clone());
+                }
+                fills_line = Some(format!(
+                    "fills {:.6} mm², {:+.4}% against the {:.6} mm² inside its members' own \
+                     curves",
+                    filled * 1e6,
+                    share * 1e2,
+                    own * 1e6
+                ));
             }
 
             // The anchor: the placeholder on a record that names no member,
@@ -998,6 +1177,9 @@ fn walk_document(
                 if !open.is_empty() {
                     println!("      does not close: {}", open.join(", "));
                 }
+                if let Some(line) = &fills_line {
+                    println!("      {line}");
+                }
             }
 
             // Every reference names one live record; the class word says of
@@ -1034,6 +1216,134 @@ fn walk_document(
                         .filter(|slot| *slot != index)
                         .find_map(try_reference)
                 });
+                // What the library made of the member: the segments of the
+                // decoded record that carry the member's tag offset.
+                let flattened: Vec<P> = library.as_ref().map_or_else(Vec::new, |decoded| {
+                    let mut vertices = Vec::new();
+                    for segment in decoded
+                        .segments
+                        .iter()
+                        .filter(|segment| segment.tag_offset == *tag_at)
+                    {
+                        if vertices.is_empty() {
+                            vertices.push(segment.start);
+                        }
+                        vertices.push(segment.end);
+                    }
+                    vertices
+                });
+                if let (
+                    true,
+                    Member::Arc { major, ratio, .. } | Member::Ellipse { major, ratio, .. },
+                ) = (flattened.len() >= 2, member)
+                {
+                    // The fill's edge against the curve itself.
+                    let gap = member
+                        .curve(4096)
+                        .iter()
+                        .map(|point| distance_to_polyline(*point, &flattened))
+                        .fold(0.0f64, f64::max);
+                    let circle = major.1 == 0.0 && *ratio == 1.0;
+                    let kind = if circle {
+                        "the arc of a circle"
+                    } else {
+                        "the arc of an ellipse"
+                    };
+                    // The pen the record this member names is stroked with.
+                    let pen = found.as_ref().and_then(|(slot, _)| {
+                        styles
+                            .get_or_insert_with(|| {
+                                pid_parse::style_link::line_styles_for_document(&package.parsed)
+                            })
+                            .get(&(stream.clone(), read.refs[*slot].0))
+                            .map(|style| style.symbology.width_m)
+                    });
+                    let entry = t
+                        .chord_gaps
+                        .entry(kind)
+                        .or_insert((0.0, 0.0, String::new(), None));
+                    if gap > entry.0 {
+                        *entry = (
+                            gap,
+                            major.0.hypot(major.1),
+                            format!("{site} member {index}"),
+                            pen,
+                        );
+                    }
+                    if let Some(pen) = pen.filter(|pen| *pen > 0.0) {
+                        let entry = t.pens.entry(kind).or_insert((0, 0, 0.0));
+                        entry.0 += 1;
+                        if gap <= pen / 2.0 {
+                            entry.1 += 1;
+                        } else {
+                            t.faults.push(format!(
+                                "{site}: member {index} is flattened {:.4} mm off its curve, \
+                                 past half the {:.4} mm pen its record is drawn with",
+                                gap * 1e3,
+                                pen * 1e3
+                            ));
+                        }
+                        entry.2 = entry.2.max(gap / (pen / 2.0));
+                    }
+                }
+                if let Some((slot, held)) = &found {
+                    // A member whose record a sheet draws as a polyline — an
+                    // arc of an ellipse, a B-spline — against that polyline:
+                    // the curve as `geometry.rs` samples it.
+                    let drawn = named.get(*slot).copied().flatten().and_then(
+                        |(code, record_at)| match code {
+                            0x007E => decode_igellipticalarc_at(data, record_at)
+                                .and_then(|arc| {
+                                    pid_parse::bspline::elliptical_arc_directed(
+                                        arc.center,
+                                        arc.major_axis,
+                                        arc.ratio,
+                                        arc.sweep_start,
+                                        arc.sweep_end,
+                                        arc.flag == 0,
+                                    )
+                                })
+                                .map(|curve| ("igEllipticalArc2d", curve)),
+                            0x005D => decode_igbspcurve_at(data, record_at).map(|curve| {
+                                ("igBspCurve2d", (curve.poles, curve.weights, curve.knots))
+                            }),
+                            _ => None,
+                        },
+                    );
+                    if let Some((family, (poles, weights, knots))) = drawn {
+                        let mut stroke = pid_parse::bspline::sample(
+                            &poles,
+                            &weights,
+                            &knots,
+                            pid_parse::bspline::SEGMENTS_PER_SPAN,
+                        );
+                        if held.forward == Some(false) {
+                            stroke.reverse();
+                        }
+                        let entry = t.stroked.entry(family).or_insert((0, 0, 0.0));
+                        entry.0 += 1;
+                        if stroke.len() == flattened.len()
+                            && stroke
+                                .iter()
+                                .zip(&flattened)
+                                .all(|(a, b)| near(*a, *b, 1e-12))
+                        {
+                            entry.1 += 1;
+                        } else {
+                            t.faults.push(format!(
+                                "{site}: member {index} is not flattened to the vertices its \
+                                 {family} is drawn as"
+                            ));
+                        }
+                        if flattened.len() >= 2 {
+                            let off = stroke
+                                .iter()
+                                .map(|point| distance_to_polyline(*point, &flattened))
+                                .fold(0.0f64, f64::max);
+                            entry.2 = entry.2.max(off);
+                        }
+                    }
+                }
                 let line = match &found {
                     None if read.refs.is_empty() => "names no member".to_string(),
                     None => {
@@ -1114,12 +1424,13 @@ fn walk_document(
                     let (first, last) = (points[0], points[points.len() - 1]);
                     println!(
                         "      [{index:>3}] +{tag_at:<5} 0x{:02X} ({:.6}, {:.6}) -> ({:.6}, \
-                         {:.6}) mm: {line}",
+                         {:.6}) mm, {} segment(s) of the fill's ring: {line}",
                         member.tag(),
                         first.0 * 1e3,
                         first.1 * 1e3,
                         last.0 * 1e3,
                         last.1 * 1e3,
+                        flattened.len().saturating_sub(1),
                     );
                 }
             }
@@ -1272,6 +1583,45 @@ fn main() {
     for (shape, count) in &t.conics {
         println!("  {count:>6}  {shape}");
     }
+    println!("the edge the library flattens a conic member to, against the member's own curve:");
+    for (kind, (gap, semi_axis, site, pen)) in &t.chord_gaps {
+        println!(
+            "  {kind}: at most {:.4} mm off its curve, on one whose major semi-axis is {:.4} mm \
+             ({site}; {})",
+            gap * 1e3,
+            semi_axis * 1e3,
+            pen.map_or_else(
+                || "it names no record whose pen resolves".to_string(),
+                |pen| format!("its record is drawn with a {:.4} mm pen", pen * 1e3)
+            )
+        );
+    }
+    for (kind, (count, within, share)) in &t.pens {
+        println!(
+            "  {kind}, where its record resolves a pen ({count}): {within} within half the \
+             pen's width of the curve, at most {share:.3} of that half width"
+        );
+    }
+    println!("members whose record a sheet draws as a polyline:");
+    for (family, (count, same, off)) in &t.stroked {
+        println!(
+            "  {count:>6}  name an {family}; flattened to the very vertices of that polyline: \
+             {same}; one of its vertices stands at most {:.4} mm from the fill's edge",
+            off * 1e3
+        );
+    }
+    println!("what a record fills, against the area inside its members' own curves:");
+    for (kind, (count, share, filled, own, site)) in &t.fill_short {
+        println!(
+            "  {kind} ({count}): at most {:+.4}% ({:.6} mm² for {:.6} mm², {site})",
+            share * 1e2,
+            filled * 1e6,
+            own * 1e6
+        );
+    }
+    for line in &t.fill_not_compared {
+        println!("  not compared: {line}");
+    }
     println!("the two bytes after a loop's member count:");
     for (bytes, count) in &t.loop_bytes {
         println!("  {count:>6}  {bytes}");
@@ -1320,11 +1670,18 @@ fn main() {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    for (shape, count) in &t.cached_conics {
+        println!("  {count:>6}  {shape}");
+    }
     for line in &t.cached_unread {
         println!("  not read: {line}");
     }
     if t.faults.is_empty() {
-        println!("\nnothing fails: every record is read, decoded, and its members are the curves it names");
+        println!(
+            "\nnothing fails: every record is read, decoded, its members are the curves it \
+             names, and each curved member is flattened as its record is drawn or within half \
+             its pen"
+        );
     } else {
         println!("\n{} thing(s) fail:", t.faults.len());
         for fault in &t.faults {
