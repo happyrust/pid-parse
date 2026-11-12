@@ -189,7 +189,9 @@ impl ParseAccount {
 pub struct RecordItem {
     /// Which drop this is.
     pub reason: DropReason,
-    /// The Sheet stream's path, or the storage path for a body record.
+    /// The Sheet stream's path, or the storage path for a body record; for
+    /// [`DropReason::SymbolFileChainFault`], the symbol file and the stream
+    /// of it, `<file>:<stream>`.
     pub stream: String,
     /// The PSM type code, written and read as `0xNNNN`.
     #[serde(
@@ -204,7 +206,8 @@ pub struct RecordItem {
     /// How many records.
     pub count: u64,
     /// The stream's byte size, for
-    /// [`DropReason::SheetStreamWithoutGeometry`].
+    /// [`DropReason::SheetStreamWithoutGeometry`]; the bytes the stream's
+    /// chain left unread, for [`DropReason::SymbolFileChainFault`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// How many body primitives an unplaced cache definition carries, for
