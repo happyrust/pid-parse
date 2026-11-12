@@ -76,7 +76,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `pid-plot/tests/cli_pid_plot.rs`：断链的 7 条（这个文件连同下面那一行的 20 条共 27 条） | 记录链立不住的流在 `pid_plot` 上：`DWG-0201GP06-01.pid` 的 `/Sheet6` 改坏一个长度字段的三份副本（中间一条记录长度为零、最后一条多一个字节、流尾多出四个字节）各导出一页，退出码不变，stderr 恰好一行 `warning:`，点名副本、`/Sheet6`、链停下的偏移与没读的字节数；页面与「同一张图、这条流干净地截到停点为止」的页逐图元相同，停点之前的图元与完好图纸逐个同一（位置相同当且仅当读到的页框相同：这张图唯一活着的页框是流的最后一条记录）；页面按图纸自己的显示次序画读到的那些记录（`paint_sequence` 有值，且与截到停点的那一份相同）；账本把这条流记成一项可疑的 `sheet_stream_without_geometry`，字节数是没读的那部分，守恒与交叉核对照过。第四份原样重写的副本一个字都不说，页面与账本同完好图纸。第五份只把流头的记录数加一：链走到流尾、页面逐图元就是完好图纸，stderr 一行不带停点的 `warning:`（`live record(s) where the header states 355`），账本记一项、字节数 0。第六、七份是「长度错而未越界」：第 1 条记录长度 +8、第 31 条长度 −16，链从不是记录起点的偏移接着读、停在类型字不是记录开头的地方（`+143`、`+3062`）；除了前几份的各项，另断言停点是坏记录之后第一个偏移、告警说 `is not one a record opens with` 并点名坏记录是最后读到的那一条。把类型字绊线关掉，合并后的 26 条里 3 条失败、23 条通过：失败的是这两条和 `a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place`（第九次审查在 26 条时量的；之后加的第 27 条没有在那个改动下重量）（第一份原先读成 359 条记录的完好流，一个字都不说）。七份副本另各自断言链读到、却没有显示次序位置的记录：第 1 条长度 +8 那一份有 1 条（2 个图元；链只读到这一条，它挂在图纸的一个对象下面，那个对象在停点之后，所以流里没有图纸自己的记录可以对照图纸的表），账本在流那一项之外另记一项 `record_without_display_place`、可疑比完好图纸多 2 项，其余六份没有；七份上 `display_order_warnings` 都不另起一句——链停造成的没有位置，由链的那一行说：那一份上链的一行接着说「读到的记录没有一条是图纸自己的」「1 条记录、2 个图元没有位置」「页面是模板名给出的页幅 594 × 420」，其余带停点的副本上那一行不说这些；每份带停点的副本上 stderr 那一行就是库函数 `chain_fault_warnings` 的那一句 | `test-file/DWG-0201GP06-01.pid`（入库）；四条在没有字体目录时照样断言 stderr、页面模型与账本，只是退出码断言为 1（停在第一个缺的字型上，警告在要字体之前打印） |
 | `tests/publish_chain_faults.rs` | `pid_publish_xml` says when a record chain of a `.pid` it publishes does not hold, for a single `.pid` and for each drawing of a backup package. The publish reader takes a stream's records all or nothing, so a copy of `DWG-0201GP06-01.pid` with one length of `/Sheet6` set to zero publishes 0 of 102 label values where the drawing publishes 92: the copy exits 0 with exactly one `warning:` naming the file, the stream, `stops at +16994 of 29594 bytes`, the 12 600 bytes unread and what the stream cost — the 120 attribute rows, text boxes, dependency objects and symbol placements the chain read before the stop — and the line is the library's sentence (`PublishChainFault::describe`) from the one read that makes the drawing (`read_publish_from_pid`). A `/StyleCluster` whose chain stops is said too, as costing the XML nothing the chain read, and the data and meta XML are the intact drawing's byte for byte. A copy whose `DrawingNo` row is in the stopped stream exits 1 with the warning ahead of the error. A header count one too many is said and the stream is still read. A package of two drawings, one damaged, publishes both, exits 0 and prints one warning led by the zip and the entry (`BackupPublishReport::chain_faults`); `_Index.json` and the coverage reports keep their keys and list no fault | `test-file/DWG-0201GP06-01.pid`, `test-file/D06.pid` (committed; runs in CI) |
 | `tests/boundary_loops.rs` | A boundary of two loops fills the area between them. `XA-A1.igr`'s oids 5074 and 5076 — outer loops of 104 and 162 lines, counters of 77 and 54 — decode with their loops, anchor and member references, and each reaches the sheet as one fill ring whose area is the outer loop's less the counter's, with the record's anchor inside it and a point of the counter outside | `test-file/Ref/Template Files/XA-A1.igr` (committed; runs in CI) |
-| `tests/boundary_members.rs` | A boundary re-lists curves of every kind, and each member is the curve its reference names. The five logo fills of each of `A0-W.igr` to `A3-W.igr` — refused until 2026-11-12 — decode: one loop of lines, arcs, arcs of an ellipse and B-splines that names its members. Each of a template's 26 members is held to the record its reference names (12 `igLine2d` bit for bit, 6 `igArc2d` on the circle between the record's two ends, 4 `igEllipticalArc2d` on the ellipse likewise, 4 `igBspCurve2d` vertex for vertex against the record's sampled curve), run the way bit 2 of the reference's last word says (13 forward, 13 reversed); members run on from one another within 10 µm, the anchor lies inside every fill, the five areas are pinned and the same in all four templates. Each fill reaches the sheet as one closed ring under a fill style, and the template refuses nothing; the four `.pid` templates that embed the same frames decode the same fills in `/JSite*/Sheet6`. And the anchor rule: the 21 fills of `CPECCHBA2.igr` and `qsmcqtaz13A2.igr` name no member, the file has `1e30` twice where an anchor would stand, and the decoded `anchor` is the ring's first vertex; over ten committed documents, 38 boundaries name their members and state an anchor inside their fill, 29 do neither | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip`, `test-file/Ref/Template Files/*.igr`, two fixture drawings (all committed; feature `refdata-archive`; runs in CI) |
+| `tests/boundary_members.rs` | A boundary re-lists curves of every kind, and each member is the curve its reference names. The five logo fills of each of `A0-W.igr` to `A3-W.igr` — refused until 2026-11-12 — decode: one loop of lines, arcs, arcs of an ellipse and B-splines that names its members. Each of a template's 26 members is held to the record its reference names (12 `igLine2d` bit for bit, 6 `igArc2d` on the circle between the record's two ends, 4 `igEllipticalArc2d` and 4 `igBspCurve2d` vertex for vertex against the polyline the record is drawn as), run the way bit 2 of the reference's last word says (13 forward, 13 reversed); members run on from one another within 10 µm, the anchor lies inside every fill, the five areas are pinned and the same in all four templates. Each fill reaches the sheet as one closed ring under a fill style, the eight members whose record the sheet draws as a polyline run through the vertices of that entity, and the template refuses nothing. The edge of a fill stays under the pen of its outline: every record the fills name is drawn with a 0.13 mm pen, each chord of the six arcs of a circle stands inside half of it — 0.0463 mm at the farthest, on the crescent's 6.7228 mm arc in fifteen chords — and each fill's shortfall against its outline as drawn is pinned (the crescent 1.72%, a stripe 0.063%, a cap none). The four `.pid` templates that embed the same frames decode the same fills in `/JSite*/Sheet6`. And the anchor rule: the 21 fills of `CPECCHBA2.igr` and `qsmcqtaz13A2.igr` name no member, the file has `1e30` twice where an anchor would stand, and the decoded `anchor` is the ring's first vertex; over ten committed documents, 38 boundaries name their members and state an anchor inside their fill, 29 do neither | `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip`, `test-file/Ref/Template Files/*.igr`, two fixture drawings (all committed; feature `refdata-archive`; runs in CI) |
 | `tests/elliptical_arcs.rs` | `0x007E igEllipticalArc2d` on both of its paths. In cached symbol bodies: A01's four head arcs decode and bulge outward from their vessels. On a sheet's own chain: `XA-A1.igr`'s two arcs close the counters of an outlined `B`, each starting and ending on the ends of the counter's edges and bulging away from it, and every stroke of that wordmark — the lines, the two arcs, the 23 `igBspCurve2d` of the letters' bowls — draws with the pen its style id names (0.25 mm) rather than the default. And the other direction byte: the four `-W` templates of the committed `RefData~4~682.zip` each keep four arcs and four B-splines in their logo; on `A1-W.igr` the arcs are the top cap, the bottom cap and two left-side pieces of one ellipse, clockwise, each on the ends of the logo's lines, the caps turning 106.26° on the far side of their chord | `test-file/export-test/publish-data/A01/A01.pid` (soft-skips when absent), `test-file/Ref/Template Files/XA-A1.igr` and `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` (committed; absent is a failure) |
 | `tests/sym_elliptical_arc_matches_cached_body.rs` | A `.sym` body's elliptical arc and the same arc in a drawing's cached body trace the identical rational B-spline (`Diaphragm Actuator.sym` against `I井场`'s `/JSite37311`). The backup is looked for under `PID_TEST_DATA_DIR` and the two `pid-test-data` copies, and the first root that holds **both** the drawing and `RefData~4~681.zip` is the one read: taking the first root that was merely a directory skipped this test on a machine whose first copy is a package with no `backup-plant-data` shelled out | the plant backup drawing and its `RefData~4~681.zip` (soft-skips when no root has both; feature `refdata-archive`) |
 | `tests/render_gap_census.rs` | A sheet record that does not reach the drawing is named. Per fixture, the refused and the undecoded graphic records are pinned in records — none of either on any fixture — every refused record has a warning, the lines a retired rule refused are counted, and the records the native reader skips are counted apart. The two documents that last carried a refusal, `A井场` of the plant backup and the committed `XA-A1.igr`, are pinned to none, in the prose and in the structured list alike; with no document left to read a refusal's wording on, that is held on synthetic rows in `geometry.rs` (`a_refusal_reads_differently_from_a_missing_decoder`, `a_sheet_whose_only_gap_is_a_refusal_reports_no_missing_decoder`). The templates are in the census too (`the_committed_templates_refuse_nothing`): the five `.igr` on disk (53 boundaries) and every distinct `.igr` and `.pid` inside the committed `RefData~*.zip` / `PlantData~*.zip` — 32 documents, 92 boundaries — refuse no graphic record and hold none without a decoder; the archives' count was 52 decoded and 40 refused until the `-W` logo fills decoded | `test-file/*.pid`, `test-file/Ref/Template Files/*.igr` and the committed archives (the archive half rides feature `refdata-archive`); the backup sheet where present |
@@ -413,12 +413,18 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   letter. **A member is a tag byte and then the geometry of one curve
   as that curve's own record states it after its 18-byte sub-header**:
   `0x67` an `igLine2d`, `0x68` an `igLineString2d`, `0x73` an
-  `igCircle2d`, `0x74` an `igEllipticalArc2d` — and an `igArc2d`,
-  written as the ellipse whose major semi-axis is `(radius, 0)` and
-  whose ratio is one, which is all `0x74` was read as until
-  2026-11-12 — and `0x7F` an `igBspCurve2d` (its curve with every
-  interior knot raised to the degree, not its own poles). After the
-  last loop: the anchor, a flag byte, a reference count and one
+  `igEllipse2d` (centre, major semi-axis vector, ratio, a byte) — and
+  an `igCircle2d`, written as the ellipse whose major semi-axis is
+  `(radius, 0)` and whose ratio is one, which is every `0x73` member
+  the corpora hold (one on a sheet chain, 171 in symbol caches) —
+  `0x74` an `igEllipticalArc2d` — and an `igArc2d`, written the same
+  way, which is all `0x74` was read as until 2026-11-12 — and `0x7F`
+  an `igBspCurve2d` (its curve with every interior knot raised to the
+  degree, not its own poles). Both readers of `0x73` still take it
+  for the circle: they read a radius off the vector's first half and
+  neither its second half nor the ratio, so an ellipse proper under
+  that tag, which no corpus holds, would be filled as a circle. After
+  the last loop: the anchor, a flag byte, a reference count and one
   8-byte reference to each member's record. Read so, every one of the
   1 743 boundaries on the sheet chains of the 111 distinct documents
   in reach (the plant backup, the acceptance sheets, the share, the
@@ -435,7 +441,20 @@ unlocked Slices J–N without needing `radsrvitem.dll` decompilation.
   reference) and the strict one (references, members a line or a
   circle) each took half of; `tests/boundary_members.rs` holds every
   member of the twenty in the `.igr` to the record it names. No page
-  wears a `-W` template, so no export changed. **The anchor** is the
+  wears a `-W` template, so no export changed. **A curved member is
+  flattened after the way its own record is drawn.** A B-spline and
+  an arc of an ellipse take the vertices of the polyline a sheet
+  draws their record as (`bspline::sample`, eight segments a span),
+  so there the fill's edge is the line of its outline. The arc of a
+  circle, whose `igArc2d` is drawn as a true arc, is cut into chords
+  of a quarter radian at most, as it always has been — every one of
+  the 378 such members decodes to the bit as it did — and a chord
+  stands `0.0078 × radius` inside its arc: 0.046 mm at the farthest
+  on the corpora, on the outer edge of the `-W` logo's crescent
+  (radius 6.72 mm, fifteen chords, the fill 1.7% short of its
+  outline), inside the half width of the 0.13 mm pen that arc is
+  drawn with. No vendor plot shows that logo, so the gap has been
+  held to the pen and looked at no further. **The anchor** is the
   point the fill was seeded at, and a record states one exactly when
   it names its members: inside the fill on all 1 643 that do, the
   placeholder `(1e30, 1e30)` on all 100 that do not — for those the
@@ -954,13 +973,25 @@ names (a line whole or in part, an arc, an arc of an ellipse, a B-spline, a
 circle), bit 2 of a reference's last word says which way the member runs along
 its record, and a record states an anchor exactly when it names its members
 (1 643 inside their fill, 100 placeholders). It exits non-zero when any of that
-fails; `--verbose <part of a name>` lists a document's records member by member.
+fails. It also measures the edge the library flattens each curved member to:
+all 32 arcs of an ellipse and all 32 B-splines on the vertices of the polyline
+their record is drawn as, and a conic member's edge against half the pen its
+record resolves (49 members that are a circle's and the 32 arcs of the ellipse,
+all inside) — either failing fails the probe too — then how far that edge
+stands from the member's own curve (0.0463 mm at the farthest, the `-W`
+crescent's 6.7228 mm arc; 0.0042 mm on an arc of the ellipse) and what each
+record fills against the area inside its members' own curves (1.71% short at
+most, the crescent). `--verbose <part of a name>` lists a document's records
+member by member.
 About a minute. Its companion `probe_what_each_boundary_decodes_as` prints one
 sorted line for each boundary the library decodes over the same documents — the
 record's place and a hash of its every field, coordinates by their bits — so a
 change to the grammar is checked by running it on both builds and comparing the
 two outputs: 1 703 lines before the loop of curves was read and 1 743 after, the
-1 703 unchanged.
+1 703 unchanged. With `--members` it prints a line for each member instead,
+with the member's kind: when an arc of an ellipse took its record's vertices
+the 32 such members changed and the other 5 937 — every line, point run,
+B-spline and all 378 arcs of a circle — did not, by a bit.
 
 `pid-plot/examples/probe_what_the_reference_prints_where_a_complex_string_is`
 reads the vendor's plot of the A2 acceptance sheet along each curve member of
