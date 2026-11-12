@@ -81,7 +81,8 @@ pub use layout::{
     BodyItemLayout, BodyTally, Confidence, EntityKind, EntityLayout, EntityOutcome, EntityRecord,
     LayoutLedger, LedgerRecorder, PageInstead, PageSources, PaperBesideAName, PaperRefused,
     ParseCounts, ParseRecord, PlacementAccount, PlacementLayout, SheetRectangle, Site, SourceKind,
-    SourceName, TemplateTrace, TextNormalization, UnplacedRecords, UnplacedWhy, micrometres,
+    SourceName, SymbolChainFault, TemplateTrace, TextNormalization, UnplacedRecords, UnplacedWhy,
+    micrometres,
 };
 pub use reason::{
     Asymmetry, DomainPair, DropReason, LedgerDomain, PartialMark, PlacementSource, ReasonLayer,

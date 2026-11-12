@@ -1462,3 +1462,98 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
         twins[0]
     );
 }
+
+/// Where each of the eleven pages draws its symbol placements from, the
+/// drawing's own and then its border template's: the body the document
+/// caches of the symbol, the `.sym` of the symbol library, nothing.
+///
+/// A drawing keeps the body of every symbol it places, and a placement is
+/// drawn from that copy; the library's file is read only for a placement
+/// the document holds no body of. So a page that draws from a library body
+/// is drawn in part from a file outside its drawing, whose damage the page
+/// has to say (`symbol_file_chain_fault`), and whose revision need not be
+/// the one the drawing was saved with. None of the eleven does: all 2 395
+/// placements of the drawings' own and all 12 of their templates' are
+/// drawn from a cached body, and none is missing one. (The 53 backup pages
+/// and the 7 fixtures are held to the same by their ledger baselines,
+/// which pin each page's placements by source: 9 225 and 170 of the
+/// drawings' own, 64 and 10 of the templates', all cached.)
+const PLACEMENTS: [[u64; 6]; 11] = [
+    [343, 0, 0, 1, 0, 0],
+    [505, 0, 0, 1, 0, 0],
+    [592, 0, 0, 1, 0, 0],
+    [75, 0, 0, 1, 0, 0],
+    [65, 0, 0, 1, 0, 0],
+    [85, 0, 0, 1, 0, 0],
+    [156, 0, 0, 0, 0, 0],
+    [144, 0, 0, 1, 0, 0],
+    [145, 0, 0, 1, 0, 0],
+    [143, 0, 0, 1, 0, 0],
+    [142, 0, 0, 3, 0, 0],
+];
+
+/// Every placement of the eleven pages is drawn from a body its document
+/// caches: [`PLACEMENTS`], page by page. Soft-skips with a word when the
+/// corpus is absent.
+#[test]
+fn the_eleven_pages_draw_every_placement_from_a_cached_body() {
+    use pid_plot::ledger::{ExportLedger, PlacementSource};
+    use pid_plot::write::write_ledger;
+
+    let corpus = corpus_dir();
+    let first = corpus.join(format!("{}.pid", SHEETS[0].name));
+    if !first.is_file() {
+        eprintln!(
+            "skipping the placements' sources; {} is absent",
+            first.display()
+        );
+        return;
+    }
+    let mut measured = Vec::new();
+    for sheet in &SHEETS {
+        let name = sheet.name;
+        let path = corpus.join(format!("{name}.pid"));
+        let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let write = write_ledger(&model).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let account = ExportLedger::assemble(&model, &write);
+        let of = |placements: &std::collections::BTreeMap<PlacementSource, u64>| {
+            [
+                PlacementSource::Cached,
+                PlacementSource::Library,
+                PlacementSource::Missing,
+            ]
+            .map(|source| placements.get(&source).copied().unwrap_or(0))
+        };
+        let [drawing, furniture] =
+            [&account.drawing, &account.furniture].map(|domain| of(&domain.bodies.placements));
+        measured.push([
+            drawing[0],
+            drawing[1],
+            drawing[2],
+            furniture[0],
+            furniture[1],
+            furniture[2],
+        ]);
+        assert!(
+            model.ledger.symbol_chain_fault_warnings().is_empty(),
+            "{name}: {:?}",
+            model.ledger.symbol_chain_fault_warnings()
+        );
+    }
+    let total = measured.iter().fold([0u64; 6], |mut sum, page| {
+        for (sum, count) in sum.iter_mut().zip(page) {
+            *sum += count;
+        }
+        sum
+    });
+    eprintln!(
+        "placements of the eleven pages: the drawings' own {} cached, {} from the library, {} \
+         missing; the templates' {} cached, {} from the library, {} missing",
+        total[0], total[1], total[2], total[3], total[4], total[5]
+    );
+    assert_eq!(
+        measured, PLACEMENTS,
+        "placements by source, page by page: the drawing's cached / library / missing, then \
+         the template's"
+    );
+}

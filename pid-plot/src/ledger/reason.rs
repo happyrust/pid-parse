@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 49 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 50 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -116,6 +116,23 @@ pub enum DropReason {
     /// records, once per stream (`LayoutLedger::note_unplaced`); no page of
     /// the corpora this crate is tested on has one.
     RecordWithoutDisplayPlace,
+    /// A placement drawn from a symbol library body whose file has a chain
+    /// stream that does not hold
+    /// (`pid_parse::symbol_library::SymbolGeometry::chain_faults`): the
+    /// placement is drawn from whatever the symbol reader took of the file.
+    /// The reader takes a sheet only where its own walk of it ends on the
+    /// stream's last byte, so that can be the body less a sheet, nothing,
+    /// or — where the file keeps the body on a second sheet — that sheet,
+    /// which a sound file is not drawn from; and for a fault that walk does
+    /// not see, the sound file's body. The page cannot tell which. Counted
+    /// once a symbol file and stream on a page that draws a placement from
+    /// it, with the bytes its chain left unread
+    /// (`LayoutLedger::symbol_chain_faults`); `pid_plot` says it. A file no
+    /// placement is drawn from costs the page nothing and is not counted: a
+    /// drawing caches the body of every symbol it places, and no page of
+    /// the corpora this crate is tested on draws a placement from the
+    /// library at all.
+    SymbolFileChainFault,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as
     /// page content of its own.
@@ -363,12 +380,13 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 49] = [
+pub const ALL: [DropReason; 50] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
     DropReason::SheetStreamWithoutGeometry,
     DropReason::RecordWithoutDisplayPlace,
+    DropReason::SymbolFileChainFault,
     DropReason::RecordSymbolBodyCache,
     DropReason::CacheDefinitionUnplaced,
     DropReason::RecordAuditOnlyFamily,
@@ -432,6 +450,7 @@ impl DropReason {
             Self::RecordNativeSkip => "record_native_skip",
             Self::SheetStreamWithoutGeometry => "sheet_stream_without_geometry",
             Self::RecordWithoutDisplayPlace => "record_without_display_place",
+            Self::SymbolFileChainFault => "symbol_file_chain_fault",
             Self::RecordSymbolBodyCache => "record_symbol_body_cache",
             Self::CacheDefinitionUnplaced => "cache_definition_unplaced",
             Self::RecordAuditOnlyFamily => "record_audit_only_family",
@@ -489,6 +508,7 @@ impl DropReason {
             | Self::RecordRefused
             | Self::SheetStreamWithoutGeometry
             | Self::RecordWithoutDisplayPlace
+            | Self::SymbolFileChainFault
             | Self::RecordEmitterOutOfRange
             | Self::RecordEmitterShapeRejected
             | Self::KindMisrouted
@@ -546,6 +566,7 @@ impl DropReason {
             | Self::RecordNativeSkip
             | Self::SheetStreamWithoutGeometry
             | Self::RecordWithoutDisplayPlace
+            | Self::SymbolFileChainFault
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
             | Self::RecordAuditOnlyFamily
@@ -806,13 +827,14 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 49] = [
+    const APPENDIX_A: [&str; 50] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
         "record_native_skip",
         "sheet_stream_without_geometry",
         "record_without_display_place",
+        "symbol_file_chain_fault",
         "record_symbol_body_cache",
         "cache_definition_unplaced",
         "record_audit_only_family",
@@ -872,7 +894,7 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 49, "the catalog is 49 codes");
+        assert_eq!(ALL.len(), 50, "the catalog is 50 codes");
     }
 
     /// Appendix A's tier column, code by code: the suspect ones.
@@ -884,11 +906,12 @@ mod tests {
     /// turned suspect passes both ledger gates — its pinned count becomes a
     /// ceiling — and the count of each tier stays what it was if another
     /// code is turned the other way with it.
-    const SUSPECT: [&str; 26] = [
+    const SUSPECT: [&str; 27] = [
         "record_no_decoder",
         "record_refused",
         "sheet_stream_without_geometry",
         "record_without_display_place",
+        "symbol_file_chain_fault",
         "record_emitter_out_of_range",
         "record_emitter_shape_rejected",
         "kind_misrouted",
@@ -973,7 +996,7 @@ mod tests {
     }
 
     #[test]
-    fn tiers_split_26_suspect_23_intentional() {
+    fn tiers_split_27_suspect_23_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -982,9 +1005,9 @@ mod tests {
             .iter()
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
-        assert_eq!(suspect, 26, "appendix A's suspect column");
+        assert_eq!(suspect, 27, "appendix A's suspect column");
         assert_eq!(intentional, 23, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 49);
+        assert_eq!(suspect + intentional, 50);
     }
 
     #[test]

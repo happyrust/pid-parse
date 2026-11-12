@@ -1439,6 +1439,9 @@ pub fn lay_out_with_symbol_roots(
     // page's paint order once the template's document is gone.
     let mut template_order = None;
     let mut template_gaps = None;
+    // The damaged symbol files the template's placements are drawn from;
+    // kept for the account once the template's tally is gone.
+    let mut furniture_faulted = Vec::new();
     if let Some((page, furniture)) = furniture {
         template_order = Some(furniture.doc.sheet_display_order.clone());
         template_gaps = Some(furniture.doc.sheet_without_display_order.clone());
@@ -1524,6 +1527,7 @@ pub fn lay_out_with_symbol_roots(
                 }
             }
         }
+        furniture_faulted = furniture_placements.faulted();
         template = Some(BorderTemplate {
             path: furniture.path.display().to_string(),
             extent_mm: furniture.extent_mm,
@@ -1680,6 +1684,10 @@ pub fn lay_out_with_symbol_roots(
     // What the sheets' lists place nowhere is painted all the same, and
     // said: a suspect item of the account and a line on `pid_plot`'s stderr.
     ledger.note_unplaced(unplaced_records(&primitives, &orders));
+    // A placement drawn from a symbol file with a chain that does not hold
+    // is drawn from whatever was read of it, and said the same two ways.
+    ledger.note_symbol_chain_faults(LedgerDomain::Drawing, placements.faulted());
+    ledger.note_symbol_chain_faults(LedgerDomain::Furniture, furniture_faulted);
     Ok(PaperModel {
         library: library.to_vec(),
         page_mm,
@@ -2355,6 +2363,22 @@ struct SymbolPlacements {
     /// its strokes reached. Only a template's are read back
     /// ([`BorderTemplate::symbols`]).
     placed: Vec<TemplateSymbol>,
+    /// The symbol files a placement was drawn from whose body carries a
+    /// chain fault, by key: the file as the placement names it, how many
+    /// placements were drawn from it, and the faults of the file.
+    faulted: std::collections::BTreeMap<String, FaultedSymbol>,
+}
+
+/// A symbol file with a chain stream that does not hold that placements
+/// were drawn from: its name below the library's `Symbols` directory, the
+/// placements, the faults.
+type FaultedSymbol = (String, u64, Vec<pid_parse::StreamChainFault>);
+
+impl SymbolPlacements {
+    /// The damaged symbol files, as the layout ledger files them.
+    fn faulted(&self) -> Vec<FaultedSymbol> {
+        self.faulted.values().cloned().collect()
+    }
 }
 
 /// Expand one `SymbolInstance` into the strokes of its body.
@@ -2477,6 +2501,20 @@ fn push_symbol_instance(
         source = PlacementSource::Cached;
         SymbolBodySource::Cached
     } else if let Some(body) = body {
+        // The body is the library's. A file with a chain stream that does
+        // not hold gave the reader what its own walk could take of it — a
+        // sheet short, another sheet in its place, or all of it — and the
+        // page cannot tell which, so it says which file.
+        if !body.chain_faults.is_empty()
+            && let (Some(key), Some(path)) = (key.clone(), symbol_path.as_deref())
+        {
+            let named = pid_parse::symbol_library::library_relative_path(path).unwrap_or(path);
+            let found = tally
+                .faulted
+                .entry(key)
+                .or_insert_with(|| (named.to_owned(), 0, body.chain_faults.clone()));
+            found.1 = found.1.saturating_add(1);
+        }
         let displayed = body.displayed_primitives();
         body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
         body_tally.dropped.insert(
@@ -7749,7 +7787,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 49 codes has to be reachable and has to be *recorded*
+    // Every one of the 50 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -7760,7 +7798,7 @@ mod tests {
 
     use crate::ledger::{
         Asymmetry, EntityLayout, ExportLedger, LayoutLedger, LedgerDomain, LedgerRecorder,
-        PartialMark, TemplateTrace,
+        PartialMark, PlacementSource, TemplateTrace,
     };
     use crate::write::{
         PrimitiveFate, PrimitiveOutcome, SegmentTally, TextMarks, WriteLedger, primitive_verdict,
@@ -8069,6 +8107,150 @@ mod tests {
         primitive
     }
 
+    /// The committed pressure gauge below a library's `Symbols` directory.
+    const GAUGE: [&str; 5] = [
+        "Instrumentation",
+        "Off-Line",
+        "Without Implied Components",
+        "Pressure",
+        "PG-Pressure Gauge.sym",
+    ];
+
+    /// The gauge as a placement names it: a site's path down to the file.
+    const GAUGE_AS_PLACED: &str = r"\\SITE\Project\Plant\Ref\Symbols\Instrumentation\Off-Line\Without Implied Components\Pressure\PG-Pressure Gauge.sym";
+
+    /// A symbol library of one file — the committed gauge, with the chain
+    /// of its fullest sheet stopped on its first record when `stopped` —
+    /// and the directory that holds the file for as long as the guard lives.
+    fn a_library_of_the_gauge(
+        name: &str,
+        stopped: bool,
+    ) -> (SymbolLibrary, crate::scratch::ScratchDir) {
+        use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+        let source = GAUGE.iter().fold(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols"),
+            |path, part| path.join(part),
+        );
+        let package = pid_parse::PidParser::new()
+            .parse_package(&source)
+            .expect("the committed gauge");
+        let mut plan = WritePlan::default();
+        if stopped {
+            let (stream, mut data) = package
+                .streams
+                .iter()
+                .filter(|(path, raw)| {
+                    path.rsplit('/')
+                        .next()
+                        .is_some_and(|name| name.starts_with("Sheet"))
+                        && raw.data.len() > 14
+                })
+                .map(|(path, raw)| (path.clone(), raw.data.clone()))
+                .max_by_key(|(_, data)| data.len())
+                .expect("the gauge has a sheet");
+            // An eight-byte header, then the first record: its type word
+            // and its length, which is set to zero.
+            data[10..14].copy_from_slice(&0u32.to_le_bytes());
+            plan.stream_replacements.push(StreamReplacement {
+                path: stream,
+                new_data: data,
+            });
+        }
+        let bytes = PidWriter::write_to_bytes(&package, &plan).expect("the gauge is written");
+        let root = crate::scratch::ScratchDir::new(name);
+        let path = GAUGE
+            .iter()
+            .fold(root.to_path_buf(), |path, part| path.join(part));
+        std::fs::create_dir_all(path.parent().expect("a directory")).expect("mkdir");
+        std::fs::write(&path, bytes).expect("the gauge is on disk");
+        (SymbolLibrary::with_roots(vec![root.to_path_buf()]), root)
+    }
+
+    /// Expand `entity` as a placement of the drawing's own against
+    /// `library`, and answer what the page drew it from and the tally.
+    fn placed_from(
+        entity: &PidGraphicEntity,
+        geometry: &NormalizedPidGeometry,
+        library: &mut SymbolLibrary,
+        tally: &mut super::SymbolPlacements,
+    ) -> PlacementSource {
+        let mut out = Vec::new();
+        push_symbol_instance(
+            &mut out,
+            entity,
+            geometry,
+            library,
+            &no_styles(),
+            &std::collections::BTreeSet::new(),
+            Some([420.0, 297.0]),
+            tally,
+        )
+        .source
+    }
+
+    /// A placement drawn from a library body whose file has a chain that
+    /// does not hold is tallied: the file once, by the name the placement
+    /// gives it below `Symbols`, with every placement drawn from it and the
+    /// faults of the file. A sound file is not, and neither is a file the
+    /// placement is not drawn from — a drawing that caches the body reads
+    /// the cache.
+    #[test]
+    fn a_placement_drawn_from_a_damaged_symbol_file_is_tallied_once_a_file() {
+        let (mut stopped, _kept) = a_library_of_the_gauge("a-gauge-read-short", true);
+        let nothing_cached = NormalizedPidGeometry::default();
+        let gauge = symbol_placement(Some(GAUGE_AS_PLACED), None);
+        let mut tally = super::SymbolPlacements::default();
+        for _ in 0..2 {
+            assert_eq!(
+                placed_from(&gauge, &nothing_cached, &mut stopped, &mut tally),
+                PlacementSource::Library
+            );
+        }
+        let faulted = tally.faulted();
+        assert_eq!(faulted.len(), 1, "{faulted:?}");
+        let (file, placements, faults) = &faulted[0];
+        assert_eq!(file, &GAUGE.join("\\"));
+        assert_eq!(*placements, 2);
+        assert_eq!(faults.len(), 1, "{faults:?}");
+        assert!(
+            faults[0].stream_path.contains("Sheet") && faults[0].stop.is_some(),
+            "{faults:?}"
+        );
+
+        // The same file, cached by the drawing: drawn from the cache, and
+        // the file is no business of the page's.
+        let cached = geometry_with(
+            vec![definition(
+                vec![SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (0.001, 0.001),
+                }],
+                Some(true),
+            )],
+            Vec::new(),
+        );
+        let held = symbol_placement(
+            Some(GAUGE_AS_PLACED),
+            Some(PidSymbolDefinitionRef { site: 12, sheet: 1 }),
+        );
+        let mut tally = super::SymbolPlacements::default();
+        assert_eq!(
+            placed_from(&held, &cached, &mut stopped, &mut tally),
+            PlacementSource::Cached
+        );
+        assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
+
+        // A sound file, drawn from.
+        let (mut sound, _kept) = a_library_of_the_gauge("a-gauge-read-whole", false);
+        let mut tally = super::SymbolPlacements::default();
+        assert_eq!(
+            placed_from(&gauge, &nothing_cached, &mut sound, &mut tally),
+            PlacementSource::Library
+        );
+        assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
+    }
+
     /// The reason `reason` names, recorded from an input built to trip it.
     ///
     /// Exhaustive over [`DropReason`]: a new code without a case here does not
@@ -8154,6 +8336,27 @@ mod tests {
                 };
                 let mut ledger = LayoutLedger::default();
                 ledger.note_unplaced(super::unplaced_records(&[stroke], &orders));
+                ledger
+                    .parse
+                    .drawing
+                    .items
+                    .first()
+                    .map(|item| item.reason)
+                    .expect("one parse record")
+            }
+            DropReason::SymbolFileChainFault => {
+                // A placement the drawing caches no body for, and a library
+                // whose file for it has a sheet with a chain that stops.
+                let (mut library, _kept) = a_library_of_the_gauge("a-gauge-case", true);
+                let mut tally = super::SymbolPlacements::default();
+                placed_from(
+                    &symbol_placement(Some(GAUGE_AS_PLACED), None),
+                    &NormalizedPidGeometry::default(),
+                    &mut library,
+                    &mut tally,
+                );
+                let mut ledger = LayoutLedger::default();
+                ledger.note_symbol_chain_faults(LedgerDomain::Drawing, tally.faulted());
                 ledger
                     .parse
                     .drawing
@@ -9015,7 +9218,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 49, "the appendix's 49 rows");
+        assert_eq!(DropReason::all().len(), 50, "the appendix's 50 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.

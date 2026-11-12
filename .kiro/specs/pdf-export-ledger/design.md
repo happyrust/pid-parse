@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 49]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 26 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`）。
+- `DropReason::ALL: [DropReason; 50]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 27 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`；第八轮加了可疑的 `symbol_file_chain_fault`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
