@@ -145,6 +145,11 @@ plant backup census: 53 drawings …; undecoded {25: 5}, refused {}, 1549 native
 
 ## 6. 这道门之外，判据还要看的地方
 
+> **2026-11-12 订正**：下表「模板」两行已经了结——四个 `-W` 模板的 20 条边界现在解码（连同嵌着同一批图框的四个
+> `.pid` 模板里的 20 条），入库模板的普查在 `tests/render_gap_census.rs::the_committed_templates_refuse_nothing`
+> 里钉成被拒 0 条；另外 21 条的「锚点」是解码器顶替上去的环的第一个顶点，文件里没有锚点。见
+> `2026-11-12-a-boundary-member-is-the-curve-its-reference-names.md`。§0、§3、§7 里「入库模板上另有 20 条」同此。
+
 | 位置 | 现状 | 证据 |
 |---|---|---|
 | 「假的」记录 | 各族只在流自己的记录链上解码（`probe_which_decoded_records_start_off_the_chain`：0 条）；链在类型字不是记录开头的地方停下；四个无链族退役。长度错了之后链读进的假记录：全语料 885 个文档、3 337 379 个长度变体读进 49 058 条，原来有 10 条被页框解码器认成页框，第五轮起页框必须声明自己的高宽比，**现在 0 条**被注册表里的族解成东西 | 文件；`tests/sheet_chain_faults.rs`、`tests/sheet_family_wiring.rs`、`examples/probe_what_passes_for_a_page_frame_off_the_chain` |
