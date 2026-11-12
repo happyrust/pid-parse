@@ -1661,7 +1661,8 @@ impl DecodedIgSmartFrame2dRecord {
 }
 
 /// Why a chain stream's record walk stopped before the stream's end.
-/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`].
+/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`],
+/// with one reason more that no walk gives ([`Self::NoStream`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamChainStopReason {
@@ -1679,6 +1680,11 @@ pub enum StreamChainStopReason {
     /// ([`crate::parsers::sheet_records::psm_type_word_opens_a_record`]):
     /// the walk has left the record boundaries by here.
     NoSuchClass,
+    /// The file holds no stream of this path: there was nothing to walk.
+    /// No walk stops for this. It is what a reader says of a file of a
+    /// kind that always keeps the stream when one does not
+    /// ([`StreamChainFault::of_a_missing_stream`]).
+    NoStream,
 }
 
 /// Where a chain stream's record walk stopped, and why.
@@ -1826,6 +1832,52 @@ impl StreamChainFault {
         )
     }
 
+    /// What is wrong with a chain stream that holds no byte, said for a
+    /// reader that holds its file to keeping the stream: it is shorter than
+    /// the header a chain opens with, and the stop is at its first byte.
+    ///
+    /// [`Self::of`] finds nothing wrong with an empty stream — the walk
+    /// read every byte there is — and that is how a drawing's own streams
+    /// are read. A chain stream of a symbol file opens with its eight-byte
+    /// header whatever it holds (the shortest on the corpora is a sheet's
+    /// header and nothing else), so one with no byte was emptied, and the
+    /// reader of a `.sym` lists it
+    /// ([`crate::symbol_library::SymbolGeometry::chain_faults`]).
+    #[must_use]
+    pub fn of_an_empty_stream(stream_path: &str) -> Self {
+        Self::of_no_bytes(stream_path, StreamChainStopReason::ShortHeader)
+    }
+
+    /// What is wrong with a chain stream the file does not hold, said for
+    /// a reader that holds its file to keeping one
+    /// ([`StreamChainStopReason::NoStream`]): the `PSMcluster0` in the root
+    /// of a symbol file, where every `.sym` of the corpora keeps its layer
+    /// table and its view sets.
+    #[must_use]
+    pub fn of_a_missing_stream(stream_path: &str) -> Self {
+        Self::of_no_bytes(stream_path, StreamChainStopReason::NoStream)
+    }
+
+    /// A fault at the first byte of a stream of which no byte was read.
+    fn of_no_bytes(stream_path: &str, reason: StreamChainStopReason) -> Self {
+        Self {
+            stream_path: stream_path.to_string(),
+            stream_len: 0,
+            wrong_magic: None,
+            stop: Some(StreamChainStop {
+                offset: 0,
+                reason,
+                record_len: None,
+                type_word: None,
+                last_record_offset: None,
+            }),
+            unread_bytes: 0,
+            records_read: 0,
+            live_records_read: 0,
+            stated_records: None,
+        }
+    }
+
     /// Whether the header's live-record count differs from what the walk
     /// read. On a walk that stopped short it usually does, and the stop is
     /// the reason; on one that reached the stream's end it is the fault.
@@ -1868,6 +1920,11 @@ impl StreamChainFault {
             ));
         }
         match &self.stop {
+            // Nothing was walked, so there is no place a walk stopped at
+            // and no count of what it read before.
+            Some(stop) if stop.reason == StreamChainStopReason::NoStream => {
+                parts.push("the file holds no such stream".to_string());
+            }
             Some(stop) => {
                 let why = match stop.reason {
                     StreamChainStopReason::ShortHeader => {
@@ -1890,6 +1947,8 @@ impl StreamChainFault {
                         "the type word 0x{:04X} is not one a record opens with",
                         stop.type_word.unwrap_or_default()
                     ),
+                    // Said by the arm above.
+                    StreamChainStopReason::NoStream => "the file holds no such stream".to_string(),
                 };
                 // The record whose stated length ends at the stop. When
                 // the stop is not a record's start, its length is where to

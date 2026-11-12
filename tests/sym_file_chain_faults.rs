@@ -53,6 +53,22 @@
 //!   (`Supply Scope Break.sym`, 8; `DV-Deluge Control Valve with
 //!   Flange.sym`, 20), none on disk.
 //!
+//! * **a stream with no byte is read short, and a file with no root
+//!   cluster is not drawn.** The chain walk has no word for an empty
+//!   stream — it read every byte there is — and until 2026-11-13 the
+//!   symbol reader took its word. A sheet emptied to no bytes was a sheet
+//!   of no strokes, and the body fell through to the file's other sheet as
+//!   it did before the rules above; a root `PSMcluster0` emptied, or gone
+//!   from the file, was no layer table and no view sets, and the gauge
+//!   drew two circles. Neither was listed. A chain stream of a symbol file
+//!   opens with its header whatever it holds, so the reader takes one with
+//!   no byte for one cut off inside its header, and a file with no root
+//!   cluster for one whose root cluster was read short, and lists each
+//!   ([`StreamChainFault::of_an_empty_stream`],
+//!   [`StreamChainFault::of_a_missing_stream`]). No committed symbol file
+//!   is either: the sweep holds every one to a root cluster and to no
+//!   fault.
+//!
 //! The tallies are pinned, by the stream's role and the kind of damage, so
 //! that a rule that changes shows here.
 //!
@@ -88,6 +104,11 @@ const CIRCLE: &str = "test-file/symbols/Design/Annotation/Graphics/Circle.sym";
 /// Nine displayed strokes on `/Sheet6`, its normal view.
 const VALVE: &str = "test-file/symbols/Piping/Valves/Angle/2-Way Angle Globe Valve.sym";
 
+/// The root cluster of a symbol file: its layer table and its view sets.
+const ROOT_CLUSTER: &str = "/PSMcluster0";
+/// How the tally names a file read with no root cluster at all.
+const NO_ROOT_CLUSTER: &str = "the root cluster not in the file";
+
 /// One way a chain stream is damaged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Damage {
@@ -116,6 +137,10 @@ enum Damage {
     CutToHeader,
     /// The stream is five bytes: shorter than a header.
     CutIntoHeader,
+    /// The stream holds no byte at all. The walk does not stop — there is
+    /// nothing to stop on — and says nothing is wrong; the reader of a
+    /// symbol file does ([`fault_of`]).
+    Emptied,
 }
 
 impl Damage {
@@ -153,6 +178,7 @@ impl Damage {
             Self::CutBeforeLast => "cut off before the last record",
             Self::CutToHeader => "cut off after the header",
             Self::CutIntoHeader => "cut off inside the header",
+            Self::Emptied => "emptied of every byte",
         }
     }
 
@@ -202,6 +228,7 @@ impl Damage {
                 }
                 damaged.truncate(5);
             }
+            Self::Emptied => damaged.clear(),
         }
         Some(damaged)
     }
@@ -230,8 +257,17 @@ fn damages(records: usize) -> Vec<Damage> {
         Damage::CutBeforeLast,
         Damage::CutToHeader,
         Damage::CutIntoHeader,
+        Damage::Emptied,
     ]);
     all
+}
+
+/// What a reader of a symbol file lists of the stream at `path` holding
+/// `damaged`: the chain walk's word; and for a stream with no byte, which
+/// the walk reads as an empty chain with nothing wrong, the reader's own.
+fn fault_of(path: &str, damage: Damage, damaged: &[u8]) -> Option<StreamChainFault> {
+    StreamChainFault::of_stream(path, damaged)
+        .or_else(|| (damage == Damage::Emptied).then(|| StreamChainFault::of_an_empty_stream(path)))
 }
 
 /// What a stream of a symbol file is to the body.
@@ -456,7 +492,7 @@ fn sweep_file(label: &str, bytes: &[u8], through: Through, sweep: &mut Sweep) {
             // reader: a stream cut off before a last record that is a
             // superseded copy still holds every live record its header
             // states.
-            let Some(fault) = StreamChainFault::of_stream(&path, &damaged) else {
+            let Some(fault) = fault_of(&path, damage, &damaged) else {
                 assert!(
                     matches!(damage, Damage::CutBeforeLast | Damage::CutToHeader),
                     "{}: no fault",
@@ -601,6 +637,55 @@ fn sweep_file(label: &str, bytes: &[u8], through: Through, sweep: &mut Sweep) {
             }
         }
     }
+
+    // The file with no root cluster at all. Every committed symbol file
+    // keeps one; a file that does not says nothing of which sheet and which
+    // layers draw, like one whose root cluster was read short, and is
+    // listed so and not drawn.
+    let root = package
+        .streams
+        .remove(ROOT_CLUSTER)
+        .unwrap_or_else(|| panic!("{label}: a symbol file with no {ROOT_CLUSTER}"));
+    let body = match through {
+        Through::Package => symbol_geometry_of_package(&package),
+        Through::Bytes => {
+            let copy = PidWriter::write_to_bytes(&package, &WritePlan::default())
+                .unwrap_or_else(|error| panic!("{label}: the copy with no root cluster: {error}"));
+            read_symbol_geometry_from_bytes(&copy)
+                .unwrap_or_else(|error| panic!("{label}: the copy with no root cluster: {error}"))
+        }
+    };
+    package.streams.insert(ROOT_CLUSTER.to_string(), root);
+    sweep.damages += 1;
+    let place = || format!("{label}: no {ROOT_CLUSTER}");
+    if body.chain_faults != [StreamChainFault::of_a_missing_stream(ROOT_CLUSTER)] {
+        sweep.fails("the fault list is the chain walk's word", || {
+            format!(
+                "{}: listed {:?}",
+                place(),
+                body.chain_faults
+                    .iter()
+                    .map(|fault| fault.stream_path.as_str())
+                    .collect::<Vec<_>>()
+            )
+        });
+    }
+    let drawn = shown(&body);
+    let outcome = match &drawn {
+        Ok(part) if part.len() == sound_shown.len() => Outcome::Whole,
+        Ok(part) if part.len() > sound_shown.len() => Outcome::More,
+        Ok(_) => Outcome::Less,
+        Err(why) => Outcome::NotDrawn((*why).into()),
+    };
+    *sweep
+        .outcomes
+        .entry((Role::Cluster, NO_ROOT_CLUSTER, outcome))
+        .or_default() += 1;
+    if drawn != Err(SymbolNotDrawn::ClusterShort) {
+        sweep.fails("a cluster read short draws nothing", || {
+            format!("{}: {:?}", place(), drawn.as_ref().map(Vec::len))
+        });
+    }
 }
 
 /// The symbol files the repository keeps on disk, the machine-local library
@@ -734,6 +819,9 @@ const ON_DISK: &[(Role, &str, Outcome, usize)] = &[
     (Role::Sheet, "cut off inside the header", Outcome::Whole, 4),
     (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 6),
     (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
+    (Role::Sheet, "emptied of every byte", Outcome::Whole, 4),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 6),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
     (Role::Sheet, "stray bytes at the end", Outcome::Whole, 8),
     (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::NothingToShow), 2),
     (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
@@ -749,8 +837,10 @@ const ON_DISK: &[(Role, &str, Outcome, usize)] = &[
     (Role::Cluster, "cut off after the header", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Cluster, "cut off before the last record", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Cluster, "cut off inside the header", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
+    (Role::Cluster, "emptied of every byte", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Cluster, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Cluster, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
+    (Role::Cluster, "the root cluster not in the file", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Styles, "a header count one too few", Outcome::Whole, 6),
     (Role::Styles, "a header count one too many", Outcome::Whole, 6),
     (Role::Styles, "a length of zero", Outcome::Whole, 108),
@@ -760,6 +850,7 @@ const ON_DISK: &[(Role, &str, Outcome, usize)] = &[
     (Role::Styles, "cut off after the header", Outcome::Whole, 6),
     (Role::Styles, "cut off before the last record", Outcome::Whole, 6),
     (Role::Styles, "cut off inside the header", Outcome::Whole, 6),
+    (Role::Styles, "emptied of every byte", Outcome::Whole, 6),
     (Role::Styles, "stray bytes at the end", Outcome::Whole, 6),
     (Role::Styles, "the last record one byte too long", Outcome::Whole, 6),
 ];
@@ -798,6 +889,10 @@ const ARCHIVED: &[(Role, &str, Outcome, usize)] = &[
     (Role::Sheet, "cut off inside the header", Outcome::Less, 7),
     (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 433),
     (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
+    (Role::Sheet, "emptied of every byte", Outcome::Whole, 315),
+    (Role::Sheet, "emptied of every byte", Outcome::Less, 7),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 433),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
     (Role::Sheet, "stray bytes at the end", Outcome::Whole, 642),
     (Role::Sheet, "stray bytes at the end", Outcome::Less, 6),
     (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::NothingToShow), 107),
@@ -815,8 +910,10 @@ const ARCHIVED: &[(Role, &str, Outcome, usize)] = &[
     (Role::Cluster, "cut off after the header", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
     (Role::Cluster, "cut off before the last record", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
     (Role::Cluster, "cut off inside the header", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
+    (Role::Cluster, "emptied of every byte", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
     (Role::Cluster, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
     (Role::Cluster, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
+    (Role::Cluster, "the root cluster not in the file", Outcome::NotDrawn(NotDrawn::ClusterShort), 616),
     (Role::Styles, "a header count one too few", Outcome::Whole, 658),
     (Role::Styles, "a header count one too many", Outcome::Whole, 658),
     (Role::Styles, "a length of zero", Outcome::Whole, 14556),
@@ -830,6 +927,7 @@ const ARCHIVED: &[(Role, &str, Outcome, usize)] = &[
     (Role::Styles, "cut off before the last record", Outcome::Whole, 657),
     (Role::Styles, "cut off before the last record", Outcome::More, 1),
     (Role::Styles, "cut off inside the header", Outcome::Whole, 658),
+    (Role::Styles, "emptied of every byte", Outcome::Whole, 658),
     (Role::Styles, "stray bytes at the end", Outcome::Whole, 658),
     (Role::Styles, "the last record one byte too long", Outcome::Whole, 657),
     (Role::Styles, "the last record one byte too long", Outcome::More, 1),
@@ -929,7 +1027,8 @@ fn the_pressure_gauge_is_its_circle_or_nothing() {
                     | Damage::Flagged(0)
                     | Damage::NoSuchClass(0)
                     | Damage::CutToHeader
-                    | Damage::CutIntoHeader,
+                    | Damage::CutIntoHeader
+                    | Damage::Emptied,
                 ) => Err(SymbolNotDrawn::NothingToShow),
                 // Everything else: the circle.
                 _ => circle.clone(),
@@ -941,11 +1040,92 @@ fn the_pressure_gauge_is_its_circle_or_nothing() {
             );
             assert_eq!(
                 body.chain_faults,
-                vec![StreamChainFault::of_stream(stream, &damaged).expect("a fault")],
+                vec![fault_of(stream, damage, &damaged).expect("a fault")],
                 "the gauge with {stream} damaged, {damage:?}: the fault the body lists"
             );
         }
     }
+
+    // The gauge with no root cluster at all: as with the cluster read
+    // short, nothing says which sheet and which layers draw. Until
+    // 2026-11-13 this file drew two circles and listed no fault.
+    let mut package = PidPackage::from_bytes(&std::fs::read(GAUGE).expect("the gauge"))
+        .expect("the gauge parses");
+    package
+        .streams
+        .remove(ROOT_CLUSTER)
+        .expect("the gauge keeps a root cluster");
+    let copy = PidWriter::write_to_bytes(&package, &WritePlan::default())
+        .expect("the gauge with no root cluster is written");
+    let body = read_symbol_geometry_from_bytes(&copy).expect("the gauge with no root cluster");
+    assert_eq!(
+        drawn(&body),
+        Err(SymbolNotDrawn::ClusterShort),
+        "the gauge with no root cluster"
+    );
+    assert_eq!(
+        body.chain_faults,
+        vec![StreamChainFault::of_a_missing_stream(ROOT_CLUSTER)],
+        "the gauge with no root cluster: the fault the body lists"
+    );
+}
+
+/// The two faults the chain walk has no word for, in the reader's own.
+///
+/// The walk reads an empty stream as an empty chain with nothing wrong, and
+/// a stream that is not there it is never handed. What a reader of a
+/// symbol file lists for them says where and why as any fault does: a
+/// stream that stops at its first byte for want of a header, and a stream
+/// the file does not hold.
+#[test]
+fn an_emptied_stream_and_a_missing_one_are_said_in_the_readers_own_words() {
+    assert!(SheetChain::walk(&[]).is_sound(), "the walk's word");
+    assert_eq!(StreamChainFault::of_stream("/Sheet6", &[]), None);
+
+    let emptied = StreamChainFault::of_an_empty_stream("/Sheet6");
+    assert_eq!(
+        emptied.describe_framing(),
+        "the record chain of /Sheet6 does not hold: it stops at +0 of 0 bytes, where the stream \
+         is shorter than the 8-byte header a chain opens with: the chain read 0 record(s) before \
+         the stop, and the 0 byte(s) from it on are not read"
+    );
+    // The same sentence a stream cut off inside its header gets, for the
+    // five bytes it has.
+    let cut = StreamChainFault::of_stream("/Sheet6", &[0x44, 0xF5, 0x90, 0x6C, 0x00])
+        .expect("five bytes are no header");
+    assert_eq!(
+        cut.describe_framing(),
+        emptied
+            .describe_framing()
+            .replace("+0 of 0 bytes", "+0 of 5 bytes")
+            .replace("the 0 byte(s) from it on", "the 5 byte(s) from it on")
+    );
+
+    let missing = StreamChainFault::of_a_missing_stream(ROOT_CLUSTER);
+    assert_eq!(
+        missing.describe_framing(),
+        "the record chain of /PSMcluster0 does not hold: the file holds no such stream"
+    );
+    assert_ne!(emptied.stop, missing.stop);
+    for fault in [&emptied, &missing] {
+        assert_eq!(
+            (fault.stream_len, fault.unread_bytes, fault.records_read),
+            (0, 0, 0)
+        );
+        assert!(fault.describe().starts_with(&fault.describe_framing()));
+        // Each survives the trip a page's account takes it on.
+        let json = serde_json::to_string(fault).expect("a fault serializes");
+        assert_eq!(
+            &serde_json::from_str::<StreamChainFault>(&json).expect("and reads back"),
+            fault
+        );
+    }
+    assert!(
+        serde_json::to_string(&missing)
+            .expect("a fault serializes")
+            .contains("\"reason\":\"no_stream\""),
+        "{missing:?}"
+    );
 }
 
 /// A body that is the sheet keeping the most strokes: `Circle.sym` keeps
@@ -1013,6 +1193,10 @@ impl Drop for Scratch {
 /// It is the library's answer now, with its fault, and is not drawn — the
 /// file standing in for the damaged one is no better than the sheet
 /// standing in for the damaged one.
+///
+/// The same copy with `/Sheet12` emptied to no bytes was passed over until
+/// 2026-11-13, when the reader came to take an empty stream of a symbol
+/// file for one read short ([`a_copy_with_an_emptied_sheet_is_not_passed_over_either`]).
 #[test]
 fn a_damaged_copy_is_not_passed_over_for_another_roots() {
     let scratch = Scratch::new("two-roots");
@@ -1052,6 +1236,56 @@ fn a_damaged_copy_is_not_passed_over_for_another_roots() {
 
     // The sound copy first: it is the answer, and the damaged one is not
     // read at all.
+    let mut library = SymbolLibrary::with_roots([&second, &first]);
+    let body = library
+        .resolve(stored)
+        .expect("the library holds the symbol");
+    assert!(body.chain_faults.is_empty(), "{:?}", body.chain_faults);
+    assert_eq!(drawn(body), Ok(vec!["circle".to_string()]));
+}
+
+/// [`a_damaged_copy_is_not_passed_over_for_another_roots`] for a copy whose
+/// one drawn sheet holds no byte. The chain walk finds nothing wrong with
+/// such a stream, so the copy read as a sound file with nothing to draw —
+/// the very thing a library moves on from — and the second root's file was
+/// drawn, with no fault to say so. It is read short now: the first root's
+/// copy is the answer, lists the emptied sheet, and is not drawn.
+#[test]
+fn a_copy_with_an_emptied_sheet_is_not_passed_over_either() {
+    let scratch = Scratch::new("two-roots-emptied");
+    let relative = Path::new("Design").join("Annotation").join("Graphics");
+    let stored = r"\\WIN-SPID\Plant\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
+    let (first, second) = (scratch.0.join("first"), scratch.0.join("second"));
+    let sound = std::fs::read(CIRCLE).expect("the circle");
+    let package = PidPackage::from_bytes(&sound).expect("the circle parses");
+    let emptied = PidWriter::write_to_bytes(
+        &package,
+        &WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: "/Sheet12".to_string(),
+                new_data: Vec::new(),
+            }],
+            ..WritePlan::default()
+        },
+    )
+    .expect("the copy with an emptied sheet is written");
+    for (root, bytes) in [(&first, &emptied), (&second, &sound)] {
+        let dir = root.join(&relative);
+        std::fs::create_dir_all(&dir).expect("the root");
+        std::fs::write(dir.join("Circle.sym"), bytes).expect("the copy");
+    }
+
+    let mut library = SymbolLibrary::with_roots([&first, &second]);
+    let body = library
+        .resolve(stored)
+        .expect("the library holds the symbol");
+    assert_eq!(
+        body.chain_faults,
+        vec![StreamChainFault::of_an_empty_stream("/Sheet12")]
+    );
+    assert!(body.primitives.is_empty(), "{:?}", body.primitives);
+    assert_eq!(drawn(body), Err(SymbolNotDrawn::PickAmongShortSheets));
+
     let mut library = SymbolLibrary::with_roots([&second, &first]);
     let body = library
         .resolve(stored)

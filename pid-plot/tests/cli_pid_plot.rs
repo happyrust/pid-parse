@@ -3132,7 +3132,18 @@ fn export_with_a_gauge_that_is_not_drawn(
     why: pid_parse::symbol_library::SymbolNotDrawn,
 ) {
     let (bytes, faults) = a_damaged_gauge(damages);
-    let library = a_library_of_the_gauge(case, &bytes);
+    a_gauge_that_is_not_drawn(case, &bytes, &faults, why);
+}
+
+/// [`export_with_a_gauge_that_is_not_drawn`] for a gauge already made:
+/// its bytes, and the faults a reader of the file lists, in order.
+fn a_gauge_that_is_not_drawn(
+    case: &str,
+    bytes: &[u8],
+    faults: &[pid_parse::StreamChainFault],
+    why: pid_parse::symbol_library::SymbolNotDrawn,
+) {
+    let library = a_library_of_the_gauge(case, bytes);
     let drawing = flash_b_without_the_gauges_cached_body(case);
     let (model, account) = laid_out_with(&drawing, &library);
     let (sound_model, sound) = laid_out_with(
@@ -3382,6 +3393,132 @@ fn a_symbol_file_whose_normal_view_stops_on_a_flagged_word_is_drawn_as_far_as_it
         )]
     );
     assert!(sound_model.ledger.symbol_chain_fault_warnings().is_empty());
+}
+
+/// The gauge with `stream` holding no byte, and what a reader of the file
+/// lists of it.
+///
+/// The chain walk finds nothing wrong with an empty stream: it read every
+/// byte there is. A chain stream of a symbol file opens with its header
+/// whatever it holds, so the reader of a `.sym` takes one with no byte for
+/// one cut off inside its header, and lists it in words of its own.
+fn a_gauge_with_an_emptied(stream: &str) -> (Vec<u8>, Vec<pid_parse::StreamChainFault>) {
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    let package = pid_parse::PidParser::new()
+        .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
+        .unwrap_or_else(|error| panic!("the gauge: {error}"));
+    assert!(
+        package
+            .get_stream(stream)
+            .is_some_and(|raw| raw.data.len() >= 8),
+        "the gauge keeps {stream}, header and all"
+    );
+    assert_eq!(
+        pid_parse::StreamChainFault::of_stream(stream, &[]),
+        None,
+        "the walk's word on a stream with no byte"
+    );
+    let plan = WritePlan {
+        stream_replacements: vec![StreamReplacement {
+            path: stream.to_string(),
+            new_data: Vec::new(),
+        }],
+        ..WritePlan::default()
+    };
+    let bytes = PidWriter::write_to_bytes(&package, &plan)
+        .unwrap_or_else(|error| panic!("the gauge with {stream} emptied is written: {error}"));
+    (
+        bytes,
+        vec![pid_parse::StreamChainFault::of_an_empty_stream(stream)],
+    )
+}
+
+/// The gauge with no root `/PSMcluster0` at all, and what a reader of the
+/// file lists of it: a stream the file does not hold.
+fn a_gauge_with_no_root_cluster() -> (Vec<u8>, Vec<pid_parse::StreamChainFault>) {
+    use pid_parse::writer::{PidWriter, WritePlan};
+
+    let mut package = pid_parse::PidParser::new()
+        .parse_package_from_reader(std::io::Cursor::new(the_gauge()))
+        .unwrap_or_else(|error| panic!("the gauge: {error}"));
+    package
+        .streams
+        .remove("/PSMcluster0")
+        .expect("the gauge keeps a root cluster");
+    let bytes = PidWriter::write_to_bytes(&package, &WritePlan::default())
+        .unwrap_or_else(|error| panic!("the gauge with no root cluster is written: {error}"));
+    (
+        bytes,
+        vec![pid_parse::StreamChainFault::of_a_missing_stream(
+            "/PSMcluster0",
+        )],
+    )
+}
+
+/// The gauge's root cluster emptied to no bytes.
+///
+/// The stream is there and holds nothing: no layer table, no view sets,
+/// and not the eight bytes of a header. The chain walk reads that as an
+/// empty chain with nothing wrong, and until 2026-11-13 the symbol reader
+/// took its word — the gauge drew two circles where the sound file draws
+/// one, as it did with the cluster stopped before #67, and the page said
+/// nothing and filed nothing: exit 0, no warning, `suspect 0`. Five bytes
+/// of the same stream were a cluster read short, not drawn and said; no
+/// bytes are now the same.
+#[test]
+fn a_symbol_file_whose_root_cluster_holds_no_byte_is_not_drawn_and_said() {
+    let (bytes, faults) = a_gauge_with_an_emptied("/PSMcluster0");
+    a_gauge_that_is_not_drawn(
+        "symbol-cluster-emptied",
+        &bytes,
+        &faults,
+        pid_parse::symbol_library::SymbolNotDrawn::ClusterShort,
+    );
+}
+
+/// The gauge's normal view emptied to no bytes.
+///
+/// `/Sheet6` with no byte was a sheet of no strokes to the reader, and the
+/// body fell through to the file's other sheet: the circle and a `PG` the
+/// sound file does not letter, the very page #67 stopped drawing for a
+/// chain that stops, and without a word. The sheet keeps its place now,
+/// with nothing to show, and the gauge is not drawn.
+#[test]
+fn a_symbol_file_whose_normal_view_holds_no_byte_is_not_drawn_and_said() {
+    let (bytes, faults) = a_gauge_with_an_emptied("/Sheet6");
+    a_gauge_that_is_not_drawn(
+        "symbol-view-emptied",
+        &bytes,
+        &faults,
+        pid_parse::symbol_library::SymbolNotDrawn::NothingToShow,
+    );
+}
+
+/// The gauge with no root cluster in the file at all.
+///
+/// Every symbol file keeps its layer table and its view sets in the
+/// `PSMcluster0` of its root. A file without one drew the two circles of a
+/// file whose cluster gave nothing, and listed no fault, there being no
+/// stream for a walk to find one in. It is read as a file whose root
+/// cluster was read short: not drawn, and said as a stream the file does
+/// not hold.
+#[test]
+fn a_symbol_file_with_no_root_cluster_is_not_drawn_and_said() {
+    let (bytes, faults) = a_gauge_with_no_root_cluster();
+    assert!(
+        faults[0]
+            .describe_framing()
+            .ends_with("the file holds no such stream"),
+        "{}",
+        faults[0].describe_framing()
+    );
+    a_gauge_that_is_not_drawn(
+        "symbol-cluster-missing",
+        &bytes,
+        &faults,
+        pid_parse::symbol_library::SymbolNotDrawn::ClusterShort,
+    );
 }
 
 /// The gauge's root cluster read short.

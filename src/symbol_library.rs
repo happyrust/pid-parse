@@ -604,7 +604,13 @@ pub struct SymbolGeometry {
     /// hold — every `Sheet*`, `PSMcluster0` and `StyleCluster` of the file,
     /// the root's among them — each as the walk that reads a drawing's
     /// streams judges it ([`crate::model::StreamChainFault`]), in path
-    /// order. A stream listed here was read as far as its chain holds and
+    /// order. Two more are the reader's own, where that walk has no word:
+    /// one of those streams that holds no byte, which the walk reads as an
+    /// empty chain with nothing wrong
+    /// ([`crate::model::StreamChainFault::of_an_empty_stream`]), and the
+    /// root `PSMcluster0` of a file that holds none
+    /// ([`crate::model::StreamChainFault::of_a_missing_stream`]). A stream
+    /// listed here was read as far as its chain holds and
     /// no further: a sheet gives the body the records before the stop, a
     /// style table the styles before it, a cluster the layers and the view
     /// sets before it. What that leaves of the body to draw is
@@ -625,13 +631,18 @@ pub struct SymbolGeometry {
 /// A chain stream is read short when its walk stops before the stream's
 /// end, or reaches the end with fewer live records than its header states
 /// ([`SheetChain::is_short`]) — which is how a stream cut off at a record
-/// boundary reads. A stream whose framing is wrong some other way — a first
+/// boundary reads — or when it holds no byte at all: a chain stream of a
+/// symbol file opens with its header whatever it holds, and the walk,
+/// which finds nothing wrong with an empty stream, is not asked. A file
+/// with no `PSMcluster0` in its root is one whose root cluster was read
+/// short. A stream whose framing is wrong some other way — a first
 /// word that is not the magic, a header that counts fewer records than the
 /// chain holds — lost no record and is not listed here, though it is among
 /// [`SymbolGeometry::chain_faults`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolShortRead {
-    /// The `PSMcluster0` streams read short, by path. The layer table and
+    /// The `PSMcluster0` streams read short, by path — the root's path
+    /// among them when the file holds no root cluster. The layer table and
     /// the view sets of such a storage may be missing entries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clusters: Vec<String>,
@@ -666,7 +677,7 @@ impl SymbolShortRead {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolNotDrawn {
-    /// A `PSMcluster0` of the file was read short
+    /// A `PSMcluster0` of the file was read short, or its root holds none
     /// ([`SymbolShortRead::clusters`]). It holds the layer table and the
     /// view sets, which say which sheet draws the body and which layers of
     /// it: with entries of either unread, a hidden layer reads as shown
@@ -1684,13 +1695,19 @@ pub fn read_symbol_geometry_from_bytes(bytes: &[u8]) -> Result<SymbolGeometry, P
     Ok(symbol_geometry_of_package(&package))
 }
 
+/// The stream a symbol file keeps its layer table and its view sets in:
+/// the `PSMcluster0` of its root.
+const ROOT_CLUSTER: &str = "/PSMcluster0";
+
 /// The drawable body of a `.sym` already parsed as a package.
 ///
 /// What [`read_symbol_geometry`] and [`read_symbol_geometry_from_bytes`]
 /// return, for a caller that holds the package. The body is read from the
 /// package's streams as they stand — every `Sheet*`, `PSMcluster0` and
 /// `StyleCluster` — each by its own record chain, and each chain that does
-/// not hold is listed ([`SymbolGeometry::chain_faults`]).
+/// not hold is listed ([`SymbolGeometry::chain_faults`]). So is one of
+/// those streams that holds no byte, and the root `PSMcluster0` of a file
+/// that holds none: both are read as a stream read short.
 #[must_use]
 pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
     // Styles are scoped to the storage they sit in, the same rule
@@ -1716,7 +1733,19 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
         // cluster's among them: what it finds wrong is what the reader of a
         // drawing says of the same bytes, and what it reads is what is read.
         let chain = SheetChain::walk(&raw.data);
-        if let Some(fault) = crate::model::StreamChainFault::of(stream_path, &chain) {
+        // The walk has no word for a stream that holds no byte: it read
+        // every byte there is. A chain stream of a symbol file opens with
+        // its header whatever it holds — the shortest on the corpora is a
+        // sheet's eight bytes — so one with no byte was emptied, and is
+        // read short and listed as one cut off inside its header is. Left
+        // to the walk's word, the gauge whose root cluster was emptied drew
+        // two circles, the one whose normal view was emptied drew the other
+        // sheet's `PG`, and neither listed a fault.
+        let emptied = raw.data.is_empty();
+        let fault = crate::model::StreamChainFault::of(stream_path, &chain).or_else(|| {
+            emptied.then(|| crate::model::StreamChainFault::of_an_empty_stream(stream_path))
+        });
+        if let Some(fault) = fault {
             geometry.chain_faults.push(fault);
         }
         match name {
@@ -1731,7 +1760,7 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
                 // and view sets are the records that chain reads: all of
                 // them under a wrong magic, the ones before the stop where
                 // it stops. Read short, it leaves both tables in doubt.
-                if chain.is_short() {
+                if chain.is_short() || emptied {
                     geometry.short.clusters.push(stream_path.clone());
                 }
                 let layers: Vec<SymbolSheetLayer> =
@@ -1772,6 +1801,24 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
             }
         }
     }
+    // Every symbol file keeps a `PSMcluster0` in its root. One that does
+    // not says nothing of which sheet and which layers draw, like one whose
+    // root cluster was read short, and there is no stream for a walk to
+    // find that in: it is listed here, where the path would stand.
+    if !package.streams.contains_key(ROOT_CLUSTER) {
+        let at = geometry
+            .chain_faults
+            .partition_point(|fault| fault.stream_path.as_str() < ROOT_CLUSTER);
+        geometry.chain_faults.insert(
+            at,
+            crate::model::StreamChainFault::of_a_missing_stream(ROOT_CLUSTER),
+        );
+        let at = geometry
+            .short
+            .clusters
+            .partition_point(|path| path.as_str() < ROOT_CLUSTER);
+        geometry.short.clusters.insert(at, ROOT_CLUSTER.to_owned());
+    }
     geometry.sheet_layers = layer_tables.values().flatten().cloned().collect();
 
     // The sheets the symbol presents as its normal view are read first, so a
@@ -1788,7 +1835,7 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
         if !geometry.short.sheets.is_empty() && !geometry.short.sheets_after.contains(&sheet_ref) {
             geometry.short.sheets_after.push(sheet_ref);
         }
-        if chain.is_short() && !geometry.short.sheets.contains(&sheet_ref) {
+        if (chain.is_short() || data.is_empty()) && !geometry.short.sheets.contains(&sheet_ref) {
             geometry.short.sheets.push(sheet_ref);
         }
         let mut sheet = SymbolGeometry::default();

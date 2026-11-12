@@ -19,7 +19,12 @@
 //!   which of the reader's ways the body is picked by;
 //! * the records the native reader skips (`0x8000` in the type word) on a
 //!   symbol's sheets, which the symbol reader decodes and the reader of a
-//!   drawing does not.
+//!   drawing does not;
+//! * whether any of those streams holds no byte, and whether a file has no
+//!   `PSMcluster0` in its root: the two things the chain walk has no word
+//!   for and the symbol reader takes for a stream read short (since
+//!   2026-11-13) — and with them, whether the body of any file lists a
+//!   fault, was read short or is not drawn.
 //!
 //! Read on 2026-11-12 over `test-file` on a machine where
 //! `test-file/symbols-full` is the full reference library: 1 845 symbol
@@ -39,9 +44,19 @@
 //! which is what `SymbolGeometry::displayed` has to be careful with when
 //! either is read short (`tests/sym_file_chain_faults.rs`).
 //!
+//! Read again on 2026-11-13 for the last of those, over every root this
+//! machine has: `test-file` (1 845 symbol files, as above), both
+//! `pid-test-data` (1 932 each: 1 288 on disk, 644 in six archives) and the
+//! share (644) — 6 353 files, a good many of them the same file kept in
+//! several places. No chain stream of a symbol file holds no byte, every
+//! file keeps a `PSMcluster0` in its root, and no body lists a fault, was
+//! read short or is not drawn — so reading an emptied stream and a missing
+//! root cluster as damage costs no sound file.
+//!
 //! Run: `cargo run --example probe_what_decides_the_sheet_a_symbol_file_draws
 //! [-- <root> … [--verbose]]`. Exits non-zero when a stream is not a chain
-//! that holds or a table read off the chain is not the walker's.
+//! that holds, holds no byte, a table read off the chain is not the
+//! walker's, a file has no root cluster, or a body is not a sound file's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -130,6 +145,12 @@ struct Census {
     pick: BTreeMap<&'static str, usize>,
     superseded: usize,
     superseded_of_a_drawn_type: usize,
+    /// Chain streams that hold no byte: not the eight of a header.
+    streams_with_no_byte: usize,
+    /// Files with no `PSMcluster0` in their root.
+    no_root_cluster: usize,
+    /// Files whose body lists a fault, was read short or is not drawn.
+    bodies_not_sound: usize,
 }
 
 impl Census {
@@ -166,6 +187,10 @@ fn hold(label: &str, bytes: &[u8], census: &mut Census, verbose: bool) {
                 .filter(|c| !c.is_ascii_digit())
                 .collect::<String>()
         );
+        if data.is_empty() {
+            census.streams_with_no_byte += 1;
+            println!("  a chain stream with no byte: {label} {path}");
+        }
         let entry = census.streams.entry(key).or_default();
         entry[0] += 1;
         if chain.is_sound() {
@@ -210,6 +235,19 @@ fn hold(label: &str, bytes: &[u8], census: &mut Census, verbose: bool) {
         }
     }
     *census.sheets_per_file.entry(sheets).or_default() += 1;
+    if !package.streams.contains_key("/PSMcluster0") {
+        census.no_root_cluster += 1;
+        println!("  no PSMcluster0 in the root: {label}");
+    }
+    if !body.chain_faults.is_empty() || !body.short.is_empty() || body.displayed().is_err() {
+        census.bodies_not_sound += 1;
+        println!(
+            "  a body that is not a sound file's: {label}: {} fault(s), short {:?}, {:?}",
+            body.chain_faults.len(),
+            body.short,
+            body.displayed().err()
+        );
+    }
 
     // The pick, read off the body.
     let displayed = body.displayed_primitives();
@@ -332,10 +370,19 @@ fn main() {
             "superseded records on sheets: {}, of a type the symbol reader draws: {}",
             census.superseded, census.superseded_of_a_drawn_type
         );
-        wrong += census.chains_that_do_not_hold() + census.tables_not_the_walkers;
+        println!(
+            "chain streams with no byte: {}; files with no PSMcluster0 in the root: {}; bodies that \
+             list a fault, were read short or are not drawn: {}",
+            census.streams_with_no_byte, census.no_root_cluster, census.bodies_not_sound
+        );
+        wrong += census.chains_that_do_not_hold()
+            + census.tables_not_the_walkers
+            + census.streams_with_no_byte
+            + census.no_root_cluster
+            + census.bodies_not_sound;
     }
     if wrong != 0 {
-        eprintln!("{wrong} stream(s) are not as the symbol reader takes them");
+        eprintln!("{wrong} stream(s) or file(s) are not as the symbol reader takes them");
         std::process::exit(1);
     }
 }
