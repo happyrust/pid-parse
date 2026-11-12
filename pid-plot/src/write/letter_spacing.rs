@@ -65,7 +65,9 @@
 //! # What the reference plots do not show
 //!
 //! - an advance exactly halfway between two 256ths, rounded away from nought
-//!   here;
+//!   here: the cells of the reference's faces — 256 design units for SimSun,
+//!   NSimSun and FangSong, 2288 for Arial, 2319 for Arial Narrow — never
+//!   give one;
 //! - a turned string under a spacing: every turned glyph is a text object of
 //!   its own on the plots, and is set on its own step here;
 //! - a string of more than one font. The driver would write a text object
@@ -79,6 +81,8 @@
 //! more by text alone, each of ours the same string whole under a `Tc`
 //! written character for character as the reference's; the other two are
 //! strings the drawing on hand does not hold.
+//!
+//! See `docs/analysis/2026-11-12-the-driver-states-a-letter-spacing-in-256ths.md`.
 
 use super::PLOT_DPI;
 use super::script_runs::Stepped;
