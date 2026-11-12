@@ -87,6 +87,21 @@ pub fn sample(
     curve(poles, weights, knots, per_span).unwrap_or_else(|| poles.to_vec())
 }
 
+/// [`sample`]'s curve, or `None` where [`sample`] hands back the poles: for
+/// a caller that takes a curve or nothing and has to tell the two apart. A
+/// boundary's member is the edge of a fill, and a control polygon is not the
+/// curve it re-lists
+/// (`parsers::sheet_records`, the `0x7F` and `0x74` members of an
+/// `igBoundary2d`).
+pub(crate) fn try_sample(
+    poles: &[(f64, f64)],
+    weights: &[f64],
+    knots: &[f64],
+    per_span: usize,
+) -> Option<Vec<(f64, f64)>> {
+    curve(poles, weights, knots, per_span)
+}
+
 /// [`sample`]'s curve, or `None` where it hands back the poles.
 fn curve(
     poles: &[(f64, f64)],

@@ -4766,12 +4766,6 @@ pub const IGBOUNDARY2D_MAX_POINTRUN_COUNT: u32 = 4096;
 /// over the corpora.
 const IGBOUNDARY2D_ARC_CHORD_STEP: f64 = 0.25;
 
-/// Highest degree a `0x7F` B-spline member may have. Three on the corpora.
-/// A decode flattens the member, and de Boor's recursion costs the square
-/// of the degree for every vertex, so the bound is what keeps that work in
-/// proportion to the bytes the member takes; it says nothing of the format.
-const IGBOUNDARY2D_MAX_BSPLINE_DEGREE: usize = 32;
-
 /// One `(start, end)` segment of an `igBoundary2d` loop: a `0x67` line
 /// member whole, or one of the chords a curved member — a point run, an
 /// arc, a B-spline, a circle — is flattened to.
@@ -5481,12 +5475,14 @@ fn igboundary_template_members(
                     )
                 };
                 if let Some((poles, weights, knots)) = stroked {
-                    let vertices = crate::bspline::sample(
+                    // The curve or nothing, as for a B-spline member: the
+                    // poles of an arc are not its vertices.
+                    let vertices = crate::bspline::try_sample(
                         &poles,
                         &weights,
                         &knots,
                         crate::bspline::SEGMENTS_PER_SPAN,
-                    );
+                    )?;
                     for pair in vertices.windows(2) {
                         push_segment(pos, pair[0], pair[1]);
                     }
@@ -5542,26 +5538,30 @@ fn igboundary_template_members(
 /// segments to each knot span, so the edge of the fill is the polyline the
 /// member's own record strokes.
 ///
-/// `None` for a degree past `IGBOUNDARY2D_MAX_BSPLINE_DEGREE`, for a knot
-/// vector whose parameter domain is empty — [`crate::bspline::sample`]
-/// would hand back the control polygon, and a member is a curve or the
-/// record is refused — and for a vertex that is not a finite point of the
-/// coordinate domain, which a weight of any size can make of finite poles.
+/// `None` where that record is not drawn as a curve: a member is a curve or
+/// the record is refused, and the control polygon [`crate::bspline::sample`]
+/// hands back for such fields is not the curve. That is a knot vector whose
+/// parameter domain is empty, and weights that leave a point of the curve
+/// nothing to be divided by — one of them more than 2^1022 times lighter
+/// than the heaviest, which no common scale makes a ratio of. The degree is
+/// held to [`crate::bspline::MAX_DEGREE`] where the member's fields are
+/// read ([`bspcurve_geometry_from`]), as a record's is, and again here by
+/// the evaluation.
+///
+/// `None` too for a vertex that is not a finite point of the coordinate
+/// domain. The poles are points of it and the weights are above zero, so
+/// the curve lies among its poles, and all that can put a vertex past the
+/// edge is the rounding of the last division: a pole on the edge itself,
+/// `1e9`, under weights of 0.7 comes out one bit beyond it. (Until a curve's
+/// weights were brought to one scale, weights of 1e308 overflowed de Boor's
+/// recursion and this was the rule that refused the member.)
 fn igboundary_bspline_vertices(curve: &BspCurveGeometry) -> Option<Vec<(f64, f64)>> {
-    let poles = curve.poles.len();
-    let degree = curve.knots.len().checked_sub(poles.checked_add(1)?)?;
-    if degree > IGBOUNDARY2D_MAX_BSPLINE_DEGREE {
-        return None;
-    }
-    if curve.knots.get(poles)? <= curve.knots.get(degree)? {
-        return None;
-    }
-    let vertices = crate::bspline::sample(
+    let vertices = crate::bspline::try_sample(
         &curve.poles,
         &curve.weights,
         &curve.knots,
         crate::bspline::SEGMENTS_PER_SPAN,
-    );
+    )?;
     let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
     (vertices.len() >= 2 && vertices.iter().all(|(x, y)| in_domain(*x) && in_domain(*y)))
         .then_some(vertices)
@@ -14981,42 +14981,79 @@ mod tests {
             )),
         );
 
-        // Finite poles do not make finite vertices. De Boor's recursion runs
-        // on each pole times its weight, and a weight has only to be finite
-        // and positive: the corners of the coordinate domain under weights
-        // of 1e308 overflow there, and the eight segments that come out are
-        // not numbers. The same poles decode unweighted and under weights of
-        // one, so it is the vertices that refuse the record, not the poles.
-        let corners = [(-1e9, -1e9), (1e9, -1e9), (1e9, 1e9), (-1e9, 1e9)];
+        // The weights of a rational curve are a ratio: the same curve under
+        // weights of any one size. Until they were brought to one scale
+        // before use (`bspline::sample`), de Boor's recursion ran on each
+        // pole times its weight as stored: poles this far out under weights
+        // of 1e308 overflowed there, and such a member was refused for
+        // vertices that were not numbers; under weights of 5e-324 the curve
+        // fell onto the origin and the member decoded as that. Both are the
+        // unweighted curve now, as under weights of one, of 0.7 or of three.
+        //
+        // The poles stand half way out to the edge of the coordinate domain
+        // and not on it. A pole on the edge is a vertex on the edge, give or
+        // take the last bit of the division by its weight — `1e9` under
+        // weights of 0.7 comes out as 1 000 000 000.000 000 1 — and whether
+        // such a member decodes would turn on that bit.
+        let corners = [(-5e8, -5e8), (5e8, -5e8), (5e8, 5e8), (-5e8, 5e8)];
         let cornered = |weights: &[f64]| {
             one_loop_boundary_payload(
                 &[
                     boundary_spline_member(&corners, weights, &knots),
-                    boundary_line_member((-1e9, 1e9), (-1e9, -1e9)),
+                    boundary_line_member((-5e8, 5e8), (-5e8, -5e8)),
                 ],
                 (0.0, 0.0),
                 &references,
             )
         };
-        for weights in [&[][..], &[1.0; 4][..]] {
+        let unweighted = decode_igboundary_at(&boundary_record(&cornered(&[])), 0)
+            .expect("the corners, unweighted")
+            .segments;
+        assert_eq!(unweighted.len(), 8 + 1);
+        for weights in [
+            &[1.0; 4][..],
+            &[0.7; 4][..],
+            &[3.0; 4][..],
+            &[1e308; 4][..],
+            &[f64::MAX; 4][..],
+            &[1e-300; 4][..],
+            &[5e-324; 4][..],
+        ] {
             let decoded = decode_igboundary_at(&boundary_record(&cornered(weights)), 0)
-                .unwrap_or_else(|| panic!("the corners under {} weights of one", weights.len()));
-            assert_eq!(decoded.segments.len(), 8 + 1);
-            assert!(decoded.segments.iter().all(|segment| {
-                [
-                    segment.start.0,
-                    segment.start.1,
-                    segment.end.0,
-                    segment.end.1,
-                ]
-                .into_iter()
-                .all(|value| value.abs() <= 1e9)
-            }));
+                .unwrap_or_else(|| panic!("the corners under weights of {:e}", weights[0]));
+            assert_eq!(decoded.segments.len(), 8 + 1, "weights of {:e}", weights[0]);
+            for (segment, plain) in decoded.segments.iter().zip(&unweighted) {
+                for (weighted, plain) in [(segment.start, plain.start), (segment.end, plain.end)] {
+                    // A vertex is some 1e8 from the origin, where one bit of
+                    // a double is 1.5e-8.
+                    assert!(
+                        (weighted.0 - plain.0).abs() <= 1e-6
+                            && (weighted.1 - plain.1).abs() <= 1e-6,
+                        "weights of {:e}: {weighted:?} for {plain:?}",
+                        weights[0]
+                    );
+                    assert!(weighted.0.abs() <= 5e8 + 1e-6 && weighted.1.abs() <= 5e8 + 1e-6);
+                }
+            }
         }
-        refused(
-            "weights of 1e308 on poles at the corners of the coordinate domain",
-            cornered(&[1e308; 4]),
-        );
+
+        // What no scale makes a ratio of: a weight so much lighter than the
+        // heaviest that nothing is left of it beside that one. The curve has
+        // no point where only such a weight bears — its start, here —
+        // `bspline::sample` hands back the poles, and a control polygon is
+        // not the curve: three segments for the eight. A member is a curve
+        // or the record is refused. (Every weight here is finite and above
+        // zero, which is all a member's own fields are held to.)
+        for weights in [
+            [5e-324, 1e308, 1e308, 1e308],
+            [1e-320, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1e-320],
+        ] {
+            refused(
+                &format!("weights {weights:?}, which leave an end of the curve no point"),
+                build(boundary_spline_member(&poles, &weights, &knots)),
+            );
+        }
 
         for cut in 0..whole.len() {
             assert!(
