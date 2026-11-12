@@ -129,6 +129,16 @@
 //! thresholds nor the label limits saw the `℃` stand 0.110 mm late, as it did
 //! until the glyphs before it were each set on their step.
 //!
+//! The page each sheet is held on is the page `pid_plot` writes for it
+//! (2026-11-12). The faces are prepared for the one sheet, as that program
+//! prepares them, and the bytes written here are asserted to be the bytes
+//! the program, run as a process on the same drawing, writes to its file
+//! (`pid_plot_page`). So what the gate verifies, and delivers when all eleven
+//! pass, is what an export of the drawing gives. Until then the faces were
+//! prepared for the eleven sheets together: the same lettering and strokes,
+//! in a file of other bytes — each face a subset cut for all eleven, with
+//! other glyph codes — which no export writes.
+//!
 //! Until the borrowed runs were lettered as the reference letters them
 //! (2026-11-11), the twelve `℃` were FangSong at the label's own 10.17 pt
 //! and the two `动火点` were squeezed to their 1.524 mm step: the pieces of
@@ -136,7 +146,7 @@
 //! there as the one class past the width threshold, 64 labels were past the
 //! two limits, and two of the fourteen runs were in the reference's family.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pid_plot::compare::{
     CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
@@ -147,6 +157,9 @@ use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
 use pid_plot::write::{PlotFont, write_plot};
+
+#[path = "../src/scratch.rs"]
+mod scratch;
 
 /// One drawing's measured reading, as an acceptance floor/ceiling.
 struct Pin {
@@ -774,6 +787,33 @@ fn deliver_plots(corpus: &std::path::Path, delivered: &[(&str, Vec<u8>)]) {
     std::fs::write(plot_dir.join("BUILD.txt"), build).expect("write BUILD.txt");
 }
 
+/// The page `pid_plot` writes for the drawing `name` of `corpus`, read back
+/// from `out`: the program run as a process, the way a sheet is exported.
+///
+/// The program looks for its faces in `PID_PLOT_FONTS` and then in the
+/// corpus, which is the order `dirs` is already in, so it is handed the
+/// whole list and reads the files this gate reads. `PID_PLOT_CJK_FONT`,
+/// which has it embed one face more, is taken out of its environment: the
+/// page delivered is the one the program writes with no such face named.
+fn pid_plot_page(corpus: &Path, name: &str, dirs: &[PathBuf], out: &Path) -> Vec<u8> {
+    let fonts = std::env::join_paths(dirs).expect("the font directories as one list");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pid_plot"))
+        .arg(corpus.join(format!("{name}.pid")))
+        .arg(out)
+        .arg(corpus)
+        .env("PID_PLOT_FONTS", fonts)
+        .env_remove("PID_PLOT_CJK_FONT")
+        .output()
+        .unwrap_or_else(|error| panic!("{name}: pid_plot did not start: {error}"));
+    assert!(
+        output.status.success(),
+        "{name}: pid_plot exited {:?}:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::read(out).unwrap_or_else(|error| panic!("{name}: {}: {error}", out.display()))
+}
+
 /// A page that matches no surveyed sheet gets no masks at all.
 #[test]
 fn only_the_surveyed_sheets_carry_furniture_masks() {
@@ -866,15 +906,6 @@ fn eleven_reference_plots_hold_their_readings() {
     );
 
     let dirs = font_search_dirs(&corpus);
-    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
 
     // D1/S1: collect each page's gated bytes, then write them as the delivery
     // only after all eleven pass, so the delivery can never drift from what the
@@ -884,7 +915,8 @@ fn eleven_reference_plots_hold_their_readings() {
     let mut in_family_on_all_pages = 0usize;
     let mut pieces_on_all_pages = 0usize;
 
-    for (pin, model) in PINS.iter().zip(&models) {
+    let exports = scratch::ScratchDir::new("acceptance-pid-plot");
+    for (index, (pin, model)) in PINS.iter().zip(&models).enumerate() {
         let name = pin.name;
         let reference_bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("reference");
         let (reference, reference_faces) =
@@ -907,7 +939,35 @@ fn eleven_reference_plots_hold_their_readings() {
             pin.page_mm
         );
 
+        // The faces are prepared for this sheet by itself, as `pid_plot`
+        // prepares them. Prepared for the eleven together the page letters
+        // and strokes the same and is other bytes: each face is then a
+        // subset cut for all eleven sheets, with other glyph codes.
+        let prepared = prepare_fonts(&[model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let our_bytes = write_plot(model, &fonts).expect("write ours");
+        // What is verified below, and delivered after it, is the page
+        // `pid_plot` writes for this drawing, byte for byte.
+        let exported = pid_plot_page(&corpus, name, &dirs, &exports.join(format!("{index}.pdf")));
+        assert!(
+            our_bytes == exported,
+            "{name}: the page this gate verifies and delivers is not the bytes pid_plot writes \
+             for the drawing: {} bytes here, {} from pid_plot, first apart at byte {}",
+            our_bytes.len(),
+            exported.len(),
+            our_bytes
+                .iter()
+                .zip(&exported)
+                .position(|(ours, theirs)| ours != theirs)
+                .unwrap_or_else(|| our_bytes.len().min(exported.len()))
+        );
         delivered.push((name, our_bytes.clone()));
         let (ours, our_faces) = read_plot_with_faces(&our_bytes).expect("read ours");
         let template = template_masks(reference.page_mm);
