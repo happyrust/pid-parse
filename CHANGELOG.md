@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：`main` 并入发布分支，重发 `publish-v4`；对库普查量出 23 个没发的对象（2026-11-12）
+
+发布这条线（分支 `publish-export-20261110`）把 `main` 并了进来（`7de1ef1`），用合并树重发了 53 张整包的交付目录，并第一次拿包里的数据库核对没有原厂参考的那 46 张图。发布规则没有改，写出的字节只有先前已经提交的一处变化。逐项的读数与没做的事在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第四阶段。
+
+- **合并。** 两边都改过的 5 个文件里 3 个各有一处冲突（`tests/parser_panic_safety.rs` 的模块注释、`AGENTS.md` 的门禁表、本文件的顶部），两边的内容都留；`pid_load.rs` 自动合并，`main` 那边的断链告警（`read_publish_from_reader`、`PublishChainFault::describe`）与本分支的设备 `Description`、注释换行都在。合并树上第一次用 CI 那一档工具链（stable 1.99.1）跑全量：`cargo test -p pid-parse --all-targets` 1 896 过 / 0 败 / 3 ignored，`--no-default-features --lib` 928 过，clippy、fmt、wasm32、缺文档（0 = 基线 0，rustdoc 退出 0）、`cargo build --workspace --all-targets` 都通过。完整度的 17 个钉原样通过；整张对照矩阵 30 次运行、253 个文件与合并前逐字节相同，调试构建与发布构建的输出也逐字节相同。
+- **`publish-v4`。** `D:\work\cad\pid-test-data\publish-v4`，出自 `7de1ef1` 的发布构建，命令与 `publish-v3` 相同：53 张写出、0 张失败，`_Index.json` 的问题清单 0 条，没有断链告警。与 `publish-v3` 逐文件比，160 个里 158 个逐字节相同；2 个 `_Data.xml`（轻烃分离器I、低压气压缩机入口改造）一共少 20 行空的 `<IOffpageConnector/>`，就是 2026-11-10 那一条的第四处修复（`dc78a7c`）。7 张同版参考图上写出参考的对象 100 %、关系 100 %、写得不同的值 0，接口元素 56.8 %、非空值 50.4 %、空值属性 0 %，与钉值相同：缺的那一半还是没做的工作，不是这次导出的变化。目录里带 `BUILD.txt`（提交、命令行、起止时间、构建类型）、`RUN-LOG.txt` 与三个对照子目录。
+- **对库普查。** 新探针 `examples/probe_which_database_representations_a_publish_leaves_out.rs`（`3411263`）不靠参考：数据库的 `T_REPRESENTATION` 给每个对象在图上的每个图形记一行，发布件把它写成同一个 UID 的 `PIDRepresentation`。51 张有内容的图上库里画着 42 048 条，写出 23 762 条，没有一条是库里没有的；没写出的里 18 263 条属于三类——标签、管段上的符号、信号线上的符号——7 张参考图上原厂对这三类也一条不发。**另有 23 条不在那三类里：C井场 21 条、Q井场 2 条，是库里画着而包里的 `.pid` 没画的仪表、注释、管嘴、机械设备与容器，现在不发。** 同样情形的管件是照库发了的（J K井场 的参考里有 3 例作证）；别的类没有任何参考样本，这一轮只量出来、记为计划 S17，等 C井场 的原厂发布件。`D03`、`D04` 两张只发了图纸对象，库里这两张图上确实什么都没有。见 `docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`。
+- **一处环境上的坑。** 在路径较长的 worktree 里，`cargo fmt --all -- --check` 交给 rustfmt 的命令行（根包 355 个根文件的绝对路径）到了 Windows 的 32 767 字符上限，报 `os error 206`、一个文件都不读。那里要对同一批文件分批跑 `rustfmt --check`，写法在 `AGENTS.md` 的 Pre-commit gates 一节。
+
 ### 文档：排字规则由谁守、三处说法写准（2026-11-11）
 
 - `AGENTS.md` 新增一节「排字规则由谁守」：守文字写法的是 `pid-plot` 的库内用例与验收门禁

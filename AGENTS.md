@@ -720,6 +720,23 @@ writes (`pid-plot/src/write/text_matrix.rs`). A machine with no
 `nsimsun.ttf` borrows SimSun instead, so there the probe would list those
 fourteen again, SimSun against NSimSun (not run on such a machine).
 
+`probe_which_database_representations_a_publish_leaves_out` holds a publish
+directory against the plant database, with no vendor reference: the dump's
+`T_REPRESENTATION` has one row for every graphic an item has on a drawing, and
+a publish states each as a `PIDRepresentation` under the row's `SP_ID`. It
+counts, per representation type (the dump's codelist 39) and item type, the rows
+each `_Data.xml` states and leaves out, reads a vendor document of the same
+`DocUID` the same way when `--reference DIR` holds one, and lists every row left
+out of a class the publish states elsewhere. On the 53-sheet package
+(`publish-v4`, commit `7de1ef1`): 42 048 rows drawn on 51 drawings, 23 762
+stated, none stated that the database lacks; three classes stated nowhere and by
+no reference (12 584 labels, the 4 678 symbols of pipe runs, the 1 001 of signal
+runs); and 23 rows left out — 21 on `C井场`, 2 on `Q井场` — of instruments,
+notes, nozzles, mechanical equipment and a vessel the database draws and the
+package's `.pid` does not. The dump is read by the probe's own reader, not by
+`publish::oracle_exp`. See
+`docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`.
+
 A `tmp_`-prefixed example is the same tool before its answer is worth
 anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
 and it disappears once the answer lands. When the numbers do turn
@@ -816,6 +833,20 @@ See `.github/scripts/check-missing-docs.sh` for the exact command
   directory: `cd vendor/oxidized-mdf && cargo test --lib`.
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
   errors; keep local output clean by the same bar.
+- `cargo fmt --all -- --check` hands rustfmt every target root of a
+  package on one command line, each as a `\\?\`-prefixed absolute path.
+  The root package has 355 of them, and in a checkout whose path is
+  longer than the main one that line passes the 32 767 characters Windows
+  allows: in `D:\work\plant-code\cad\pid-parse-wt\publish-export` the
+  gate fails with `os error 206` (the file name or extension is too
+  long) before rustfmt reads a file. Run rustfmt over the same roots in
+  batches there — `cargo metadata --format-version 1` gives each
+  target's `src_path` and edition — as `rustfmt --check --edition 2021
+  <files…>` for the root package and `vendor/oxidized-mdf` and
+  `--edition 2024` for `pid-plot` (449 roots on 2026-11-12). The four
+  crates under `vendor/pdfcraft-pin` are not in the gate: rustfmt run on
+  them directly reports 64 diffs, and `cargo fmt --all -- --check`
+  passes where it can start.
 
 ### Security audit (CI-only)
 

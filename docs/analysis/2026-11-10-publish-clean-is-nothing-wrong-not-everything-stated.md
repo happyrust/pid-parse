@@ -115,6 +115,8 @@ MTF 包那 27 条与 `.pid` 单发的 27 条只是个数碰巧相同：4 个多�
 - `DWG-0202GP06-01_p` 里另外 6 张图。
 - MTF 整包只有 A01 一张图。
 
+补（2026-11-12）：53 张整包现在多了一项不靠参考的核对——拿包里的数据库对表示这一层，见 `docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`。它量出上面那 27 个外推的管件之外，C井场 还有 21 个、Q井场 有 2 个库里画着而 `.pid` 没画的非管件对象没有发。
+
 ### 2.4 完整度普查
 
 这是本轮新增的口径：对参考里的每个对象（管线按名配对），数它的接口元素、非空属性值、关系有多少在我方文件里（值要逐字相等，关系按两端与 `DefUID`、不看 `Rel` 自己的 UID）。下表出自当时的脚本 `target/publish-audit/census.py`（不入库）。入库的探针是 `examples/probe_how_much_of_a_reference_does_a_publish_state.rs`（方案 S0），口径相同，只有一处更严：对象要同 UID 且同类才算写出。因此 A01 · `.pid` 那一行探针读作 6 / 12、9 / 105——脚本把那个已登记的错类对象（参考 `PIDPipeline` 的 UID 下我方写的是 `PIDPipingConnector`）算作写出；其余各行两者相同。
@@ -230,6 +232,7 @@ A01 的数据库线看起来低，是因为连接件、两个端口、工艺点 
 | `D:\work\cad\pid-test-data\publish` | 2026-10-14 02:48 | 53 张 × 三件 + `_Index.json` = 160 | `_Data.xml` / `_Meta.xml` 106 件里 63 同、43 不同 |
 | `…\publish-v2` | 2026-10-24 – 25 | 同上 + `_ByteCompare.json` 与几个核对用子目录 | 同上 |
 | `…\publish-v3` | 2026-11-05 16:15 – 16:19 | 160 + `_ByteCompare.json`（记着命令行与每件变化对应的提交） | **106 / 106 逐字节相同** |
+| `…\publish-v4`（2026-11-12 补） | 2026-11-12 14:49 – 14:50 | 160 + `BUILD.txt`、`RUN-LOG.txt` 与三个对照子目录（对 `publish-v3`、对原厂参考、对库） | 出自 `7de1ef1`（`main` 并入本分支之后）。与 `publish-v3` 比 158 / 160 逐字节相同，2 个 `_Data.xml` 一共少 20 行空的 `<IOffpageConnector/>`（§3.2 的 S3b） |
 | `D:\work\plant-code\cad\pid-test-data\publish` | 2026-10-14 | 第一个目录的逐字节拷贝（160 / 160） | — |
 | `D:\work\cad\PID自研软件验证\publish` | 2026-10-12 / 14 | 5 张图的早期输出，其中 4 份 `_Meta.xml` 是 418–434 字节的空壳 | 已过时 |
 

@@ -2,8 +2,8 @@
 
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
-> 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。
-> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
+> 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。2026-11-12 把 `main`（`7f71586`）并进了分支（`7de1ef1`）。
+> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查，见 §5；§2 的 Q1–Q6 等批复；§3 其余切片未开工。
 
 ## 一句话
 
@@ -22,11 +22,11 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 | # | 问题 | 选项 | 推荐 |
 |---|---|---|---|
 | Q1 | 库里的属性从哪条线补 | (a) 在 `.pid` + exp 线上补：类的固定接口表 + 按 `SPPIDDataMap.xml` 把 dump 的列发成属性；(b) 把 Oracle `exp` 的行送进数据库线（MDF 那条线的 `sqlite_load` + `xml_writer`，`backup-store-v2` 分支计划的方向）；(c) 两条都做 | **(a)**。`.pid` + exp 线的对象与关系在 7 张图、21 个类上已经 100 % 对上，这是最难的一半；数据库线只在 A01 一张图、8 个类上验证过，比它少 6 个类，写手是逐类手写的。数据映射是原厂自己的文件，对 87.5 % 的参考值给得出「哪一列发成哪个属性」（名字级的匹配，不管值怎么写；只看 7 张图还没写出的 19 437 个值是 76.9 %，叫不出名字的 4 488 个是层级枚举里映射没有点名的几级，见分析 §3.4），比照参考手抄更站得住。(b) 的好处是 14 条 DWG 软跳过能真跑、MTF 与 Oracle 同一条路，代价是要一个完整的 Oracle 行解码器（LOB、所有类型），那边分支上有未提交的一半。不选 (a) 的话 S5–S9 换成「Oracle 行进 SQLite」一大片 |
-| Q2 | 主检出 `stash@{0}`（18 个文件的 publish 未合入改动）怎么办 | (a) 原样并到本分支，单独成提交，再在其上继续；(b) 只取门禁那几项（接口、`<Container>`、重复 UID、包模式版本检查）；(c) 不要 | **(a)**。在本 worktree 临时套上验过：348 条库测与 14 个 `publish_*` 全过，对照矩阵不变。它让门禁更严，所以**会往基线里加条目**（A01 27 → 28，I井场 别名 1 → 2）并改两处测试计数——这是口径变严带来的登记，不是放宽，但要你点头。它与本轮 S1 改了 `oracle_exp.rs` 的同一处（`ExpTables::read` 五张表改宽松读）、与 S3b 改了 `pid_writer.rs` 的同一处（空的 `IOffpageConnector`），并入时这些行两边写法相同，`oracle_exp.rs` 的端口投影（它改成跳过非端口行，本轮保持报错）和测试辅助函数要手工对一下 |
+| Q2 | 主检出 `stash@{0}`（18 个文件的 publish 未合入改动）怎么办 | (a) 原样并到本分支，单独成提交，再在其上继续；(b) 只取门禁那几项（接口、`<Container>`、重复 UID、包模式版本检查）；(c) 不要 | **(a)**。在本 worktree 临时套上验过：348 条库测与 14 个 `publish_*` 全过，对照矩阵不变。它让门禁更严，所以**会往基线里加条目**（A01 27 → 28，I井场 别名 1 → 2）并改两处测试计数——这是口径变严带来的登记，不是放宽，但要你点头。它与本轮 S1 改了 `oracle_exp.rs` 的同一处（`ExpTables::read` 五张表改宽松读）、与 S3b 改了 `pid_writer.rs` 的同一处（空的 `IOffpageConnector`），并入时这些行两边写法相同，`oracle_exp.rs` 的端口投影（它改成跳过非端口行，本轮保持报错）和测试辅助函数要手工对一下。2026-11-12 补：并入 `main` 之后它不能再直接套上——`git apply --check` 对 18 个文件里的 13 个通过，`backup_package.rs`（`main` 加了断链告警）、`oracle_exp.rs`、`pid_writer.rs`、`pid_load.rs`、`tests/parser_panic_safety.rs` 这 5 个不过，(a) 现在是一次三方合并 |
 | Q3 | `.pid` 单发要不要也写类的固定接口（`<IDrawingItem/>` 这类没有属性的元素） | (a) 两种模式都写；(b) 只在有 dump 时写，`.pid` 单发保持「只写文件里说的」 | **(a)**。13 份参考里 12 个类的接口序列只有一种写法，这是类的定义，不是从库里读的值；不写的话下游按接口认对象时，`.pid` 单发的对象什么都不是。空值属性（`InstrTagSuffix=""`）建议一并照参考写 |
 | Q4 | DWG-0202GP06-01 的备份包比参考新（管段的序号、位号写法都改过） | (a) 承认它是版本差：`.pid` 单发收进基线，`--oracle-exp` 的管线类差异钉在测试里并写明原因；同时请现场对**现在的库**重新发布一次这张图，或给参考当时的备份；(b) 只管 `.pid` 单发 | **(a)**。这是唯一一个三件都在仓库里、CI 上真跑的 Oracle 图。有了同版参考，「`T_PIPELINE` 有行时管线用它的 UID」（S10）才能验证 |
 | Q5 | 数据库线（`Export.mdf --drawing`）的命令行门禁只比个数 | (a) 换成与 `.pid` 线同一个 `diff_pid_export`，A01 的三类合成残差（连接件 UID、`Rel` UID、`GraphicOID`）逐条登记进基线；(b) 维持 | **(a)**。测试层已经逐字节比过，命令行给用户的却是最弱的一档；MTF 包走包门禁时报的 27 条现在既没登记也没人看 |
-| Q6 | 还缺的参考数据 | 请现场提供：① 4 张旧集注站图那一版的备份包；② 53 张里没有参考的图挑几张发布（建议 C井场——27 个只在库里的管件是外推的——和任意一张带设备 `Description` 标签的图）；③ Q4 的 DWG 重新发布；④ 一张本图 stockpile 里放着 OPC 的图的发布件，连同发布那一刻的备份（`DWG-0202GP06-01_p` 这个库里 `DWG-0201GP06-01` 上就有 2 个，S12） | 没有这些，对应的结论只能停在「外推」或「版本差」 |
+| Q6 | 还缺的参考数据 | 请现场提供：① 4 张旧集注站图那一版的备份包；② 53 张里没有参考的图挑几张发布（建议 C井场——27 个只在库里的管件是外推的，另有 21 个库里画着而 `.pid` 没画的仪表、注释、管嘴、设备现在不发，见 S17——和任意一张带设备 `Description` 标签的图）；③ Q4 的 DWG 重新发布；④ 一张本图 stockpile 里放着 OPC 的图的发布件，连同发布那一刻的备份（`DWG-0202GP06-01_p` 这个库里 `DWG-0201GP06-01` 上就有 2 个，S12） | 没有这些，对应的结论只能停在「外推」或「版本差」 |
 
 ## 3. 切片
 
@@ -52,6 +52,7 @@ publish 现在的状态是「7 张图写出的都对，但只写出参考的一�
 | S14 14 条 DWG 软跳过 | Q1 (a)：删掉这 14 条等 `Export.mdf` 的用例，换成对 Oracle 包真跑的；Q1 (b)：让它们读 Oracle 行 | 没有一条 `publish_*` 用例在仓库夹具齐全时软跳过 | Q1 | 小 / 大 |
 | S15 数据库线的注释正文与 OPC 接口（只记录） | 读代码所见（独立审查提出，已对照代码）：`xml_writer::write_item_note` 的 `INote.NoteText` 取对象的 `NoteText` 字段，没有就取 `T_ModelItem.Description`；`mdf_load` 暂存的 24 张表里有 `T_ItemNote`、没有放正文的 `T_Note`。`.pid` 线取的是标签的 `Note.Body`，库里对应 `T_NOTE.BODY`；Oracle dump 的 `T_ITEMNOTE` 只有 2 列、没有正文，7 张同版图参考里的 178 个注释在库里的 `T_MODELITEM.DESCRIPTION` 全空。照这样，数据库线遇到带正文的注释会写成空的 `<INote/>`。`write_pid_branch_point` 从不写 `IOffpageConnector`，`T_OPC` 也不在暂存的表里：没有 `ToFromText` 时两条线一致，有值时数据库线缺这个接口 | 仓库里没有带注释或 OPC 的 MDF 夹具（A01 的 12 个对象里这两类都没有），这一轮不改；有夹具之后先写红测 | 一份带注释与 OPC 的 MDF / MTF 备份 | 小 |
 | S16 管线名回退时的流体代号（只记录） | `codelist_short_text(19)` 只读 `CODELIST_SHORT_TEXT`。19 号代码表里出厂自带的代号只填 `CODELIST_TEXT`（两个包都是 173 行），所以 `fluid codes missing` 把它们计成缺失：DWG 包 5 条管段（代号 493 = `OD`），53 张那个库 70 条（代号 20 = `AI`）。管段在 `T_PLANTITEM` 里有行时名字取 `ITEMTAG`，输出不受影响；dump 没有这张表或这一行时，回退拼出的名字会少掉流体这一格 | 找到一条走回退拼名、代号又只有 `CODELIST_TEXT` 的管段并对上参考之后再改 | 那样的样本 | 小 |
+| S17 库里画在图上、`.pid` 没画的非管件对象（只记录，2026-11-12） | 现状：`ExpTables::dump_only_piping_components` 只对管件做「库里在本图上有表示、`.pid` 没画就照库发」，依据是 J K井场 的 3 例。53 张整包对库普查（`docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`）量出另有 23 条同样情形的表示没有发：C井场 21（仪表 5、注释 7、管嘴 5、机械设备 3、容器 1），Q井场 2（仪表）。库里它们与发出的行没有区别，`.pid` 里没有这些图元。这一轮不改：别的类没有任何参考样本，而且各有连带内容（管嘴的组成关系、注释正文、仪表位号与信号端口） | 探针 `probe_which_database_representations_a_publish_leaves_out` 的「left out of a class the publish states elsewhere」从 23 到 0，「states … the database does not draw」保持 0；写出的对象对上 C井场 的原厂发布件 | Q6 ② 的 C井场 发布件 | 中 |
 
 S5 做完，接口元素这一栏就满了；S7 + S8 做完，7 张图的非空值从 19 734 / 39 171（50.4 %）到 39 011 / 39 171（99.6 %），豁免清单只剩合成值。
 
@@ -59,7 +60,7 @@ S5 做完，接口元素这一栏就满了；S7 + S8 做完，7 张图的非空�
 
 - **规则量不出来的属性。** 层级枚举和单位写法现在只有参考可对，原厂的实现在 `EFAdapter.dll`（2026-11-05 已有 IDA 库在 `D:\ida_scratch\publish-native\efadapter-fluid\`）。S8 / S9 按「先量、全对才写」做，量不出的留在豁免清单里并写明。
 - **只有一个库有全量参考。** 7 张同版参考都来自同一个工厂库。数据映射是三个包共用的同一份，所以按映射写的属性换库也该成立，但只有 DWG（版本差）和 A01（MTF）能旁证。
-- **`.pid` 单发的输出会变**（S5）。交付目录 `publish-v3` 要重发成 `publish-v4` 并出逐字节对比，照 2026-11-05 的做法。
+- **`.pid` 单发的输出会变**（S5）。交付目录要重发并出逐字节对比，照 2026-11-05 的做法。（`publish-v4` 已在 2026-11-12 发出，与 `publish-v3` 只差 S3b 的 20 行，见 §5 第四阶段；S5 之后要发的是下一个号。）
 - **与别处的改动撞车。** 主检出未提交的 `rusqlite` 升级动了 `sqlite_load.rs` 与 `publish_a01_raw_residual.rs`（本计划 S11 会碰前者）；stash 动了 13 个 publish 源文件（Q2）；`CHANGELOG.md` 与 `AGENTS.md` 顶部是 pid-plot 那条线在写。
 - **A01 的三类合成残差**不会消失：库里搜不到那些值。
 
@@ -191,3 +192,39 @@ Q1–Q6 仍未答复。这一阶段做两件不依赖答复的事：处理一个
 DWG 那 17 个缺的值，探针逐个给出表和列，例如 `PIDPipingConnector IInsulatedItem.TotalInsulThick <- PipeRun.InsulThick [unit list Thickness] => T_PipeRun.InsulThick`。
 
 **这一阶段没做的。** S4、S5 及之后的切片（等 Q1–Q3）；不并 stash；不动已接受基线；`.pid` 单发的输出没变；stockpile 的发布规则（S12，只有 1 例）；`StagedMdf` 那条「写到一半失败」的路径（随 Q2）；数据库线的两处不一致（S15，没有夹具）；流体代号只读 `CODELIST_SHORT_TEXT`（S16，没有样本）。没核实的：没有用 CI 的 stable 工具链跑（门禁用的是 `rustup run nightly cargo`）；`vendor/oxidized-mdf` 自己的测试没有单独跑；「层级跟 schema 一侧」是从值对不上映射推出来的，schema 文件本身没有读。
+
+### 第四阶段（2026-11-12）：并入 main，重发 publish-v4，对库普查
+
+Q1–Q6 仍未答复。这一阶段做三件不依赖答复的事。
+
+**并入 `main`。** `main` 到 `7f71586` 有 87 个分支没有的提交，分支有 16 个 `main` 没有的。合并提交 `7de1ef1`（不 rebase）。`main` 那边与 publish 有关的是三个提交：记录链立不住时 `pid_publish_xml` 在 stderr 上出声（`5a7bc12`），`.pid` 只读一遍、告警说出这条流让 XML 少了多少条记录（`838a556`，`pid_load::read_publish_from_reader` 与 `PublishChainFault::describe`），整包发布点名是哪张图（`27e434c`，`BackupPublishReport::chain_faults`）；其余是解析线的记录链绊线与四个退役族。两边都改过的文件 5 个：`src/publish/mod.rs`、`src/publish/pid_load.rs` 自动合并；`tests/parser_panic_safety.rs`（模块注释）、`AGENTS.md`（门禁表）、`CHANGELOG.md`（Unreleased 顶部）各一处冲突，两边的内容都留。合并树相对 `main` 只在本分支改过的 16 个代码文件上不同；`pid-plot` 编 `pid-parse` 时不开 `backup-exp`，这 16 个文件它一个都不编，所以没有跑它的页面门禁。
+
+合并树上的门禁（第一次用 CI 那一档工具链：stable 1.99.1，`--locked --offline`，`RUSTFLAGS=-Dwarnings`；前三个阶段用的是 nightly）：
+
+| 门 | 结果 |
+|---|---|
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo clippy -p pid-parse --all-targets -- -D warnings` | 通过 |
+| `cargo test -p pid-parse --all-targets` | 1 896 过 / 0 败 / 3 ignored（库 1 423，47 个集成测试文件 463，示例 10） |
+| `cargo test -p pid-parse --no-default-features --lib` | 928 过 |
+| `cargo check --lib -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 通过 |
+| `.github/scripts/check-missing-docs.sh` | rustdoc 退出 0；缺文档 0 = 基线 0 |
+| `cargo build --workspace --all-targets` | 通过（`pid-plot` 编得过） |
+| 16 个 `tests/publish_*.rs` 逐个带 `--nocapture` | 121 过 / 2 ignored；skip 行 21 行，与前三个阶段相同；临时目录里不留东西 |
+| `vendor/oxidized-mdf`：`cargo test --lib` | 37 过 |
+
+`tests/publish_completeness.rs` 的 17 个钉原样通过，所以每种模式写出参考的多少与合并前相同。整张对照矩阵（`audit.py`，30 次运行）用合并树的调试构建重跑：253 个文件与合并前 `bc813ef` 的输出逐字节相同，退出码与标准输出也相同；发布构建再跑一遍，与调试构建同样逐字节相同。A01 没有钉，探针今天的读数是：`.pid` 单发 对象 6 / 12、接口元素 9 / 105、非空值 1 / 29（另 3 个写得不同）、关系 0 / 15；`Export.mdf`、`Export_v2.sqlite`、`TEST02_p` 目录三种入口都是 8 / 12、63 / 105、14 / 29（另 4 个不同）、空值属性 4 / 15、关系 9 / 15，与 11-10 的读数相同。
+
+**`publish-v4`。** `D:\work\cad\pid-test-data` 与 `D:\work\plant-code\cad\pid-test-data` 是同一个包（16 个文件 SHA-256 全同），只导一次。命令与 `publish-v3` 相同：`pid_publish_xml D:\work\cad\pid-test-data --out-dir D:\work\cad\pid-test-data\publish-v4`，提交 `7de1ef1`、工作树干净、发布构建，19 秒。53 张写出、0 张失败、2 张没有 `DrawingNo`（`D03`、`D04`）；`_Index.json` 的 `problems` 0 条；stderr 一行，没有断链告警。目录里另有 `BUILD.txt`、`RUN-LOG.txt` 与三个子目录：
+
+- `vs-publish-v3\`：160 个文件里 158 个与 `publish-v3` 逐字节相同（53 个 `_Meta.xml`、53 个 `_Coverage.json`、`_Index.json`、51 个 `_Data.xml`）；2 个 `_Data.xml` 一共少 20 行空的 `<IOffpageConnector/>`（轻烃分离器I 14、低压气压缩机入口改造 6），就是 S3b（`dc78a7c`）。`main` 并进来的提交与分支上其余 15 个都不改变这个包写出的字节。
+- `vs-reference\`：整包门禁对 `验收数据` 是 7 张 clean、4 张另一版、42 张没有参考；11 张图各两种单图模式的输出；完整度的表。7 张同版图在交付目录里的文件：对象 18 197 / 18 197、关系 24 143 / 24 143、写得不同的值 0、接口元素 76 646 / 134 983（56.8 %）、非空值 19 734 / 39 171（50.4 %）、空值属性 0 / 16 680——就是钉值。这 7 张单图 `--oracle-exp` 的 `_Data.xml` 与 `_Meta.xml` 和交付文件逐字节相同。
+- `vs-database\`：下面那项普查的输出。
+
+同一命令再跑一次 160 / 160 相同；调试构建跑同一个包 160 / 160 相同。交付件里每条关系的两端都是同一个文件里的对象（0 条悬空，11 份原厂参考也是 0），没有重复的 UID。53 个 `_Data.xml` 的 `<Container>` 各带 `LoginUser`、`LoginPWD` 两个属性，值全部为空，原厂参考也是空的。
+
+**对库普查。** 46 张没有同版参考的图靠什么保证，此前只有「写出来、不失败、自洽、可重复」。这一轮拿包里的数据库对了表示这一层（`3411263`，探针 `examples/probe_which_database_representations_a_publish_leaves_out.rs`；分析页 `docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`）：51 张有内容的图上库里画着 42 048 条表示，写出 23 762 条，没有一条是库里没有的；没写出的 18 286 条里 18 263 条属于原厂自己也不发的三类（标签、管段上的符号、信号线上的符号）；**剩下 23 条是库里画着而 `.pid` 没画的非管件对象，现在不发**（C井场 21、Q井场 2）。记为 S17，等 C井场 的原厂发布件；这一轮没有改发布规则。`D03`、`D04` 在库里没有任何表示，所以那两个壳与库一致。
+
+**这一阶段没做的。** S4、S5 及之后的切片（等 Q1–Q3）；不并 stash（Q2；并入 `main` 之后它要三方合并才套得上）；S17 的规则（没有样本）；发布时断链进 `_Index.json`、`/Unclustered Dynamic Attributes` 的告警措辞（工单 #49，解析线在做）；普查只到表示这一层，属性值与关系没有对库。没核实的：分支上 `624916d` 之后的提交仍然没有独立审查；`pid-plot` 的页面门禁在合并树上没有跑（理由见上）。
+
+**一处环境上的坑。** `cargo fmt --all -- --check` 把一个包的全部 target 根文件以 `\\?\` 开头的绝对路径放在一条命令行上交给 rustfmt。根包现在有 355 个根文件，在这个 worktree 里路径合计 31 006 个字符，加上前缀与程序名就到了 Windows 的 32 767 上限：合并提交上它还过，加了一个示例之后报 `os error 206`（文件名或扩展名太长），rustfmt 一个文件都没读。主检出的路径短 19 个字符，同一条命令行短约 6 700 个字符（355 × 19），那里没有试。在这个 worktree 里 fmt 这道门改成对同一批文件分批跑 `rustfmt --check --edition <版本>`：根包与 `vendor/oxidized-mdf` 是 2021，`pid-plot` 是 2024，共 449 个根文件，0 处差异。`vendor/pdfcraft-pin` 的四个第三方 crate 不在其内：对它们直接跑 rustfmt 有 64 处差异，而 `cargo fmt --all -- --check` 在合并提交上是过的，所以它没有读它们。
