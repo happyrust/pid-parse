@@ -40,6 +40,9 @@
 //!   compositions and item notes.
 //! * [`pipeline`] — synthesized `PIDPipeline` rows and their
 //!   `PipingConnectors` from `T_PIPERUN` + `SPPIDDataMap.xml`.
+//! * [`placement`] — where a published property is stored in an Oracle
+//!   `exp` dump: the data map's attribute placed in a table and a column
+//!   by the dump's own data dictionary.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
 //!   provenance record (`PidValueSource`).
 //! * [`pid_writer`] — that DTO → `_Data.xml` / `_Meta.xml` / `_Coverage.json`.
@@ -99,6 +102,7 @@ pub mod oracle_exp;
 pub mod pid_load;
 pub mod pid_writer;
 pub mod pipeline;
+pub mod placement;
 #[cfg(feature = "backup-mdf")]
 pub mod sqlite_load;
 pub mod xml_writer;

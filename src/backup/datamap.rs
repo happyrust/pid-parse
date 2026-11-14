@@ -166,6 +166,46 @@ impl DataMap {
         }
         sources
     }
+
+    /// Every attribute the map publishes as `property` of an item type that
+    /// [`MapClassToClass`](MapClass::publish_classes) publishes as
+    /// `publish_class`, whatever class the rel itself names.
+    ///
+    /// This is the second way to read the map: [`Self::sources`] goes by
+    /// the class each rel names, this by the item type that owns the
+    /// attribute. The two differ where a rel names another class than its
+    /// item type's (a pipe run's process properties, which the rel puts on
+    /// `PIDProcessPoint`).
+    #[must_use]
+    pub fn sources_through_item_type(
+        &self,
+        publish_class: &str,
+        property: &str,
+    ) -> Vec<MapSource<'_>> {
+        let mut sources = Vec::new();
+        for candidate in &self.properties {
+            let Some(class) = self.class(&candidate.class_uid) else {
+                continue;
+            };
+            if !class
+                .publish_classes
+                .iter()
+                .any(|name| name == publish_class)
+            {
+                continue;
+            }
+            for target in &candidate.targets {
+                if target.property == property {
+                    sources.push(MapSource {
+                        class: Some(class),
+                        property: candidate,
+                        target,
+                    });
+                }
+            }
+        }
+        sources
+    }
 }
 
 /// Why a data map was not read.

@@ -21,6 +21,7 @@ use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
 };
+use super::placement::DumpDictionary;
 
 const CHARSET_AL16UTF16: u16 = 2000;
 const CHARSET_FORM: u16 = 2;
@@ -286,8 +287,9 @@ pub struct DrawingPorts {
 /// [`Self::read`] loads the port, connectivity, composition, OPC, model
 /// item and plant item tables the publish stages follow, `T_EQUIPMENT` and
 /// `T_VESSEL` (their SI values), the first `CODELISTS` insert (pipeline
-/// names spell codelist 19) and `T_DRAWING` (the package index and the
-/// revision check). `APPLICATIONS` is pinned first and is not kept: a dump
+/// names spell codelist 19), `T_DRAWING` (the package index and the
+/// revision check) and the dump's data dictionary ([`Self::dictionary`]).
+/// `APPLICATIONS` is pinned first and is not kept: a dump
 /// that fails the pin returns [`ExpError::FormatUnpinned`] and the other
 /// tables are not read.
 ///
@@ -323,6 +325,7 @@ pub struct ExpTables {
     drawing: Table,
     equipment: Table,
     vessel: Table,
+    dictionary: DumpDictionary,
 }
 
 impl ExpTables {
@@ -332,7 +335,9 @@ impl ExpTables {
     ///
     /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not
     /// pin the row format, and [`ExpError::Table`] when a stored table's
-    /// bytes do not frame. `CODELISTS` is the first insert of that name.
+    /// bytes do not frame or the dump carries part of a data dictionary
+    /// ([`DumpDictionary::read`]). `CODELISTS` is the first insert of that
+    /// name.
     pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
         Self::pin(dump)?;
         Ok(Self {
@@ -353,7 +358,15 @@ impl ExpTables {
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
             equipment: read_optional_table(dump, "T_EQUIPMENT")?,
             vessel: read_optional_table(dump, "T_VESSEL")?,
+            dictionary: DumpDictionary::read(dump)?,
         })
+    }
+
+    /// The dump's own data dictionary, read with the tables. Empty when the
+    /// dump carries none.
+    #[must_use]
+    pub fn dictionary(&self) -> &DumpDictionary {
+        &self.dictionary
     }
 
     /// Projected piping and signal port rows.
@@ -712,6 +725,7 @@ impl ExpTables {
             drawing: Table::blank("T_DRAWING"),
             equipment: Table::blank("T_EQUIPMENT"),
             vessel: Table::blank("T_VESSEL"),
+            dictionary: DumpDictionary::default(),
         }
     }
 
@@ -2264,6 +2278,53 @@ fn read_optional_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
         return Ok(Table::blank(name));
     }
     read_table_tolerant(dump, name)
+}
+
+/// The cells of `columns` in the first insert of `name`, row by row, each
+/// as text: national text as stored, an integer `NUMBER` in decimal, and
+/// `None` for NULL or any other cell. `Ok(None)` when the dump has no
+/// insert of that name.
+///
+/// # Errors
+///
+/// Returns [`ExpError::Table`] when the table's bytes do not frame or it
+/// lacks one of `columns`.
+pub(crate) fn read_text_cells(
+    dump: &[u8],
+    name: &str,
+    columns: &[&str],
+) -> Result<Option<Vec<Vec<Option<String>>>>, ExpError> {
+    let marker = format!("INSERT INTO \"{name}\"");
+    if find_slice(dump, marker.as_bytes()).is_none() {
+        return Ok(None);
+    }
+    let table = read_table_tolerant(dump, name)?;
+    let indices = columns
+        .iter()
+        .map(|column| {
+            table
+                .columns
+                .iter()
+                .position(|candidate| candidate.name == *column)
+                .ok_or_else(|| table_error(name, format!("column {column} is missing")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(
+        table
+            .rows
+            .iter()
+            .map(|row| {
+                indices
+                    .iter()
+                    .map(|index| match row.get(*index) {
+                        Some(Field::Text(text)) => Some(text.clone()),
+                        Some(Field::Int(value)) => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect(),
+    ))
 }
 
 fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
