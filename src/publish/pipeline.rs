@@ -223,6 +223,8 @@ mod tests {
             fluid_system: None,
             insulation_spec: insulation.to_string(),
             item_tag: None,
+            insulation_thickness_si: None,
+            slope_si: None,
         }
     }
 
