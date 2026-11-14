@@ -11,12 +11,13 @@
   3. **圆/弧/椭圆顶点坐标域守卫：** 为 `0x0059 igCircle2d`、`0x0061 igArc2d`、`0x0063 igEllipse2d` 及其 `.sym`/边界成员增设 `circle_keeps_to_the_domain`、`arc_keeps_to_the_domain`、`ellipse_keeps_to_the_domain` 与展平顶点域校验。
   4. **#51 真实路径与测试路径护栏：** 新增 `SymbolLibrary::resolved_relative` 与 `SymbolChainFault::resolved`，断链告警在提供额外路径信息时附带 `(resolved to …)`；`export_plant_backup.rs` 与 `style_witness.rs` 将本地绝对路径回退限制在 `named_corpus().is_none()` 条件下。
 
-### publish：库里原样存着的标志从 dump 写出（S7 后一半，2026-11-15）
+### publish：库里存着的标志从 dump 写出（S7 后一半，2026-11-15）
 
 **`--oracle-exp` 与整包两种模式下，对象多写出库里原样存着、`SPPIDDataMap.xml` 给得出写法的标志。** `.pid` 单独发布不变。写法沿用 S7 前一半的 `publish::stored_values`：映射文件说明属性从哪个条目类型的哪个属性来，dump 自己的数据字典把它放到表与列（`publish::placement`），按对象 UID 取同 `SP_ID` 的那一行。
 
 - **`IPIDTypical.IsTypical`。** 映射把十个类（管段、管件、仪表、信号线、在线仪表、设备、管嘴、机械设备、容器、换热器）的 `IsTypical` 都从各自条目类型的 `SP_IsTypical` 发布，经 `EFAdapter.EnumToBoolConv`；数据字典把它放在 `T_ModelItem.SP_IsTypical`，所有条目类型从这张表继承。库里存的是布尔代码表（73 号）的下标，写法与 `RepresentationsAreAllZeroLength` 相同：1 `False`、2 `True`。在线仪表的映射写的是 `InstrumentInline`，dump 没有这个条目类型，照 `InsulSpec` 的办法按对象自己的类型 `Instrument` 放。7 张同版参考图：写出 2 754 个，全是 `False`，逐个等于参考，参考没有的 0；非空值 31 785 → 34 539 / 39 171（81.1 % → 88.2 %，每张 86.4–89.5 %）。DWG-0202GP06-01 用入库包的 dump 写出 14 个，正是参考有的 14 个；整包 53 张值 143 833 → 156 327，入库 DWG 包 1 200 → 1 328。
-- **门禁。** 新表 `catalog::DUMP_STORED_ATTRIBUTES`（`IsTypical` 与 S7 前一半写的 `RepresentationsAreAllZeroLength`）与 `DUMP_CODELIST_ATTRIBUTES` 同一条规则：`.pid` 单独发布照旧豁免，一次运行只要在某个对象上从 dump 写了它，另一个对象上参考有而没写就是发现。`stored_values` 的单测核对：`STORED_PROPERTIES` 里没有标签给的那些，正是这张表。
+- **`IInlineComponent.IsFlowDirectional`。** 映射把管件与在线仪表的这个属性经 `EFAdapter.CompFlowDirConv` 发布，但数据字典没有把 `IsFlowDirectional` 归到这两个条目类型下，dump 里也没有这一列；映射在同一条目类型下另列了 `InlineComp.FlowDirection`，字典把它放在 `T_InlineComp.FlowDirection`，就是对象自己那一行（7 张图的 980 个对象各有一行，`SP_ID` 即对象 UID）。值是映射的 `SP_47` 流向代码：1 `Undefined` 写 `False`，2 `End 1 is upstream`、3 `End 1 is downstream` 写 `True`，有这一行而格子为空也写 `False`——这三条都是从 7 张参考图逐个对出来的（空 925 个、1 有 1 个全是 `False`，2 / 3 共 54 个全是 `True`）；4 `Bi-Directional` 与 5 `No Flow` 参考里一个都没有，不写、计为没拼出（`left out unspelled`）。7 张图写出 980 个，逐个等于参考，参考没有的 0；非空值 34 539 → 35 519 / 39 171（88.2 % → 90.7 %，每张 89.5–91.5 %）。DWG-0202GP06-01 写出参考有的 2 个 `False`；整包 53 张值 156 327 → 160 855，入库 DWG 包 1 328 → 1 379。
+- **门禁。** 新表 `catalog::DUMP_STORED_ATTRIBUTES`（`IsTypical`、`IsFlowDirectional` 与 S7 前一半写的 `RepresentationsAreAllZeroLength`）与 `DUMP_CODELIST_ATTRIBUTES` 同一条规则：`.pid` 单独发布照旧豁免，一次运行只要在某个对象上从 dump 写了它，另一个对象上参考有而没写就是发现。`stored_values` 的单测核对：`STORED_PROPERTIES` 里没有标签给的那些，正是这张表。
 
 ### publish：带单位的值从 dump 的 SI 列写出（S9 后一半，2026-11-15）
 
