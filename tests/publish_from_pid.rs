@@ -1587,8 +1587,9 @@ fn finding_lines(stdout: &str) -> Vec<&str> {
 //                            SP_VOLUMERATINGSI = 27
 //   CatalogPartNumber        T_PLANTITEM.SP_PARTNO, NULL in this later state
 //
-// No stage follows those columns yet, so the values are missing with the
-// dump as without it (plan S9).
+// With the dump, the nine values of `DWG_UNIT_VALUES` are written from the
+// SI columns, each as the reference spells it; no stage follows the other
+// columns yet, so those eight are missing with the dump as without it.
 const DWG_VALUES_NOT_STATED: [&str; 17] = [
     r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
     r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
@@ -1607,6 +1608,14 @@ const DWG_VALUES_NOT_STATED: [&str; 17] = [
     r#"missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
     r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IPBSItem.HeightRelativeToGrade: "3 m" not in generated"#,
     r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IProcessVessel.ProcessVessel_VesselVolumetricCapacity: "27 m^3" not in generated"#,
+];
+
+/// The values of [`DWG_VALUES_NOT_STATED`] the dump's SI columns state.
+const DWG_UNIT_VALUES: [&str; 4] = [
+    "IInsulatedItem.TotalInsulThick:",
+    "ISlopedPipingItem.SlopedPipingAngle:",
+    "IPBSItem.HeightRelativeToGrade:",
+    "IProcessVessel.ProcessVessel_VesselVolumetricCapacity:",
 ];
 
 // What `--oracle-exp` prints beyond those values.
@@ -1687,13 +1696,32 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     );
     assert!(
         stdout.lines().any(|line| line
-            == "pid export diff: objects 108 (extra 6, wrong class 0), values 99 \
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 108 \
                 (different 0, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
+    assert!(
+        stderr.contains(
+            "oracle-exp unit values: 9 written, 0 left out because the item's class \
+             carries no element for them"
+        ),
+        "{stderr}"
+    );
+    let unit_value = |line: &&str| DWG_UNIT_VALUES.iter().any(|key| line.contains(key));
+    assert_eq!(
+        DWG_VALUES_NOT_STATED
+            .iter()
+            .filter(|line| unit_value(line))
+            .count(),
+        9
+    );
     let expected: Vec<&str> = DWG_EXP_OBJECT_AND_REL_FINDINGS
         .iter()
-        .chain(&DWG_VALUES_NOT_STATED)
+        .chain(
+            DWG_VALUES_NOT_STATED
+                .iter()
+                .filter(|line| !unit_value(line)),
+        )
         .copied()
         .collect();
     assert_eq!(finding_lines(&stdout), expected, "{stdout}");
@@ -1739,9 +1767,9 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
         }
     }
     // Nothing is refused on the way. The dump's `T_PIPERUN` holds SI values
-    // that are not integers (`SP_INSULTHICKSI` 0.05 on its first row), in
-    // columns no stage follows: the index lists no problem, for the package
-    // or for a drawing, and the run prints no warning and no error.
+    // that are not integers (`SP_INSULTHICKSI` 0.05 on its first row), which
+    // are written as values with a unit: the index lists no problem, for the
+    // package or for a drawing, and the run prints no warning and no error.
     assert_eq!(index["problems"], serde_json::json!([]), "{index}");
     let drawings = index["drawings"].as_array().expect("drawings");
     for drawing in drawings {
@@ -1778,13 +1806,13 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             ("002", 3, 2, 2),
             ("222", 3, 2, 2),
             ("DWG-0201GP01-01", 492, 362, 688),
-            ("DWG-0201GP06-01", 170, 150, 233),
-            ("DWG-0202GP06-01", 113, 121, 141),
-            ("DWG-0104GP01-08", 5, 6, 4),
+            ("DWG-0201GP06-01", 170, 152, 233),
+            ("DWG-0202GP06-01", 113, 130, 141),
+            ("DWG-0104GP01-08", 5, 7, 4),
         ]
     );
     assert_eq!(index["objects"], 786);
-    assert_eq!(index["values"], 643);
+    assert_eq!(index["values"], 655);
     assert_eq!(index["relationships"], 1_070);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

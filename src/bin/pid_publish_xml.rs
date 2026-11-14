@@ -693,6 +693,13 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         drawing.exp_relations = exp_tables
             .composition_relations()
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let units = pid_parse::publish::unit_values::attach_unit_values(&mut drawing, &exp_tables)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        eprintln!(
+            "oracle-exp unit values: {} written, {} left out because the item's class \
+             carries no element for them",
+            units.written, units.left_out
+        );
         let mut opc_points = exp_tables
             .opc_points(&drawing.drawing_uid)
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;

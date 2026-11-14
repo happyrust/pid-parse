@@ -364,13 +364,16 @@ const DWG_ALONE: Pin = Pin {
 /// the note and nozzle relations. Still missing are one off-page connector
 /// and the reference's five pipelines with the six `PipingConnectors`
 /// relations to them: the dump's own six pipelines carry the later
-/// revision's tags and pair with none of the five by name.
+/// revision's tags and pair with none of the five by name. Its SI columns
+/// give the six insulation thicknesses, the slope, the vessel's height and
+/// its volume, and with them seven `IInsulatedItem` / `ISlopedPipingItem`
+/// elements.
 const DWG_WITH_ITS_DUMP: Pin = Pin {
     container: (15, 15),
     objects: (102, 108),
     paired_by_name: 0,
-    interfaces: (677, 747),
-    values: (99, 236),
+    interfaces: (684, 747),
+    values: (108, 236),
     empty_attributes: (91, 93),
     relations: (127, 133),
     relations_verbatim: 127,
@@ -387,8 +390,8 @@ const DWG_PACKAGE_DIRECTORY: Pin = Pin {
     container: (15, 15),
     objects: (100, 108),
     paired_by_name: 0,
-    interfaces: (673, 747),
-    values: (58, 236),
+    interfaces: (680, 747),
+    values: (67, 236),
     empty_attributes: (91, 93),
     relations: (123, 133),
     relations_verbatim: 123,

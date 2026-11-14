@@ -862,6 +862,7 @@ fn attach_exp(
     attach_oracle_ports(drawing, &ports, &loaded.path);
     drawing.connectivity_ends = loaded.tables.connectivity_ends(&drawing.drawing_uid)?;
     drawing.exp_relations = loaded.tables.composition_relations()?;
+    super::unit_values::attach_unit_values(drawing, &loaded.tables)?;
     let mut opc_points = loaded.tables.opc_points(&drawing.drawing_uid)?;
     let representations: std::collections::HashSet<&str> = drawing
         .representations
