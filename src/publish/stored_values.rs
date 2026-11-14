@@ -22,7 +22,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use super::oracle_exp::{backup_uid_key, ExpTables, StoredCell};
 use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidValueSource};
-use super::placement::{place_property, DumpColumn};
+use super::placement::{place_property, DumpColumn, Unplaced};
 use crate::backup::DataMap;
 
 /// One published property this stage reads from the dump.
@@ -36,10 +36,16 @@ pub struct StoredProperty {
 
 /// The properties this stage reads, on whichever published class the map
 /// publishes them.
-pub const STORED_PROPERTIES: &[StoredProperty] = &[StoredProperty {
-    interface: "IPipingSpecifiedItem",
-    property: "PipingMaterialsClass",
-}];
+pub const STORED_PROPERTIES: &[StoredProperty] = &[
+    StoredProperty {
+        interface: "IPipingSpecifiedItem",
+        property: "PipingMaterialsClass",
+    },
+    StoredProperty {
+        interface: "IInsulatedItem",
+        property: "InsulSpec",
+    },
+];
 
 /// What [`attach_stored_values`] did to one drawing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -153,6 +159,11 @@ pub fn attach_stored_values(
 
 /// The placed column the map publishes `property` of `class` from, for an
 /// item of type `item_type`.
+///
+/// The map may name an item type the dump does not have: it publishes an
+/// inline instrument from `InstrumentInline`, which the `.pid` and the dump
+/// call `Instrument`. The attribute is then placed under the item's own
+/// type.
 fn source_of(
     map: &DataMap,
     tables: &ExpTables,
@@ -160,10 +171,21 @@ fn source_of(
     property: &str,
     item_type: &str,
 ) -> Source {
-    let placement = place_property(map, tables.dictionary(), class, property)
-        .into_iter()
-        .find(|placement| placement.item_type() == Some(item_type))?;
-    let column = placement.column.ok()?;
+    let placements = place_property(map, tables.dictionary(), class, property);
+    if let Some(placement) = placements
+        .iter()
+        .find(|placement| placement.item_type() == Some(item_type))
+    {
+        let column = placement.column.clone().ok()?;
+        return Some((column, placement.source.property.process_criteria.clone()));
+    }
+    let placement = placements
+        .iter()
+        .find(|placement| matches!(placement.column, Err(Unplaced::NoItemType { .. })))?;
+    let column = tables
+        .dictionary()
+        .place(item_type, &placement.source.property.name)
+        .ok()?;
     Some((column, placement.source.property.process_criteria.clone()))
 }
 
@@ -297,6 +319,34 @@ mod tests {
             "PipingMaterialsClass"
         )
         .is_none());
+    }
+
+    /// Where each class's `InsulSpec` is read: a run's and a piping
+    /// component's from their own tables; an inline instrument's, which the
+    /// map publishes from `InstrumentInline`, from `T_Instrument`, the table
+    /// of the type the `.pid` and the dump call it.
+    #[test]
+    fn an_insulation_spec_is_read_from_the_table_of_the_items_own_type() {
+        let (_, tables, map) = dwg();
+        let column = |class: &str, item_type: &str| {
+            source_of(&map, &tables, class, "InsulSpec", item_type).map(|(column, criteria)| {
+                assert_eq!(criteria, None, "{class}");
+                column.to_string()
+            })
+        };
+        assert_eq!(
+            column("PIDPipingConnector", "PipeRun").as_deref(),
+            Some("T_PipeRun.InsulationSpec")
+        );
+        assert_eq!(
+            column("PIDPipingComponent", "PipingComp").as_deref(),
+            Some("T_PipingComp.InsulationSpec")
+        );
+        assert_eq!(
+            column("PIDInlineInstrument", "Instrument").as_deref(),
+            Some("T_Instrument.InsulationSpec")
+        );
+        assert_eq!(column("PIDPipingConnector", "DuctRun"), None);
     }
 
     #[test]

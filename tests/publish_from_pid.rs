@@ -1001,7 +1001,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_179);
-    assert_eq!(index["values"], 90_035);
+    assert_eq!(index["values"], 92_145);
     assert_eq!(index["relationships"], 106_812);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
