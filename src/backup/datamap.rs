@@ -175,7 +175,8 @@ pub enum DataMapError {
     Io(std::io::Error),
     /// The zip has no entry whose name is exactly `SPPIDDataMap.xml`.
     MissingEntry,
-    /// The XML could not be read as UTF-8 events.
+    /// The XML could not be read as UTF-8 events, or it ends before its
+    /// root element closes.
     Xml(String),
 }
 
@@ -197,7 +198,8 @@ impl std::error::Error for DataMapError {}
 ///
 /// Returns [`DataMapError::MissingEntry`] when `path` is a zip without that
 /// entry, [`DataMapError::Io`] when the path cannot be read, and
-/// [`DataMapError::Xml`] when the events cannot be decoded.
+/// [`DataMapError::Xml`] when the events cannot be decoded or the document
+/// is cut short: a map is read whole or not at all.
 pub fn read_datamap(path: &Path) -> Result<DataMap, DataMapError> {
     let bytes = fs::read(path).map_err(DataMapError::Io)?;
     if bytes.starts_with(b"PK\x03\x04") {
@@ -421,8 +423,16 @@ fn parse_datamap_xml(bytes: &[u8]) -> Result<DataMap, DataMapError> {
     let mut block: Option<Block> = None;
     let mut in_list = false;
     let mut in_unit_list = false;
+    let mut root_closed = false;
     loop {
         match reader.read_event() {
+            Ok(Event::Start(_) | Event::Empty(_)) if root_closed => {
+                return Err(DataMapError::Xml(format!(
+                    "SPPIDDataMap.xml has an element after its root closes, at byte {}",
+                    reader.buffer_position()
+                )));
+            }
+            Ok(Event::Empty(_)) if depth == 0 => root_closed = true,
             Ok(Event::Start(start)) => {
                 let qname = start.name();
                 let name = local_name(qname.as_ref());
@@ -476,8 +486,21 @@ fn parse_datamap_xml(bytes: &[u8]) -> Result<DataMap, DataMapError> {
                     }
                 }
                 depth = depth.saturating_sub(1);
+                root_closed = depth == 0;
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) if root_closed => break,
+            Ok(Event::Eof) if depth == 0 => {
+                return Err(DataMapError::Xml(
+                    "SPPIDDataMap.xml has no root element".to_string(),
+                ));
+            }
+            Ok(Event::Eof) => {
+                return Err(DataMapError::Xml(format!(
+                    "SPPIDDataMap.xml ends at byte {} with {depth} element(s) still open; \
+                     the file is cut short",
+                    reader.buffer_position()
+                )));
+            }
             Err(error) => return Err(DataMapError::Xml(error.to_string())),
             _ => {}
         }
@@ -746,6 +769,86 @@ mod tests {
         assert!(map.sources("PIDThing", "PointSize").is_empty());
         // The rel from `P9` is counted and hangs on no property.
         assert!(map.sources("PIDThing", "Lost").is_empty());
+    }
+
+    // A map cut short reads as fewer blocks and rels than the plant wrote,
+    // and a publish that followed it would leave out what the lost part
+    // mapped. Every cut before the root closes, at every byte, is refused;
+    // the whole document still reads.
+    #[test]
+    fn a_map_cut_short_anywhere_before_its_root_closes_is_refused() {
+        let xml: &[u8] = br#"<?xml version="1.0" encoding="utf-8"?>
+<Container>
+  <SPMapEnumListDef>
+    <IObject UID="SP_20" Name="Fluid System"/>
+  </SPMapEnumListDef>
+  <Rel>
+    <IRel UID1="SP_20_7" UID2="{A729B087-24B7-4418-A185-53CAA90C2286}" DefUID="MapEnumToEnum"/>
+  </Rel>
+  <Rel><IRel UID1="C1" UID2="PIDThing" DefUID="MapClassToClass"/></Rel>
+</Container>
+"#;
+        let whole = parse_datamap_xml(xml).expect("the whole map reads");
+        assert_eq!(whole.rel_counts.values().sum::<usize>(), 2);
+        let root_closed = xml.len() - 1;
+        let accepted: Vec<usize> = (0..root_closed)
+            .filter(|&cut| parse_datamap_xml(&xml[..cut]).is_ok())
+            .collect();
+        assert!(
+            accepted.is_empty(),
+            "{} of {root_closed} cuts read as a map, the first at byte {:?}",
+            accepted.len(),
+            accepted.first()
+        );
+        let before_root_end = root_closed - "</Container>".len();
+        assert_eq!(
+            parse_datamap_xml(&xml[..before_root_end])
+                .expect_err("a cut map")
+                .to_string(),
+            format!(
+                "SPPIDDataMap.xml ends at byte {before_root_end} with 1 element(s) still open; \
+                 the file is cut short"
+            )
+        );
+    }
+
+    #[test]
+    fn the_committed_map_cut_short_is_refused() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip");
+        let zip = fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let xml = sppid_datamap_entry(&zip).expect("the entry");
+        let find = |needle: &[u8], from: usize| {
+            from + xml[from..]
+                .windows(needle.len())
+                .position(|window| window == needle)
+                .expect("a needle")
+        };
+        let middle = xml.len() / 2;
+        let rel_closed = find(b"</Rel>", middle) + b"</Rel>".len();
+        let in_rel = find(b"UID1=\"", middle) + 3;
+        let root_end = xml
+            .windows(b"</Container>".len())
+            .rposition(|window| window == b"</Container>")
+            .expect("the root's end tag");
+        for (what, cut) in [
+            ("a tenth in", xml.len() / 10),
+            ("halfway", middle),
+            ("inside an attribute name", in_rel),
+            ("between two rels", rel_closed),
+            ("before the root's end tag", root_end),
+            ("inside the root's end tag", root_end + 5),
+            (
+                "one byte short of the root closing",
+                root_end + "</Container".len(),
+            ),
+        ] {
+            assert!(
+                parse_datamap_xml(&xml[..cut]).is_err(),
+                "the map cut {what} (byte {cut} of {}) read as a map",
+                xml.len()
+            );
+        }
     }
 
     /// The data map every backup package at hand carries, out of the

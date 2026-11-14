@@ -241,13 +241,13 @@ impl ExpTables {
     /// that was not read. A dump with no `T_PLANTITEM`, or one without
     /// `SP_ID` or `ITEMTAG`, gives every run `item_tag: None`.
     pub fn pipe_runs(&self) -> Result<Vec<PipeRunRow>, ExpError> {
-        let id = column_index(&self.piperun, "SP_ID")?;
-        let class = column_index(&self.piperun, "PIPINGMATERIALSCLASS")?;
-        let sequence = column_index(&self.piperun, "TAGSEQUENCENO")?;
-        let insulation = column_index(&self.piperun, "INSULATIONSPEC")?;
-        column_index(&self.piperun, "NOMINALDIAMETER")?;
-        column_index(&self.piperun, "OPERFLUIDCODE")?;
-        column_index(&self.piperun, "FLUIDSYSTEM")?;
+        let id = column_index(&self.piperun, "SP_ID", Kind::Char)?;
+        let class = column_index(&self.piperun, "PIPINGMATERIALSCLASS", Kind::Char)?;
+        let sequence = column_index(&self.piperun, "TAGSEQUENCENO", Kind::Char)?;
+        let insulation = column_index(&self.piperun, "INSULATIONSPEC", Kind::Char)?;
+        column_index(&self.piperun, "NOMINALDIAMETER", Kind::Num)?;
+        column_index(&self.piperun, "OPERFLUIDCODE", Kind::Num)?;
+        column_index(&self.piperun, "FLUIDSYSTEM", Kind::Num)?;
         let item_tags = self.item_tags()?;
         let mut runs = Vec::with_capacity(self.piperun.rows.len());
         for (index, row) in self.piperun.rows.iter().enumerate() {
@@ -299,8 +299,8 @@ impl ExpTables {
     ) -> Result<Vec<(PidPublishItem, PidPublishRepresentation)>, ExpError> {
         let drawing_uid = norm_uid(drawing_uid);
         let models = &self.modelitem;
-        let model_id = column_index(models, "SP_ID")?;
-        let Some(model_type) = optional_column_index(models, "ITEMTYPENAME")? else {
+        let model_id = column_index(models, "SP_ID", Kind::Char)?;
+        let Some(model_type) = optional_column_index(models, "ITEMTYPENAME", Kind::Char)? else {
             return Ok(Vec::new());
         };
         let components: HashSet<String> = models
@@ -311,8 +311,8 @@ impl ExpTables {
             .collect();
         let mut diameters = HashMap::<String, i64>::new();
         if let (Some(id), Some(diameter)) = (
-            optional_column_index(&self.inlinecomp, "SP_ID")?,
-            optional_column_index(&self.inlinecomp, "NOMINALDIAMETER")?,
+            optional_column_index(&self.inlinecomp, "SP_ID", Kind::Char)?,
+            optional_column_index(&self.inlinecomp, "NOMINALDIAMETER", Kind::Num)?,
         ) {
             for row in &self.inlinecomp.rows {
                 if let (Some(id), Some(code)) =
@@ -324,11 +324,11 @@ impl ExpTables {
         }
 
         let reps = &self.representation;
-        let rep_id = column_index(reps, "SP_ID")?;
-        let rep_model = column_index(reps, "SP_MODELITEMID")?;
-        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
-        let rep_type = column_index(reps, "REPRESENTATIONTYPE")?;
-        let rep_oid = column_index(reps, "GRAPHICOID")?;
+        let rep_id = column_index(reps, "SP_ID", Kind::Char)?;
+        let rep_model = column_index(reps, "SP_MODELITEMID", Kind::Char)?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID", Kind::Char)?;
+        let rep_type = column_index(reps, "REPRESENTATIONTYPE", Kind::Num)?;
+        let rep_oid = column_index(reps, "GRAPHICOID", Kind::Num)?;
         let mut found = Vec::new();
         for row in &reps.rows {
             if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str())
@@ -382,8 +382,8 @@ impl ExpTables {
     /// dump carries no `T_PLANTITEM` or the table lacks either column.
     fn item_tags(&self) -> Result<HashMap<String, String>, ExpError> {
         let (Some(id), Some(tag)) = (
-            optional_column_index(&self.plantitem, "SP_ID")?,
-            optional_column_index(&self.plantitem, "ITEMTAG")?,
+            optional_column_index(&self.plantitem, "SP_ID", Kind::Char)?,
+            optional_column_index(&self.plantitem, "ITEMTAG", Kind::Char)?,
         ) else {
             return Ok(HashMap::new());
         };
@@ -406,9 +406,9 @@ impl ExpTables {
     /// Returns [`ExpError::Table`] when the codelist columns are missing or
     /// a number cell is not an integer.
     pub fn codelist_short_text(&self, list_number: i64) -> Result<HashMap<i64, String>, ExpError> {
-        let short = column_index(&self.codelists, "CODELIST_SHORT_TEXT")?;
-        column_index(&self.codelists, "CODELIST_NUMBER")?;
-        column_index(&self.codelists, "CODELIST_INDEX")?;
+        let short = column_index(&self.codelists, "CODELIST_SHORT_TEXT", Kind::Char)?;
+        column_index(&self.codelists, "CODELIST_NUMBER", Kind::Num)?;
+        column_index(&self.codelists, "CODELIST_INDEX", Kind::Num)?;
         let mut texts = HashMap::new();
         for (row_index, row) in self.codelists.rows.iter().enumerate() {
             let list = optional_int(
@@ -670,9 +670,9 @@ pub fn read_plant_groups(dump: &[u8]) -> Result<Vec<PlantGroup>, ExpError> {
         return Ok(Vec::new());
     }
     let table = read_table_tolerant(dump, "T_PLANTGROUP")?;
-    let id = column_index(&table, "SP_ID")?;
-    let name = column_index(&table, "NAME")?;
-    let parent = column_index(&table, "PARENTID")?;
+    let id = column_index(&table, "SP_ID", Kind::Char)?;
+    let name = column_index(&table, "NAME", Kind::Char)?;
+    let parent = column_index(&table, "PARENTID", Kind::Char)?;
     let mut groups = Vec::with_capacity(table.rows.len());
     for row in &table.rows {
         let id = cell_text(row, id);
@@ -741,26 +741,29 @@ pub fn read_backup_drawings(dump: &[u8]) -> Result<Vec<BackupDrawing>, ExpError>
 }
 
 fn project_drawings(drawing: &Table) -> Result<Vec<BackupDrawing>, ExpError> {
-    let id = column_index(drawing, "SP_ID")?;
-    let name = column_index(drawing, "NAME")?;
-    let path = column_index(drawing, "PATH")?;
-    let number = column_index(drawing, "DRAWINGNUMBER")?;
-    let group = column_index(drawing, "SP_PLANTGROUPID")?;
-    let description = optional_column_index(drawing, "DESCRIPTION")?;
-    let title = optional_column_index(drawing, "TITLE")?;
-    let revision = optional_column_index(drawing, "REVISION")?;
-    let version = optional_column_index(drawing, "VERSION")?;
-    let document_type = optional_column_index(drawing, "DOCUMENTTYPE")?;
-    let document_category = optional_column_index(drawing, "DOCUMENTCATEGORY")?;
-    let item_status = optional_column_index(drawing, "ITEMSTATUS")?;
-    let template = optional_column_index(drawing, "TEMPLATE")?;
-    let design_phase = optional_column_index(drawing, "DESIGNPHASE")?;
-    let project_number = optional_column_index(drawing, "PROJECTNUMBER")?;
-    let date_created = optional_column_index(drawing, "DATECREATED")?;
-    let drawing_date = optional_column_index(drawing, "DRAWINGDATE")?;
-    let date_of_drawing = optional_column_index(drawing, "DATEOFDRAWING")?;
-    let last_publish_time = optional_column_index(drawing, "LASTPUBLISHTIME")?;
-    let last_archive_time = optional_column_index(drawing, "LASTARCHIVETIME")?;
+    let id = column_index(drawing, "SP_ID", Kind::Char)?;
+    let name = column_index(drawing, "NAME", Kind::Char)?;
+    let path = column_index(drawing, "PATH", Kind::Char)?;
+    let number = column_index(drawing, "DRAWINGNUMBER", Kind::Char)?;
+    let group = column_index(drawing, "SP_PLANTGROUPID", Kind::Char)?;
+    let text = |name| optional_column_index(drawing, name, Kind::Char);
+    let int = |name| optional_column_index(drawing, name, Kind::Num);
+    let date = |name| optional_column_index(drawing, name, Kind::Date);
+    let description = text("DESCRIPTION")?;
+    let title = text("TITLE")?;
+    let revision = text("REVISION")?;
+    let version = text("VERSION")?;
+    let document_type = int("DOCUMENTTYPE")?;
+    let document_category = int("DOCUMENTCATEGORY")?;
+    let item_status = int("ITEMSTATUS")?;
+    let template = text("TEMPLATE")?;
+    let design_phase = text("DESIGNPHASE")?;
+    let project_number = text("PROJECTNUMBER")?;
+    let date_created = date("DATECREATED")?;
+    let drawing_date = date("DRAWINGDATE")?;
+    let date_of_drawing = text("DATEOFDRAWING")?;
+    let last_publish_time = date("LASTPUBLISHTIME")?;
+    let last_archive_time = date("LASTARCHIVETIME")?;
     let mut drawings = Vec::with_capacity(drawing.rows.len());
     for row in &drawing.rows {
         let id = cell_text(row, id);
@@ -1040,6 +1043,18 @@ enum Kind {
     Date,
 }
 
+impl Kind {
+    /// The column type as an error names it.
+    fn declared(self) -> &'static str {
+        match self {
+            Self::Char => "national text",
+            Self::Bytes => "text in another character set",
+            Self::Num => "NUMBER",
+            Self::Date => "DATE",
+        }
+    }
+}
+
 struct Column {
     name: String,
     kind: Kind,
@@ -1088,13 +1103,13 @@ fn applications_pinned(table: &Table) -> bool {
 }
 
 fn project_piping(table: &Table) -> Result<Vec<PipingPoint>, ExpError> {
-    for followed in [
-        "SP_PLANTITEMID",
-        "PIPINGPOINTNUMBER",
-        "FLOWDIRECTION",
-        "NOMINALDIAMETER",
+    for (followed, wanted) in [
+        ("SP_PLANTITEMID", Kind::Char),
+        ("PIPINGPOINTNUMBER", Kind::Num),
+        ("FLOWDIRECTION", Kind::Num),
+        ("NOMINALDIAMETER", Kind::Num),
     ] {
-        column_index(table, followed)?;
+        column_index(table, followed, wanted)?;
     }
     let mut points = Vec::with_capacity(table.rows.len());
     for (index, row) in table.rows.iter().enumerate() {
@@ -1111,8 +1126,11 @@ fn project_piping(table: &Table) -> Result<Vec<PipingPoint>, ExpError> {
 }
 
 fn project_signal(table: &Table) -> Result<Vec<SignalPoint>, ExpError> {
-    for followed in ["SP_PLANTITEMID", "SIGNALPOINTNUMBER"] {
-        column_index(table, followed)?;
+    for (followed, wanted) in [
+        ("SP_PLANTITEMID", Kind::Char),
+        ("SIGNALPOINTNUMBER", Kind::Num),
+    ] {
+        column_index(table, followed, wanted)?;
     }
     let mut points = Vec::with_capacity(table.rows.len());
     for (index, row) in table.rows.iter().enumerate() {
@@ -1461,9 +1479,9 @@ impl ExpTables {
         let opc = &self.opc;
 
         let mut rep_of = HashMap::<String, (String, String)>::new();
-        let rep_id = column_index(reps, "SP_ID")?;
-        let rep_model = column_index(reps, "SP_MODELITEMID")?;
-        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
+        let rep_id = column_index(reps, "SP_ID", Kind::Char)?;
+        let rep_model = column_index(reps, "SP_MODELITEMID", Kind::Char)?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID", Kind::Char)?;
         for row in &reps.rows {
             let Some(id) = text_of(row, rep_id) else {
                 continue;
@@ -1490,8 +1508,8 @@ impl ExpTables {
         let run_ids = id_set(runs, "SP_ID")?;
         let srun_ids = id_set(signal_runs, "SP_ID")?;
         let mut opc_pair = HashMap::<String, Option<String>>::new();
-        let opc_id = column_index(opc, "SP_ID")?;
-        let opc_paired = column_index(opc, "SP_PAIREDWITHID")?;
+        let opc_id = column_index(opc, "SP_ID", Kind::Char)?;
+        let opc_paired = column_index(opc, "SP_PAIREDWITHID", Kind::Char)?;
         for row in &opc.rows {
             let Some(id) = text_of(row, opc_id) else {
                 continue;
@@ -1502,11 +1520,11 @@ impl ExpTables {
             opc_pair.insert(norm_uid(id), other);
         }
 
-        let sp_id = column_index(connector, "SP_ID")?;
-        let item1 = column_index(connector, "SP_CONNECTITEM1ID")?;
-        let item2 = column_index(connector, "SP_CONNECTITEM2ID")?;
-        let start_object = column_index(connector, "STARTOBJECT")?;
-        let end_object = column_index(connector, "ENDOBJECT")?;
+        let sp_id = column_index(connector, "SP_ID", Kind::Char)?;
+        let item1 = column_index(connector, "SP_CONNECTITEM1ID", Kind::Char)?;
+        let item2 = column_index(connector, "SP_CONNECTITEM2ID", Kind::Char)?;
+        let start_object = column_index(connector, "STARTOBJECT", Kind::Num)?;
+        let end_object = column_index(connector, "ENDOBJECT", Kind::Num)?;
         let mut ends: HashMap<(String, String), ConnectivityEnd> = HashMap::new();
         let index = EndIndex {
             rep_of: &rep_of,
@@ -1616,8 +1634,8 @@ impl ExpTables {
         let item_note_ids = id_set(item_notes, "SP_ID")?;
 
         let mut rels = Vec::new();
-        let nozzle_id = column_index(nozzles, "SP_ID")?;
-        let equipment_id = column_index(nozzles, "SP_EQUIPMENTID")?;
+        let nozzle_id = column_index(nozzles, "SP_ID", Kind::Char)?;
+        let equipment_id = column_index(nozzles, "SP_EQUIPMENTID", Kind::Char)?;
         for row in &nozzles.rows {
             let Some(nozzle) = text_of(row, nozzle_id) else {
                 continue;
@@ -1631,8 +1649,8 @@ impl ExpTables {
                 uid2: norm_uid(equipment),
             });
         }
-        let note_id = column_index(notes, "SP_ITEMNOTEID")?;
-        let model_id = column_index(notes, "SP_MODELITEMID")?;
+        let note_id = column_index(notes, "SP_ITEMNOTEID", Kind::Char)?;
+        let model_id = column_index(notes, "SP_MODELITEMID", Kind::Char)?;
         for row in &notes.rows {
             let Some(note) = text_of(row, note_id) else {
                 continue;
@@ -1693,10 +1711,10 @@ impl ExpTables {
         let reps = &self.representation;
         let models = &self.modelitem;
 
-        let opc_id = column_index(opc, "SP_ID")?;
-        let opc_paired = column_index(opc, "SP_PAIREDWITHID")?;
-        let opc_tag = column_index(opc, "OPCTAG")?;
-        let opc_text = column_index(opc, "TOFROMTEXT")?;
+        let opc_id = column_index(opc, "SP_ID", Kind::Char)?;
+        let opc_paired = column_index(opc, "SP_PAIREDWITHID", Kind::Char)?;
+        let opc_tag = column_index(opc, "OPCTAG", Kind::Char)?;
+        let opc_text = column_index(opc, "TOFROMTEXT", Kind::Char)?;
         let mut rows_of = HashMap::<String, (String, String, String)>::new();
         for row in &opc.rows {
             let Some(id) = text_of(row, opc_id) else {
@@ -1711,8 +1729,8 @@ impl ExpTables {
                 ),
             );
         }
-        let model_id = column_index(models, "SP_ID")?;
-        let model_description = column_index(models, "DESCRIPTION")?;
+        let model_id = column_index(models, "SP_ID", Kind::Char)?;
+        let model_description = column_index(models, "DESCRIPTION", Kind::Char)?;
         let mut descriptions = HashMap::<String, String>::new();
         for row in &models.rows {
             let Some(id) = text_of(row, model_id) else {
@@ -1723,9 +1741,9 @@ impl ExpTables {
             }
         }
 
-        let rep_id = column_index(reps, "SP_ID")?;
-        let rep_model = column_index(reps, "SP_MODELITEMID")?;
-        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
+        let rep_id = column_index(reps, "SP_ID", Kind::Char)?;
+        let rep_model = column_index(reps, "SP_MODELITEMID", Kind::Char)?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID", Kind::Char)?;
         let mut points = Vec::new();
         for row in &reps.rows {
             if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str()) {
@@ -1835,7 +1853,7 @@ fn symbol_uids(index: &EndIndex<'_>, rep_id: &str, object_index: Option<i64>) ->
 }
 
 fn id_set(table: &Table, name: &str) -> Result<HashSet<String>, ExpError> {
-    let index = column_index(table, name)?;
+    let index = column_index(table, name, Kind::Char)?;
     let mut ids = HashSet::new();
     for row in &table.rows {
         if let Some(text) = text_of(row, index) {
@@ -1847,22 +1865,29 @@ fn id_set(table: &Table, name: &str) -> Result<HashSet<String>, ExpError> {
 
 /// The index of a column a projection requires: [`optional_column_index`],
 /// with a table that lacks the column refused as well.
-fn column_index(table: &Table, name: &str) -> Result<usize, ExpError> {
-    optional_column_index(table, name)?
+fn column_index(table: &Table, name: &str, wanted: Kind) -> Result<usize, ExpError> {
+    optional_column_index(table, name, wanted)?
         .ok_or_else(|| table_error(&table.name, format!("column {name} is missing")))
 }
 
 /// The index of a column a projection follows when the dump has it: `None`
 /// when `name` is not a column of `table`.
 ///
-/// A column that is there is refused unless every cell of it was read. Its
-/// header may declare text that is not AL16UTF16 ([`Kind::Bytes`]), or a
-/// row may hold a `NUMBER` that is not an integer or a `DATE` that does not
-/// decode ([`Field::Unscaled`]). The cell accessors read such a cell as an
-/// empty one, so a projection that took the column anyway would publish a
-/// drawing with part of the dump silently missing. Every projection takes
-/// its columns through here or through [`column_index`].
-fn optional_column_index(table: &Table, name: &str) -> Result<Option<usize>, ExpError> {
+/// A column that is there is refused unless its header declares `wanted`,
+/// the kind of cell the projection reads out of it, and every cell of it
+/// was read. Its header may declare text that is not AL16UTF16
+/// ([`Kind::Bytes`]) or another type than `wanted`, or a row may hold a
+/// `NUMBER` that is not an integer or a `DATE` that does not decode
+/// ([`Field::Unscaled`]). The cell accessors read such a cell as an empty
+/// one, or as a value of the wrong kind, so a projection that took the
+/// column anyway would publish a drawing with part of the dump silently
+/// missing. Every projection takes its columns through here or through
+/// [`column_index`].
+fn optional_column_index(
+    table: &Table,
+    name: &str,
+    wanted: Kind,
+) -> Result<Option<usize>, ExpError> {
     let Some(index) = table.columns.iter().position(|column| column.name == name) else {
         return Ok(None);
     };
@@ -1871,6 +1896,16 @@ fn optional_column_index(table: &Table, name: &str) -> Result<Option<usize>, Exp
         return Err(table_error(
             &table.name,
             format!("column {name} is not AL16UTF16 text; its cells were not read"),
+        ));
+    }
+    if column.kind != wanted {
+        return Err(table_error(
+            &table.name,
+            format!(
+                "column {name} is declared {}, not {}",
+                column.kind.declared(),
+                wanted.declared()
+            ),
         ));
     }
     if let Some(row) = column.unread_row {
@@ -2985,6 +3020,110 @@ mod tests {
         assert!(
             not_refused.is_empty(),
             "{} of {columns_tried} followed columns were not refused by name and reason:\n{}",
+            not_refused.len(),
+            not_refused.join("\n")
+        );
+    }
+
+    // Each followed NUMBER column in turn is declared national text, its
+    // cell the digit it held, or declared a DATE. Every cell of it reads, so
+    // the unread-cell check passes it; a stage that took the column anyway
+    // would read each cell as no integer at all. Whichever projection follows
+    // the column names the table, the column and the type the dump declared.
+    #[test]
+    fn every_followed_number_column_is_refused_when_the_dump_declares_another_type() {
+        let fixture = followed_fixture();
+        let mut columns_tried = 0;
+        let mut not_refused = Vec::new();
+        for (table_index, (table_name, columns, _)) in fixture.iter().enumerate() {
+            for (column_index, column) in columns.iter().enumerate() {
+                if column.kind != 2 {
+                    continue;
+                }
+                for (declared, as_declared, cell) in [
+                    ("national text", ch(column.name), utf16("1")),
+                    ("DATE", date(column.name), vec![120, 126, 4, 25, 20, 12, 1]),
+                ] {
+                    let mut damaged = followed_fixture();
+                    let (_, damaged_columns, damaged_rows) = &mut damaged[table_index];
+                    damaged_columns[column_index] = as_declared;
+                    for row in damaged_rows.iter_mut() {
+                        if row[column_index].is_some() {
+                            row[column_index] = Some(cell.clone());
+                        }
+                    }
+                    columns_tried += 1;
+                    let what = format!("{table_name}.{} as {declared}", column.name);
+                    let expected = format!(
+                        "{table_name}: column {} is declared {declared}, not NUMBER",
+                        column.name
+                    );
+                    match every_projection(&dump_of(&damaged)) {
+                        Ok(()) => {
+                            not_refused.push(format!("{what}: every projection accepted it"));
+                        }
+                        Err(error) if error.to_string().starts_with(&expected) => {}
+                        Err(error) => not_refused.push(format!("{what}: refused as `{error}`")),
+                    }
+                }
+            }
+        }
+        assert_eq!(columns_tried, 34);
+        assert!(
+            not_refused.is_empty(),
+            "{} of {columns_tried} retyped NUMBER columns were not refused by name and type:\n{}",
+            not_refused.len(),
+            not_refused.join("\n")
+        );
+    }
+
+    // The other way round: each followed text column declared a NUMBER, its
+    // cell the integer 1, and each followed date column declared national
+    // text, its cell the date spelled out. Every cell reads; a text cell
+    // that holds an integer is no id to a join, and a stage that took the
+    // column anyway would drop the row without a word.
+    #[test]
+    fn every_followed_text_or_date_column_is_refused_when_the_dump_declares_another_type() {
+        let fixture = followed_fixture();
+        let mut columns_tried = 0;
+        let mut not_refused = Vec::new();
+        for (table_index, (table_name, columns, _)) in fixture.iter().enumerate() {
+            for (column_index, column) in columns.iter().enumerate() {
+                let (declared, wanted, as_declared, cell) = match column.kind {
+                    1 => ("NUMBER", "national text", num(column.name), one()),
+                    12 => (
+                        "national text",
+                        "DATE",
+                        ch(column.name),
+                        utf16("2026/04/25 19:11:00"),
+                    ),
+                    _ => continue,
+                };
+                let mut damaged = followed_fixture();
+                let (_, damaged_columns, damaged_rows) = &mut damaged[table_index];
+                damaged_columns[column_index] = as_declared;
+                for row in damaged_rows.iter_mut() {
+                    if row[column_index].is_some() {
+                        row[column_index] = Some(cell.clone());
+                    }
+                }
+                columns_tried += 1;
+                let what = format!("{table_name}.{} as {declared}", column.name);
+                let expected = format!(
+                    "{table_name}: column {} is declared {declared}, not {wanted}",
+                    column.name
+                );
+                match every_projection(&dump_of(&damaged)) {
+                    Ok(()) => not_refused.push(format!("{what}: every projection accepted it")),
+                    Err(error) if error.to_string().starts_with(&expected) => {}
+                    Err(error) => not_refused.push(format!("{what}: refused as `{error}`")),
+                }
+            }
+        }
+        assert_eq!(columns_tried, 49);
+        assert!(
+            not_refused.is_empty(),
+            "{} of {columns_tried} retyped text and date columns were not refused by name and type:\n{}",
             not_refused.len(),
             not_refused.join("\n")
         );
