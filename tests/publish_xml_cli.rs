@@ -489,6 +489,129 @@ fn cli_diff_against_a_reference_with_one_value_changed_exits_one() {
     );
 }
 
+/// The database run's own `_Data.xml`, written under `dir`.
+fn a01_own_output(dir: &std::path::Path) -> String {
+    let data_path = dir.join("A01_Data.xml");
+    let gen = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --out (gen)");
+    assert!(gen.status.success(), "initial generation must succeed");
+    std::fs::read_to_string(&data_path).expect("generated data xml")
+}
+
+/// The database run scored against `reference`, as (exit code, stdout, stderr).
+fn a01_diff_against(reference: &std::path::Path) -> (Option<i32>, String, String) {
+    let diff = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--diff-against",
+            reference.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --diff-against a changed reference");
+    (
+        diff.status.code(),
+        String::from_utf8_lossy(&diff.stdout).into_owned(),
+        String::from_utf8_lossy(&diff.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn cli_diff_against_a_reference_missing_one_interface_exits_one() {
+    // Every value of the object still agrees: only the interface element is
+    // gone from the reference, so the run writes one the reference lacks.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("interface-diff");
+    let own = a01_own_output(dir.path());
+    let interface = "      <IDocVersionComposition/>\n";
+    assert_eq!(own.matches(interface).count(), 1, "{own}");
+    let reference = dir.join("A01_Data_no_interface.xml");
+    std::fs::write(&reference, own.replace(interface, "")).expect("write the reference");
+
+    let (code, stdout, stderr) = a01_diff_against(&reference);
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stdout.lines().any(|line| line
+            == format!(
+                "interface PIDDrawing {A01_DRAWING_UID} IDocVersionComposition not in reference"
+            )),
+        "{stdout}"
+    );
+    assert!(!stderr.contains("is clean"), "{stderr}");
+}
+
+#[test]
+fn cli_diff_against_a_reference_of_another_plant_exits_one() {
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("plant-diff");
+    let own = a01_own_output(dir.path());
+    assert_eq!(own.matches(r#" Plant="TEST02""#).count(), 1, "{own}");
+    let reference = dir.join("A01_Data_other_plant.xml");
+    std::fs::write(
+        &reference,
+        own.replace(r#" Plant="TEST02""#, r#" Plant="P01""#),
+    )
+    .expect("write the reference");
+
+    let (code, stdout, stderr) = a01_diff_against(&reference);
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == r#"container Plant: "TEST02" reference "P01""#),
+        "{stdout}"
+    );
+    assert!(!stderr.contains("is clean"), "{stderr}");
+}
+
+#[test]
+fn a_block_written_twice_is_not_clean_against_the_runs_own_output() {
+    // The command line hands the gate a reference, never a generated
+    // document, so the duplicate is planted on the generated side through
+    // the gate the command line calls.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("duplicate-diff");
+    let own = a01_own_output(dir.path());
+    let start = own.find("   <PIDProcessVessel>").expect("a vessel block");
+    let end = own[start..]
+        .find("   </PIDProcessVessel>\n")
+        .map(|at| start + at + "   </PIDProcessVessel>\n".len())
+        .expect("the vessel block closes");
+    let mut doubled = own.clone();
+    doubled.insert_str(end, &own[start..end]);
+
+    let clean = pid_parse::publish::diff::diff_pid_export(&own, &own).expect("own output parses");
+    assert!(clean.is_clean(), "{clean}");
+    let diff = pid_parse::publish::diff::diff_pid_export(&doubled, &own).expect("doubled parses");
+    assert_eq!(diff.duplicate_uids_in_generated, 1, "{diff}");
+    assert!(
+        diff.findings
+            .iter()
+            .any(|f| f == "duplicate C57494A1B154442C9DF0F4BA713E88EC in generated"),
+        "{diff}"
+    );
+    assert!(!diff.is_clean(), "{diff}");
+}
+
 #[test]
 fn cli_diff_against_a_truncated_reference_is_refused_and_exits_one() {
     // The tag counts scan bytes: a reference that lost its closing tag counts
