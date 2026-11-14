@@ -1001,7 +1001,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_179);
-    assert_eq!(index["values"], 96_520);
+    assert_eq!(index["values"], 101_198);
     assert_eq!(index["relationships"], 106_812);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
@@ -1687,7 +1687,7 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     );
     assert!(
         stdout.lines().any(|line| line
-            == "pid export diff: objects 108 (extra 6, wrong class 0), values 104 \
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 111 \
                 (different 0, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
@@ -1777,14 +1777,14 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             ("001", 1, 1, 0),
             ("002", 3, 2, 2),
             ("222", 3, 2, 2),
-            ("DWG-0201GP01-01", 492, 362, 688),
-            ("DWG-0201GP06-01", 170, 188, 233),
-            ("DWG-0202GP06-01", 113, 127, 141),
-            ("DWG-0104GP01-08", 5, 6, 4),
+            ("DWG-0201GP01-01", 492, 389, 688),
+            ("DWG-0201GP06-01", 170, 203, 233),
+            ("DWG-0202GP06-01", 113, 134, 141),
+            ("DWG-0104GP01-08", 5, 7, 4),
         ]
     );
     assert_eq!(index["objects"], 786);
-    assert_eq!(index["values"], 687);
+    assert_eq!(index["values"], 737);
     assert_eq!(index["relationships"], 1_070);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

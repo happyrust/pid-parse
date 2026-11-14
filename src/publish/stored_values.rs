@@ -58,6 +58,10 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IPipeCrossSectionItem",
         property: "NominalDiameter",
     },
+    StoredProperty {
+        interface: "IConnector",
+        property: "RepresentationsAreAllZeroLength",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
@@ -78,8 +82,10 @@ pub struct StoredValues {
 
 /// Spell one stored cell as the reference writes the property, under the
 /// conversion the map names: none (`None` or empty) is the value as
-/// stored, and `EFAdapter.NominalDiameterConv` spells a code the way a
-/// port's diameter is spelled ([`nominal_spelling`]: `80 mm`, `1 in`).
+/// stored, `EFAdapter.NominalDiameterConv` spells a code the way a port's
+/// diameter is spelled ([`nominal_spelling`]: `80 mm`, `1 in`), and
+/// `EFAdapter.EnumToBoolConv` spells a code of the dump's Boolean list
+/// (codelist 73: 1 `False`, 2 `True`).
 ///
 /// `None` when the conversion is not one this stage runs, or the cell is
 /// not a value it converts.
@@ -94,6 +100,11 @@ pub fn spell(criteria: Option<&str>, cell: &StoredCell) -> Option<String> {
         "EFAdapter.NominalDiameterConv" => match cell {
             StoredCell::Integer(code) => nominal_spelling(*code),
             StoredCell::Text(_) | StoredCell::Number(_) => None,
+        },
+        "EFAdapter.EnumToBoolConv" => match cell {
+            StoredCell::Integer(1) => Some("False".to_string()),
+            StoredCell::Integer(2) => Some("True".to_string()),
+            _ => None,
         },
         _ => None,
     }
@@ -285,7 +296,7 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 5,
+                written: 12,
                 confirmed_labels: 17,
                 disagreeing_labels: 2,
                 ..StoredValues::default()
@@ -345,6 +356,26 @@ mod tests {
         assert_eq!(component.source, placed("T_InlineComp", "NominalDiameter"));
     }
 
+    /// Every one of the fixture's seven runs is stored `1`: none of them is
+    /// drawn as zero-length pieces alone.
+    #[test]
+    fn every_run_states_whether_its_representations_are_all_zero_length() {
+        let (drawing, _) = dwg_with_stored_values();
+        let runs: Vec<_> = drawing
+            .items
+            .iter()
+            .filter(|item| item.class == Some("PIDPipingConnector"))
+            .collect();
+        assert_eq!(runs.len(), 7);
+        for run in runs {
+            let flag = stated(&drawing, &run.uid, "RepresentationsAreAllZeroLength")
+                .unwrap_or_else(|| panic!("{} states it", run.uid));
+            assert_eq!(flag.interface, "IConnector");
+            assert_eq!(flag.value, "False");
+            assert_eq!(flag.source, placed("T_PipeRun", "SP_ConnectorsZeroLength"));
+        }
+    }
+
     #[test]
     fn a_label_the_dump_disagrees_with_is_kept_and_a_class_less_item_gets_nothing() {
         let (mut drawing, tables, map) = dwg();
@@ -366,7 +397,7 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 3);
+        assert_eq!(report.written, 10);
         assert_eq!(report.disagreeing_labels, 3);
         let run = stated(
             &drawing,
@@ -436,6 +467,26 @@ mod tests {
         );
         assert_eq!(spell(criteria, &StoredCell::Integer(5001)), None);
         assert_eq!(spell(criteria, &StoredCell::Text("80".to_string())), None);
+    }
+
+    #[test]
+    fn a_boolean_code_is_spelled_as_the_dumps_boolean_list_names_it() {
+        let criteria = Some("EFAdapter.EnumToBoolConv");
+        let (_, tables, _) = dwg();
+        let booleans = tables.codelist_short_text(73).expect("codelist 73 reads");
+        assert_eq!(booleans.len(), 2);
+        for (code, text) in booleans {
+            assert_eq!(
+                spell(criteria, &StoredCell::Integer(code)).as_deref(),
+                Some(text.as_str())
+            );
+        }
+        assert_eq!(
+            spell(criteria, &StoredCell::Integer(2)).as_deref(),
+            Some("True")
+        );
+        assert_eq!(spell(criteria, &StoredCell::Integer(0)), None);
+        assert_eq!(spell(criteria, &StoredCell::Text("True".to_string())), None);
     }
 
     #[test]
