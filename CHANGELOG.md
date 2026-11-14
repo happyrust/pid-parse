@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：`--oracle-exp` 按库里的代码表格子写枚举值（S8，2026-11-15）
+
+**带库发布（`.pid` + `--oracle-exp`，或整包目录）写出的 `_Data.xml` 变了：每个对象多了库里存着、`SPPIDDataMap.xml` 给得出写法的枚举值。** `.pid` 单独发布一个值都不多；对象、关系不变。
+
+- **写什么。** 新模块 `publish::codelist_values`，按对象 UID 找库里同 `SP_ID` 的行，取代码表下标，在映射文件里按「表号 + `MapEnumNumber`」找到那一项再写：十个带 `IPBSItem` 的类的 `ConstructionStatus2`（`MapEnumToEnum`）与 `ConstructionStatus`（只经 `EnumToMapEnum` 读回、没有哪项发布到它的那一个结构枚举，如 `@NewConstruction`）；设备的 `EqTypeDescription`（`SP_22` 的名称）；管件的 `PipModelCode`（`SP_25` 的描述）与 `CommoditySpecialtyType`（`SP_ISSPECIALTYITEM` 1 / 2 两行表，映射文件只写了 `BoolToEnumConv`、没给枚举，两种写法从 7 张参考图读出：610 / 129 个）；仪表的 `InstrumentType3`、`ProcFunc`、`InstrumentLocation`（类型下标 ≥ 10000 即厂里自加的类型、且映射给得出目标时两者都不写——参考图上读出的经验规则，136 / 136、154 / 154）；管嘴的 `ProcessEqCompType2`（映射文件把它叫 `ProcessEqCompType1`，差一级）与 `ProcEqpCompTypeDescription`；管段的 `PipingConnectorType`、`FlowDirection`。图纸写所有参考都有的 `DocCategory="P&ID Documents"`、`DocType="P&ID"`。`backup::datamap` 新读出 `SPMapEnumDef`（名称、描述、下标）、`MapEnumListMapEnum`、全部 `MapEnumToEnum` 目标原样与 `EnumToMapEnum`。
+- **读数。** 7 张同版参考图：新增 9 218 个值，逐个等于参考，参考没有的 0；非空值 19 734 → 28 952 / 39 171（50.4 % → 73.9 %）。整包 53 张：值 87 598 → 130 233；入库 DWG 包 643 → 1 094。
+- **不写的。** 枝叶之上的层级（`EqType0`–`5`、`PipingComponentType1`–`3`、`ProcessEqCompType1`、`InstrumentType`）：库只存叶子的下标，映射只发布叶子本身，两者都没有上面的层级。它们在豁免表里单列一类「codelist levels above the leaf」，理由写明这一点。
+- **门禁。** 这批属性在 `.pid` 单独发布时照旧豁免；一次运行只要在某个对象上写了其中一个，另一个对象上参考有而没写就是发现（`catalog::DUMP_CODELIST_ATTRIBUTES`）。完整度的值钉与 `publish-diff-accepted.json` 的摘要行提到新读数，没有登记行消失或新增。
+
 ### publish：`.pid` 这条线按类的接口表写接口元素（S5，2026-11-15）
 
 **`.pid` 这条线写出的 `_Data.xml` 变了：每个对象现在带它这一类的整张接口元素表，拿旧输出做逐字节比较会不同。** 对象、关系、非空值一个没变；`_Meta.xml`、`_Coverage.json`、`_Index.json` 逐字节不变。数据库那条线（`xml_writer.rs`）的输出不变。
