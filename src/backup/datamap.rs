@@ -17,12 +17,17 @@
 //! * `MapEnumToEnum`, the published spelling of an enum, and
 //!   `MapEnumMapEnum`, the enum of the list one level up that an enum
 //!   sits under;
+//! * `SPMapEnumDef`, a codelist entry with its name, description and the
+//!   index the plant database stores (`MapEnumNumber`), the list it is an
+//!   entry of (`MapEnumListMapEnum`), and the schema enums the vendor's
+//!   adapter reads back into it (`EnumToMapEnum`);
 //! * the names of the enum lists and of the unit lists;
 //! * how many `<Rel>` blocks the file holds under each `DefUID`.
 //!
 //! The class and property maps are read out and nothing more: no
 //! conversion is run and no enum hierarchy is walked here, and no publish
-//! stage consults them. The file may be the XML itself or the
+//! stage consults them. The enum map is what `publish::codelist_values`
+//! spells a codelist cell of the dump by. The file may be the XML itself or the
 //! `SPPIDDataMap.xml` entry inside a zip (dated copies in the same zip
 //! are left alone).
 
@@ -55,6 +60,30 @@ pub struct DataMap {
     /// How many `<Rel>` blocks the file holds under each `DefUID`, whether
     /// or not this module reads that kind any further.
     pub rel_counts: BTreeMap<String, usize>,
+    /// `SPMapEnumDef` blocks keyed by their `IObject` `UID` (`SP_93_2`).
+    pub enums: HashMap<String, MapEnum>,
+    /// `MapEnumListMapEnum`: an enum list (`SP_93`) → its enums, in file
+    /// order.
+    pub enum_list_members: HashMap<String, Vec<String>>,
+    /// `MapEnumToEnum` `UID1` → every `UID2` as the file writes it
+    /// (`EE68D`, a `{GUID}`), in file order. [`Self::enum_to_enum`] is the
+    /// same rels spelled `@{…}` whatever the target, the last one kept.
+    pub enum_targets: HashMap<String, Vec<String>>,
+    /// `EnumToMapEnum` rels as `(UID1, UID2)`, in file order: a schema
+    /// enum and the map enum the vendor's adapter reads it back into.
+    pub enum_retrievals: Vec<(String, String)>,
+}
+
+/// One `SPMapEnumDef`: an entry of a plant codelist.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MapEnum {
+    /// `IObject` `Name` (`New`).
+    pub name: String,
+    /// `IObject` `Description`.
+    pub description: String,
+    /// `IMapEnumDef` `MapEnumNumber`: the codelist index the plant
+    /// database stores. `None` when the block states none or not a number.
+    pub number: Option<i64>,
 }
 
 /// One `SPMapClassDef`: a P&ID item type the map publishes.
@@ -166,6 +195,55 @@ impl DataMap {
         }
         sources
     }
+
+    /// The `UID` of the enum of `list` whose `MapEnumNumber` is `number`:
+    /// the map enum a codelist cell of that list stands for.
+    #[must_use]
+    pub fn enum_numbered(&self, list: &str, number: i64) -> Option<&str> {
+        self.enum_list_members
+            .get(list)?
+            .iter()
+            .find(|uid| self.enums.get(*uid).and_then(|entry| entry.number) == Some(number))
+            .map(String::as_str)
+    }
+
+    /// The published spelling of a codelist cell: `@` and the schema enum
+    /// the first `MapEnumToEnum` rel sends the cell's map enum to, as the
+    /// file writes it (`@{78398AB4-…}`, `@EE425`).
+    #[must_use]
+    pub fn enum_target(&self, list: &str, number: i64) -> Option<String> {
+        let target = self
+            .enum_targets
+            .get(self.enum_numbered(list, number)?)?
+            .first()?;
+        Some(format!("@{target}"))
+    }
+
+    /// For each map enum, the schema enums an `EnumToMapEnum` rel reads
+    /// back into it and no `MapEnumToEnum` rel publishes to, in file order.
+    ///
+    /// Such a schema enum is a node the vendor's adapter only reads back
+    /// from, never writes: `NewConstruction` → `SP_93_2`, beside the
+    /// `{78398AB4-…}` that `SP_93_2` is published as.
+    #[must_use]
+    pub fn enums_retrieved_only(&self) -> HashMap<&str, Vec<&str>> {
+        let published: std::collections::HashSet<&str> = self
+            .enum_targets
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let mut retrieved: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (schema, map_enum) in &self.enum_retrievals {
+            if !published.contains(schema.as_str()) {
+                retrieved
+                    .entry(map_enum.as_str())
+                    .or_default()
+                    .push(schema.as_str());
+            }
+        }
+        retrieved
+    }
 }
 
 /// Why a data map was not read.
@@ -271,6 +349,8 @@ fn sppid_datamap_entry(bytes: &[u8]) -> Result<Vec<u8>, DataMapError> {
 enum Block {
     Class(MapClass),
     Property(MapProperty),
+    /// An `SPMapEnumDef`, with its `IObject` `UID`.
+    Enum(String, MapEnum),
     Rel(MapRel),
     /// A definition this module keeps nothing of.
     Other,
@@ -301,6 +381,7 @@ impl Block {
         match name {
             "SPMapClassDef" => Self::Class(MapClass::default()),
             "SPMapPropertyDef" => Self::Property(MapProperty::default()),
+            "SPMapEnumDef" => Self::Enum(String::new(), MapEnum::default()),
             "Rel" => Self::Rel(MapRel::default()),
             _ => Self::Other,
         }
@@ -326,6 +407,15 @@ impl Block {
             (Self::Property(property), "IMapPropertyDef") => {
                 property.process_criteria = attr(start, "ProcessPropertyCriteria");
             }
+            (Self::Enum(uid, entry), "IObject") => {
+                *uid = text("UID");
+                entry.name = text("Name");
+                entry.description = text("Description");
+            }
+            (Self::Enum(_, entry), "IMapEnumDef") => {
+                entry.number =
+                    attr(start, "MapEnumNumber").and_then(|number| number.trim().parse().ok());
+            }
             (Self::Rel(rel), "IRel") => {
                 rel.uid1 = text("UID1");
                 rel.uid2 = text("UID2");
@@ -345,6 +435,9 @@ impl Block {
         match self {
             Self::Class(class) => map.classes.push(class),
             Self::Property(property) => map.properties.push(property),
+            Self::Enum(uid, entry) => {
+                map.enums.insert(uid, entry);
+            }
             Self::Rel(rel) => {
                 *map.rel_counts.entry(rel.def_uid.clone()).or_insert(0) += 1;
                 match rel.def_uid.as_str() {
@@ -362,6 +455,16 @@ impl Block {
                     "MapEnumMapEnum" => {
                         map.enum_parents.entry(rel.uid2).or_insert(rel.uid1);
                     }
+                    "MapEnumListMapEnum" => {
+                        map.enum_list_members
+                            .entry(rel.uid1)
+                            .or_default()
+                            .push(rel.uid2);
+                    }
+                    "MapEnumToEnum" => {
+                        map.enum_targets.entry(rel.uid1).or_default().push(rel.uid2);
+                    }
+                    "EnumToMapEnum" => map.enum_retrievals.push((rel.uid1, rel.uid2)),
                     _ => {}
                 }
             }
@@ -614,6 +717,55 @@ mod tests {
             map.enum_to_enum.get("SP_14_10").map(String::as_str),
             Some("@{EE68D}")
         );
+    }
+
+    // A codelist entry is found by its list and its number, not by its
+    // `UID`, and a schema enum is retrieved-only when no rel publishes to it.
+    #[test]
+    fn codelist_entries_their_targets_and_retrievals_are_read() {
+        let xml = br#"
+            <Container>
+              <Rel><IRel UID1="L" UID2="L_a" DefUID="MapEnumListMapEnum"/></Rel>
+              <SPMapEnumDef>
+                <IObject UID="L_a" Name="New" Description="Brand new"/>
+                <IMapObject ToolOID="SPEN_L_a"/>
+                <IMapEnumDef MapEnumNumber="2"/>
+              </SPMapEnumDef>
+              <SPMapEnumDef>
+                <IObject UID="L_b" Name="Old"/>
+                <IMapEnumDef MapEnumNumber="x"/>
+              </SPMapEnumDef>
+              <Rel><IRel UID1="L" UID2="L_b" DefUID="MapEnumListMapEnum"/></Rel>
+              <Rel><IRel UID1="L_a" UID2="EE1" DefUID="MapEnumToEnum"/></Rel>
+              <Rel><IRel UID1="L_a" UID2="EE2" DefUID="MapEnumToEnum"/></Rel>
+              <Rel><IRel UID1="EE1" UID2="L_a" DefUID="EnumToMapEnum"/></Rel>
+              <Rel><IRel UID1="Brand" UID2="L_a" DefUID="EnumToMapEnum"/></Rel>
+              <Rel><IRel UID1="EE2" UID2="L_b" DefUID="EnumToMapEnum"/></Rel>
+            </Container>
+        "#;
+        let map = parse_datamap_xml(xml).expect("xml");
+        assert_eq!(
+            map.enums.get("L_a"),
+            Some(&MapEnum {
+                name: "New".to_string(),
+                description: "Brand new".to_string(),
+                number: Some(2),
+            })
+        );
+        assert_eq!(map.enums.get("L_b").map(|entry| entry.number), Some(None));
+        assert_eq!(map.enum_list_members.get("L").map(Vec::len), Some(2));
+        assert_eq!(map.enum_numbered("L", 2), Some("L_a"));
+        assert_eq!(map.enum_numbered("L", 3), None);
+        assert_eq!(map.enum_numbered("M", 2), None);
+        assert_eq!(map.enum_target("L", 2).as_deref(), Some("@EE1"));
+        assert_eq!(
+            map.enum_to_enum.get("L_a").map(String::as_str),
+            Some("@{EE2}")
+        );
+        assert_eq!(map.enum_retrievals.len(), 3);
+        let retrieved = map.enums_retrieved_only();
+        assert_eq!(retrieved.get("L_a"), Some(&vec!["Brand"]));
+        assert_eq!(retrieved.get("L_b"), None);
     }
 
     // The class and property maps on a document small enough to read: a rel
@@ -944,6 +1096,14 @@ mod tests {
         );
         assert_eq!(map.enum_parents.len(), 1_573);
         assert_eq!(map.enum_to_enum.len(), 1_921);
+        assert_eq!(map.enum_targets.len(), 1_921);
+        assert_eq!(map.enums.len(), 3_131);
+        assert_eq!(map.enum_list_members.len(), 117);
+        assert_eq!(
+            map.enum_list_members.values().map(Vec::len).sum::<usize>(),
+            3_343
+        );
+        assert_eq!(map.enum_retrievals.len(), 1_040);
         assert_eq!(map.enum_list_names.len(), 102);
         assert_eq!(map.unit_list_names.len(), 15);
     }
@@ -1110,6 +1270,129 @@ mod tests {
                 (Some("EFAdapter.UoMToEnumConv"), 9),
             ]
         );
+    }
+
+    // The codelists `publish::codelist_values` spells a dump cell by: how
+    // many entries each holds, how many of them `MapEnumToEnum` publishes,
+    // and an entry of each with its name, description and target.
+    #[test]
+    fn the_committed_map_spells_these_codelists() {
+        let map = committed_map();
+        let entry = |list: &str, number: i64| {
+            let uid = map.enum_numbered(list, number).expect("an entry");
+            let entry = &map.enums[uid];
+            (
+                entry.name.as_str(),
+                entry.description.as_str(),
+                map.enum_target(list, number),
+            )
+        };
+        let mut sizes = Vec::new();
+        for list in [
+            "SP_93", "SP_22", "SP_25", "SP_35", "SP_28", "SP_29", "SP_17", "SP_14", "SP_47",
+        ] {
+            let members = &map.enum_list_members[list];
+            let published = members
+                .iter()
+                .filter(|uid| map.enum_targets.contains_key(*uid))
+                .count();
+            sizes.push((map.enum_list_names[list].as_str(), members.len(), published));
+        }
+        assert_eq!(
+            sizes,
+            [
+                ("ConstructionStatus", 14, 14),
+                ("EquipmentType", 604, 604),
+                ("PipingComponentType", 272, 119),
+                ("NozzleType", 19, 19),
+                ("InstrumentComponentType", 269, 136),
+                ("InstrumentComponentClass", 11, 2),
+                ("InstrumentLocation", 18, 1),
+                ("LineType", 31, 12),
+                ("FlowDirection", 5, 5),
+            ]
+        );
+        let target = |text: &str| Some(text.to_string());
+        assert_eq!(
+            entry("SP_93", 2),
+            (
+                "New",
+                "New",
+                target("@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}")
+            )
+        );
+        assert_eq!(
+            entry("SP_22", 100),
+            (
+                "1 diameter, 1 chamber, elliptical head reactor",
+                "1D 1C 2:1 reactor",
+                target("@EE7BA")
+            )
+        );
+        assert_eq!(
+            entry("SP_25", 18),
+            (
+                "Gate valve",
+                "Gate valve",
+                target("@{5F7F9234-BC29-11D6-BDBC-00104BCC2B69}")
+            )
+        );
+        assert_eq!(
+            entry("SP_35", 38),
+            (
+                "Flanged Nozzle",
+                "",
+                target("@{B88907F5-D4FC-49D8-BA8E-C1F76F392A52}")
+            )
+        );
+        assert_eq!(
+            entry("SP_28", 101),
+            ("Automatic recirculation valve", "", None)
+        );
+        assert_eq!(entry("SP_28", 103), ("Regulator", "", target("@EE426")));
+        assert_eq!(
+            entry("SP_29", 1),
+            (
+                "Control valves and regulators",
+                "Control valves and regulators",
+                target("@EE3F8")
+            )
+        );
+        assert_eq!(entry("SP_17", 2), ("Field", "", target("@EE31D")));
+        assert_eq!(
+            entry("SP_14", 10),
+            ("Pneumatic binary", "PB", target("@EE68D"))
+        );
+        assert_eq!(
+            entry("SP_47", 2),
+            ("End 1 is upstream (Inlet)", "", target("@EE872"))
+        );
+
+        // The schema enums the adapter only reads back: 94 of them, onto 83
+        // entries, nine of which take more than one. Each construction
+        // status the seven reference drawings carry takes exactly one.
+        let retrieved = map.enums_retrieved_only();
+        assert_eq!(retrieved.len(), 83);
+        assert_eq!(retrieved.values().map(Vec::len).sum::<usize>(), 94);
+        assert_eq!(
+            retrieved.values().filter(|found| found.len() > 1).count(),
+            9
+        );
+        for (number, only) in [
+            (1, Some("{B72FE633-954A-40BA-AB15-CA7A63796594}")),
+            (2, Some("NewConstruction")),
+            (3, Some("ExistingConstruction")),
+            (4, None),
+            (8, Some("FutureConstruction")),
+            (14, None),
+        ] {
+            let uid = map.enum_numbered("SP_93", number).expect("a status");
+            assert_eq!(
+                retrieved.get(uid).map(Vec::as_slice),
+                only.as_ref().map(std::slice::from_ref),
+                "SP_93 {number}"
+            );
+        }
     }
 
     // What the file says beyond one attribute to one property of the item's

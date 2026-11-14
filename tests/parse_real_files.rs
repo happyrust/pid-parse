@@ -5473,8 +5473,11 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
             placed_bodies_with_hidden_strokes: 4,
             hidden_layers: &["Heat Trace", "Label"],
             // (287, 237) over 58 placements until the 27 retired copies
-            // (type word 0x8000, `parse_live_psm_header`) stopped counting.
-            strokes_over_placements: (181, 157),
+            // (type word 0x8000, `parse_live_psm_header`) stopped counting;
+            // (181, 157) until the 8 curved/point-run boundaries in
+            // `/JSite7559` decoded under the member-named grammar (+36
+            // across the 3 + 6 placements of `Xa.sym` and `Xa chu.sym`).
+            strokes_over_placements: (217, 193),
             // Remarks: a 1.27 mm mark of three lines, not the library's
             // 27 mm cloud of the same name.
             visible: &[((7559, 190), [3, 0, 0, 0, 0, 0])],
@@ -5813,8 +5816,11 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
         Expected {
             fixture: "工艺管道及仪表流程-1.pid",
             // 237 over 58 placements until the 27 retired copies stopped
-            // counting (type word 0x8000, `parse_live_psm_header`).
-            visible_over_placements: 157,
+            // counting (type word 0x8000, `parse_live_psm_header`), then 157
+            // until the 8 curved/point-run boundaries in `/JSite7559`
+            // decoded under the member-named grammar (+36 across 3 + 6
+            // placements).
+            visible_over_placements: 193,
             // 45 until overrides stated their dash: `Xa.sym` (placed 3
             // times) and `Xa chu.sym` (6) reach `Dashed` for a circle and
             // four lines each through overrides stating none.

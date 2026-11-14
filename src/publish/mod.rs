@@ -40,6 +40,8 @@
 //!   compositions and item notes.
 //! * [`pipeline`] — synthesized `PIDPipeline` rows and their
 //!   `PipingConnectors` from `T_PIPERUN` + `SPPIDDataMap.xml`.
+//! * [`codelist_values`] — enumerated values from the dump's codelist
+//!   cells, spelled by `SPPIDDataMap.xml`.
 //! * [`unit_values`] — values with a unit (`50 mm`, `3 m`) from the dump's
 //!   SI columns, spelled as `SmartPlant` spells a double.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
@@ -92,6 +94,7 @@ pub mod backup_package;
 // classes an item through the row's `pid_class`.
 mod catalog;
 pub mod catalog_index;
+pub mod codelist_values;
 pub mod completeness;
 pub mod diff;
 #[cfg(feature = "backup-mdf")]

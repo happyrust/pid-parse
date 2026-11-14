@@ -461,6 +461,7 @@ mod tests {
         PidPublishDrawing {
             drawing_uid: "D1".to_string(),
             drawing_name: "D".to_string(),
+            drawing_attributes: Vec::new(),
             items,
             process_points: Vec::new(),
             branch_points: Vec::new(),

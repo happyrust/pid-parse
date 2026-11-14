@@ -323,6 +323,8 @@ pub struct ExpTables {
     drawing: Table,
     equipment: Table,
     vessel: Table,
+    pipingcomp: Table,
+    instrument: Table,
 }
 
 impl ExpTables {
@@ -353,6 +355,8 @@ impl ExpTables {
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
             equipment: read_optional_table(dump, "T_EQUIPMENT")?,
             vessel: read_optional_table(dump, "T_VESSEL")?,
+            pipingcomp: read_optional_table(dump, "T_PIPINGCOMP")?,
+            instrument: read_optional_table(dump, "T_INSTRUMENT")?,
         })
     }
 
@@ -520,6 +524,47 @@ impl ExpTables {
                 })
             })
             .collect())
+    }
+
+    /// The integer cells of `column` of `table` keyed by the folded
+    /// `SP_ID` of their row: the codelist indexes the plant database
+    /// stores for an item (`T_PLANTITEM.CONSTRUCTIONSTATUS`). A NULL cell
+    /// is left out, and so is a row with no `SP_ID`.
+    ///
+    /// Empty when the dump has no such table, or the table has no `SP_ID`
+    /// or no `column`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when `SP_ID` or `column` is declared
+    /// another type than the projection reads, or holds a cell that was not
+    /// read or a `NUMBER` that is not an integer.
+    pub fn codelist_cells(
+        &self,
+        table: ItemTable,
+        column: &str,
+    ) -> Result<HashMap<String, i64>, ExpError> {
+        let table = match table {
+            ItemTable::PlantItem => &self.plantitem,
+            ItemTable::Equipment => &self.equipment,
+            ItemTable::PipingComp => &self.pipingcomp,
+            ItemTable::Instrument => &self.instrument,
+            ItemTable::Nozzle => &self.nozzle,
+            ItemTable::PipeRun => &self.piperun,
+        };
+        let (Some(id), Some(cell)) = (
+            optional_column_index(table, "SP_ID", Kind::Char)?,
+            optional_column_index(table, column, Kind::Num)?,
+        ) else {
+            return Ok(HashMap::new());
+        };
+        let mut cells = HashMap::new();
+        for row in &table.rows {
+            if let (Some(id), Some(code)) = (text_of(row, id), int_of(row, cell)) {
+                cells.entry(norm_uid(id)).or_insert(code);
+            }
+        }
+        Ok(cells)
     }
 
     /// Piping components this drawing places that its `.pid` does not
@@ -712,6 +757,8 @@ impl ExpTables {
             drawing: Table::blank("T_DRAWING"),
             equipment: Table::blank("T_EQUIPMENT"),
             vessel: Table::blank("T_VESSEL"),
+            pipingcomp: Table::blank("T_PIPINGCOMP"),
+            instrument: Table::blank("T_INSTRUMENT"),
         }
     }
 
@@ -767,6 +814,39 @@ impl ExpTables {
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
             ..Self::blank()
         })
+    }
+}
+
+/// A table of item rows keyed by `SP_ID` whose codelist cells
+/// [`ExpTables::codelist_cells`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemTable {
+    /// `T_PLANTITEM`.
+    PlantItem,
+    /// `T_EQUIPMENT`.
+    Equipment,
+    /// `T_PIPINGCOMP`.
+    PipingComp,
+    /// `T_INSTRUMENT`.
+    Instrument,
+    /// `T_NOZZLE`.
+    Nozzle,
+    /// `T_PIPERUN`.
+    PipeRun,
+}
+
+impl ItemTable {
+    /// The table's name in the dump.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PlantItem => "T_PLANTITEM",
+            Self::Equipment => "T_EQUIPMENT",
+            Self::PipingComp => "T_PIPINGCOMP",
+            Self::Instrument => "T_INSTRUMENT",
+            Self::Nozzle => "T_NOZZLE",
+            Self::PipeRun => "T_PIPERUN",
+        }
     }
 }
 
@@ -4529,6 +4609,8 @@ mod tests {
             &tables.drawing,
             &tables.equipment,
             &tables.vessel,
+            &tables.pipingcomp,
+            &tables.instrument,
         ] {
             for (index, column) in table.columns.iter().enumerate() {
                 if let Some(first) = column.non_integer_row {

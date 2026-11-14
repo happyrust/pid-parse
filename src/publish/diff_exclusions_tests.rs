@@ -293,6 +293,47 @@ fn a_pid_export_accounts_for_classes_it_does_not_publish_and_fails_a_wrong_value
     assert!(dirty.findings[0].contains("PT-2"));
 }
 
+// A codelist value is excused for a run that states it nowhere, as from a
+// `.pid` alone; a run that states it on one object had the dump, and leaving
+// it out on another is a finding. A level above the leaf stays excused
+// either way, under the reason it cannot be stated.
+#[test]
+fn a_run_that_states_a_codelist_value_somewhere_is_held_to_it_everywhere() {
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPBSItem ConstructionStatus="@NewConstruction"/><IInstrument InstrumentType="@EE3F8.1"/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPBSItem ConstructionStatus="@NewConstruction"/></PIDInstrument>
+    </Container>"#;
+    let alone = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPBSItem/><IInstrument/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPBSItem/></PIDInstrument>
+    </Container>"#;
+    let excused = diff_pid_export(alone, reference).expect("well-formed");
+    assert!(excused.is_clean(), "{excused}");
+    assert_eq!(excused.values_excused_by_design, 3);
+
+    let with_dump = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPBSItem ConstructionStatus="@NewConstruction"/><IInstrument/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPBSItem/></PIDInstrument>
+    </Container>"#;
+    let held = diff_pid_export(with_dump, reference).expect("well-formed");
+    assert!(!held.is_clean());
+    assert_eq!(held.values_not_in_generated, 1);
+    assert_eq!(
+        held.findings,
+        [
+            "missing value PIDInstrument B IPBSItem.ConstructionStatus: \"@NewConstruction\" \
+             not in generated, and the run states IPBSItem.ConstructionStatus from the dump on \
+             other objects"
+        ]
+    );
+    assert!(
+        held.exclusions.iter().any(|line| line
+            .starts_with("excused value IInstrument.InstrumentType 1 — excluded class \"codelist levels above the leaf\"")),
+        "{}",
+        held.exclusions.join("\n")
+    );
+}
+
 #[test]
 fn the_excused_accounting_prints_with_findings_not_on_a_clean_run() {
     let generated = r#"<Container>
@@ -325,7 +366,7 @@ fn the_excused_accounting_prints_with_findings_not_on_a_clean_run() {
 #[test]
 fn excluded_attribute_classes_are_the_measured_union() {
     let classes = crate::publish::catalog::EXCLUDED_ATTRIBUTE_CLASSES;
-    assert_eq!(classes.len(), 8);
+    assert_eq!(classes.len(), 9);
     let mut pairs = Vec::new();
     for class in classes {
         assert!(!class.class.is_empty(), "unnamed exclusion class");

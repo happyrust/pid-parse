@@ -116,6 +116,18 @@ pub enum PidValueSource {
         /// Column the value was read from, e.g. `PIPINGPOINTNUMBER`.
         column: &'static str,
     },
+    /// A codelist index of one row in the plant-database backup, spelled
+    /// the way `super::codelist_values` names.
+    CodelistCell {
+        /// Table the row was read from, e.g. `T_PLANTITEM`.
+        table: &'static str,
+        /// Column the index was read from, e.g. `CONSTRUCTIONSTATUS`.
+        column: &'static str,
+        /// How the index is spelled, e.g. `MapEnumToEnum`.
+        spelling: &'static str,
+    },
+    /// The same value on every reference object of the publish class.
+    ClassConstant,
 }
 
 /// One published attribute value of an item.
@@ -348,6 +360,9 @@ pub struct PidPublishDrawing {
     pub drawing_uid: String,
     /// The drawing name: the file name without `.pid`.
     pub drawing_name: String,
+    /// Values of the `PIDDrawing` object beside its UID and name. Empty
+    /// until [`super::codelist_values::attach_codelist_values`] runs.
+    pub drawing_attributes: Vec<PidPublishAttribute>,
     /// Model items, ordered by UID.
     pub items: Vec<PidPublishItem>,
     /// Process points derived from published pipe runs, ordered by UID.
@@ -1208,6 +1223,7 @@ fn load_from_records(
     Ok(PidPublishDrawing {
         drawing_uid,
         drawing_name: drawing_name.to_string(),
+        drawing_attributes: Vec::new(),
         items,
         process_points,
         branch_points: branch_points.into_values().collect(),
