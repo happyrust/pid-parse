@@ -265,9 +265,10 @@ fn exp_table(name: &str, columns: &[(&str, ExpKind)], rows: &[&[ExpCell]]) -> Ve
 /// One drawing `D`: equipment `E` with a piping and a signal point, pipe run
 /// `R` whose connector `C` starts on that piping point and ends on off-page
 /// connector `O1`, a nozzle, a note, a piping component `P` the dump places
-/// on the drawing, a codelist row, a plant item tag and a plant group. The
-/// tables also carry what a real dump does beside the followed columns: a
-/// date, a `NUMBER` that is not an integer and database-charset text.
+/// on the drawing, a codelist row, a plant item tag and a plant group, and
+/// SI values on the run, the equipment and a vessel. The tables also carry
+/// what a real dump does beside the followed columns: a date and
+/// database-charset text.
 fn exp_dump() -> Vec<u8> {
     use ExpCell::{Null, Raw, Text};
     use ExpKind::{Bytes, Date, Number};
@@ -357,8 +358,10 @@ fn exp_dump() -> Vec<u8> {
             ("FLUIDSYSTEM", Number),
             ("INSULATIONSPEC", text),
             ("SP_INSULTHICKSI", Number),
+            ("SP_SLOPESI", Number),
         ],
-        // 0.05 in the last column: one base-100 digit, 5, at exponent -1.
+        // 0.05: one base-100 digit, 5, at exponent -1. -1.57079632679448:
+        // a negative number's complemented digits and its closing 0x66.
         &[&[
             Text("R"),
             HUNDRED,
@@ -368,7 +371,22 @@ fn exp_dump() -> Vec<u8> {
             ONE,
             Null,
             Raw(&[0xc0, 0x06]),
+            Raw(&[0x3e, 0x64, 0x2c, 0x5e, 0x05, 0x45, 0x22, 0x07, 0x35, 0x66]),
         ]],
+    ));
+    dump.extend(exp_table(
+        "T_EQUIPMENT",
+        &[
+            ("SP_ID", text),
+            ("SP_INSULTHICKSI", Number),
+            ("SP_HEIGHTSI", Number),
+        ],
+        &[&[Text("E"), Null, Raw(&[0xc1, 0x04])]],
+    ));
+    dump.extend(exp_table(
+        "T_VESSEL",
+        &[("SP_ID", text), ("SP_VOLUMERATINGSI", Number)],
+        &[&[Text("E"), Raw(&[0xc1, 0x1c])]],
     ));
     dump.extend(exp_table(
         "T_SIGNALRUN",
@@ -722,6 +740,17 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = composition_relations(input);
         let _ = connectivity_ends_for_drawing(input, "D");
         let _ = opc_points_for_drawing(input, "D");
+    }
+
+    // An Oracle `NUMBER` cell's payload, at every length the input gives,
+    // and everything a decoded number says of itself.
+    #[cfg(feature = "backup-exp")]
+    for end in 0..=input.len().min(48) {
+        if let Some(number) =
+            pid_parse::publish::oracle_exp::OracleNumber::from_oracle_bytes(&input[..end])
+        {
+            exercise_oracle_number(&number);
+        }
     }
 
     // Oracle `exp` dump readers: every public entry that takes the dump.
@@ -1318,7 +1347,24 @@ fn exercise_exp_readers(dump: &[u8], every_entry: bool) {
         if let Ok(runs) = tables.pipe_runs() {
             for run in &runs {
                 let _ = run.nominal_diameter.and_then(nominal_spelling);
+                run.insulation_thickness_si
+                    .iter()
+                    .chain(&run.slope_si)
+                    .for_each(exercise_oracle_number);
             }
+        }
+        if let Ok(rows) = tables.equipment_rows() {
+            for row in &rows {
+                row.insulation_thickness_si
+                    .iter()
+                    .chain(&row.height_si)
+                    .for_each(exercise_oracle_number);
+            }
+        }
+        if let Ok(rows) = tables.vessel_rows() {
+            rows.iter()
+                .filter_map(|row| row.volume_rating_si.as_ref())
+                .for_each(exercise_oracle_number);
         }
         let _ = tables.codelist_short_text(19);
         let _ = tables.connectivity_ends("D");
@@ -1342,6 +1388,17 @@ fn exercise_exp_readers(dump: &[u8], every_entry: bool) {
         let _ = connectivity_ends_for_drawing(dump, "D");
         let _ = opc_points_for_drawing(dump, "D");
     }
+}
+
+/// Everything an Oracle `NUMBER` says of itself.
+#[cfg(feature = "backup-exp")]
+fn exercise_oracle_number(number: &pid_parse::publish::oracle_exp::OracleNumber) {
+    let _ = number.to_string();
+    let _ = number.to_f64();
+    let _ = number.to_i64();
+    let _ = number.significant_digits();
+    let _ = number.exponent();
+    let _ = number.is_negative();
 }
 
 /// Names the damaged dump a panic came from: the test runner prints the
@@ -1415,7 +1472,18 @@ fn exp_dump_readers_do_not_panic_on_a_damaged_dump() {
         (ports.piping_points.len(), ports.signal_points.len()),
         (2, 1)
     );
-    assert_eq!(tables.pipe_runs().expect("its runs project").len(), 1);
+    let runs = tables.pipe_runs().expect("its runs project");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(
+        runs[0]
+            .slope_si
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("-1.57079632679448")
+    );
+    assert_eq!(tables.equipment_rows().expect("equipment").len(), 1);
+    assert_eq!(tables.vessel_rows().expect("vessels").len(), 1);
     assert_eq!(tables.connectivity_ends("D").expect("ends").len(), 2);
     assert_eq!(tables.composition_relations().expect("rels").len(), 2);
     assert_eq!(tables.opc_points("D").expect("off-page").len(), 1);

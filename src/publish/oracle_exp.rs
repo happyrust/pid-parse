@@ -54,6 +54,173 @@ impl fmt::Display for ExpError {
 
 impl std::error::Error for ExpError {}
 
+/// An Oracle `NUMBER` cell, read exactly.
+///
+/// `exp` writes a `NUMBER` in Oracle's internal form: an exponent byte that
+/// counts powers of 100 from `0xc1` (100^0), then base-100 digits, each
+/// stored as the digit plus one, so `c0 06` is 5 × 100^-1 = 0.05. A
+/// negative number counts its exponent down from `0x3e`, stores each digit
+/// as 101 less the digit, and ends in `0x66` when it has fewer than twenty
+/// digits: `3f 33 66` is −0.5. Zero is `80` alone.
+///
+/// The value keeps its decimal digits, so nothing is rounded through a
+/// binary double on its way to a writer. The `SP_*SI` columns, which the
+/// dump's own dictionary types as doubles, are declared `NUMBER` in the
+/// dumps and are read as this.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OracleNumber {
+    negative: bool,
+    /// Decimal digits, the first and the last not `0`; `"0"` for zero.
+    digits: String,
+    /// The power of ten of the first digit.
+    exponent: i32,
+}
+
+impl OracleNumber {
+    fn zero() -> Self {
+        Self {
+            negative: false,
+            digits: "0".to_string(),
+            exponent: 0,
+        }
+    }
+
+    /// The number a `NUMBER` cell's payload states.
+    ///
+    /// `None` for bytes no finite number is written as: no exponent byte,
+    /// no digit after it, a digit byte outside the digits, bytes after the
+    /// zero byte, and Oracle's two infinities (`00` and `ff 65`).
+    #[must_use]
+    pub fn from_oracle_bytes(raw: &[u8]) -> Option<Self> {
+        let (&head, rest) = raw.split_first()?;
+        if head == 0x80 {
+            return rest.is_empty().then(Self::zero);
+        }
+        let negative = head < 0x80;
+        let mantissa = if negative {
+            rest.strip_suffix(&[0x66]).unwrap_or(rest)
+        } else {
+            rest
+        };
+        if mantissa.is_empty() {
+            return None;
+        }
+        let hundreds = if negative {
+            62 - i32::from(head)
+        } else {
+            i32::from(head) - 193
+        };
+        let mut decimal = String::with_capacity(2 * mantissa.len());
+        for &byte in mantissa {
+            let digit = if negative {
+                101 - i32::from(byte)
+            } else {
+                i32::from(byte) - 1
+            };
+            let digit = u8::try_from(digit).ok().filter(|digit| *digit < 100)?;
+            decimal.push(char::from(b'0' + digit / 10));
+            decimal.push(char::from(b'0' + digit % 10));
+        }
+        // `decimal` is every digit after a point at 10^(2 × (hundreds + 1)).
+        let leading = decimal.bytes().take_while(|byte| *byte == b'0').count();
+        let digits = decimal[leading..].trim_end_matches('0');
+        if digits.is_empty() {
+            return Some(Self::zero());
+        }
+        let exponent = (2 * (hundreds + 1) - 1).checked_sub(i32::try_from(leading).ok()?)?;
+        Some(Self {
+            negative,
+            digits: digits.to_string(),
+            exponent,
+        })
+    }
+
+    /// Whether the number is below zero.
+    #[must_use]
+    pub fn is_negative(&self) -> bool {
+        self.negative
+    }
+
+    /// The significant decimal digits, without sign, point or the zeros
+    /// before the first and after the last: `29999910000486` for
+    /// 0.0029999910000486, `12` for 1200, `0` for zero.
+    #[must_use]
+    pub fn significant_digits(&self) -> &str {
+        &self.digits
+    }
+
+    /// The power of ten of the first significant digit: −3 for
+    /// 0.0029999910000486, 3 for 1200, 0 for zero.
+    #[must_use]
+    pub fn exponent(&self) -> i32 {
+        self.exponent
+    }
+
+    /// The number when it is an integer `i64` holds.
+    #[must_use]
+    pub fn to_i64(&self) -> Option<i64> {
+        let places = usize::try_from(self.exponent).ok()?;
+        if self.digits.len() > places + 1 {
+            return None;
+        }
+        let mut magnitude: i128 = 0;
+        for byte in self.digits.bytes() {
+            magnitude = magnitude
+                .checked_mul(10)?
+                .checked_add(i128::from(byte - b'0'))?;
+        }
+        for _ in self.digits.len()..=places {
+            magnitude = magnitude.checked_mul(10)?;
+        }
+        i64::try_from(if self.negative { -magnitude } else { magnitude }).ok()
+    }
+
+    /// The double nearest the number.
+    #[must_use]
+    pub fn to_f64(&self) -> f64 {
+        let sign = if self.negative { "-" } else { "" };
+        format!("{sign}0.{}e{}", self.digits, i64::from(self.exponent) + 1)
+            .parse()
+            .unwrap_or(f64::NAN)
+    }
+}
+
+impl From<i64> for OracleNumber {
+    fn from(value: i64) -> Self {
+        let magnitude = value.unsigned_abs().to_string();
+        let digits = magnitude.trim_end_matches('0');
+        if digits.is_empty() {
+            return Self::zero();
+        }
+        Self {
+            negative: value < 0,
+            digits: digits.to_string(),
+            exponent: i32::try_from(magnitude.len()).map_or(i32::MAX, |len| len - 1),
+        }
+    }
+}
+
+/// Positional notation with no exponent and no trailing zeros after the
+/// point: `0.0029999910000486`, `-0.5`, `1200`, `0`.
+impl fmt::Display for OracleNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.negative {
+            f.write_str("-")?;
+        }
+        let digits = self.digits.as_str();
+        match usize::try_from(self.exponent) {
+            Err(_) => {
+                let zeros = self.exponent.unsigned_abs() as usize - 1;
+                write!(f, "0.{}{digits}", "0".repeat(zeros))
+            }
+            Ok(whole) if whole < digits.len() - 1 => {
+                write!(f, "{}.{}", &digits[..=whole], &digits[whole + 1..])
+            }
+            Ok(whole) => write!(f, "{digits}{}", "0".repeat(whole + 1 - digits.len())),
+        }
+    }
+}
+
 /// One `T_PIPINGPOINT` row with the columns N5 publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipingPoint {
@@ -117,24 +284,27 @@ pub struct DrawingPorts {
 /// Tables from one Oracle `exp` dump, read once and shared by every drawing.
 ///
 /// [`Self::read`] loads the port, connectivity, composition, OPC, model
-/// item and plant item tables the publish stages follow, the first
-/// `CODELISTS` insert (pipeline names spell codelist 19) and `T_DRAWING`
-/// (the package index and the revision check). `APPLICATIONS` is pinned
-/// first and is not kept: a dump that fails the pin returns
-/// [`ExpError::FormatUnpinned`] and the other tables are not read.
+/// item and plant item tables the publish stages follow, `T_EQUIPMENT` and
+/// `T_VESSEL` (their SI values), the first `CODELISTS` insert (pipeline
+/// names spell codelist 19) and `T_DRAWING` (the package index and the
+/// revision check). `APPLICATIONS` is pinned first and is not kept: a dump
+/// that fails the pin returns [`ExpError::FormatUnpinned`] and the other
+/// tables are not read.
 ///
 /// Every other table is read cell by cell without judging the columns no
 /// stage follows: `T_PIPERUN` alone has 293 columns, and a run that is
 /// insulated or sloped states the thickness or the slope in SI units
 /// beside its text (`SP_INSULTHICKSI` 0.05 for `50mm`), a `NUMBER` that is
-/// not an integer. Such a `NUMBER`, a `DATE` that does not decode and a
-/// character cell that is not AL16UTF16 are kept unread. A projection
-/// refuses a column it follows when any cell of it was not read, whether it
-/// requires the column or only uses it when the dump has one, so an unread
-/// cell never passes for an empty one. A column the dump lacks is not an
-/// unread one: where a projection can do without it, it still does. The
-/// `&[u8]` functions still read only the tables that entry used before, so
-/// one drawing keeps today's call.
+/// not an integer. Such a `NUMBER` is read as an [`OracleNumber`], which a
+/// projection that reads integers out of the column refuses and one that
+/// reads SI values takes. A `NUMBER` that does not decode, a `DATE` that
+/// does not decode and a character cell that is not AL16UTF16 are kept
+/// unread. A projection refuses a column it follows when any cell of it was
+/// not read, whether it requires the column or only uses it when the dump
+/// has one, so an unread cell never passes for an empty one. A column the
+/// dump lacks is not an unread one: where a projection can do without it,
+/// it still does. The `&[u8]` functions still read only the tables that
+/// entry used before, so one drawing keeps today's call.
 pub struct ExpTables {
     piping_point: Table,
     signal_point: Table,
@@ -151,6 +321,8 @@ pub struct ExpTables {
     inlinecomp: Table,
     codelists: Table,
     drawing: Table,
+    equipment: Table,
+    vessel: Table,
 }
 
 impl ExpTables {
@@ -179,6 +351,8 @@ impl ExpTables {
             inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
             codelists: read_table_tolerant(dump, "CODELISTS")?,
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
+            equipment: read_optional_table(dump, "T_EQUIPMENT")?,
+            vessel: read_optional_table(dump, "T_VESSEL")?,
         })
     }
 
@@ -239,7 +413,8 @@ impl ExpTables {
     /// Returns [`ExpError::Table`] when a required `T_PIPERUN` column is
     /// missing, or a followed column of it or of `T_PLANTITEM` holds a cell
     /// that was not read. A dump with no `T_PLANTITEM`, or one without
-    /// `SP_ID` or `ITEMTAG`, gives every run `item_tag: None`.
+    /// `SP_ID` or `ITEMTAG`, gives every run `item_tag: None`; one without
+    /// `SP_INSULTHICKSI` or `SP_SLOPESI` gives every run `None` there.
     pub fn pipe_runs(&self) -> Result<Vec<PipeRunRow>, ExpError> {
         let id = column_index(&self.piperun, "SP_ID", Kind::Char)?;
         let class = column_index(&self.piperun, "PIPINGMATERIALSCLASS", Kind::Char)?;
@@ -248,6 +423,8 @@ impl ExpTables {
         column_index(&self.piperun, "NOMINALDIAMETER", Kind::Num)?;
         column_index(&self.piperun, "OPERFLUIDCODE", Kind::Num)?;
         column_index(&self.piperun, "FLUIDSYSTEM", Kind::Num)?;
+        let insulation_si = optional_column_index(&self.piperun, "SP_INSULTHICKSI", Kind::Decimal)?;
+        let slope_si = optional_column_index(&self.piperun, "SP_SLOPESI", Kind::Decimal)?;
         let item_tags = self.item_tags()?;
         let mut runs = Vec::with_capacity(self.piperun.rows.len());
         for (index, row) in self.piperun.rows.iter().enumerate() {
@@ -272,9 +449,77 @@ impl ExpTables {
                 tag_sequence: cell_text(row, sequence),
                 fluid_system: optional_int("T_PIPERUN", &self.piperun, row, "FLUIDSYSTEM", index)?,
                 insulation_spec: cell_text(row, insulation),
+                insulation_thickness_si: optional_cell_number(row, insulation_si),
+                slope_si: optional_cell_number(row, slope_si),
             });
         }
         Ok(runs)
+    }
+
+    /// `T_EQUIPMENT` rows with an `SP_ID`, in table order, each with the SI
+    /// values of its insulation and its height.
+    ///
+    /// Empty when the dump has no `T_EQUIPMENT` or the table has no
+    /// `SP_ID`; a row reads `None` for an SI column the table lacks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a followed column is declared
+    /// another type than the projection reads, or holds a cell that was not
+    /// read.
+    pub fn equipment_rows(&self) -> Result<Vec<EquipmentRow>, ExpError> {
+        let table = &self.equipment;
+        let id = optional_column_index(table, "SP_ID", Kind::Char)?;
+        let insulation = optional_column_index(table, "SP_INSULTHICKSI", Kind::Decimal)?;
+        let height = optional_column_index(table, "SP_HEIGHTSI", Kind::Decimal)?;
+        let Some(id) = id else {
+            return Ok(Vec::new());
+        };
+        Ok(table
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let id = text_of(row, id)?.to_string();
+                Some(EquipmentRow {
+                    id_key: norm_uid(&id),
+                    id,
+                    insulation_thickness_si: optional_cell_number(row, insulation),
+                    height_si: optional_cell_number(row, height),
+                })
+            })
+            .collect())
+    }
+
+    /// `T_VESSEL` rows with an `SP_ID`, in table order, each with the SI
+    /// value of its volume rating.
+    ///
+    /// Empty when the dump has no `T_VESSEL` or the table has no `SP_ID`;
+    /// a row reads `None` when the table lacks `SP_VOLUMERATINGSI`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a followed column is declared
+    /// another type than the projection reads, or holds a cell that was not
+    /// read.
+    pub fn vessel_rows(&self) -> Result<Vec<VesselRow>, ExpError> {
+        let table = &self.vessel;
+        let id = optional_column_index(table, "SP_ID", Kind::Char)?;
+        let volume = optional_column_index(table, "SP_VOLUMERATINGSI", Kind::Decimal)?;
+        let Some(id) = id else {
+            return Ok(Vec::new());
+        };
+        Ok(table
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let id = text_of(row, id)?.to_string();
+                Some(VesselRow {
+                    id_key: norm_uid(&id),
+                    id,
+                    volume_rating_si: optional_cell_number(row, volume),
+                })
+            })
+            .collect())
     }
 
     /// Piping components this drawing places that its `.pid` does not
@@ -465,6 +710,8 @@ impl ExpTables {
             inlinecomp: Table::blank("T_INLINECOMP"),
             codelists: Table::blank("CODELISTS"),
             drawing: Table::blank("T_DRAWING"),
+            equipment: Table::blank("T_EQUIPMENT"),
+            vessel: Table::blank("T_VESSEL"),
         }
     }
 
@@ -545,6 +792,47 @@ pub struct PipeRunRow {
     /// `T_PLANTITEM.ITEMTAG` of the plant item with this `SP_ID`. `None`
     /// when no such row is in the dump; a NULL tag reads as `Some("")`.
     pub item_tag: Option<String>,
+    /// `SP_INSULTHICKSI`: the `INSULTHICK` beside it in metres (0.05 for
+    /// `50mm`), which the data map publishes as `TotalInsulThick`. `None`
+    /// when the cell is NULL or the dump has no such column.
+    pub insulation_thickness_si: Option<OracleNumber>,
+    /// `SP_SLOPESI`: the `SLOPE` beside it as an angle in radians
+    /// (0.0029999910000486 for `0.3 %`), which the data map publishes as
+    /// `SlopedPipingAngle`. `None` when the cell is NULL or the dump has no
+    /// such column.
+    pub slope_si: Option<OracleNumber>,
+}
+
+/// One `T_EQUIPMENT` row with the SI values its unit-bearing attributes are
+/// written from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EquipmentRow {
+    /// `SP_ID` as stored.
+    pub id: String,
+    /// `SP_ID` folded like [`BackupDrawing::id_key`].
+    pub id_key: String,
+    /// `SP_INSULTHICKSI`: the `INSULTHICK` beside it in metres, which the
+    /// data map publishes as `TotalInsulThick`. `None` when the cell is NULL
+    /// or the dump has no such column.
+    pub insulation_thickness_si: Option<OracleNumber>,
+    /// `SP_HEIGHTSI`: the `HEIGHT` beside it in metres (3 for `3m`), which
+    /// the data map publishes as `HeightRelativeToGrade`. `None` when the
+    /// cell is NULL or the dump has no such column.
+    pub height_si: Option<OracleNumber>,
+}
+
+/// One `T_VESSEL` row with the SI value its volume is written from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VesselRow {
+    /// `SP_ID` as stored: the vessel's `T_EQUIPMENT` row has the same.
+    pub id: String,
+    /// `SP_ID` folded like [`BackupDrawing::id_key`].
+    pub id_key: String,
+    /// `SP_VOLUMERATINGSI`: the `VOLUMERATING` beside it in cubic metres
+    /// (27 for `27m^3`), which the data map publishes as
+    /// `ProcessVessel_VesselVolumetricCapacity`. `None` when the cell is
+    /// NULL or the dump has no such column.
+    pub volume_rating_si: Option<OracleNumber>,
 }
 
 /// One `T_DRAWING` row a backup package hangs a `.pid` on.
@@ -808,6 +1096,7 @@ fn cell_text(row: &[Field], index: usize) -> String {
     match row.get(index) {
         Some(Field::Text(text) | Field::Date(text)) => text.clone(),
         Some(Field::Int(value)) => value.to_string(),
+        Some(Field::Number(number)) => number.to_string(),
         Some(Field::Null | Field::Unscaled) | None => String::new(),
     }
 }
@@ -1038,7 +1327,14 @@ enum Kind {
     /// A character column that is not AL16UTF16 national text. The payload
     /// is skipped, and [`column_index`] refuses the column.
     Bytes,
+    /// Oracle `NUMBER` (type code 2); as the kind a projection reads, an
+    /// integer `i64` holds.
     Num,
+    /// What a projection reads out of a `NUMBER` column when it takes
+    /// every number exactly, fraction and all. No column is declared this:
+    /// [`optional_column_index`] matches it to a column declared
+    /// [`Kind::Num`].
+    Decimal,
     /// Oracle `DATE` (type code 12). The payload is skipped.
     Date,
 }
@@ -1049,7 +1345,7 @@ impl Kind {
         match self {
             Self::Char => "national text",
             Self::Bytes => "text in another character set",
-            Self::Num => "NUMBER",
+            Self::Num | Self::Decimal => "NUMBER",
             Self::Date => "DATE",
         }
     }
@@ -1063,16 +1359,23 @@ struct Column {
     /// ([`Field::Unscaled`]). [`optional_column_index`] refuses a column
     /// that has one.
     unread_row: Option<usize>,
+    /// The first row whose cell is a [`Field::Number`].
+    /// [`optional_column_index`] refuses the column to a projection that
+    /// reads integers out of it.
+    non_integer_row: Option<usize>,
 }
 
 enum Field {
     Null,
+    /// A `NUMBER` that is an integer `i64` holds.
     Int(i64),
+    /// Any other `NUMBER`.
+    Number(OracleNumber),
     Text(String),
     /// An Oracle `DATE` cell decoded to `YYYY/MM/DD HH:MM:SS`.
     Date(String),
-    /// A cell kept unread: a `NUMBER` that is not an integer `i64` holds, a
-    /// `DATE` that does not decode, or a skipped byte string.
+    /// A cell kept unread: a `NUMBER` that does not decode, a `DATE` that
+    /// does not decode, or a skipped byte string.
     Unscaled,
 }
 
@@ -1196,7 +1499,7 @@ fn table_error(name: &str, detail: String) -> ExpError {
 fn int_at(row: &[Field], columns: &[Column], name: &str) -> Option<i64> {
     match field_at(row, columns, name)? {
         Field::Int(value) => Some(*value),
-        Field::Null | Field::Text(_) | Field::Date(_) | Field::Unscaled => None,
+        Field::Null | Field::Number(_) | Field::Text(_) | Field::Date(_) | Field::Unscaled => None,
     }
 }
 
@@ -1205,6 +1508,7 @@ fn text_at(row: &[Field], columns: &[Column], name: &str) -> Option<String> {
         Field::Text(text) | Field::Date(text) => Some(text.clone()),
         Field::Null => Some(String::new()),
         Field::Int(value) => Some(value.to_string()),
+        Field::Number(number) => Some(number.to_string()),
         Field::Unscaled => None,
     }
 }
@@ -1321,6 +1625,7 @@ fn parse_header(
             kind,
             maxlen,
             unread_row: None,
+            non_integer_row: None,
         });
     }
     if dump.get(pos..pos + 4) != Some(&[0, 0, 0, 0]) {
@@ -1349,7 +1654,7 @@ fn read_field(dump: &[u8], pos: usize, column: &Column) -> Result<(Field, usize)
             }
             Field::Text(decode_utf16_be(raw))
         }
-        Kind::Num => Field::Int(
+        Kind::Num | Kind::Decimal => Field::Int(
             decode_i64(raw).ok_or_else(|| format!("NUMBER at {pos:#x} is not an integer"))?,
         ),
         Kind::Bytes | Kind::Date => {
@@ -1371,53 +1676,10 @@ fn decode_utf16_be(raw: &[u8]) -> String {
 /// Oracle internal `NUMBER` to `i64`.
 ///
 /// `80` is 0, `c1 02` is 1, `c2 1a 34` is 2551, `3e 64 66` is −1.
-/// A fraction or a value that does not fit returns `None`.
+/// A fraction, a value that does not fit and bytes that are no number
+/// return `None`.
 fn decode_i64(raw: &[u8]) -> Option<i64> {
-    if raw.is_empty() {
-        return None;
-    }
-    if raw == [0x80] {
-        return Some(0);
-    }
-    let negative = raw[0] < 0x80;
-    let body = if negative && raw.last() == Some(&0x66) && raw.len() < 21 {
-        &raw[..raw.len() - 1]
-    } else {
-        raw
-    };
-    if body.is_empty() {
-        return None;
-    }
-    let exponent = if negative {
-        62 - i32::from(body[0])
-    } else {
-        i32::from(body[0]) - 193
-    };
-    let mut total: i128 = 0;
-    for (index, byte) in body[1..].iter().enumerate() {
-        let digit = if negative {
-            101 - i32::from(*byte)
-        } else {
-            i32::from(*byte) - 1
-        };
-        if !(0..100).contains(&digit) {
-            return None;
-        }
-        let power = exponent - index as i32;
-        if power < 0 {
-            if digit != 0 {
-                return None;
-            }
-            continue;
-        }
-        let mut place: i128 = i128::from(digit);
-        for _ in 0..power {
-            place = place.checked_mul(100)?;
-        }
-        total = total.checked_add(place)?;
-    }
-    let signed = if negative { -total } else { total };
-    i64::try_from(signed).ok()
+    OracleNumber::from_oracle_bytes(raw)?.to_i64()
 }
 
 fn read_u16(dump: &[u8], pos: usize) -> Result<u16, String> {
@@ -1877,12 +2139,14 @@ fn column_index(table: &Table, name: &str, wanted: Kind) -> Result<usize, ExpErr
 /// the kind of cell the projection reads out of it, and every cell of it
 /// was read. Its header may declare text that is not AL16UTF16
 /// ([`Kind::Bytes`]) or another type than `wanted`, or a row may hold a
-/// `NUMBER` that is not an integer or a `DATE` that does not decode
-/// ([`Field::Unscaled`]). The cell accessors read such a cell as an empty
-/// one, or as a value of the wrong kind, so a projection that took the
-/// column anyway would publish a drawing with part of the dump silently
-/// missing. Every projection takes its columns through here or through
-/// [`column_index`].
+/// `NUMBER` or a `DATE` that does not decode ([`Field::Unscaled`]). The
+/// cell accessors read such a cell as an empty one, or as a value of the
+/// wrong kind, so a projection that took the column anyway would publish a
+/// drawing with part of the dump silently missing. A projection that reads
+/// integers ([`Kind::Num`]) also refuses a column with a `NUMBER` that is
+/// not one ([`Field::Number`]); one that reads exact numbers
+/// ([`Kind::Decimal`]) takes it. Every projection takes its columns
+/// through here or through [`column_index`].
 fn optional_column_index(
     table: &Table,
     name: &str,
@@ -1898,7 +2162,9 @@ fn optional_column_index(
             format!("column {name} is not AL16UTF16 text; its cells were not read"),
         ));
     }
-    if column.kind != wanted {
+    let declared_as_wanted =
+        column.kind == wanted || (column.kind == Kind::Num && wanted == Kind::Decimal);
+    if !declared_as_wanted {
         return Err(table_error(
             &table.name,
             format!(
@@ -1908,9 +2174,18 @@ fn optional_column_index(
             ),
         ));
     }
-    if let Some(row) = column.unread_row {
-        let detail = match column.kind {
+    let refused_row = match wanted {
+        Kind::Num => column
+            .unread_row
+            .into_iter()
+            .chain(column.non_integer_row)
+            .min(),
+        Kind::Char | Kind::Bytes | Kind::Decimal | Kind::Date => column.unread_row,
+    };
+    if let Some(row) = refused_row {
+        let detail = match wanted {
             Kind::Date => format!("row {row} {name} is a DATE that does not decode"),
+            Kind::Decimal => format!("row {row} {name} is a NUMBER that does not decode"),
             Kind::Char | Kind::Bytes | Kind::Num => {
                 format!("row {row} {name} is not an integer or NULL")
             }
@@ -1932,6 +2207,16 @@ fn optional_cell_text(row: &[Field], index: Option<usize>) -> String {
 fn optional_cell_int(row: &[Field], index: Option<usize>) -> Option<i64> {
     match index.and_then(|index| row.get(index)) {
         Some(Field::Int(value)) => Some(*value),
+        _ => None,
+    }
+}
+
+/// Exact number cell for an [`optional_column_index`] taken as
+/// [`Kind::Decimal`]. `None` when the column is absent or the cell is NULL.
+fn optional_cell_number(row: &[Field], index: Option<usize>) -> Option<OracleNumber> {
+    match index.and_then(|index| row.get(index)) {
+        Some(Field::Int(value)) => Some(OracleNumber::from(*value)),
+        Some(Field::Number(number)) => Some(number.clone()),
         _ => None,
     }
 }
@@ -2016,6 +2301,9 @@ fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
             if matches!(field, Field::Unscaled) && column.unread_row.is_none() {
                 column.unread_row = Some(rows.len());
             }
+            if matches!(field, Field::Number(_)) && column.non_integer_row.is_none() {
+                column.non_integer_row = Some(rows.len());
+            }
             row.push(field);
         }
         if dump.get(pos..pos + 2) != Some(&[0, 0]) {
@@ -2078,6 +2366,7 @@ fn parse_header_tolerant(
             kind,
             maxlen,
             unread_row: None,
+            non_integer_row: None,
         });
     }
     if dump.get(pos..pos + 4) != Some(&[0, 0, 0, 0]) {
@@ -2106,8 +2395,8 @@ fn read_field_tolerant(dump: &[u8], pos: usize, column: &Column) -> Result<(Fiel
             }
             Field::Text(decode_utf16_be(raw))
         }
-        Kind::Num => match decode_i64(raw) {
-            Some(value) => Field::Int(value),
+        Kind::Num | Kind::Decimal => match OracleNumber::from_oracle_bytes(raw) {
+            Some(number) => number.to_i64().map_or(Field::Number(number), Field::Int),
             None => Field::Unscaled,
         },
         Kind::Date => decode_oracle_date(raw).map_or(Field::Unscaled, Field::Date),
@@ -2185,6 +2474,320 @@ mod tests {
         assert_eq!(decode_i64(&[0xc2, 0x02]), Some(100));
         assert_eq!(decode_i64(&[0xc2, 0x10, 0x1f]), Some(1530));
         assert_eq!(decode_i64(&[0x3e, 0x62, 0x66]), Some(-3));
+    }
+
+    /// `raw` read as a `NUMBER`: its plain spelling, its significant digits
+    /// and the power of ten of the first of them.
+    fn number_parts(raw: &[u8]) -> Option<(String, String, i32)> {
+        OracleNumber::from_oracle_bytes(raw).map(|number| {
+            (
+                number.to_string(),
+                number.significant_digits().to_string(),
+                number.exponent(),
+            )
+        })
+    }
+
+    fn parts(plain: &str, digits: &str, exponent: i32) -> Option<(String, String, i32)> {
+        Some((plain.to_string(), digits.to_string(), exponent))
+    }
+
+    // The exponent byte counts powers of 100 from 0xc1 (100^0) for a
+    // positive number and down from 0x3e for a negative one; each mantissa
+    // byte is a base-100 digit plus one, or 101 less the digit when the
+    // number is negative, which then ends in 0x66 unless it has twenty
+    // digits. The samples are cells of the two dumps where they say so.
+    #[test]
+    fn a_number_with_a_fraction_reads_exactly() {
+        // Zero is the exponent byte alone.
+        assert_eq!(number_parts(&[0x80]), parts("0", "0", 0));
+        // DWG-0202GP06-01_p, `T_PIPERUN.SP_INSULTHICKSI`: 5 at 100^-1.
+        assert_eq!(number_parts(&[0xc0, 0x06]), parts("0.05", "5", -2));
+        // Its `SP_SLOPESI`: 29 99 99 10 00 04 86 from 100^-2.
+        assert_eq!(
+            number_parts(&SLOPE_OF_THREE_PER_MILLE),
+            parts("0.0029999910000486", "29999910000486", -3)
+        );
+        // 0.001 is the digit 10 at 100^-2.
+        assert_eq!(number_parts(&[0xbf, 0x0b]), parts("0.001", "1", -3));
+        assert_eq!(number_parts(&[0xc0, 0x1f]), parts("0.3", "3", -1));
+        // The 53-sheet dump, `T_CASEPROCESS.SP_TEMPERATURESI`: 2 83 . 15.
+        assert_eq!(
+            number_parts(&[0xc2, 0x03, 0x54, 0x10]),
+            parts("283.15", "28315", 2)
+        );
+        // Its `T_VESSEL.SP_DIAMETERINTERNALSI`: the digit 40 after the
+        // point is 0.40, written 0.4.
+        assert_eq!(number_parts(&[0xc1, 0x03, 0x29]), parts("2.4", "24", 0));
+        assert_eq!(number_parts(&[0xc1, 0x02, 0x33]), parts("1.5", "15", 0));
+        assert_eq!(number_parts(&[0xc1, 0x0b, 0x33]), parts("10.5", "105", 1));
+        // Trailing zeros of an integer are in the exponent, not the digits.
+        assert_eq!(number_parts(&[0xc2, 0x0d]), parts("1200", "12", 3));
+        assert_eq!(number_parts(&[0xc2, 0x0d, 0x01]), parts("1200", "12", 3));
+        assert_eq!(number_parts(&[0xc2, 0x02]), parts("100", "1", 2));
+        // Negative: -0.5 and -1 end in 0x66.
+        assert_eq!(number_parts(&[0x3f, 0x33, 0x66]), parts("-0.5", "5", -1));
+        assert_eq!(number_parts(&[0x3e, 0x64, 0x66]), parts("-1", "1", 0));
+        // DWG-0202GP06-01_p, `T_SYMBOL.ROTATIONANGLE` and
+        // `T_SMARTFRAME.SP_DELTAX`.
+        assert_eq!(
+            number_parts(&[0x3e, 0x64, 0x2c, 0x5e, 0x05, 0x45, 0x22, 0x07, 0x35, 0x66]),
+            parts("-1.57079632679448", "157079632679448", 0)
+        );
+        assert_eq!(
+            number_parts(&[0x40, 0x5c, 0x29, 0x17, 0x33, 0x4e, 0x17, 0x4e, 0x48, 0x66]),
+            parts("-0.000960785023782329", "960785023782329", -4)
+        );
+        // Twenty digits leave no room for the 0x66: -0.0101…01.
+        let mut twenty = vec![0x3f];
+        twenty.extend([0x64; 20]);
+        let number = OracleNumber::from_oracle_bytes(&twenty).expect("twenty digits");
+        assert_eq!(number.significant_digits(), format!("{}1", "10".repeat(19)));
+        assert_eq!(number.exponent(), -2);
+        assert!(number.is_negative());
+        // Past what `i64` holds: 1 23 45 … 01 23, and 10^124.
+        assert_eq!(
+            number_parts(&[
+                0xcc, 0x02, 0x18, 0x2e, 0x44, 0x5a, 0x02, 0x18, 0x2e, 0x44, 0x5a, 0x02, 0x18
+            ]),
+            parts("12345678901234567890123", "12345678901234567890123", 22)
+        );
+        let huge = OracleNumber::from_oracle_bytes(&[0xff, 0x02]).expect("10^124");
+        assert_eq!(huge.to_string(), format!("1{}", "0".repeat(124)));
+        assert_eq!(huge.to_i64(), None);
+        let tiny = OracleNumber::from_oracle_bytes(&[0x81, 0x02]).expect("10^-128");
+        assert_eq!(tiny.exponent(), -128);
+        assert_eq!(tiny.to_string(), format!("0.{}1", "0".repeat(127)));
+    }
+
+    #[test]
+    fn bytes_no_number_is_written_as_are_refused() {
+        for raw in [
+            &[][..],
+            // An exponent byte and no digit.
+            &[0xc1],
+            // Oracle's negative and positive infinity.
+            &[0x00],
+            &[0xff, 0x65],
+            // A digit byte below 1, above 100, or 0x66 inside a negative.
+            &[0xc1, 0x00],
+            &[0xc1, 0x66],
+            &[0x3e, 0x66, 0x66],
+            // Zero followed by digits.
+            &[0x80, 0x02],
+        ] {
+            assert_eq!(OracleNumber::from_oracle_bytes(raw), None, "{raw:02x?}");
+            assert_eq!(decode_i64(raw), None, "{raw:02x?}");
+        }
+    }
+
+    // Every integer a cell held before still reads as that integer, to the
+    // ends of `i64`; one past them is a number all the same.
+    #[test]
+    fn an_integer_reads_as_the_same_integer() {
+        let max = [
+            0xca, 0x0a, 0x17, 0x22, 0x49, 0x04, 0x45, 0x37, 0x4e, 0x3b, 0x08,
+        ];
+        assert_eq!(decode_i64(&max), Some(i64::MAX));
+        let min = [
+            0x35, 0x5c, 0x4f, 0x44, 0x1d, 0x62, 0x21, 0x2f, 0x18, 0x2b, 0x5d, 0x66,
+        ];
+        assert_eq!(decode_i64(&min), Some(i64::MIN));
+        let past = [
+            0xca, 0x0a, 0x17, 0x22, 0x49, 0x04, 0x45, 0x37, 0x4e, 0x3b, 0x09,
+        ];
+        assert_eq!(decode_i64(&past), None);
+        assert_eq!(
+            OracleNumber::from_oracle_bytes(&past).map(|number| number.to_string()),
+            Some("9223372036854775808".to_string())
+        );
+        for value in [0, 1, -1, 100, 1200, -1500, 2551, i64::MAX, i64::MIN] {
+            let number = OracleNumber::from(value);
+            assert_eq!(number.to_i64(), Some(value));
+            assert_eq!(number.to_string(), value.to_string());
+        }
+        assert_eq!(
+            OracleNumber::from_oracle_bytes(&min),
+            Some(OracleNumber::from(i64::MIN))
+        );
+        assert_eq!(
+            OracleNumber::from_oracle_bytes(&[0xc2, 0x0d]),
+            Some(OracleNumber::from(1200))
+        );
+        assert_eq!(
+            OracleNumber::from_oracle_bytes(&[0xc0, 0x06]).and_then(|n| n.to_i64()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_number_converts_to_the_nearest_double() {
+        let slope = OracleNumber::from_oracle_bytes(&SLOPE_OF_THREE_PER_MILLE).expect("slope");
+        assert_eq!(slope.to_f64(), 0.002_999_991_000_048_6);
+        assert_eq!(
+            OracleNumber::from_oracle_bytes(&[0xc0, 0x06]).map(|n| n.to_f64()),
+            Some(0.05)
+        );
+        assert_eq!(OracleNumber::from(-1500).to_f64(), -1500.0);
+        assert_eq!(OracleNumber::from(0).to_f64(), 0.0);
+        let huge = OracleNumber::from_oracle_bytes(&[0xff, 0x02]).expect("10^124");
+        assert_eq!(huge.to_f64(), 1e124);
+    }
+
+    // `SP_*SI` columns are declared `NUMBER` in both dumps (header type 2,
+    // 22 bytes). A run, an equipment and a vessel read theirs exactly, an
+    // integer among them as well.
+    #[test]
+    fn a_run_an_equipment_and_a_vessel_read_their_si_values() {
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &pipe_run_columns()
+                .into_iter()
+                .chain([num("SP_INSULTHICKSI"), num("SP_SLOPESI")])
+                .collect::<Vec<_>>(),
+            &[
+                row(&[
+                    Some(utf16("RUN1")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(vec![0xc0, 0x06]),
+                    Some(SLOPE_OF_THREE_PER_MILLE.to_vec()),
+                ]),
+                row(&[
+                    Some(utf16("RUN2")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(vec![0x80]),
+                    None,
+                ]),
+            ],
+        ));
+        dump.extend(table(
+            "T_EQUIPMENT",
+            &[ch("SP_ID"), num("SP_INSULTHICKSI"), num("SP_HEIGHTSI")],
+            &[row(&[Some(utf16("E1")), None, Some(vec![0xc1, 0x04])])],
+        ));
+        dump.extend(table(
+            "T_VESSEL",
+            &[ch("SP_ID"), num("SP_VOLUMERATINGSI")],
+            &[row(&[Some(utf16("E1")), Some(vec![0xc1, 0x1c])])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let runs = tables.pipe_runs().expect("runs");
+        let si = |number: &Option<OracleNumber>| number.as_ref().map(ToString::to_string);
+        assert_eq!(
+            runs.iter()
+                .map(|run| (si(&run.insulation_thickness_si), si(&run.slope_si)))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    Some("0.05".to_string()),
+                    Some("0.0029999910000486".to_string())
+                ),
+                (Some("0".to_string()), None),
+            ]
+        );
+        let equipment = tables.equipment_rows().expect("equipment");
+        assert_eq!(
+            equipment,
+            [EquipmentRow {
+                id: "E1".to_string(),
+                id_key: "E1".to_string(),
+                insulation_thickness_si: None,
+                height_si: Some(OracleNumber::from(3)),
+            }]
+        );
+        let vessels = tables.vessel_rows().expect("vessels");
+        assert_eq!(
+            vessels,
+            [VesselRow {
+                id: "E1".to_string(),
+                id_key: "E1".to_string(),
+                volume_rating_si: Some(OracleNumber::from(27)),
+            }]
+        );
+    }
+
+    // An SI column the dump declares as text or a date has no number in it
+    // to read, and one whose cell does not decode has a number nobody can
+    // read; each is refused by table, column and reason.
+    #[test]
+    fn an_si_column_declared_as_another_type_is_refused() {
+        let run_with = |slope: Col, cell: Vec<u8>| {
+            let mut dump = pinned();
+            dump.extend(table(
+                "T_PIPERUN",
+                &pipe_run_columns()
+                    .into_iter()
+                    .chain([slope])
+                    .collect::<Vec<_>>(),
+                &[row(&[
+                    Some(utf16("RUN1")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(cell),
+                ])],
+            ));
+            dump.extend(other_tables(&[]));
+            ExpTables::read(&dump)
+                .expect("the dump reads")
+                .pipe_runs()
+                .map(|runs| runs.len())
+                .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            run_with(ch("SP_SLOPESI"), utf16("0.3 %")),
+            Err("T_PIPERUN: column SP_SLOPESI is declared national text, not NUMBER".to_string())
+        );
+        assert_eq!(
+            run_with(date("SP_SLOPESI"), vec![120, 126, 4, 25, 20, 12, 1]),
+            Err("T_PIPERUN: column SP_SLOPESI is declared DATE, not NUMBER".to_string())
+        );
+        assert_eq!(
+            run_with(num("SP_SLOPESI"), vec![0xff, 0x65]),
+            Err("T_PIPERUN: row 0 SP_SLOPESI is a NUMBER that does not decode".to_string())
+        );
+        assert_eq!(run_with(num("SP_SLOPESI"), vec![0xc0, 0x1f]), Ok(1));
+
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_EQUIPMENT",
+            &[ch("SP_ID"), ch("SP_HEIGHTSI")],
+            &[row(&[Some(utf16("E1")), Some(utf16("3m"))])],
+        ));
+        dump.extend(table(
+            "T_VESSEL",
+            &[ch("SP_ID"), date("SP_VOLUMERATINGSI")],
+            &[row(&[
+                Some(utf16("E1")),
+                Some(vec![120, 126, 4, 25, 20, 12, 1]),
+            ])],
+        ));
+        dump.extend(table("T_PIPERUN", &pipe_run_columns(), &[]));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        assert_eq!(
+            tables.equipment_rows().unwrap_err().to_string(),
+            "T_EQUIPMENT: column SP_HEIGHTSI is declared national text, not NUMBER"
+        );
+        assert_eq!(
+            tables.vessel_rows().unwrap_err().to_string(),
+            "T_VESSEL: column SP_VOLUMERATINGSI is declared DATE, not NUMBER"
+        );
     }
 
     #[test]
@@ -2445,8 +3048,8 @@ mod tests {
 
     // DWG-0202GP06-01_p's first pipe run is insulated 50 mm, which its
     // `SP_INSULTHICKSI` states as 0.05; a plant also writes dates and
-    // database-charset text into the table's other columns. None of those
-    // is a column a stage follows, so the run reads.
+    // database-charset text into the table's other columns. No stage
+    // follows those two, so the run reads, its SI value with it.
     #[test]
     fn a_pipe_run_reads_past_the_columns_no_stage_follows() {
         let mut columns = pipe_run_columns();
@@ -2481,6 +3084,14 @@ mod tests {
         assert_eq!(runs[0].nominal_diameter, Some(100));
         assert_eq!(runs[0].materials_class, "B5");
         assert_eq!(runs[0].tag_sequence, "0101");
+        assert_eq!(
+            runs[0]
+                .insulation_thickness_si
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("0.05")
+        );
     }
 
     #[test]
@@ -2741,7 +3352,10 @@ mod tests {
             ),
             (
                 "T_PIPERUN",
-                pipe_run_columns(),
+                pipe_run_columns()
+                    .into_iter()
+                    .chain([num("SP_INSULTHICKSI"), num("SP_SLOPESI")])
+                    .collect(),
                 vec![row(&[
                     text("R"),
                     Some(vec![0xc2, 0x02]),
@@ -2750,7 +3364,23 @@ mod tests {
                     text("0101"),
                     Some(one()),
                     text("P40"),
+                    Some(vec![0xc0, 0x06]),
+                    Some(SLOPE_OF_THREE_PER_MILLE.to_vec()),
                 ])],
+            ),
+            (
+                "T_EQUIPMENT",
+                vec![ch("SP_ID"), num("SP_INSULTHICKSI"), num("SP_HEIGHTSI")],
+                vec![row(&[
+                    text("E"),
+                    Some(vec![0xc0, 0x06]),
+                    Some(vec![0xc1, 0x04]),
+                ])],
+            ),
+            (
+                "T_VESSEL",
+                vec![ch("SP_ID"), num("SP_VOLUMERATINGSI")],
+                vec![row(&[text("E"), Some(vec![0xc1, 0x1c])])],
             ),
             ("T_SIGNALRUN", vec![ch("SP_ID")], vec![row(&[text("S")])]),
             (
@@ -2925,9 +3555,23 @@ mod tests {
         tables.opc_points("D")?;
         tables.drawings()?;
         tables.dump_only_piping_components("D", &HashSet::new())?;
+        tables.equipment_rows()?;
+        tables.vessel_rows()?;
         read_plant_groups(dump)?;
         Ok(())
     }
+
+    /// The `SP_SLOPESI` both runs of DWG-0202GP06-01_p that slope carry:
+    /// 0.0029999910000486 rad, the arctangent of their `0.3 %`.
+    const SLOPE_OF_THREE_PER_MILLE: [u8; 8] = [0xbf, 0x1e, 0x64, 0x64, 0x0b, 0x01, 0x05, 0x57];
+
+    /// The followed columns whose cells are read as exact decimals.
+    const SI_COLUMNS: [&str; 4] = [
+        "SP_INSULTHICKSI",
+        "SP_SLOPESI",
+        "SP_HEIGHTSI",
+        "SP_VOLUMERATINGSI",
+    ];
 
     // Every projection reads something out of the fixture, so each of its
     // columns is one some projection follows.
@@ -2944,6 +3588,37 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].item_tag.as_deref(), Some("OD-50"));
         assert_eq!(runs[0].insulation_spec, "P40");
+        assert_eq!(
+            runs[0]
+                .insulation_thickness_si
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("0.05")
+        );
+        assert_eq!(
+            runs[0]
+                .slope_si
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("0.0029999910000486")
+        );
+        let equipment = tables.equipment_rows().expect("equipment");
+        assert_eq!(equipment.len(), 1);
+        assert_eq!(equipment[0].id, "E");
+        assert_eq!(equipment[0].height_si, Some(OracleNumber::from(3)));
+        assert_eq!(
+            equipment[0]
+                .insulation_thickness_si
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("0.05")
+        );
+        let vessels = tables.vessel_rows().expect("vessels");
+        assert_eq!(vessels.len(), 1);
+        assert_eq!(vessels[0].volume_rating_si, Some(OracleNumber::from(27)));
         assert_eq!(tables.codelist_short_text(19).expect("codes")[&1], "OD");
         let ends = tables.connectivity_ends("D").expect("ends");
         assert_eq!(
@@ -2969,8 +3644,9 @@ mod tests {
     }
 
     // Each followed column in turn is made one the reader keeps unread: a
-    // character column becomes database-charset text, a number column holds
-    // a fraction, a date column a cell that is not a date. Whichever
+    // character column becomes database-charset text, an integer column
+    // holds a fraction, an SI column a `NUMBER` that does not decode, a date
+    // column a cell that is not a date. Whichever
     // projection follows the column says which table and column it could
     // not read, and why. A projection that read the column as empty cells
     // instead would leave every projection accepting the dump.
@@ -2989,6 +3665,11 @@ mod tests {
                         damaged_columns[column_index] = ch_db(column.name);
                         damaged_rows[0][column_index] = Some(b"x".to_vec());
                         "is not AL16UTF16 text"
+                    }
+                    2 if SI_COLUMNS.contains(&column.name) => {
+                        // Oracle's positive infinity.
+                        damaged_rows[0][column_index] = Some(vec![0xff, 0x65]);
+                        "is a NUMBER that does not decode"
                     }
                     2 => {
                         // 0.3: one base-100 digit, 30, at exponent -1.
@@ -3016,7 +3697,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(columns_tried, 66);
+        assert_eq!(columns_tried, 73);
         assert!(
             not_refused.is_empty(),
             "{} of {columns_tried} followed columns were not refused by name and reason:\n{}",
@@ -3068,7 +3749,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(columns_tried, 34);
+        assert_eq!(columns_tried, 44);
         assert!(
             not_refused.is_empty(),
             "{} of {columns_tried} retyped NUMBER columns were not refused by name and type:\n{}",
@@ -3120,7 +3801,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(columns_tried, 49);
+        assert_eq!(columns_tried, 51);
         assert!(
             not_refused.is_empty(),
             "{} of {columns_tried} retyped text and date columns were not refused by name and type:\n{}",
@@ -3168,6 +3849,49 @@ mod tests {
             assert_eq!(components.len(), 1);
             assert!(components[0].0.attributes.is_empty());
         }
+
+        let dump = fixture_without("T_PIPERUN", Some(&["SP_INSULTHICKSI", "SP_SLOPESI"]));
+        every_projection(&dump).expect("a dump without SI values on its runs projects");
+        let runs = ExpTables::read(&dump)
+            .expect("reads")
+            .pipe_runs()
+            .expect("runs");
+        assert_eq!(
+            (&runs[0].insulation_thickness_si, &runs[0].slope_si),
+            (&None, &None)
+        );
+
+        for dump in [
+            fixture_without("T_EQUIPMENT", None),
+            fixture_without("T_EQUIPMENT", Some(&["SP_ID"])),
+            fixture_without("T_VESSEL", None),
+            fixture_without("T_VESSEL", Some(&["SP_ID"])),
+        ] {
+            every_projection(&dump).expect("a dump without equipment or vessel rows projects");
+        }
+        let tables = ExpTables::read(&fixture_without("T_EQUIPMENT", None)).expect("reads");
+        assert!(tables.equipment_rows().expect("equipment").is_empty());
+        let tables = ExpTables::read(&fixture_without("T_VESSEL", None)).expect("reads");
+        assert!(tables.vessel_rows().expect("vessels").is_empty());
+        let dump = fixture_without("T_EQUIPMENT", Some(&["SP_INSULTHICKSI", "SP_HEIGHTSI"]));
+        let equipment = ExpTables::read(&dump)
+            .expect("reads")
+            .equipment_rows()
+            .expect("rows");
+        assert_eq!(equipment.len(), 1);
+        assert_eq!(
+            (
+                &equipment[0].insulation_thickness_si,
+                &equipment[0].height_si
+            ),
+            (&None, &None)
+        );
+        let dump = fixture_without("T_VESSEL", Some(&["SP_VOLUMERATINGSI"]));
+        let vessels = ExpTables::read(&dump)
+            .expect("reads")
+            .vessel_rows()
+            .expect("rows");
+        assert_eq!(vessels[0].volume_rating_si, None);
 
         for column in DRAWING_DISPLAY_COLUMNS {
             every_projection(&fixture_without("T_DRAWING", Some(&[column])))
@@ -3725,6 +4449,10 @@ mod tests {
         std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
     }
 
+    /// The one vessel of that dump with a height and a volume rating
+    /// (`3m`, `27m^3`).
+    const DWG_HEIGHT_EQUIPMENT: &str = "F1081777313D41ABB14B7B18FA210D83";
+
     // A reader that takes `T_PIPERUN` whole or not at all stops on this
     // dump at `row 0 NUMBER at 0x7a4c07 is not an integer`, and with it the
     // package publishes no drawing. The cell is the first run's
@@ -3767,18 +4495,22 @@ mod tests {
         );
     }
 
-    // What the fifteen tables of that dump hold that the reader keeps
-    // unread, column by column with the first row and the number of cells.
-    // The two `NUMBER` columns are SI values: 0.05 m beside `50mm` on eight
-    // runs, and 0.0029999910000486 rad, the arctangent of the `0.3 %` beside
-    // it, on two. The three text columns are in the database character
-    // set. None is a column a stage follows, which is why every projection
-    // of the dump goes through.
+    // What the seventeen tables of that dump hold that the reader keeps
+    // unread, column by column with the first row and the number of cells:
+    // three text columns in the database character set, none of them one a
+    // stage follows, which is why every projection of the dump goes through.
+    // The two SI columns that used to be on this list, a fraction in a
+    // `NUMBER` the reader could not hold, now read and are pinned below as
+    // the only columns of the followed tables that hold a number no integer
+    // projection takes: 0.05 m beside `50mm` on eight runs, and
+    // 0.0029999910000486 rad, the arctangent of the `0.3 %` beside it, on
+    // two.
     #[test]
     fn the_committed_dwg_dump_keeps_unread_only_columns_no_stage_follows() {
         let dump = committed_dwg_dump();
         let tables = ExpTables::read(&dump).expect("the dump reads");
         let mut unread = Vec::new();
+        let mut not_integers = Vec::new();
         for table in [
             &tables.piping_point,
             &tables.signal_point,
@@ -3795,8 +4527,18 @@ mod tests {
             &tables.inlinecomp,
             &tables.codelists,
             &tables.drawing,
+            &tables.equipment,
+            &tables.vessel,
         ] {
             for (index, column) in table.columns.iter().enumerate() {
+                if let Some(first) = column.non_integer_row {
+                    let cells = table
+                        .rows
+                        .iter()
+                        .filter(|row| matches!(row[index], Field::Number(_)))
+                        .count();
+                    not_integers.push((table.name.as_str(), column.name.as_str(), first, cells));
+                }
                 let cells = table
                     .rows
                     .iter()
@@ -3808,7 +4550,7 @@ mod tests {
                 let kind = match column.kind {
                     Kind::Char => "national text",
                     Kind::Bytes => "database-charset text",
-                    Kind::Num => "NUMBER",
+                    Kind::Num | Kind::Decimal => "NUMBER",
                     Kind::Date => "DATE",
                 };
                 unread.push((
@@ -3830,8 +4572,6 @@ mod tests {
                     Some(2),
                     228
                 ),
-                ("T_PIPERUN", "SP_INSULTHICKSI", "NUMBER", Some(0), 8),
-                ("T_PIPERUN", "SP_SLOPESI", "NUMBER", Some(21), 2),
                 (
                     "T_OPC",
                     "MATINGOPCPATH",
@@ -3842,11 +4582,77 @@ mod tests {
                 ("T_NOTE", "BODY", "database-charset text", Some(0), 8),
             ]
         );
+        assert_eq!(
+            not_integers,
+            [
+                ("T_PIPERUN", "SP_INSULTHICKSI", 0, 8),
+                ("T_PIPERUN", "SP_SLOPESI", 21, 2),
+            ]
+        );
         // The two fractions as the dump writes them.
         assert_eq!(decode_i64(&[0xc0, 0x06]), None);
+        assert_eq!(decode_i64(&SLOPE_OF_THREE_PER_MILLE), None);
+    }
+
+    // The values the reference publishes for DWG-0202GP06-01 with a unit —
+    // `TotalInsulThick "50 mm"`, `SlopedPipingAngle "2.9999910000486E-03
+    // rad"`, `HeightRelativeToGrade "3 m"`,
+    // `ProcessVessel_VesselVolumetricCapacity "27 m^3"` — read out of the
+    // dump's SI columns: metres, radians and cubic metres.
+    #[test]
+    fn the_committed_dwg_dump_reads_its_si_values() {
+        let dump = committed_dwg_dump();
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let runs = tables.pipe_runs().expect("pipe runs");
+        let insulated = runs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, run)| {
+                run.insulation_thickness_si
+                    .as_ref()
+                    .map(|si| (index, si.to_string()))
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            decode_i64(&[0xbf, 0x1e, 0x64, 0x64, 0x0b, 0x01, 0x05, 0x57]),
-            None
+            insulated,
+            [0, 1, 19, 21, 22, 23, 27, 49].map(|index| (index, "0.05".to_string()))
+        );
+        let sloped = runs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, run)| run.slope_si.as_ref().map(|si| (index, si.clone())))
+            .collect::<Vec<_>>();
+        assert_eq!(sloped.len(), 2);
+        for (index, slope) in &sloped {
+            assert!([21, 28].contains(index), "{index}");
+            assert_eq!(slope.significant_digits(), "29999910000486");
+            assert_eq!(slope.exponent(), -3);
+            assert_eq!(slope.to_string(), "0.0029999910000486");
+            assert!(slope.to_i64().is_none());
+        }
+
+        let heights = tables
+            .equipment_rows()
+            .expect("equipment")
+            .into_iter()
+            .filter_map(|row| row.height_si.map(|height| (row.id, height.to_string())))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            heights,
+            [(DWG_HEIGHT_EQUIPMENT.to_string(), "3".to_string())]
+        );
+        let volumes = tables
+            .vessel_rows()
+            .expect("vessels")
+            .into_iter()
+            .filter_map(|row| {
+                row.volume_rating_si
+                    .map(|volume| (row.id, volume.to_string()))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            volumes,
+            [(DWG_HEIGHT_EQUIPMENT.to_string(), "27".to_string())]
         );
     }
 
