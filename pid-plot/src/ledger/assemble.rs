@@ -2934,8 +2934,19 @@ mod tests {
 
     #[test]
     fn a_template_read_from_an_archive_is_named_by_its_member() {
+        // Built with `Path::join`, never spelled with a hard-coded separator:
+        // on Linux only `/` splits, so a Windows-shaped literal would put the
+        // whole `D:\corpus\RefData~4~682.zip` into one segment and the archive
+        // would go unrecognised. Production gets its path from
+        // `ArchiveFile::label()` (`archive.join(name)`), so it already varies
+        // with the platform; the fixture has to do the same.
+        let path = std::path::Path::new("corpus")
+            .join("RefData~4~682.zip")
+            .join("CPE-SQ-A1.igr")
+            .to_string_lossy()
+            .into_owned();
         let fact = template_fact(&crate::model::BorderTemplate {
-            path: r"D:\corpus\RefData~4~682.zip/CPE-SQ-A1.igr".to_string(),
+            path,
             extent_mm: [841.0, 594.0],
             offset_mm: [0.0, 0.0],
             scale: 1.0,
