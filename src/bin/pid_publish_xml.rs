@@ -1,35 +1,31 @@
-//! CLI: generate `SmartPlant` Publish Data XML from a `SmartPlant` MDF
-//! file using the Rust `oxidized-mdf` reader.
+//! CLI: generate `SmartPlant` Publish Data XML (`_Data.xml` and its
+//! `_Meta.xml` companion) from one of four inputs:
 //!
-//! Stage-1 terminal binary. Given
+//! * a SQL Server `Export.mdf` (or a legacy `Export_v2.sqlite` mirror)
+//!   and the `T_Drawing.SP_ID` of one drawing — the database line, with
+//!   `--style a01|dwg` and `--list-drawings`;
+//! * a `.pid` alone, written with `--out-dir` beside a `_Coverage.json`;
+//! * a `.pid` plus the backup's Oracle `exp` dump (`--oracle-exp`,
+//!   optionally `--datamap`), which adds ports, connectivity,
+//!   compositions, off-page connectors and synthesized pipelines;
+//! * a backup-package directory (one containing `Manifest.txt`), which
+//!   publishes every drawing into `--out-dir` with an `_Index.json`.
 //!
-//! 1. a SQL Server MDF file extracted from `Export.dmp`,
-//! 2. a `SmartPlant` drawing UID (the `T_Drawing.SP_ID` value),
-//!
-//! this tool emits the drawing's `_Data.xml` and, optionally,
-//! `_Meta.xml` companion. The binary also exposes the publish
-//! fidelity helpers that are now part of the normal workflow:
-//! `--style a01|dwg`, `--diff-against <reference.xml>`, and
-//! `--list-drawings`.
-//!
-//! Historical `Export_v2.sqlite` mirrors remain accepted as a
-//! legacy compatibility adapter, but MDF is now the only public
-//! publish-fidelity baseline.
-//!
-//! The unresolved work is no longer "can the CLI render business
-//! objects?" but rather DWG-mirror-gated fidelity closure:
-//! loader canonical-field enrichment and the remaining branch-point
-//! writer arms.
+//! `--diff-against` scores the generated document against a reference
+//! `SmartPlant` export (or, for a backup directory, a directory of them).
 //!
 //! Usage:
 //!
 //! ```text
-//! pid_publish_xml <mdf> --drawing UID --out <file> [--plant NAME]
-//! pid_publish_xml <mdf> --drawing UID --stdout [--plant NAME]
+//! pid_publish_xml <mdf> --drawing UID --out <file> [--meta-out FILE] [--plant NAME]
+//! pid_publish_xml <file.pid> --out-dir DIR [--oracle-exp DUMP [--datamap FILE]]
+//! pid_publish_xml <backup dir> --out-dir DIR [--diff-against DIR]
 //! ```
 //!
-//! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
-//! usage error.
+//! Exit codes: 0 = written (and, with `--diff-against`, clean);
+//! 1 = an I/O or format error, a `--diff-against` finding, or a package
+//! drawing that failed; 2 = a usage error, including an `--oracle-exp`
+//! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
 
 use pid_parse::publish::diff::diff_meta_xml;
 use pid_parse::publish::pid_writer::{
@@ -155,15 +151,15 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20                   plant database's attribute classes, and the\n\
          \x20                   tag-named duplicate elements. With --oracle-exp\n\
          \x20                   the clean line says oracle-exp mode.\n\
-         \x20                   With a .pid input, a _Meta.xml this run writes
-         \x20                   (--out-dir or --meta-out) is scored too: the
-         \x20                   <Name>_Meta.xml beside the reference
-         \x20                   <Name>_Data.xml is compared on the 13
-         \x20                   <Container> attributes, the top-level block
-         \x20                   order, the three Rel DefUIDs and their role
-         \x20                   wiring, and the sibling _Data.xml DocUID.
-         \x20                   DocVersionDate, FilePath and the six derived
-         \x20                   UUID v5 ids are registered accepted
+         \x20                   With a .pid input, a _Meta.xml this run writes\n\
+         \x20                   (--out-dir or --meta-out) is scored too: the\n\
+         \x20                   <Name>_Meta.xml beside the reference\n\
+         \x20                   <Name>_Data.xml is compared on the 13\n\
+         \x20                   <Container> attributes, the top-level block\n\
+         \x20                   order, the three Rel DefUIDs and their role\n\
+         \x20                   wiring, and the sibling _Data.xml DocUID.\n\
+         \x20                   DocVersionDate, FilePath and the six derived\n\
+         \x20                   UUID v5 ids are registered accepted\n\
          \x20                   differences. Drift exits 1.\n\
          --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
          \x20                   an Oracle exp dump and emit them for parents this\n\
@@ -473,9 +469,11 @@ fn main() {
 /// Returned `i32` is the process exit code:
 /// - `0` — success and (when `--diff-against` is set) the diff
 ///   surfaced no actionable findings.
-/// - `1` — diff-only failure: the generated XML differs semantically
-///   from the reference (used as a CI gate). Real I/O / `SQLite`
-///   errors short-circuit through `Err(String)` instead.
+/// - `1` — the generated XML differs from the reference (used as a CI
+///   gate), or a package drawing failed. Real I/O / `SQLite` errors
+///   short-circuit through `Err(String)` instead.
+/// - `2` — the input cannot be published as asked: a package with an
+///   unusable `Export.dmp`, or an `--oracle-exp` dump of another revision.
 fn run(options: CliOptions) -> Result<i32, String> {
     if options.input_path.is_dir() {
         return run_package(&options);
@@ -887,7 +885,7 @@ fn report_pid_diff(
         println!("oracle-exp run excused {class} ×{count} the dump should supply");
     }
     let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
-    if diff.is_clean() && !meta_dirty && excused_dump_classes.is_empty() {
+    if diff.is_clean_with_dump(oracle_exp) && !meta_dirty {
         eprintln!(
             "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
             ref_path.display(),
@@ -945,11 +943,20 @@ fn report_pid_diff(
 }
 
 /// G5 — the `<Name>_Meta.xml` that belongs beside a `<Name>_Data.xml`
-/// reference. `None` when the reference is not named that way.
+/// reference. `None` when the reference is not named that way. The name is
+/// the file's stored one, so an 8.3 alias of the reference still finds it.
 fn meta_reference_sibling(reference: &Path) -> Option<PathBuf> {
-    let name = reference.file_name()?.to_str()?;
-    let stem = name.strip_suffix("_Data.xml")?;
-    Some(reference.with_file_name(format!("{stem}_Meta.xml")))
+    let stored = std::fs::canonicalize(reference).ok();
+    let name = stored
+        .as_deref()
+        .unwrap_or(reference)
+        .file_name()?
+        .to_str()?;
+    let cut = name.len().checked_sub("_Data.xml".len())?;
+    let (stem, suffix) = (name.get(..cut)?, name.get(cut..)?);
+    suffix
+        .eq_ignore_ascii_case("_Data.xml")
+        .then(|| reference.with_file_name(format!("{stem}_Meta.xml")))
 }
 
 /// G5 — score the generated `_Meta.xml` against the `<Name>_Meta.xml` beside

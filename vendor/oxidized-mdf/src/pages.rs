@@ -9,6 +9,9 @@
 //   - Added manual i24 sign-extension for datetime2
 //   - Extended column type coverage to 27 SQL Server types
 //   - Clippy pass: div_ceil, Option::map, trimmed range parens, array literal
+// Modified: 2026-11-07 by happyrust
+//   - Page::records() returns live data rows only: ghost records (deleted,
+//     not yet cleaned up), forwarding stubs, index and blob records skipped
 
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -47,6 +50,15 @@ enum RecordType {
     GhostIndex,
     GhostData,
     GhostVersion,
+}
+
+impl RecordType {
+    /// A row of the table: a primary record, or the forwarded record a heap
+    /// row moved to. A ghost is a row deleted but not yet cleaned up, and a
+    /// forwarding stub only points at the forwarded record.
+    fn is_live_data(&self) -> bool {
+        matches!(self, RecordType::Primary | RecordType::Forwarded)
+    }
 }
 
 fn take_bytes<'a>(
@@ -851,7 +863,15 @@ impl Page {
             }
 
             match Record::try_from(&self.bytes[range.clone()]) {
-                Ok(record) => records.push(record),
+                Ok(record) if record.r#type.is_live_data() => records.push(record),
+                Ok(record) => {
+                    log::debug!(
+                        "Skipping {:?} record at slot {}..{}",
+                        record.r#type,
+                        range.start,
+                        range.end
+                    );
+                }
                 Err(err) => {
                     log::error!(
                         "Skipping malformed record slot {}..{}: {}",
@@ -1008,6 +1028,29 @@ mod tests {
             page.records().is_empty(),
             "out-of-bounds slot should be skipped"
         );
+    }
+
+    #[test]
+    fn page_records_keep_live_rows_and_skip_ghosts() {
+        let mut bytes = [0u8; 8192];
+        bytes[22..24].copy_from_slice(&2u16.to_le_bytes());
+        // A primary record, then a ghost data record (type 6 in bits 1-3):
+        // header, fixed-length size 8, one i32, column count 1.
+        bytes[96..106].copy_from_slice(&[0x00, 0x00, 0x08, 0x00, 1, 0, 0, 0, 1, 0]);
+        bytes[106..116].copy_from_slice(&[0x0C, 0x00, 0x08, 0x00, 2, 0, 0, 0, 1, 0]);
+        bytes[8190..8192].copy_from_slice(&96u16.to_le_bytes());
+        bytes[8188..8190].copy_from_slice(&106u16.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        let records = page.records();
+        assert_eq!(records.len(), 1, "the ghost record is not a row");
+        let (value, _) = records
+            .into_iter()
+            .next()
+            .expect("one record")
+            .parse_i32()
+            .expect("fixed i32");
+        assert_eq!(value, 1);
     }
 
     #[test]

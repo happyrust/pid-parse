@@ -724,6 +724,22 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = opc_points_for_drawing(input, "D");
     }
 
+    // Oracle `exp` dump readers: every public entry that takes the dump.
+    #[cfg(feature = "backup-exp")]
+    {
+        use pid_parse::publish::oracle_exp::{
+            composition_relations, connectivity_ends_for_drawing, opc_points_for_drawing,
+            read_backup_drawings, read_plant_groups, read_port_tables, ExpTables,
+        };
+        let _ = ExpTables::read(input);
+        let _ = read_backup_drawings(input);
+        let _ = read_plant_groups(input);
+        let _ = read_port_tables(input);
+        let _ = composition_relations(input);
+        let _ = connectivity_ends_for_drawing(input, "D");
+        let _ = opc_points_for_drawing(input, "D");
+    }
+
     // Phase 25-A: normalized f64 pair scan + spatial-distribution
     // analysis. `collect_normalized_f64_pairs` is the byte-level entry;
     // chain into `coordinate_pair_spatial_analysis` with degenerate

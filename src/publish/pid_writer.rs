@@ -36,12 +36,7 @@ use super::pid_load::{
 };
 #[cfg(test)]
 use super::xml_writer::derive_meta_uid;
-use super::xml_writer::{defuid_prefix, escape_attr, write_meta_xml};
-
-const SOFTWARE_VERSION: &str = "10.00.31.0023";
-const SCHEMA_VERSION: &str = "04.02.17.01";
-const TOOL_ID: &str = "SMARTPLANTPID";
-const TOOL_SIGNATURE: &str = "AAAD";
+use super::xml_writer::{defuid_prefix, escape_attr, write_data_container_open, write_meta_xml};
 
 /// Render the `_Data.xml` document of a `.pid`-only drawing.
 pub fn write_pid_data_xml(drawing: &PidPublishDrawing, plant_name: &str) -> String {
@@ -73,13 +68,7 @@ fn write_document(
     plant_name: &str,
 ) -> std::fmt::Result {
     writeln!(buf, r#"<?xml version ="1.0" encoding="UTF-8"?>"#)?;
-    writeln!(
-        buf,
-        r#"<Container CompSchema="PIDComponent" Scope="Data" SoftwareVersion="{SOFTWARE_VERSION}" IsValidated="False" SchemaVersion="{SCHEMA_VERSION}" LoginUser="" LoginPWD="" Plant="{}" Project="" DocUID="{}" DocName="{}" Version="" ToolID="{TOOL_ID}" ToolSignature="{TOOL_SIGNATURE}" SDECIMAL=".">"#,
-        escape_attr(plant_name),
-        escape_attr(&drawing.drawing_uid),
-        escape_attr(&drawing.drawing_name),
-    )?;
+    write_data_container_open(buf, plant_name, &drawing.drawing_uid, &drawing.drawing_name)?;
     writeln!(buf, "   <PIDDrawing>")?;
     writeln!(
         buf,
@@ -535,6 +524,17 @@ const LEFT_OUT_BY_DESIGN: [&str; 5] = [
 /// per-class tally, the items left out, and what the export never carries.
 /// `source` is the `.pid` the report describes.
 pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> String {
+    pid_coverage_json(drawing, source, &drawing.drawing_name)
+}
+
+/// [`write_pid_coverage_json`] for files written under `file_stem`, which a
+/// backup package derives from the drawing name when that name holds
+/// characters a file name cannot.
+pub(crate) fn pid_coverage_json(
+    drawing: &PidPublishDrawing,
+    source: &Path,
+    file_stem: &str,
+) -> String {
     let published = published_items(drawing);
     let stats = drawing.stats;
     let mut classes: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
@@ -630,8 +630,8 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
         "source": source.display().to_string(),
         "drawing": { "uid": drawing.drawing_uid, "name": drawing.drawing_name },
         "files": {
-            "data": format!("{}_Data.xml", drawing.drawing_name),
-            "meta": format!("{}_Meta.xml", drawing.drawing_name),
+            "data": format!("{file_stem}_Data.xml"),
+            "meta": format!("{file_stem}_Meta.xml"),
         },
         "classified_items": {
             "items_named_by_the_file": drawing.items.len(),
@@ -783,22 +783,26 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
 /// A `.pid`-only export goes through [`write_pid_coverage_json`] instead:
 /// a `.pid` file states neither a template nor an archive path, so that
 /// report omits both rather than inventing them.
+///
+/// `file_stem` is the stem the three files were written under; it differs
+/// from the drawing name when the row states no name or one that cannot be
+/// a file name.
 pub fn write_database_coverage_json(
     drawing: &PublishDrawing,
     source: &Path,
     counts: (usize, usize, usize),
+    file_stem: &str,
 ) -> String {
     let (objects, values, relationships) = counts;
-    let name = drawing.drawing_name.as_str();
     let report = json!({
         "source": source.display().to_string(),
-        "drawing": { "uid": drawing.drawing_uid, "name": name },
+        "drawing": { "uid": drawing.drawing_uid, "name": drawing.drawing_name },
         "template": drawing.template,
         "path": drawing.path,
         "files": {
-            "data": format!("{name}_Data.xml"),
-            "meta": format!("{name}_Meta.xml"),
-            "coverage": format!("{name}_Coverage.json"),
+            "data": format!("{file_stem}_Data.xml"),
+            "meta": format!("{file_stem}_Meta.xml"),
+            "coverage": format!("{file_stem}_Coverage.json"),
         },
         "document_counts": {
             "objects": objects,
@@ -979,6 +983,7 @@ mod tests {
             &drawing,
             Path::new("PlantData~2~711.zip:01/01/A01.pid"),
             (12, 29, 15),
+            "A01",
         );
         let report: serde_json::Value = serde_json::from_str(&text).expect("report json");
         assert_eq!(report["drawing"]["uid"], "UID-A01");
@@ -997,10 +1002,16 @@ mod tests {
             &bare,
             Path::new("Export.dmp"),
             (0, 0, 0),
+            "UID-B",
         ))
         .expect("report json");
         assert!(report["template"].is_null());
         assert!(report["path"].is_null());
+        assert_eq!(report["drawing"]["name"], "B");
+        assert_eq!(
+            report["files"]["data"], "UID-B_Data.xml",
+            "the files are the ones written, under the stem the package chose"
+        );
     }
 
     #[test]

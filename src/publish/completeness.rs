@@ -591,7 +591,7 @@ fn close_block(document: &mut Document, block: Option<OpenBlock>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::publish::catalog::EXCLUDED_ATTRIBUTE_CLASSES;
+    use crate::publish::catalog::{EXCLUDED_ATTRIBUTE_CLASSES, LABELLED_ATTRIBUTES};
     use crate::publish::diff_pid_export;
 
     /// A `_Data.xml` with the given container attributes and blocks.
@@ -864,9 +864,10 @@ mod tests {
         assert_eq!(measured.interfaces.stated, measured.interfaces.reference);
     }
 
-    /// What the gate excuses, the measure still counts: a reference object
-    /// carrying every attribute of the exclusion list, published with none of
-    /// them, passes the gate with nothing missing and states none of them.
+    /// What the gate excuses, the measure still counts: of a reference object
+    /// carrying every attribute of the exclusion list and published with none
+    /// of them, the gate reports the seven a label fills and excuses the
+    /// rest, and the measure reads none of the 41 stated.
     #[test]
     fn an_excused_attribute_is_still_in_the_denominator() {
         let mut elements: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
@@ -907,10 +908,12 @@ mod tests {
         let reference = document("", &reference_block);
         let generated = document("", &generated_block);
 
+        // The gate excuses every pair but the ones a label fills: a run that
+        // states one of those on no object lost it, and that is a finding.
+        let labelled = LABELLED_ATTRIBUTES.len();
         let gate = diff_pid_export(&generated, &reference).expect("well-formed");
-        assert!(gate.is_clean(), "{gate}");
-        assert_eq!(gate.values_not_in_generated, 0);
-        assert_eq!(gate.values_excused_by_design, excused);
+        assert_eq!(gate.values_not_in_generated, labelled, "{gate}");
+        assert_eq!(gate.values_excused_by_design, excused - labelled);
 
         let measured = measure(&generated, &reference).expect("well-formed");
         assert_eq!(

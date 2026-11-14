@@ -24,7 +24,9 @@ fn mdf_adapter_loads_a01_publish_core_tables() {
     assert_eq!(table_count(&conn, "T_Representation"), 6);
     assert_eq!(table_count(&conn, "T_Relationship"), 3);
     assert_eq!(table_count(&conn, "T_ModelItem"), 4);
-    assert_eq!(table_count(&conn, "T_PlantItem"), 4);
+    // 3, not 4: the fourth row on T_PlantItem's pages is a ghost record —
+    // a deleted plant item whose T_ModelItem row is already gone.
+    assert_eq!(table_count(&conn, "T_PlantItem"), 3);
     assert_eq!(table_count(&conn, "T_Connector"), 1);
     assert_eq!(table_count(&conn, "T_PipeRun"), 1);
     let date_created: String = conn
@@ -107,4 +109,29 @@ fn strict_rows_load_a01_codelists_table() {
         .expect("strict rows should load codelists");
 
     assert!(!rows.is_empty(), "codelists should contain rows");
+}
+
+/// #27: an attribute reaches its codelist through `attribute_datatype`
+/// (`C90`), not through the `attribute_codelisted` flag (`T`). This MDF's
+/// catalog is the plant-structure one: 15 codelisted attributes over 13
+/// lists, and no equipment-type list.
+#[test]
+fn a01_codelist_resolves_an_attribute_through_its_datatype() {
+    if !Path::new(A01_MDF_PATH).exists() {
+        eprintln!("skipping: MDF fixture {A01_MDF_PATH} not found");
+        return;
+    }
+    let conn = open_mdf_as_sqlite(Path::new(A01_MDF_PATH)).expect("open MDF through Rust loader");
+    let index = pid_parse::publish::load_codelist_index(&conn).expect("codelist index");
+    assert_eq!(index.attribute_mapping_count(), 15);
+    assert_eq!(index.entry_count(), 129);
+    assert_eq!(
+        index.lookup_by_attribute("PlantGroupType", "65"),
+        Some("Unit")
+    );
+    assert_eq!(
+        index.lookup_by_attribute("DataAccessType", "2"),
+        Some("UNC")
+    );
+    assert_eq!(index.lookup_by_attribute("EquipmentType", "241"), None);
 }

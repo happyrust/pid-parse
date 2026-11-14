@@ -63,6 +63,9 @@ enum Kind {
     RelNotInReference,
     MissingObject,
     MissingRel,
+    InterfaceNotInReference,
+    Container,
+    Duplicate,
 }
 
 impl Kind {
@@ -75,16 +78,26 @@ impl Kind {
             Kind::RelNotInReference => "rel_not_in_reference",
             Kind::MissingObject => "missing_object",
             Kind::MissingRel => "missing_rel",
+            Kind::InterfaceNotInReference => "interface_not_in_reference",
+            Kind::Container => "container",
+            Kind::Duplicate => "duplicate",
         }
     }
 
     /// The kind of a printed difference line, or `None` for accounting lines
-    /// (`meta ...`, `reference-only:`, `excused ...`) and the pairing note.
+    /// (`meta ...`, `reference-only:`, `excused ...`, `structure: ...`) and
+    /// the pairing note.
     fn of(line: &str) -> Option<Self> {
         if line.starts_with("class ") {
             Some(Kind::Class)
         } else if line.starts_with("extra ") {
             Some(Kind::Extra)
+        } else if line.starts_with("interface ") {
+            Some(Kind::InterfaceNotInReference)
+        } else if line.starts_with("container ") {
+            Some(Kind::Container)
+        } else if line.starts_with("duplicate ") {
+            Some(Kind::Duplicate)
         } else if line.starts_with("missing rel (") {
             Some(Kind::MissingRel)
         } else if line.starts_with("missing ") {
@@ -406,8 +419,8 @@ fn the_a01_run_prints_exactly_the_registered_differences() {
         .map(|count| count as usize)
         .sum();
     assert_eq!(
-        listed, 27,
-        "A01 lists 18 emitted + 9 reference-only differences"
+        listed, 28,
+        "A01 lists 19 emitted + 9 reference-only differences"
     );
 }
 
@@ -529,7 +542,8 @@ fn a_changed_generated_document_is_unregistered_and_still_exits_one() {
 
     // Renaming the input changes the generated document and nothing else: the
     // drawing name is derived from the file name, so the reference stays as
-    // shipped and the run gains one difference it did not have before.
+    // shipped and the run gains the two differences that name reaches — the
+    // drawing's IObject.Name and the container's DocName.
     let scratch = Scratch::new("d3-renamed-input");
     let renamed = scratch.path().join("A01-mutated.pid");
     std::fs::copy(a01_pid(), &renamed).expect("copy A01.pid under a mutated stem");
@@ -550,8 +564,11 @@ fn a_changed_generated_document_is_unregistered_and_still_exits_one() {
     let classification = Classification::of(figure, &run);
     assert_eq!(
         classification.unregistered,
-        BTreeSet::from([format!("value_different\t{needle}")]),
-        "the renamed input contributes exactly one unregistered difference"
+        BTreeSet::from([
+            format!("value_different\t{needle}"),
+            "container\tcontainer DocName: \"A01-mutated\" reference \"A01\"".to_string(),
+        ]),
+        "the renamed input contributes exactly its two unregistered differences"
     );
     assert!(
         classification.disappeared.is_empty(),
@@ -571,8 +588,8 @@ fn the_ijingchang_run_never_leaves_the_registered_item() {
 
     let baseline = baseline();
     let figure = &baseline["figures"]["I井场"];
-    let dump = PathBuf::from(PACKAGE_DEFAULT).join("Export.dmp");
-    let datamap = PathBuf::from(PACKAGE_DEFAULT).join("RefData~4~804.zip");
+    let dump = package_dir().join("Export.dmp");
+    let datamap = package_dir().join("RefData~4~804.zip");
 
     for mode in ["pid-alone", "oracle-exp"] {
         let mut args: Vec<OsString> = vec![pid.clone().into_os_string()];
@@ -625,8 +642,8 @@ fn the_ijingchang_run_never_leaves_the_registered_item() {
                 );
                 assert_eq!(
                     classification.registered.len(),
-                    1,
-                    "I井场 {mode} must print exactly the one registered item: {:#?}",
+                    2,
+                    "I井场 {mode} must print exactly the two registered items: {:#?}",
                     classification.registered
                 );
                 classification.assert_complete(&format!("I井场 {mode}"));
@@ -673,16 +690,20 @@ fn the_ijingchang_alias_stem_reproduces_the_registered_item() {
 
     let classification = Classification::of(figure, &run);
     classification.assert_complete("I井场 alias stem");
-    assert_eq!(classification.registered.len(), 1);
-    let only = classification
-        .registered
-        .iter()
-        .next()
-        .expect("one registered item");
-    assert!(
-        only.contains("IObject.Name: \"IB031~1\""),
-        "unexpected registered item: {only}"
-    );
+    assert_eq!(classification.registered.len(), 2);
+    for needle in [
+        "IObject.Name: \"IB031~1\"",
+        "container DocName: \"IB031~1\"",
+    ] {
+        assert!(
+            classification
+                .registered
+                .iter()
+                .any(|item| item.contains(needle)),
+            "no registered item carries {needle}: {:#?}",
+            classification.registered
+        );
+    }
 }
 
 #[test]

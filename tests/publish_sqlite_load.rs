@@ -231,16 +231,9 @@ fn real_sqlite_codelist_loader_does_not_error_even_when_catalog_empty() {
         idx.entry_count(),
         idx.attribute_mapping_count()
     );
-    // The index is expected to be empty for this fixture, but the
-    // assertion is written defensively so any future catalog
-    // export still passes: the key correctness property is "no
-    // error", not "zero rows".
-    assert!(
-        idx.entry_count() == 0 || idx.entry_count() > 0,
-        "entry_count is always a valid count"
-    );
-    assert!(
-        idx.attribute_mapping_count() == 0 || idx.attribute_mapping_count() > 0,
-        "attribute_mapping_count is always a valid count"
-    );
+    // The legacy mirror carries neither `codelists` nor `attributes`, so the
+    // index is empty; the codelist join is gated on the MDF in
+    // `publish_mdf_load.rs`.
+    assert_eq!(idx.entry_count(), 0);
+    assert_eq!(idx.attribute_mapping_count(), 0);
 }

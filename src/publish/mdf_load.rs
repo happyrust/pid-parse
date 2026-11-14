@@ -127,16 +127,49 @@ pub fn mdf_bytes_from_mtf_dump(dump: &[u8]) -> Result<Vec<u8>, PublishError> {
 /// whatever [`open_mdf_as_sqlite`] reports while staging.
 pub fn open_mtf_dump_as_sqlite(dump: &[u8]) -> Result<Connection, PublishError> {
     let mdf = mdf_bytes_from_mtf_dump(dump)?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    let temp =
-        std::env::temp_dir().join(format!("pid-parse-mtf-{}-{nanos}.mdf", std::process::id()));
-    std::fs::write(&temp, &mdf)
-        .map_err(|error| PublishError::Io(format!("write {}: {error}", temp.display())))?;
-    let result = open_mdf_as_sqlite(&temp);
-    let _ = std::fs::remove_file(&temp);
-    result
+    let staged = StagedMdf::write(&mdf)?;
+    open_mdf_as_sqlite(&staged.path)
+}
+
+/// A temp `.mdf` that is removed when it goes out of scope — after staging,
+/// after a failed or partial write, and on unwind — so a plant-sized image
+/// is never left in the temp directory.
+struct StagedMdf {
+    path: std::path::PathBuf,
+}
+
+impl StagedMdf {
+    fn write(mdf: &[u8]) -> Result<Self, PublishError> {
+        use std::io::Write as _;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "pid-parse-mtf-{}-{nanos}-{}.mdf",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| PublishError::Io(format!("create {}: {error}", path.display())))?;
+        let staged = Self { path };
+        file.write_all(mdf).map_err(|error| {
+            PublishError::Io(format!("write {}: {error}", staged.path.display()))
+        })?;
+        Ok(staged)
+    }
+}
+
+impl Drop for StagedMdf {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            log::warn!("could not remove {}: {error}", self.path.display());
+        }
+    }
 }
 
 fn stage_table(

@@ -22,8 +22,9 @@
 //! * UTF-8 output, indented for human inspection (two-space
 //!   indent, trailing newline). `SmartPlant` accepts compact and
 //!   indented forms alike.
-//! * Strings go through XML entity escaping so names / paths with
-//!   `&`, `<`, quotes, CR/LF round-trip cleanly.
+//! * Strings go through [`escape_attr`]: names / paths with `&`, `<`,
+//!   quotes, CR / LF / TAB round-trip, and a character XML 1.0 cannot
+//!   carry becomes `U+FFFD` instead of making the document ill-formed.
 //! * Unknown optional fields render as empty attribute values
 //!   (`Description=""`) — matches how SPPID itself emits
 //!   blank-but-present attributes.
@@ -1946,10 +1947,11 @@ pub(super) fn write_generic_object(
     obj: &PublishObject,
     item_type_name: &str,
 ) -> Result<(), PublishError> {
+    // XML forbids `--` inside a comment.
     writeln!(
         buf,
         r#"   <!-- Unsupported item type `{}`: emitting generic placeholder -->"#,
-        escape_attr(item_type_name),
+        escape_attr(item_type_name).replace("--", "-_"),
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   <PIDItem>").map_err(fmt_err)?;
@@ -2024,6 +2026,17 @@ fn write_container_open(
     drawing: &PublishDrawing,
     plant_name: &str,
 ) -> Result<(), PublishError> {
+    write_data_container_open(buf, plant_name, &drawing.drawing_uid, &drawing.drawing_name)
+        .map_err(fmt_err)
+}
+
+/// The `_Data.xml` `<Container>` opening line both publish lines write.
+pub(crate) fn write_data_container_open(
+    buf: &mut String,
+    plant_name: &str,
+    drawing_uid: &str,
+    drawing_name: &str,
+) -> std::fmt::Result {
     writeln!(
         buf,
         concat!(
@@ -2037,13 +2050,12 @@ fn write_container_open(
         CONTAINER_SOFTWARE_VERSION,
         CONTAINER_SCHEMA_VERSION,
         escape_attr(plant_name),
-        escape_attr(&drawing.drawing_uid),
-        escape_attr(&drawing.drawing_name),
+        escape_attr(drawing_uid),
+        escape_attr(drawing_name),
         CONTAINER_TOOL_ID,
         CONTAINER_TOOL_SIGNATURE,
         CONTAINER_SDECIMAL,
     )
-    .map_err(fmt_err)
 }
 
 /// `_Meta.xml` flavor of the container header. Identical wire shape
@@ -2303,39 +2315,59 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         type_by_uid.insert(rep.uid.as_str(), "Representation");
     }
 
-    // --- Derived: ModelItem → Representation (DwgRepresentationComposition)
-    // Naturally filtered to publishable reps (the rel's source IS
-    // `model_item_uid`, so a pure annotation row with no model
-    // item never produces one). Keep the inline check anyway so a
-    // future loader change that accidentally injects `Some("")`
-    // does not silently produce a malformed rel.
     let ordered_reps = ordered_publishable_representations(drawing);
-    for rep in &ordered_reps {
-        let Some(model_item_uid) = rep.model_item_uid.as_deref() else {
-            continue;
-        };
-        write_rel(
-            buf,
-            &format!("DRC-{}-{}", model_item_uid, rep.uid),
-            model_item_uid,
-            &rep.uid,
-            "DwgRepresentationComposition",
-        )?;
-    }
+    let dwg = matches!(drawing.style, PublishStyle::Dwg);
+    if dwg {
+        // DWG-0202GP06-01's own export: the drawing composes each
+        // representation, a representation draws its item, and every Rel
+        // UID is `{prefix}-{UID1}-{UID2}` (133 of 133 rels).
+        for rep in &ordered_reps {
+            write_rel_between(
+                buf,
+                "DwgRepresentationComposition",
+                &drawing.drawing_uid,
+                &rep.uid,
+            )?;
+        }
+        for rep in &ordered_reps {
+            if let Some(model_item_uid) = rep.model_item_uid.as_deref() {
+                write_rel_between(buf, "DrawingItems", &rep.uid, model_item_uid)?;
+            }
+        }
+    } else {
+        // --- Derived: ModelItem → Representation (DwgRepresentationComposition)
+        // Naturally filtered to publishable reps (the rel's source IS
+        // `model_item_uid`, so a pure annotation row with no model
+        // item never produces one). Keep the inline check anyway so a
+        // future loader change that accidentally injects `Some("")`
+        // does not silently produce a malformed rel.
+        for rep in &ordered_reps {
+            let Some(model_item_uid) = rep.model_item_uid.as_deref() else {
+                continue;
+            };
+            write_rel(
+                buf,
+                &format!("DRC-{}-{}", model_item_uid, rep.uid),
+                model_item_uid,
+                &rep.uid,
+                "DwgRepresentationComposition",
+            )?;
+        }
 
-    // --- Derived: Drawing → Representation (DrawingItems)
-    // A14: only emit `DrawingItems` for representations that survive
-    // the A14 publishability filter. Otherwise we would generate a
-    // rel pointing at a `<PIDRepresentation>` we never wrote — a
-    // dangling reference SmartPlant validators reject.
-    for rep in &ordered_reps {
-        write_rel(
-            buf,
-            &format!("DRI-{}-{}", drawing.drawing_uid, rep.uid),
-            &drawing.drawing_uid,
-            &rep.uid,
-            "DrawingItems",
-        )?;
+        // --- Derived: Drawing → Representation (DrawingItems)
+        // A14: only emit `DrawingItems` for representations that survive
+        // the A14 publishability filter. Otherwise we would generate a
+        // rel pointing at a `<PIDRepresentation>` we never wrote — a
+        // dangling reference SmartPlant validators reject.
+        for rep in &ordered_reps {
+            write_rel(
+                buf,
+                &format!("DRI-{}-{}", drawing.drawing_uid, rep.uid),
+                &drawing.drawing_uid,
+                &rep.uid,
+                "DrawingItems",
+            )?;
+        }
     }
 
     // --- A34: Derived rels for every PipeRun-driven
@@ -2394,13 +2426,17 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         if vessel_uid.is_empty() {
             continue;
         }
-        write_rel(
-            buf,
-            &format!("EQC-{vessel_uid}-{}", obj.uid),
-            &obj.uid,
-            vessel_uid,
-            "EquipmentComponentComposition",
-        )?;
+        if dwg {
+            write_rel_between(buf, "EquipmentComponentComposition", &obj.uid, vessel_uid)?;
+        } else {
+            write_rel(
+                buf,
+                &format!("EQC-{vessel_uid}-{}", obj.uid),
+                &obj.uid,
+                vessel_uid,
+                "EquipmentComponentComposition",
+            )?;
+        }
     }
 
     for obj in &drawing.objects {
@@ -2516,6 +2552,18 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
 /// delivery-contract and raw-residual tests therefore keep this slot
 /// under explicit normalization until the publish-time rule is
 /// reconstructed from TEST02.
+/// [`write_rel`] under the `{prefix}-{UID1}-{UID2}` UID every rel of the
+/// DWG-0202GP06-01 export carries (and the `.pid` line writes).
+fn write_rel_between(
+    buf: &mut String,
+    def_uid: &str,
+    uid1: &str,
+    uid2: &str,
+) -> Result<(), PublishError> {
+    let rel_uid = format!("{}-{uid1}-{uid2}", defuid_prefix(def_uid));
+    write_rel(buf, &rel_uid, uid1, uid2, def_uid)
+}
+
 fn write_rel(
     buf: &mut String,
     rel_uid: &str,
@@ -2596,9 +2644,14 @@ pub(crate) fn defuid_prefix(def_uid: &str) -> &'static str {
 }
 
 /// XML attribute-value escape. `SmartPlant` uses double-quote
-/// delimiters so we only need to escape the five canonical
-/// entities plus CR/LF (which SPPID stores verbatim as
-/// `&#13;&#10;` inside attribute values).
+/// delimiters, the five canonical entities, and character references
+/// for CR / LF (SPPID stores them as `&#13;&#10;`); TAB is written the
+/// same way so a reader's attribute-value normalization keeps it.
+///
+/// A character XML 1.0 cannot carry even as a reference — a C0 control
+/// other than TAB / LF / CR, `U+FFFE`, `U+FFFF` — becomes `U+FFFD`: one
+/// such byte in a label would otherwise make the whole document
+/// unreadable to a conforming parser.
 pub(crate) fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -2610,6 +2663,15 @@ pub(crate) fn escape_attr(s: &str) -> String {
             '\'' => out.push_str("&apos;"),
             '\r' => out.push_str("&#13;"),
             '\n' => out.push_str("&#10;"),
+            '\t' => out.push_str("&#9;"),
+            '\u{0}'..='\u{8}'
+            | '\u{B}'
+            | '\u{C}'
+            | '\u{E}'..='\u{1F}'
+            | '\u{FFFE}'
+            | '\u{FFFF}' => {
+                out.push('\u{FFFD}');
+            }
             _ => out.push(c),
         }
     }
@@ -2727,6 +2789,42 @@ mod tests {
         assert!(out.contains(
             r#"<IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DrawingItems"/>"#
         ));
+    }
+
+    #[test]
+    fn dwg_style_wires_the_drawing_rels_the_way_the_dwg_export_does() {
+        let mut drawing = example_drawing();
+        drawing.style = PublishStyle::Dwg;
+        let out = write_data_xml(&drawing, "TEST02").expect("write");
+        // DwgRepresentationComposition — Drawing → Rep.
+        assert!(out.contains(
+            r#"<IObject UID="DRC-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#
+        ));
+        assert!(out.contains(
+            r#"<IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DwgRepresentationComposition"/>"#
+        ));
+        // DrawingItems — Rep → its model item.
+        assert!(out.contains(
+            r#"<IObject UID="DRI-CA8A0A9DD1784E3BB6913445CE3F6375-C57494A1B154442C9DF0F4BA713E88EC"/>"#
+        ));
+        assert!(out.contains(
+            r#"<IRel UID1="CA8A0A9DD1784E3BB6913445CE3F6375" UID2="C57494A1B154442C9DF0F4BA713E88EC" DefUID="DrawingItems"/>"#
+        ));
+        assert!(
+            !out.contains(r#"<IRel UID1="C57494A1B154442C9DF0F4BA713E88EC" UID2="CA8A0A9DD1784E3BB6913445CE3F6375""#),
+            "the A01 item → rep orientation is not written in DWG style"
+        );
+        // Rewired, not added or dropped: the two styles write as many of each.
+        let a01 = write_data_xml(&example_drawing(), "TEST02").expect("write");
+        assert_eq!(
+            a01.matches(r#"DefUID="DwgRepresentationComposition""#)
+                .count()
+                + a01.matches(r#"DefUID="DrawingItems""#).count(),
+            out.matches(r#"DefUID="DwgRepresentationComposition""#)
+                .count()
+                + out.matches(r#"DefUID="DrawingItems""#).count(),
+            "the same rels, rewired"
+        );
     }
 
     #[test]
@@ -2876,6 +2974,16 @@ mod tests {
         assert_eq!(escape_attr("<x>"), "&lt;x&gt;");
         assert_eq!(escape_attr("it's \"ok\""), "it&apos;s &quot;ok&quot;");
         assert_eq!(escape_attr("line1\r\nline2"), "line1&#13;&#10;line2");
+        assert_eq!(escape_attr("a\tb"), "a&#9;b");
+    }
+
+    #[test]
+    fn escape_attr_replaces_what_xml_cannot_carry() {
+        assert_eq!(
+            escape_attr("V\u{0}\u{1}\u{B}\u{C}\u{1F}\u{FFFE}\u{FFFF}-1"),
+            "V\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}-1"
+        );
+        assert_eq!(escape_attr("井场 \u{7F} é"), "井场 \u{7F} é");
     }
 
     #[test]

@@ -22,7 +22,7 @@
 //! dependency surface zero-cost (no quick-xml needed) and makes the
 //! comparison robust to the formatting drift between exporters.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use quick_xml::errors::IllFormedError;
@@ -1281,11 +1281,11 @@ pub fn fluid_system_reference_empty_allowance(doc_uid: &str) -> usize {
 /// How a `.pid`-mode export compares with a `SmartPlant` `_Data.xml`.
 ///
 /// An emitted object must exist under the same UID and class, every value
-/// it carries must equal the reference's, and every emitted `<Rel>` must
-/// exist with the same UID, ends and `DefUID`. Anything the reference has
-/// and this mode does not emit — whole classes included — is not a finding:
-/// the file does not state those objects, so they are not `MISSING` and
-/// they do not fail [`PidExportDiff::is_clean`].
+/// and interface element it carries must be the reference's, every emitted
+/// `<Rel>` must exist with the same UID, ends and `DefUID`, the
+/// `<Container>` attributes must read the same, and no block UID may be
+/// written twice. Content only the reference has is a finding unless the
+/// explicit exclusion list covers it with a printed reason.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PidExportDiff {
     /// Objects the export emitted.
@@ -1345,10 +1345,20 @@ pub struct PidExportDiff {
     /// run carries the dump that should have supplied them, so the excuse is
     /// not one the mode allows. Sorted by class.
     pub dump_supplied_excused: Vec<(String, usize)>,
+    /// Block UIDs the generated document states more than once — an object
+    /// or a `<Rel>` written twice, or a `<Rel>` reusing an object's UID.
+    pub duplicate_uids_in_generated: usize,
+    /// Interface elements an emitted object carries that the reference
+    /// object does not.
+    pub interfaces_not_in_reference: usize,
+    /// Generated `<Container>` attributes the reference states otherwise or
+    /// not at all.
+    pub container_attributes_different: usize,
 }
 
 impl PidExportDiff {
-    /// No emitted object, value or rel disagrees with the reference, no
+    /// No emitted object, value, interface, rel or `<Container>` attribute
+    /// disagrees with the reference, no block UID is written twice, no
     /// reference-only object, value or rel lacks a finding or an excuse, and
     /// the excused `FluidSystem` count is within its registered allowance.
     pub fn is_clean(&self) -> bool {
@@ -1360,8 +1370,20 @@ impl PidExportDiff {
             + self.objects_not_in_generated
             + self.values_not_in_generated
             + self.rels_not_in_generated
+            + self.duplicate_uids_in_generated
+            + self.interfaces_not_in_reference
+            + self.container_attributes_different
             == 0
             && !self.fluid_system_allowance_exceeded()
+    }
+
+    /// [`Self::is_clean`] for a run that carried the exp dump or the plant
+    /// database: a class the dump supplies, excused because the run
+    /// published none of it ([`Self::dump_supplied_excused`]), is then a
+    /// loss as well. Every gate — one drawing or a whole package — decides
+    /// with this.
+    pub fn is_clean_with_dump(&self, dump_in_run: bool) -> bool {
+        self.is_clean() && (!dump_in_run || self.dump_supplied_excused.is_empty())
     }
 
     /// The excused `FluidSystem` count is over its registered allowance.
@@ -1409,6 +1431,20 @@ impl fmt::Display for PidExportDiff {
                 self.fluid_system_reference_empty,
                 self.fluid_system_allowance,
                 self.fluid_system_allowance,
+            )?;
+        }
+        if self.duplicate_uids_in_generated
+            + self.interfaces_not_in_reference
+            + self.container_attributes_different
+            > 0
+        {
+            writeln!(
+                f,
+                "structure: duplicate uids {}, interfaces not in reference {}, container \
+                 attributes different {}",
+                self.duplicate_uids_in_generated,
+                self.interfaces_not_in_reference,
+                self.container_attributes_different,
             )?;
         }
         for finding in &self.findings {
@@ -1489,6 +1525,9 @@ impl std::error::Error for MalformedPublishDocument {}
 
 /// Objects, non-empty attribute values, and `<Rel>` elements in one `.pid` export.
 ///
+/// Every block is counted, so a block written twice counts twice; the values
+/// are those of the last block under each UID.
+///
 /// # Errors
 ///
 /// Returns [`MalformedPublishDocument`] when `xml` is not well-formed XML.
@@ -1499,7 +1538,7 @@ pub fn pid_publish_counts(xml: &str) -> Result<(usize, usize, usize), MalformedP
         .values()
         .map(|(_, values)| values.len())
         .sum();
-    Ok((document.objects.len(), values, document.rels.len()))
+    Ok((document.object_blocks, values, document.rel_blocks))
 }
 
 /// Read `xml` with the reader [`diff_pid_export`] uses and report where it is
@@ -1540,9 +1579,18 @@ pub fn diff_pid_export(
             .map_or(0, |uid| fluid_system_reference_empty_allowance(&uid)),
         ..PidExportDiff::default()
     };
+    compare_container(&mut diff, &generated.container, &reference.container);
+    for uid in &generated.duplicate_uids {
+        diff.duplicate_uids_in_generated += 1;
+        diff.findings.push(format!("duplicate {uid} in generated"));
+    }
     let reference_pipelines = pipelines_by_name(&reference);
     let generated_pipeline_names = pipeline_names(&generated);
     let reference_pipeline_names = pipeline_names(&reference);
+    let reference_pipeline_uids: HashMap<&str, &str> = reference_pipeline_names
+        .iter()
+        .map(|(uid, name)| (name.as_str(), uid.as_str()))
+        .collect();
     let reference_connectors = piping_connector_keys(&reference, &reference_pipeline_names);
     let mut uids: Vec<&String> = generated.objects.keys().collect();
     uids.sort();
@@ -1558,7 +1606,15 @@ pub fn diff_pid_export(
                 continue;
             };
             diff.pipelines_paired_by_name += 1;
-            if class != reference_class.as_str() {
+            if class == reference_class.as_str() {
+                let reference_uid = reference_pipeline_uids.get(name.as_str()).copied();
+                compare_interfaces(
+                    &mut diff,
+                    (class, uid),
+                    generated.interfaces.get(uid),
+                    reference_uid.and_then(|reference_uid| reference.interfaces.get(reference_uid)),
+                );
+            } else {
                 diff.objects_of_another_class += 1;
                 diff.findings
                     .push(format!("class {class} {uid}: reference {reference_class}"));
@@ -1571,7 +1627,14 @@ pub fn diff_pid_export(
             diff.findings.push(format!("extra {class} {uid}"));
             continue;
         };
-        if class != reference_class {
+        if class == reference_class {
+            compare_interfaces(
+                &mut diff,
+                (class, uid),
+                generated.interfaces.get(uid),
+                reference.interfaces.get(uid),
+            );
+        } else {
             diff.objects_of_another_class += 1;
             diff.findings
                 .push(format!("class {class} {uid}: reference {reference_class}"));
@@ -1660,6 +1723,48 @@ fn piping_connector_key(
     Some((rel.2.clone(), name.clone()))
 }
 
+/// Each `<Container>` attribute the generated document states must read the
+/// same in the reference's.
+fn compare_container(
+    diff: &mut PidExportDiff,
+    generated: &InterfacePairs,
+    reference: &InterfacePairs,
+) {
+    for (name, value) in generated {
+        let found = reference
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, found)| found);
+        if found == Some(value) {
+            continue;
+        }
+        diff.container_attributes_different += 1;
+        diff.findings.push(match found {
+            Some(found) => format!("container {name}: {value:?} reference {found:?}"),
+            None => format!("container {name}: {value:?} not in reference"),
+        });
+    }
+}
+
+/// Each interface element an emitted object carries must be one the
+/// reference object carries; the reference may carry more.
+fn compare_interfaces(
+    diff: &mut PidExportDiff,
+    (class, uid): (&str, &str),
+    generated: Option<&BTreeSet<String>>,
+    reference: Option<&BTreeSet<String>>,
+) {
+    for interface in generated.into_iter().flatten() {
+        if reference.is_some_and(|reference| reference.contains(interface)) {
+            continue;
+        }
+        diff.interfaces_not_in_reference += 1;
+        diff.findings.push(format!(
+            "interface {class} {uid} {interface} not in reference"
+        ));
+    }
+}
+
 fn compare_values(
     diff: &mut PidExportDiff,
     class: &str,
@@ -1695,6 +1800,18 @@ fn compare_values(
 struct PublishBlocks {
     objects: HashMap<String, (String, BTreeMap<String, String>)>,
     rels: HashSet<(String, String, String, String)>,
+    /// The interface elements each object carries, `IObject` aside, by UID.
+    interfaces: HashMap<String, BTreeSet<String>>,
+    /// The root `<Container>` attributes, in document order.
+    container: InterfacePairs,
+    /// Block UIDs (objects and rels alike) a later block states again, in
+    /// document order. The maps above keep one block per UID.
+    duplicate_uids: Vec<String>,
+    /// Every top-level block read, duplicates included.
+    object_blocks: usize,
+    /// Every `<Rel>` block read, duplicates included.
+    rel_blocks: usize,
+    seen_uids: HashSet<String>,
 }
 
 type InterfacePairs = Vec<(String, String)>;
@@ -1714,7 +1831,9 @@ fn read_publish_document(
             Ok(Event::Start(start)) => {
                 let tag = start.name().as_ref().to_string();
                 let pairs = checked_attributes(&start, side, reader.buffer_position())?;
-                if open_tags.len() == 1 {
+                if open_tags.is_empty() {
+                    document.container.clone_from(&pairs);
+                } else if open_tags.len() == 1 {
                     block = Some((tag.clone(), Vec::new()));
                 } else if open_tags.len() == 2 {
                     push_interface(tag.clone(), pairs, &mut block);
@@ -1810,13 +1929,24 @@ fn finish_publish_block(
     let Some(uid) = values.remove("IObject.UID") else {
         return;
     };
+    if !document.seen_uids.insert(uid.clone()) {
+        document.duplicate_uids.push(uid.clone());
+    }
     if tag == "Rel" {
+        document.rel_blocks += 1;
         let get = |key: &str| values.get(key).cloned().unwrap_or_default();
         document
             .rels
             .insert((uid, get("IRel.UID1"), get("IRel.UID2"), get("IRel.DefUID")));
     } else {
+        document.object_blocks += 1;
         values.retain(|_, value| !value.is_empty());
+        let carried = interfaces
+            .into_iter()
+            .map(|(interface, _)| interface)
+            .filter(|interface| interface != "IObject")
+            .collect();
+        document.interfaces.insert(uid.clone(), carried);
         document.objects.insert(uid, (tag, values));
     }
 }

@@ -34,7 +34,7 @@ use super::oracle_exp::{
 use super::pid_load::{
     read_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats, PublishChainFault,
 };
-use super::pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
+use super::pid_writer::{pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
 use crate::backup::{scan_backup_folder, BackupFolderScan, ExportDumpFormat, PlantDataFile};
 
 /// Why a backup directory was not published.
@@ -562,35 +562,41 @@ fn publish_one(
         }
     };
 
-    if let Some(loaded) = loaded {
-        if uid_from != "T_DRAWING.PATH" {
-            if let Err(error) = attach_exp(&mut drawing, loaded) {
-                let detail = error.to_string();
-                tally
-                    .problems
-                    .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-                *tally.failed += 1;
-                tally
-                    .drawings
-                    .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-                return;
-            }
-            if let Err(error) = super::pipeline::attach_pipelines(
+    // Only a sheet the dump lists is this dump's revision: another revision
+    // could share model item UIDs with it and pick up ports, compositions or
+    // pipelines that are not its own, so it is published from the `.pid` alone.
+    let dump_in_run = loaded.is_some() && uid_from == "T_DRAWING.SP_ID";
+    let mut notes = Vec::new();
+    if loaded.is_some() && uid_from == "DrawingNo" {
+        let note = format!(
+            "DocUID {} has no T_DRAWING row: the dump is another revision of this sheet, \
+             so it was published from the .pid alone",
+            drawing.drawing_uid
+        );
+        tally
+            .problems
+            .push(format!("{} {zip_entry}: {note}", plant.file_name));
+        notes.push(note);
+    }
+    if let Some(loaded) = loaded.filter(|_| dump_in_run) {
+        let attached = attach_exp(&mut drawing, loaded).and_then(|()| {
+            super::pipeline::attach_pipelines(
                 &mut drawing,
                 &loaded.tables,
                 plant_name,
                 loaded.datamap.as_ref(),
-            ) {
-                let detail = error.to_string();
-                tally
-                    .problems
-                    .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-                *tally.failed += 1;
-                tally
-                    .drawings
-                    .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-                return;
-            }
+            )
+        });
+        if let Err(error) = attached {
+            let detail = error.to_string();
+            tally
+                .problems
+                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
+            *tally.failed += 1;
+            tally
+                .drawings
+                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
+            return;
         }
     }
 
@@ -606,9 +612,10 @@ fn publish_one(
             drawing.drawing_uid.clone()
         };
     }
-    let data_path = out_dir.join(format!("{}_Data.xml", drawing.drawing_name));
-    if !tally.written_names.insert(drawing.drawing_name.clone()) {
-        let detail = format!("output name {} is already used", drawing.drawing_name);
+    let file_stem = output_stem(&drawing.drawing_name);
+    let data_path = out_dir.join(format!("{file_stem}_Data.xml"));
+    if !tally.written_names.insert(file_stem.to_lowercase()) {
+        let detail = format!("output name {file_stem} is already used");
         tally
             .problems
             .push(format!("{} {zip_entry}: {detail}", plant.file_name));
@@ -634,7 +641,7 @@ fn publish_one(
         }
     };
     let source = PathBuf::from(format!("{}:{zip_entry}", plant.file_name));
-    let report = write_pid_coverage_json(&drawing, &source);
+    let report = pid_coverage_json(&drawing, &source, &file_stem);
     let (object_count, value_count, rel_count) = match pid_publish_counts(&xml) {
         Ok(counts) => counts,
         Err(error) => {
@@ -649,7 +656,7 @@ fn publish_one(
             return;
         }
     };
-    if let Err(error) = write_three(&data_path, &xml, &meta, &report, &drawing.drawing_name) {
+    if let Err(error) = write_three(&data_path, &xml, &meta, &report, &file_stem) {
         tally
             .problems
             .push(format!("{} {zip_entry}: {error}", plant.file_name));
@@ -661,7 +668,7 @@ fn publish_one(
     }
     *tally.written += 1;
     if let Some(gate) = tally.gate.as_deref_mut() {
-        gate.score(&drawing.drawing_name, &xml);
+        gate.score(&file_stem, &xml, dump_in_run);
     }
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
@@ -710,12 +717,12 @@ fn publish_one(
         "values": value_count,
         "relationships": rel_count,
         "files": [
-            format!("{}_Data.xml", drawing.drawing_name),
-            format!("{}_Meta.xml", drawing.drawing_name),
-            format!("{}_Coverage.json", drawing.drawing_name),
+            format!("{file_stem}_Data.xml"),
+            format!("{file_stem}_Meta.xml"),
+            format!("{file_stem}_Coverage.json"),
         ],
         "oracle_exp": oracle,
-        "problems": [],
+        "problems": notes,
     }));
 }
 
@@ -738,7 +745,11 @@ impl PackageGate {
     /// 参考文件不存在时记 unpaired（**不是** clean、也不是跳过）。参考文件在、
     /// 但两侧 `<Container DocUID>` 不同时记 `revision_mismatch`：那是同一张图名的
     /// 另一版图纸，逐条比对只会产出与版本差有关的 finding，门禁不再列出它们。
-    fn score(&mut self, name: &str, xml: &str) {
+    ///
+    /// `dump_in_run`：这张图挂了 dump（或出自数据库）。此时 dump 该提供、却被整类
+    /// 豁免的类算 finding，与单图 `--oracle-exp` 同一判定
+    /// （[`super::diff::PidExportDiff::is_clean_with_dump`]）。
+    fn score(&mut self, name: &str, xml: &str, dump_in_run: bool) {
         let reference_path = self.reference_dir.join(format!("{name}_Data.xml"));
         if !reference_path.is_file() {
             self.report.unpaired += 1;
@@ -765,7 +776,7 @@ impl PackageGate {
             return;
         }
         match super::diff::diff_pid_export(xml, &reference) {
-            Ok(diff) if diff.is_clean() => {
+            Ok(diff) if diff.is_clean_with_dump(dump_in_run) => {
                 self.report.clean += 1;
                 self.report.lines.push(format!(
                     "{name}: clean (objects {}, values {}, rels {})",
@@ -773,16 +784,26 @@ impl PackageGate {
                 ));
             }
             Ok(diff) => {
+                let dump_findings: &[(String, usize)] = if dump_in_run {
+                    &diff.dump_supplied_excused
+                } else {
+                    &[]
+                };
                 self.report.dirty += 1;
                 self.report.lines.push(format!(
                     "{name}: dirty (objects {}, values {}, rels {}, findings {})",
                     diff.objects,
                     diff.values,
                     diff.rels,
-                    diff.findings.len()
+                    diff.findings.len() + dump_findings.len()
                 ));
                 for finding in &diff.findings {
                     self.report.lines.push(format!("  {name}: {finding}"));
+                }
+                for (class, count) in dump_findings {
+                    self.report.lines.push(format!(
+                        "  {name}: excused {class} ×{count} the dump should supply"
+                    ));
                 }
             }
             Err(malformed) => {
@@ -981,6 +1002,20 @@ fn excluded_from_totals(drawings: &[Value]) -> Value {
     })
 }
 
+/// The stem a drawing's three files are written under: its name with each
+/// path separator and each character a Windows file name cannot hold
+/// replaced by `_`, so a row's name can neither leave `--out-dir` nor fail
+/// the write. The name inside the documents is not touched.
+fn output_stem(name: &str) -> String {
+    name.chars()
+        .map(|ch| match ch {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect()
+}
+
 fn entry_stem(entry: &str) -> String {
     let name = entry.rsplit(['/', '\\']).next().unwrap_or(entry);
     name.strip_suffix(".pid")
@@ -1169,8 +1204,9 @@ fn publish_mtf_package(
         } else {
             row.uid.clone()
         };
-        if !written_names.insert(name.clone()) {
-            let detail = format!("output name {name} is already used");
+        let file_stem = output_stem(&name);
+        if !written_names.insert(file_stem.to_lowercase()) {
+            let detail = format!("output name {file_stem} is already used");
             problems.push(format!("{} {}: {detail}", row.name, row.uid));
             failed += 1;
             drawings.push(mtf_drawing_entry(
@@ -1203,10 +1239,11 @@ fn publish_mtf_package(
             }
         };
         let source = PathBuf::from(format!("{zip_file}:{zip_entry}"));
-        let report = super::pid_writer::write_database_coverage_json(&graph, &source, counts);
-        if let Err(detail) = write_file(&out_dir.join(format!("{name}_Data.xml")), &xml)
-            .and_then(|()| write_file(&out_dir.join(format!("{name}_Meta.xml")), &meta))
-            .and_then(|()| write_file(&out_dir.join(format!("{name}_Coverage.json")), &report))
+        let report =
+            super::pid_writer::write_database_coverage_json(&graph, &source, counts, &file_stem);
+        if let Err(detail) = write_file(&out_dir.join(format!("{file_stem}_Data.xml")), &xml)
+            .and_then(|()| write_file(&out_dir.join(format!("{file_stem}_Meta.xml")), &meta))
+            .and_then(|()| write_file(&out_dir.join(format!("{file_stem}_Coverage.json")), &report))
         {
             problems.push(format!("{name}: {detail}"));
             failed += 1;
@@ -1223,13 +1260,15 @@ fn publish_mtf_package(
         }
         written += 1;
         if let Some(gate) = gate.as_mut() {
-            gate.score(&name, &xml);
+            // The plant database is in the run: it supplies what the dump would.
+            gate.score(&file_stem, &xml, true);
         }
         objects += counts.0;
         values += counts.1;
         relationships += counts.2;
         pipelines += xml.matches("<PIDPipeline>").count();
-        piping_connectors += xml.matches("<PIDPipingConnector>").count();
+        // `piping_connectors` counts relations in both branches.
+        piping_connectors += xml.matches(r#"DefUID="PipingConnectors""#).count();
         if zip_pid.contains_key(&path_key) {
             paired += 1;
             paired_keys.insert(path_key);
@@ -1241,9 +1280,9 @@ fn publish_mtf_package(
             counts,
             graph.template.clone().unwrap_or_default(),
             vec![
-                format!("{name}_Data.xml"),
-                format!("{name}_Meta.xml"),
-                format!("{name}_Coverage.json"),
+                format!("{file_stem}_Data.xml"),
+                format!("{file_stem}_Meta.xml"),
+                format!("{file_stem}_Coverage.json"),
             ],
             Vec::new(),
         ));
@@ -1420,6 +1459,56 @@ mod tests {
         assert!(!errors);
         assert_eq!(decode_zip_entry_name(&encoded), "00/00/井场.pid");
         assert_eq!(decode_zip_entry_name(b"D06.pid"), "D06.pid");
+    }
+
+    #[test]
+    fn the_package_gate_holds_a_dump_run_to_the_classes_the_dump_supplies() {
+        let dir = std::env::temp_dir().join(format!("pid-parse-gate-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("reference dir");
+        fs::write(
+            dir.join("X_Data.xml"),
+            r#"<Container DocUID="D">
+                <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+                <PIDSignalPort><IObject UID="A.1"/></PIDSignalPort>
+            </Container>"#,
+        )
+        .expect("reference");
+        let generated = r#"<Container DocUID="D">
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        </Container>"#;
+        let mut pid_only = PackageGate::new(&dir);
+        pid_only.score("X", generated, false);
+        let mut with_dump = PackageGate::new(&dir);
+        with_dump.score("X", generated, true);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!((pid_only.report.clean, pid_only.report.dirty), (1, 0));
+        assert_eq!((with_dump.report.clean, with_dump.report.dirty), (0, 1));
+        assert!(
+            with_dump
+                .report
+                .lines
+                .iter()
+                .any(|line| line.ends_with("excused PIDSignalPort ×1 the dump should supply")),
+            "{:?}",
+            with_dump.report.lines
+        );
+    }
+
+    #[test]
+    fn an_output_stem_stays_inside_the_output_directory() {
+        assert_eq!(
+            output_stem("I井场 注采阀组工艺及自控流程图"),
+            "I井场 注采阀组工艺及自控流程图"
+        );
+        assert_eq!(output_stem(r"..\..\Windows\x"), ".._.._Windows_x");
+        assert_eq!(output_stem("C:/plant/A01"), "C__plant_A01");
+        assert_eq!(output_stem("a*b?c\"d<e>f|g\u{1}"), "a_b_c_d_e_f_g_");
+        let out = Path::new("out");
+        assert_eq!(
+            out.join(format!("{}_Data.xml", output_stem(r"C:\x")))
+                .parent(),
+            Some(out)
+        );
     }
 
     #[test]

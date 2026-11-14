@@ -9,7 +9,9 @@
 //!    `PublishItemCatalog` via `catalog::pid_file_cannot_state`, and only
 //!    when this run published no object of that class;
 //! 2. the `(interface, attribute)` pairs of
-//!    `catalog::EXCLUDED_ATTRIBUTE_CLASSES` the plant database supplies;
+//!    `catalog::EXCLUDED_ATTRIBUTE_CLASSES` the plant database supplies — a
+//!    pair the sheet's labels fill (`catalog::LABELLED_ATTRIBUTES`) only
+//!    while the run states it on some object;
 //! 3. relations this run states nowhere — the same wiring under another
 //!    `<Rel>` UID, an end the generated document does not publish (a
 //!    `PIDPipeline` that pairs by name counts as published), or no generated
@@ -101,6 +103,11 @@ pub(super) fn account_reference_side(
         .values()
         .filter(|(_, values)| values.contains_key("IObject.Name"))
         .map(|(class, _)| class.as_str())
+        .collect();
+    let stated_keys: HashSet<&str> = generated
+        .objects
+        .values()
+        .flat_map(|(_, values)| values.keys().map(String::as_str))
         .collect();
     // Content only an exp run writes: a port, an OPC branch point or a
     // synthesized pipeline, or a relation the dump supplies.
@@ -256,6 +263,15 @@ pub(super) fn account_reference_side(
                 continue;
             }
             let (interface, attribute) = key.rsplit_once('.').unwrap_or((key.as_str(), ""));
+            let labelled = catalog::LABELLED_ATTRIBUTES.contains(&(interface, attribute));
+            if labelled && !stated_keys.contains(key.as_str()) {
+                diff.values_not_in_generated += 1;
+                missing_values.push(format!(
+                    "missing value {class} {uid} {key}: {value:?} not in generated, and the \
+                     run states {key} on no object"
+                ));
+                continue;
+            }
             if let Some(excluded) = catalog::excluded_attribute(interface, attribute) {
                 diff.values_excused_by_design += 1;
                 excused_members

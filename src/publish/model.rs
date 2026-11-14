@@ -279,13 +279,20 @@ pub struct PublishRelationship {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PublishStyle {
     /// A01-flavor fixture export — `IObject` uses `ItemTag` on
-    /// pipe / connector / vessel; vessel always stamps a tag.
+    /// pipe / connector / vessel; vessel always stamps a tag. The item
+    /// composes its representation (`DwgRepresentationComposition`) and
+    /// the drawing lists it (`DrawingItems`).
     /// This is the writer default.
     #[default]
     A01,
     /// DWG-flavor fixture export — `IObject` uses `Name`
     /// instead of `ItemTag` on pipe / connector; vessel omits
-    /// the identifier attribute entirely.
+    /// the identifier attribute entirely. The drawing composes each
+    /// representation, the representation draws its item, and those
+    /// rels and `EquipmentComponentComposition` take the
+    /// `{prefix}-{UID1}-{UID2}` UID. The pipe-run family still follows
+    /// the A01 object model (the run publishes as `PIDPipeline` with a
+    /// derived connector); DWG publishes the run as the connector itself.
     Dwg,
 }
 

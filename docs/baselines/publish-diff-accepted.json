@@ -8,7 +8,7 @@
   },
   "how_to_verify": {
     "1": "Run the command recorded in the figure entry and read stdout.",
-    "2": "Split stdout into difference lines by the prefixes in difference_line_kinds. Lines that start with `meta `, `reference-only:`, `excused `, or the localized pairing note are accounting, not differences.",
+    "2": "Split stdout into difference lines by the prefixes in difference_line_kinds. Lines that start with `meta `, `reference-only:`, `excused `, `structure:`, or the localized pairing note are accounting, not differences.",
     "3": "For each printed line, look for a byte-identical `line` under the figure. Found -> registered. Not found -> unregistered.",
     "4": "For each `line` under the figure, check it was printed. Not printed -> disappeared.",
     "5": "The figure passes only when the unregistered set and the disappeared set are both empty."
@@ -20,7 +20,10 @@
     "value_not_in_reference": "value <CLASS> <UID> <INTERFACE>.<ATTRIBUTE>: \"<OURS>\" not in reference",
     "rel_not_in_reference": "rel (\"<RELUID>\", \"<UID1>\", \"<UID2>\", \"<DEFUID>\")",
     "missing_object": "missing <CLASS> <UID>",
-    "missing_rel": "missing rel (\"<RELUID>\", \"<UID1>\", \"<UID2>\", \"<DEFUID>\")"
+    "missing_rel": "missing rel (\"<RELUID>\", \"<UID1>\", \"<UID2>\", \"<DEFUID>\")",
+    "interface_not_in_reference": "interface <CLASS> <UID> <INTERFACE> not in reference",
+    "container": "container <ATTRIBUTE>: \"<OURS>\" reference \"<REFERENCE>\"",
+    "duplicate": "duplicate <UID> in generated"
   },
   "not_enumerated_here": [
     "Attribute classes the gate excuses wholesale live in src/publish/diff_exclusions.rs (EXCLUDED_ATTRIBUTE_CLASSES) and are printed as `excused ...` lines. This baseline does not restate them.",
@@ -60,7 +63,7 @@
   },
   "figures": {
     "A01": {
-      "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 27 items below are accepted and recorded, not suppressed.",
+      "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 28 items below are accepted and recorded, not suppressed.",
       "command": "pid_publish_xml.exe test-file/export-test/publish-data/A01/A01.pid --diff-against test-file/export-test/publish-data/A01/A01_Data.xml --plant TEST02",
       "exit_code": 1,
       "summary": "pid export diff: objects 8 (extra 1, wrong class 1), values 10 (different 3, not in reference 6), rels 7 (not in reference 7)",
@@ -215,6 +218,17 @@
               "def_uid": "ProcessPointCollection"
             }
           ]
+        },
+        "interface_not_in_reference": {
+          "count": 1,
+          "items": [
+            {
+              "line": "interface PIDProcessVessel C57494A1B154442C9DF0F4BA713E88EC INamedEquipment not in reference",
+              "class_name": "PIDProcessVessel",
+              "uid": "C57494A1B154442C9DF0F4BA713E88EC",
+              "interface": "INamedEquipment"
+            }
+          ]
         }
       },
       "reference_only_differences": {
@@ -292,19 +306,21 @@
         "value_different": 3,
         "value_not_in_reference": 6,
         "rel_not_in_reference": 7,
+        "interface_not_in_reference": 1,
         "missing_object": 3,
         "missing_rel": 6
       },
       "notes": [
         "The interface is IDrawingRepresentation.GraphicOID on <PIDRepresentation>, not IDrawingPresentation.",
+        "The reference vessel carries no INamedEquipment element at all, so the interface line and the EquipPrefix / EquipSeqNo value lines are one difference seen at two levels.",
         "Do not pass --out-dir when reproducing this figure: that adds three `meta ...` lines to stdout. They are not differences, and the command above omits it.",
         "This figure exits 1 on purpose. The baseline records the differences; it does not make them go away."
       ]
     },
     "I井场": {
-      "what": "The single-`.pid` publish of the I井场 drawing against the vendor reference. Path-sensitive: the drawing name is derived from the file name, so the one registered item appears only when the 8.3 short alias reaches the process.",
+      "what": "The single-`.pid` publish of the I井场 drawing against the vendor reference. Path-sensitive: the drawing name is derived from the file's own name, so the two registered items appear only when the file itself is named by the short stem.",
       "path_sensitive": true,
-      "why": "IB031 appears nowhere in the 3,997,696 bytes of the fixture; the drawing name is derived from the path. Pass the long Chinese name and the run is clean. Pass the 8.3 alias IB031~1.PID and the registered IObject.Name difference appears. Both are legitimate observations of the same product, so the assertion is a disjunction and this entry is listed either way.",
+      "why": "IB031 appears nowhere in the 3,997,696 bytes of the fixture; the drawing name is derived from the file name. Pass the long Chinese name — or its 8.3 alias IB031~1.PID, which now resolves to the stored long name — and the run is clean. Run a copy actually named IB031~1.pid and the drawing's IObject.Name and the container's DocName both read IB031~1. Both outcomes are legitimate observations of the same product, so the assertion is a disjunction and this entry is listed either way.",
       "differences": {
         "value_different": {
           "count": 1,
@@ -318,10 +334,22 @@
               "reference": "I井场 注采阀组工艺及自控流程图"
             }
           ]
+        },
+        "container": {
+          "count": 1,
+          "items": [
+            {
+              "line": "container DocName: \"IB031~1\" reference \"I井场 注采阀组工艺及自控流程图\"",
+              "attribute": "DocName",
+              "ours": "IB031~1",
+              "reference": "I井场 注采阀组工艺及自控流程图"
+            }
+          ]
         }
       },
       "category_counts": {
-        "value_different": 1
+        "value_different": 1,
+        "container": 1
       },
       "modes": {
         "pid-alone": {
@@ -342,13 +370,13 @@
       },
       "allowed_outcomes": [
         "Exit 0 with no difference line at all: the long name reached the process.",
-        "Exit 1 with exactly one difference line, byte-identical to the single registered item above: the 8.3 alias reached the process."
+        "Exit 1 with exactly two difference lines, byte-identical to the two registered items above: a file named by the short stem reached the process."
       ],
       "forbidden_outcomes": [
-        "Exit 1 with a difference line other than the registered one.",
+        "Exit 1 with a difference line other than the registered ones.",
         "Exit 0 while a difference line was printed.",
         "A clean branch that printed anything matching difference_line_kinds.",
-        "An alias branch whose differing value is anything but IObject.Name."
+        "An alias branch whose differences are anything but IObject.Name and the container DocName."
       ]
     }
   },

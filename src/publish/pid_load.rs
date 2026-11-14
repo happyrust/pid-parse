@@ -292,7 +292,7 @@ pub struct PidPipeline {
     /// `@{GUID}` from the data map. Absent when the run has no code,
     /// the map was not given, or the code is not in the map.
     pub fluid_system: Option<String>,
-    /// Published connector UIDs that carry this name, in drawing order.
+    /// Published connector UIDs that carry this name, in UID order.
     pub connector_uids: Vec<String>,
 }
 
@@ -632,7 +632,8 @@ fn parse_measure(text: &str) -> Option<String> {
         let (numerator, denominator) = fraction.split_once('/')?;
         let numerator = parse_unsigned(numerator)?;
         let denominator = parse_unsigned(denominator)?;
-        return format_ratio(whole * denominator + numerator, denominator);
+        let improper = whole.checked_mul(denominator)?.checked_add(numerator)?;
+        return format_ratio(improper, denominator);
     }
     if let Some((numerator, denominator)) = text.split_once('/') {
         return format_ratio(parse_unsigned(numerator)?, parse_unsigned(denominator)?);
@@ -658,7 +659,7 @@ fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
     }
     let mut digits = String::new();
     for _ in 0..6 {
-        remainder *= 10;
+        remainder = remainder.checked_mul(10)?;
         let digit = (remainder / denominator) as u32;
         digits.push(char::from_digit(digit, 10)?);
         remainder %= denominator;
@@ -806,9 +807,11 @@ fn labelled_item<'a>(
 
 /// Read a drawing's publish data from its `.pid`.
 ///
-/// The drawing name is the file name without `.pid`.
+/// The drawing name is the file's stored name without `.pid`: an 8.3 alias
+/// (`IB031~1.PID`) opens the same file, so it is resolved to the long name.
 pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadError> {
-    let name = path
+    let stored = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let name = stored
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
@@ -1510,6 +1513,40 @@ mod tests {
     }
 
     #[test]
+    fn every_labelled_exclusion_is_one_a_label_fills() {
+        let piping = ["PIDPipingConnector", "PIDPipingComponent"];
+        let classes = INSTRUMENT_CLASSES
+            .iter()
+            .chain(EQUIPMENT_CLASSES.iter())
+            .chain(piping.iter());
+        let properties = [
+            "MeasuredVariableCode",
+            "TagSequenceNo",
+            "TagPrefix",
+            "PipingMaterialsClass",
+            "InsulationSpec",
+            "Description",
+            "ToFromText",
+            "Note.Body",
+        ];
+        let filled: BTreeSet<(&str, &str)> = classes
+            .flat_map(|class| {
+                properties
+                    .iter()
+                    .filter_map(move |property| published_attribute(property, class))
+            })
+            .chain([("IPipeCrossSectionItem", "NominalDiameter")])
+            .collect();
+        for pair in super::super::catalog::LABELLED_ATTRIBUTES {
+            assert!(filled.contains(&pair), "{pair:?} is not filled by a label");
+            assert!(
+                super::super::catalog::excluded_attribute(pair.0, pair.1).is_some(),
+                "{pair:?} is not an excluded attribute"
+            );
+        }
+    }
+
+    #[test]
     fn names_compose_only_for_instruments_and_equipment_with_both_parts() {
         let part = |interface, name, value: &str| PidPublishAttribute {
             interface,
@@ -1567,6 +1604,15 @@ mod tests {
         assert_eq!(publish_nominal_diameter("200"), Some("200 mm".to_string()));
         assert_eq!(publish_nominal_diameter("2 in"), None);
         assert_eq!(publish_nominal_diameter(""), None);
+        // Untrusted label text: an overflowing measure is unspelled, not a panic.
+        assert_eq!(
+            publish_nominal_diameter("99999999999-1/99999999999\""),
+            None
+        );
+        assert_eq!(
+            publish_nominal_diameter("9223372036854775806/9223372036854775807\""),
+            None
+        );
     }
 
     #[test]

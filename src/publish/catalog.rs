@@ -555,9 +555,10 @@ pub(crate) fn pid_file_cannot_state(tag: &str) -> Option<(&'static str, PidTagRo
 /// reference-only `(interface, attribute)` keys of the five corpus vendor
 /// references (`A` / `B` / `CD` / `lowA` / `I井场`) plus the A01 test-file
 /// reference — the G2 census `contract-work/g2-evidence/devin/ref-only-inventory.log`.
-/// The rule that admits a member: the plant database is the attribute's only
-/// source — the `.pid` file's own attribute map (`super::pid_load`) and the exp
-/// tables (`super::oracle_exp`) state it for no object of that interface. The
+/// A member is a reference-only value this line cannot state for that object:
+/// either the plant database is its only source, or the sheet states it only
+/// on an object that carries the label ([`LABELLED_ATTRIBUTES`]) — a run that
+/// states such an attribute on no object at all is not covered. The
 /// ghost-probe tests in `diff.rs` keep the list honest: an attribute this line
 /// never publishes and this table does not name stays a finding.
 pub(crate) struct ExcludedAttributeClass {
@@ -679,6 +680,25 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
                  IObject.Name or IObject.UID stays in the diff.",
         members: &[("IObject", &["Description", "ItemTag"])],
     },
+];
+
+/// Excluded attributes the sheet's labels fill (`pid_load`'s label map and
+/// its nominal-diameter rule): an object whose label is missing leaves the
+/// reference value excused, but a run that states the attribute on no object
+/// lost it, and that is a finding.
+///
+/// Measured on the twelve reference drawings in `.pid` and `--oracle-exp`
+/// mode: every drawing whose reference carries one of these states it on
+/// some object. `IObject.Description` is not here: the sheets do not label
+/// it, and six of the seven acceptance drawings state none from the `.pid`.
+pub(crate) const LABELLED_ATTRIBUTES: [(&str, &str); 7] = [
+    ("IInsulatedItem", "InsulSpec"),
+    ("IPipeCrossSectionItem", "NominalDiameter"),
+    ("IPipingSpecifiedItem", "PipingMaterialsClass"),
+    ("INamedInstrument", "InstrTagSequenceNo"),
+    ("INamedInstrument", "MeasuredVariable"),
+    ("INamedEquipment", "EquipPrefix"),
+    ("INamedPipingConnector", "PipingConnectorSeqNo"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

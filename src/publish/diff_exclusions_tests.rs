@@ -643,3 +643,110 @@ fn an_unnamed_row_of_a_class_this_run_names_elsewhere_is_excused() {
     assert!(diff.is_clean(), "{diff}");
     assert_eq!(diff.values_excused_by_design, 1);
 }
+
+#[test]
+fn an_object_or_rel_written_twice_is_a_finding() {
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <Rel><IObject UID="R0"/><IRel UID1="A" UID2="A" DefUID="DrawingItems"/></Rel>
+    </Container>"#;
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <Rel><IObject UID="R0"/><IRel UID1="A" UID2="A" DefUID="DrawingItems"/></Rel>
+        <Rel><IObject UID="R0"/><IRel UID1="A" UID2="A" DefUID="DrawingItems"/></Rel>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.duplicate_uids_in_generated, 2, "{diff}");
+    assert!(
+        diff.findings
+            .iter()
+            .any(|f| f == "duplicate A in generated"),
+        "{diff}"
+    );
+    assert_eq!(
+        pid_publish_counts(generated).expect("well-formed"),
+        (2, 1, 2),
+        "every block written is counted"
+    );
+}
+
+#[test]
+fn an_interface_element_the_reference_object_lacks_is_a_finding() {
+    // An off-page connector with no ToFromText: the reference leaves the
+    // element out, and it may carry interfaces this line does not write.
+    let reference = r#"<Container>
+        <PIDBranchPoint><IObject UID="O" Name="653"/><IPIDBranchPoint/><IConnection/></PIDBranchPoint>
+    </Container>"#;
+    let generated = r#"<Container>
+        <PIDBranchPoint><IObject UID="O" Name="653"/><IPIDBranchPoint/><IOffpageConnector/></PIDBranchPoint>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.interfaces_not_in_reference, 1, "{diff}");
+    assert!(
+        diff.findings
+            .iter()
+            .any(|f| f == "interface PIDBranchPoint O IOffpageConnector not in reference"),
+        "{diff}"
+    );
+}
+
+#[test]
+fn a_container_attribute_that_reads_otherwise_is_a_finding() {
+    let reference = r#"<Container Plant="P01" DocName="A01">
+        <PIDDrawing><IObject UID="D" Name="A01"/></PIDDrawing>
+    </Container>"#;
+    let generated = r#"<Container Plant="TEST02" DocName="A01">
+        <PIDDrawing><IObject UID="D" Name="A01"/></PIDDrawing>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.container_attributes_different, 1, "{diff}");
+    assert!(
+        diff.findings
+            .iter()
+            .any(|f| f == r#"container Plant: "TEST02" reference "P01""#),
+        "{diff}"
+    );
+}
+
+#[test]
+fn a_labelled_attribute_the_run_states_on_no_object_is_a_finding() {
+    let reference = r#"<Container>
+        <PIDPipingConnector><IObject UID="R1"/><IPipingSpecifiedItem PipingMaterialsClass="B5"/></PIDPipingConnector>
+        <PIDPipingConnector><IObject UID="R2"/><IPipingSpecifiedItem PipingMaterialsClass="B5"/></PIDPipingConnector>
+    </Container>"#;
+    // A run row without its label is excused while the run states the
+    // attribute on another row…
+    let one_labelled = r#"<Container>
+        <PIDPipingConnector><IObject UID="R1"/><IPipingSpecifiedItem PipingMaterialsClass="B5"/></PIDPipingConnector>
+        <PIDPipingConnector><IObject UID="R2"/></PIDPipingConnector>
+    </Container>"#;
+    let diff = diff_pid_export(one_labelled, reference).expect("well-formed");
+    assert!(diff.is_clean(), "{diff}");
+    assert_eq!(diff.values_excused_by_design, 1);
+    // …but a run that states it on no row lost it.
+    let none = r#"<Container>
+        <PIDPipingConnector><IObject UID="R1"/></PIDPipingConnector>
+        <PIDPipingConnector><IObject UID="R2"/></PIDPipingConnector>
+    </Container>"#;
+    let diff = diff_pid_export(none, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.values_not_in_generated, 2, "{diff}");
+}
+
+#[test]
+fn a_run_with_the_dump_is_not_excused_a_class_the_dump_supplies() {
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <PIDSignalPort><IObject UID="A.1"/></PIDSignalPort>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(diff.is_clean_with_dump(false), "{diff}");
+    assert!(!diff.is_clean_with_dump(true), "{diff}");
+}
