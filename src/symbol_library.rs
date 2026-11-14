@@ -221,22 +221,19 @@ pub enum SymbolPrimitive {
         /// degree.
         knots: Vec<f64>,
     },
-    /// A filled region (PSM `0x0013` `igBoundary2d`) — the flange dots of
-    /// `Wellhead Christmas Tree 02.sym`, which `SmartPlant`'s plot fills
-    /// solid where a reader that only stroked the member circles draws a
-    /// hairline ring. The record's members re-list shapes that are also
-    /// stroked on their own, so the area is what draws, not the outline:
-    /// a consumer fills each member rather than stroking it.
+    /// A filled region (PSM `0x0013` `igBoundary2d`). A loop that is one
+    /// circle is that disc, filled solid. A loop of lines stays those
+    /// lines. Any other loop — arcs, a point run, a spline, a mix — is
+    /// one closed [`SymbolPrimitive::Polyline`] of the vertices the fill
+    /// uses. Several such polylines are the loops of one record, a fill
+    /// with holes among them.
     ///
     /// The record's style index names a fill-family style, which rides
     /// along resolved (the same slot a stroke's line style would carry,
     /// but a boundary's index resolves nothing through
     /// `resolve_line_style`).
     Boundary {
-        /// The member shapes the region fills over — circles on the
-        /// corpus (`0x73` groups), straight segments where a boundary
-        /// lists lines (`0x67` groups). Only `Circle` and `Line` members
-        /// ever appear here.
+        /// Circles, lines and the polyline of each other loop.
         members: Vec<SymbolPrimitive>,
         /// What the record's style index resolves to through the
         /// symbol's own table — `None` where it names no fill style.
@@ -911,7 +908,33 @@ impl SymbolGeometry {
                                 add(center.0 - radius, center.1 - radius);
                                 add(center.0 + radius, center.1 + radius);
                             }
-                            _ => {}
+                            SymbolPrimitive::Arc {
+                                center,
+                                radius,
+                                start_angle,
+                                end_angle,
+                                ..
+                            } => {
+                                add(center.0, center.1);
+                                for angle in [*start_angle, *end_angle] {
+                                    add(
+                                        center.0 + radius * angle.cos(),
+                                        center.1 + radius * angle.sin(),
+                                    );
+                                }
+                            }
+                            SymbolPrimitive::Polyline { vertices, .. } => {
+                                for (x, y) in vertices {
+                                    add(*x, *y);
+                                }
+                            }
+                            SymbolPrimitive::BSpline { poles, .. } => {
+                                for (x, y) in poles {
+                                    add(*x, *y);
+                                }
+                            }
+                            SymbolPrimitive::Text { at, .. } => add(at.0, at.1),
+                            SymbolPrimitive::Boundary { .. } => {}
                         }
                     }
                 }
@@ -1399,23 +1422,10 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
         }
         TYPE_TEXT => decode_text(payload),
         TYPE_BOUNDARY => {
-            use crate::parsers::sheet_records::{decode_igsym_boundary_payload, IgBoundaryMember};
+            use crate::parsers::sheet_records::decode_igsym_boundary_payload;
             let boundary = decode_igsym_boundary_payload(payload)?;
-            let members = boundary
-                .members
-                .iter()
-                .map(|member| match member {
-                    IgBoundaryMember::Line { start, end } => SymbolPrimitive::Line {
-                        start: *start,
-                        end: *end,
-                    },
-                    IgBoundaryMember::Circle { center, radius } => SymbolPrimitive::Circle {
-                        center: *center,
-                        radius: *radius,
-                    },
-                })
-                .collect();
-            Some(SymbolPrimitive::Boundary {
+            let members = boundary_primitives(&boundary.members, &boundary.loop_counts);
+            (!members.is_empty()).then_some(SymbolPrimitive::Boundary {
                 members,
                 fill: None,
             })
@@ -1444,17 +1454,124 @@ pub(crate) fn boundary_member_key(member: &SymbolPrimitive, fill: Option<Primiti
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
-    let coords: &[f64] = match member {
-        SymbolPrimitive::Line { start, end } => &[start.0, start.1, end.0, end.1],
-        SymbolPrimitive::Circle { center, radius } => &[center.0, center.1, *radius],
-        _ => &[],
-    };
-    for v in coords {
-        ((v * 1e9).round() as i64).hash(&mut hasher);
+    let mut hash_coord = |value: f64| ((value * 1e9).round() as i64).hash(&mut hasher);
+    match member {
+        SymbolPrimitive::Line { start, end } => {
+            hash_coord(start.0);
+            hash_coord(start.1);
+            hash_coord(end.0);
+            hash_coord(end.1);
+        }
+        SymbolPrimitive::Circle { center, radius } => {
+            hash_coord(center.0);
+            hash_coord(center.1);
+            hash_coord(*radius);
+        }
+        SymbolPrimitive::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => {
+            hash_coord(center.0);
+            hash_coord(center.1);
+            hash_coord(*radius);
+            hash_coord(*start_angle);
+            hash_coord(*end_angle);
+            clockwise.hash(&mut hasher);
+        }
+        SymbolPrimitive::Polyline {
+            vertices,
+            is_closed,
+        } => {
+            for (x, y) in vertices {
+                hash_coord(*x);
+                hash_coord(*y);
+            }
+            is_closed.hash(&mut hasher);
+        }
+        SymbolPrimitive::BSpline {
+            poles,
+            weights,
+            knots,
+        } => {
+            for (x, y) in poles {
+                hash_coord(*x);
+                hash_coord(*y);
+            }
+            for weight in weights {
+                hash_coord(*weight);
+            }
+            for knot in knots {
+                hash_coord(*knot);
+            }
+        }
+        SymbolPrimitive::Text { .. } | SymbolPrimitive::Boundary { .. } => {}
     }
     std::mem::discriminant(member).hash(&mut hasher);
     fill.and_then(|fill| fill.rgb).hash(&mut hasher);
     hasher.finish()
+}
+
+/// The primitives one boundary fills: each loop of a single circle stays a
+/// circle, a loop of only lines stays those lines, and every other loop is
+/// one closed polyline of the vertices the member flattens to.
+pub(crate) fn boundary_primitives(
+    members: &[crate::parsers::sheet_records::IgBoundaryMember],
+    loop_counts: &[u32],
+) -> Vec<SymbolPrimitive> {
+    use crate::parsers::sheet_records::{igboundary_member_points, IgBoundaryMember};
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for count in loop_counts {
+        let count = *count as usize;
+        let Some(loop_members) = members.get(offset..offset + count) else {
+            return Vec::new();
+        };
+        offset += count;
+        let lines_only = loop_members
+            .iter()
+            .all(|member| matches!(member, IgBoundaryMember::Line { .. }));
+        let one_circle = matches!(loop_members, [IgBoundaryMember::Circle { .. }]);
+        if one_circle {
+            if let IgBoundaryMember::Circle { center, radius } = loop_members[0] {
+                out.push(SymbolPrimitive::Circle { center, radius });
+            }
+            continue;
+        }
+        if lines_only {
+            for member in loop_members {
+                if let IgBoundaryMember::Line { start, end } = member {
+                    out.push(SymbolPrimitive::Line {
+                        start: *start,
+                        end: *end,
+                    });
+                }
+            }
+            continue;
+        }
+        let mut vertices = Vec::new();
+        for member in loop_members {
+            let Some(points) = igboundary_member_points(member) else {
+                return Vec::new();
+            };
+            if let Some(last) = vertices.last().copied() {
+                if points.first().is_some_and(|first| *first == last) {
+                    vertices.extend(points.into_iter().skip(1));
+                    continue;
+                }
+            }
+            vertices.extend(points);
+        }
+        if vertices.len() >= 2 {
+            out.push(SymbolPrimitive::Polyline {
+                vertices,
+                is_closed: true,
+            });
+        }
+    }
+    out
 }
 
 /// Decode the records of one symbol `Sheet*` stream into `out`: the ones
