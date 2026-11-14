@@ -370,7 +370,7 @@ fn hold_acceptance_drawing(drawing: &Drawing) {
     let corpus = acceptance_dir();
     if !corpus.is_dir() {
         eprintln!(
-            "skip: {key} — the acceptance corpus directory {} is absent (set {ACCEPTANCE_ENV})",
+            "skipping: {key} — the acceptance corpus directory {} is absent (set {ACCEPTANCE_ENV})",
             corpus.display()
         );
         return;
@@ -379,7 +379,7 @@ fn hold_acceptance_drawing(drawing: &Drawing) {
     let reference = corpus.join(format!("{stem}_Data.xml"));
     if !pid.is_file() || !reference.is_file() {
         eprintln!(
-            "skip: {key} — the acceptance corpus directory {} holds no {stem}.pid beside a \
+            "skipping: {key} — the acceptance corpus directory {} holds no {stem}.pid beside a \
              {stem}_Data.xml (set {ACCEPTANCE_ENV})",
             corpus.display()
         );
@@ -398,7 +398,7 @@ fn hold_acceptance_drawing(drawing: &Drawing) {
     let datamap = package.join("RefData~4~804.zip");
     if !dump.is_file() || !datamap.is_file() {
         eprintln!(
-            "skip: {key} · --oracle-exp — the backup package directory {} is absent or holds no \
+            "skipping: {key} · --oracle-exp — the backup package directory {} is absent or holds no \
              Export.dmp beside a RefData~4~804.zip (set {PACKAGE_ENV})",
             package.display()
         );
