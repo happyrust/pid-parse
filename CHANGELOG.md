@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### publish：带单位的值从 dump 的 SI 列写出（S9 后一半，2026-11-15）
+
+**`--oracle-exp` 与整包两种模式下，dump 的 SI 列有值的对象多写出带单位的属性；53 张的整包里这五列一格都没有，重发与 `publish-v5` 逐字节相同。** `.pid` 单独发布不变。
+
+- **写什么。** 新模块 `publish::unit_values`：`T_PIPERUN.SP_INSULTHICKSI` → `IInsulatedItem.TotalInsulThick`（`mm`），`SP_SLOPESI` → `ISlopedPipingItem.SlopedPipingAngle`（`rad`），`T_EQUIPMENT.SP_HEIGHTSI` → `IPBSItem.HeightRelativeToGrade`（`m`），`T_VESSEL.SP_VOLUMERATINGSI` → `IProcessVessel.ProcessVessel_VesselVolumetricCapacity`（`m^3`），写在 UID 等于该行 `SP_ID`、且类的接口表列着那个元素的对象上；`T_EQUIPMENT.SP_INSULTHICKSI` 也读，但没有参考把 `IInsulatedItem` 放在设备类上，所以计为没写（`left_out`）。单位是参考的：dump 里坡度是按 `0.3 %` 输入的，参考照样发弧度；`SPPIDDataMap.xml` 只列出每个属性可取的单位（`SPMU_1001` Thickness 里没有米），没说发哪一个。换单位只挪小数点，不经过浮点。
+- **数怎么写。** 照 OLE Automation 把双精度转成文本（`VarBstrFromR8`，`CStr` 调的就是它）：15 位有效数字、四舍五入、去尾零；小于 10^15 且小数位不超过 15 位时写定点，否则写 `E±dd`。规则是在本机用 `cscript` 跑 `CStr` 读出来的（`0.029999910000486` 定点、`2.9999910000486E-03` 科学计数、`999999999999999.5` 写 `1000000000000000` 而 `1E+15` 写 `1E+15`），单测逐条钉住；参考上的四种写法 `50 mm`、`2.9999910000486E-03 rad`、`3 m`、`27 m^3` 都由它得出。
+- **读数。** DWG-0202GP06-01 用入库包的 dump：写出 9 个值，与参考逐 UID 相同（6 个 `50 mm`、坡度、容器的高与容积），参考没有的 0；`--oracle-exp` 的非空值 99 → 108 / 236、接口元素 677 → 684，整包目录 58 → 67、673 → 680，报告的缺值 17 → 8（剩下 `InsulThickSrc` 6、`SlopedPipeDirection`、`CatalogPartNumber`）。整包另在 DWG-0201GP06-01 写 2 个、DWG-0104GP01-08 写 1 个（没有参考）。7 张同版验收图不变。新用例 `tests/publish_unit_values.rs`，探针 `examples/probe_which_si_values_a_dump_states.rs`。
+
 ### publish：`.pid` 这条线按类的接口表写接口元素（S5，2026-11-15）
 
 **`.pid` 这条线写出的 `_Data.xml` 变了：每个对象现在带它这一类的整张接口元素表，拿旧输出做逐字节比较会不同。** 对象、关系、非空值一个没变；`_Meta.xml`、`_Coverage.json`、`_Index.json` 逐字节不变。数据库那条线（`xml_writer.rs`）的输出不变。

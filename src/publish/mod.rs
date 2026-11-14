@@ -40,6 +40,8 @@
 //!   compositions and item notes.
 //! * [`pipeline`] — synthesized `PIDPipeline` rows and their
 //!   `PipingConnectors` from `T_PIPERUN` + `SPPIDDataMap.xml`.
+//! * [`unit_values`] — values with a unit (`50 mm`, `3 m`) from the dump's
+//!   SI columns, spelled as `SmartPlant` spells a double.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
 //!   provenance record (`PidValueSource`).
 //! * [`pid_writer`] — that DTO → `_Data.xml` / `_Meta.xml` / `_Coverage.json`.
@@ -68,8 +70,8 @@
 //!   per class in `catalog` (S5);
 //! * the attributes the plant database states, by `SPPIDDataMap.xml`:
 //!   values as stored (S7), enumerations, whose hierarchical levels follow
-//!   a schema-side hierarchy the map does not hold (S8), and values with
-//!   units (S9);
+//!   a schema-side hierarchy the map does not hold (S8); the values with
+//!   units (S9) are written from the dump's SI columns by [`unit_values`];
 //! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
 //!   off-page connectors in a drawing's stockpile (S12), and objects other
 //!   than piping components the database draws on a sheet its `.pid` does
@@ -101,6 +103,7 @@ pub mod pid_writer;
 pub mod pipeline;
 #[cfg(feature = "backup-mdf")]
 pub mod sqlite_load;
+pub mod unit_values;
 pub mod xml_writer;
 
 pub use catalog::{cross_check_catalog_index, CatalogIndexCrossCheck};
