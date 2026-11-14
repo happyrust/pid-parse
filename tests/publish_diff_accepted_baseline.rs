@@ -21,6 +21,12 @@ use common::Scratch;
 const CLI: &str = env!("CARGO_BIN_EXE_pid_publish_xml");
 const BASELINE_REL: &str = "docs/baselines/publish-diff-accepted.json";
 const A01_DIR: &str = "test-file/export-test/publish-data/A01";
+const A01_PACKAGE: &str = "test-file/backup-test/TEST02_p";
+const A01_MDF: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
+const A01_DATABASE_FIGURE: &str = "A01 · Export.mdf";
+const A01_PACKAGE_FIGURE: &str = "A01 · TEST02_p 目录";
+/// The three synthetic residuals the database line leaves on A01.
+const A01_DATABASE_RESIDUALS: [&str; 3] = ["connector_uid", "rel_uid", "graphic_oid"];
 const CORPUS_ENV: &str = "PID_PARSE_SELF_CHECK_DIR";
 const CORPUS_DEFAULT: &str = r"D:\work\cad\PID自研软件验证";
 const PACKAGE_DEFAULT: &str = r"D:\work\cad\pid-test-data";
@@ -211,6 +217,35 @@ fn a01_run(pid: &Path, reference: &Path) -> Run {
         OsStr::new("--plant"),
         OsStr::new("TEST02"),
     ])
+}
+
+fn a01_mdf() -> PathBuf {
+    manifest_dir().join(A01_MDF)
+}
+
+fn a01_package() -> PathBuf {
+    manifest_dir().join(A01_PACKAGE)
+}
+
+/// The database publish of A01 against `reference`, or `None` (with a
+/// `skipping:` line) when the database or the reference is absent.
+fn a01_database_run(reference: &Path) -> Option<Run> {
+    let mdf = a01_mdf();
+    for path in [&mdf, &reference.to_path_buf()] {
+        if !path.is_file() {
+            eprintln!("skipping: {} is absent", path.display());
+            return None;
+        }
+    }
+    Some(run_cli([
+        mdf.as_os_str(),
+        OsStr::new("--drawing"),
+        OsStr::new(DRAWING_UID),
+        OsStr::new("--plant"),
+        OsStr::new("TEST02"),
+        OsStr::new("--diff-against"),
+        reference.as_os_str(),
+    ]))
 }
 
 fn corpus_dir() -> PathBuf {
@@ -557,6 +592,179 @@ fn a_changed_generated_document_is_unregistered_and_still_exits_one() {
         classification.disappeared.is_empty(),
         "every registered difference must still print: {:#?}",
         classification.disappeared
+    );
+}
+
+/// The whole-package publish of `TEST02_p` scored against `reference_dir`,
+/// with each `  A01: ` prefix taken off its difference line, or `None` (with
+/// a `skipping:` line) when the package is absent.
+fn a01_package_run(figure: &Value, reference_dir: &Path) -> Option<(Run, String)> {
+    let package = a01_package();
+    if !package.join("Manifest.txt").is_file() {
+        eprintln!("skipping: {} is absent", package.display());
+        return None;
+    }
+    let prefix = figure["printed_prefix"]
+        .as_str()
+        .expect("the package figure records its printed_prefix");
+    let scratch = Scratch::new("a01-package-gate");
+    let run = run_cli([
+        package.as_os_str(),
+        OsStr::new("--out-dir"),
+        scratch.path().as_os_str(),
+        OsStr::new("--diff-against"),
+        reference_dir.as_os_str(),
+    ]);
+    let verdict = run
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("A01: "))
+        .unwrap_or_default()
+        .to_string();
+    let stdout = run
+        .stdout
+        .lines()
+        .map(|line| line.strip_prefix(prefix).unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some((
+        Run {
+            code: run.code,
+            stdout,
+        },
+        verdict,
+    ))
+}
+
+#[test]
+fn the_a01_database_run_prints_exactly_the_registered_differences() {
+    let baseline = baseline();
+    let figure = &baseline["figures"][A01_DATABASE_FIGURE];
+    let Some(run) = a01_database_run(&a01_reference()) else {
+        return;
+    };
+    assert_eq!(
+        i64::from(run.code),
+        figure["exit_code"].as_i64().expect("exit_code"),
+        "{}",
+        run.stdout
+    );
+    assert_eq!(
+        run.summary(),
+        figure["summary"].as_str().unwrap_or_default()
+    );
+    Classification::of(figure, &run).assert_complete(A01_DATABASE_FIGURE);
+}
+
+#[test]
+fn the_a01_package_run_prints_exactly_the_registered_differences() {
+    let baseline = baseline();
+    let figure = &baseline["figures"][A01_PACKAGE_FIGURE];
+    let reference_dir = manifest_dir().join(A01_DIR);
+    let Some((run, verdict)) = a01_package_run(figure, &reference_dir) else {
+        return;
+    };
+    assert_eq!(
+        i64::from(run.code),
+        figure["exit_code"].as_i64().expect("exit_code"),
+        "{}",
+        run.stdout
+    );
+    assert_eq!(verdict, figure["verdict"].as_str().unwrap_or_default());
+    Classification::of(figure, &run).assert_complete(A01_PACKAGE_FIGURE);
+}
+
+#[test]
+fn the_a01_database_entries_list_the_three_synthetic_residuals_alone() {
+    let baseline = baseline();
+    let database = &baseline["figures"][A01_DATABASE_FIGURE];
+    let package = &baseline["figures"][A01_PACKAGE_FIGURE];
+    assert_eq!(
+        registered_lines(database),
+        registered_lines(package),
+        "the package's one drawing is the database's A01"
+    );
+    assert_eq!(registered_lines(database).len(), 27);
+
+    for figure in [database, package] {
+        let residuals: BTreeSet<&str> = figure["residuals"]
+            .as_object()
+            .expect("residuals")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(residuals, BTreeSet::from(A01_DATABASE_RESIDUALS));
+        let mut seen = BTreeSet::new();
+        for section in ["differences", "reference_only_differences"] {
+            for (kind, entry) in figure[section].as_object().expect(section) {
+                let items = entry["items"].as_array().expect("items");
+                assert_eq!(entry["count"].as_u64(), Some(items.len() as u64));
+                assert_eq!(
+                    figure["category_counts"][kind].as_u64(),
+                    Some(items.len() as u64)
+                );
+                for item in items {
+                    let residual = item["residual"].as_str().unwrap_or_default();
+                    assert!(
+                        A01_DATABASE_RESIDUALS.contains(&residual),
+                        "{item}: {residual:?} is not one of the three residuals"
+                    );
+                    seen.insert(residual);
+                    if residual == "graphic_oid" {
+                        assert_eq!(
+                            item["interface_attribute"].as_str(),
+                            Some("IDrawingRepresentation.GraphicOID")
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(seen, BTreeSet::from(A01_DATABASE_RESIDUALS));
+    }
+}
+
+#[test]
+fn a_deleted_object_is_unregistered_in_the_database_and_package_runs() {
+    let baseline = baseline();
+    let reference_path = a01_reference();
+    if !reference_path.is_file() {
+        eprintln!("skipping: {} is absent", reference_path.display());
+        return;
+    }
+    let reference = std::fs::read_to_string(&reference_path).expect("read A01_Data.xml");
+    let stripped = strip_block_containing(&reference, PROBE_OBJECT_UID);
+    assert_ne!(stripped, reference, "the probe must remove something");
+    let scratch = Scratch::new("a01-database-deleted-object");
+    let mutated = scratch.path().join("A01_Data.xml");
+    std::fs::write(&mutated, &stripped).expect("write the mutated reference");
+    let needle = format!("extra PIDProcessVessel {PROBE_OBJECT_UID}");
+
+    let figure = &baseline["figures"][A01_DATABASE_FIGURE];
+    let Some(run) = a01_database_run(&mutated) else {
+        return;
+    };
+    assert_eq!(run.code, 1, "deleting an object must not silence the gate");
+    let classification = Classification::of(figure, &run);
+    assert!(
+        classification
+            .unregistered
+            .contains(&format!("extra\t{needle}")),
+        "{A01_DATABASE_FIGURE}: the deleted object must be unregistered: {:#?}",
+        classification.unregistered
+    );
+
+    let figure = &baseline["figures"][A01_PACKAGE_FIGURE];
+    let Some((run, _)) = a01_package_run(figure, scratch.path()) else {
+        return;
+    };
+    assert_eq!(run.code, 1, "deleting an object must not silence the gate");
+    let classification = Classification::of(figure, &run);
+    assert!(
+        classification
+            .unregistered
+            .contains(&format!("extra\t{needle}")),
+        "{A01_PACKAGE_FIGURE}: the deleted object must be unregistered: {:#?}",
+        classification.unregistered
     );
 }
 
