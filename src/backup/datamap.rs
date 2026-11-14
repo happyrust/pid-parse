@@ -25,9 +25,11 @@
 //! * how many `<Rel>` blocks the file holds under each `DefUID`.
 //!
 //! The class and property maps are read out and nothing more: no
-//! conversion is run and no enum hierarchy is walked here, and no publish
-//! stage consults them. The enum map is what `publish::codelist_values`
-//! spells a codelist cell of the dump by. The file may be the XML itself or the
+//! conversion is run and no enum hierarchy is walked here. The enum map is
+//! what `publish::codelist_values` spells a codelist cell of the dump by;
+//! [`crate::publish::placement`] joins the property map to a dump's data
+//! dictionary, and [`crate::publish::stored_values`] writes the properties
+//! it places. The file may be the XML itself or the
 //! `SPPIDDataMap.xml` entry inside a zip (dated copies in the same zip
 //! are left alone).
 
@@ -243,6 +245,46 @@ impl DataMap {
             }
         }
         retrieved
+    }
+
+    /// Every attribute the map publishes as `property` of an item type that
+    /// [`MapClassToClass`](MapClass::publish_classes) publishes as
+    /// `publish_class`, whatever class the rel itself names.
+    ///
+    /// This is the second way to read the map: [`Self::sources`] goes by
+    /// the class each rel names, this by the item type that owns the
+    /// attribute. The two differ where a rel names another class than its
+    /// item type's (a pipe run's process properties, which the rel puts on
+    /// `PIDProcessPoint`).
+    #[must_use]
+    pub fn sources_through_item_type(
+        &self,
+        publish_class: &str,
+        property: &str,
+    ) -> Vec<MapSource<'_>> {
+        let mut sources = Vec::new();
+        for candidate in &self.properties {
+            let Some(class) = self.class(&candidate.class_uid) else {
+                continue;
+            };
+            if !class
+                .publish_classes
+                .iter()
+                .any(|name| name == publish_class)
+            {
+                continue;
+            }
+            for target in &candidate.targets {
+                if target.property == property {
+                    sources.push(MapSource {
+                        class: Some(class),
+                        property: candidate,
+                        target,
+                    });
+                }
+            }
+        }
+        sources
     }
 }
 

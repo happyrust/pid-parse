@@ -23,10 +23,10 @@
 //!   for each reference. The counts are then split into the values that
 //!   document states and the ones it does not, by the rule of
 //!   `publish::completeness::measure`.
-//! * `--dump` — an Oracle `exp` dump. Its own data dictionary (`ITEM`,
-//!   `ITEMATTRIBUTIONS`, `UNIQUEATTS`, `ENTITIES`, `ATTRIBUTES`) places an
-//!   item type's attribute in a table and a column, and each row of the
-//!   breakdown gains that place.
+//! * `--dump` — an Oracle `exp` dump. Its own data dictionary
+//!   (`publish::placement::DumpDictionary`) places an item type's attribute
+//!   in a table and a column, and each row of the breakdown gains that
+//!   place.
 //! * `--top N` — rows of the breakdown to print (40; 0 prints all).
 //!
 //! Two counts of "named" are printed. One takes the publish class from the
@@ -45,8 +45,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pid_parse::backup::{read_datamap, DataMap, MapSource};
+use pid_parse::backup::{read_datamap, DataMap};
 use pid_parse::publish::completeness::measure;
+use pid_parse::publish::placement::{place_property, DumpDictionary, Placement};
 
 /// What the references hold under one `(class, interface, attribute)`.
 #[derive(Default, Clone, Copy)]
@@ -102,41 +103,11 @@ fn named_by_item_type(map: &DataMap) -> HashMap<&str, HashSet<&str>> {
     named
 }
 
-/// The attributes of the item types published as `publish_class` that the
-/// map publishes as `property`, whatever class the rel itself names.
-fn sources_by_item_type<'a>(
-    map: &'a DataMap,
-    publish_class: &str,
-    property: &str,
-) -> Vec<MapSource<'a>> {
-    let mut sources = Vec::new();
-    for candidate in &map.properties {
-        let Some(class) = map.class(&candidate.class_uid) else {
-            continue;
-        };
-        if !class
-            .publish_classes
-            .iter()
-            .any(|name| name == publish_class)
-        {
-            continue;
-        }
-        for target in &candidate.targets {
-            if target.property == property {
-                sources.push(MapSource {
-                    class: Some(class),
-                    property: candidate,
-                    target,
-                });
-            }
-        }
-    }
-    sources
-}
-
-/// `Item.Attribute`, with the conversion and the value list the map states.
-fn describe(map: &DataMap, source: &MapSource<'_>, dictionary: Option<&Dictionary>) -> String {
-    let item_type = source.class.map_or("?", |class| class.name.as_str());
+/// `Item.Attribute`, with the conversion and the value list the map states,
+/// and the place in the dump when one was given.
+fn describe(map: &DataMap, placement: &Placement<'_>, dump_given: bool) -> String {
+    let source = &placement.source;
+    let item_type = placement.item_type().unwrap_or("?");
     let mut text = format!("{item_type}.{}", source.property.name);
     let mut notes = Vec::new();
     match source.property.process_criteria.as_deref() {
@@ -158,255 +129,13 @@ fn describe(map: &DataMap, source: &MapSource<'_>, dictionary: Option<&Dictionar
     if !notes.is_empty() {
         text.push_str(&format!(" [{}]", notes.join("; ")));
     }
-    if let Some(dictionary) = dictionary {
-        text.push_str(&format!(
-            " => {}",
-            dictionary.place(item_type, &source.property.name)
-        ));
+    if dump_given {
+        match &placement.column {
+            Ok(column) => text.push_str(&format!(" => {column}")),
+            Err(unplaced) => text.push_str(&format!(" => ({unplaced})")),
+        }
     }
     text
-}
-
-/// The data dictionary an Oracle `exp` dump carries: which table and column
-/// hold an item type's attribute.
-struct Dictionary {
-    /// `ITEM.NAME` → `ITEM.ID`.
-    items: HashMap<String, String>,
-    /// (`ITEMATTRIBUTIONS.ITEMID`, `NAME`) → `ATTRIBUTIONID`.
-    attributions: HashMap<(String, String), String>,
-    /// `UNIQUEATTS.ID` → (`ENTITY_NUMBER`, `ATTRIBUTE_NUMBER`).
-    unique: HashMap<String, (String, String)>,
-    /// `ENTITIES.ENTITY_NUMBER` → `ENTITY_NAME`.
-    entities: HashMap<String, String>,
-    /// `ATTRIBUTES.ATTRIBUTE_NUMBER` → `ATTRIBUTE_NAME`.
-    attributes: HashMap<String, String>,
-}
-
-impl Dictionary {
-    fn read(dump: &[u8]) -> Result<Self, String> {
-        let column = |table: &ExpTable, name: &str| {
-            table
-                .columns
-                .iter()
-                .position(|column| column == name)
-                .ok_or_else(|| format!("{}: no column {name}", table.name))
-        };
-        let pairs = |name: &str, key: &str, value: &str| -> Result<Vec<(String, String)>, String> {
-            let table = ExpTable::read(dump, name)?;
-            let (key, value) = (column(&table, key)?, column(&table, value)?);
-            Ok(table
-                .rows
-                .iter()
-                .filter_map(|row| Some((row[key].clone()?, row[value].clone()?)))
-                .collect())
-        };
-        let items = pairs("ITEM", "NAME", "ID")?.into_iter().collect();
-        let entities = pairs("ENTITIES", "ENTITY_NUMBER", "ENTITY_NAME")?
-            .into_iter()
-            .collect();
-        let attributes = pairs("ATTRIBUTES", "ATTRIBUTE_NUMBER", "ATTRIBUTE_NAME")?
-            .into_iter()
-            .collect();
-        let table = ExpTable::read(dump, "UNIQUEATTS")?;
-        let (id, entity, attribute) = (
-            column(&table, "ID")?,
-            column(&table, "ENTITY_NUMBER")?,
-            column(&table, "ATTRIBUTE_NUMBER")?,
-        );
-        let unique = table
-            .rows
-            .iter()
-            .filter_map(|row| {
-                Some((
-                    row[id].clone()?,
-                    (row[entity].clone()?, row[attribute].clone()?),
-                ))
-            })
-            .collect();
-        let table = ExpTable::read(dump, "ITEMATTRIBUTIONS")?;
-        let (item, attribution, name) = (
-            column(&table, "ITEMID")?,
-            column(&table, "ATTRIBUTIONID")?,
-            column(&table, "NAME")?,
-        );
-        let mut attributions = HashMap::new();
-        for row in &table.rows {
-            if let (Some(item), Some(attribution), Some(name)) = (
-                row[item].clone(),
-                row[attribution].clone(),
-                row[name].clone(),
-            ) {
-                attributions.entry((item, name)).or_insert(attribution);
-            }
-        }
-        Ok(Self {
-            items,
-            attributions,
-            unique,
-            entities,
-            attributes,
-        })
-    }
-
-    /// `T_Table.Column` of an item type's attribute, or why the dictionary
-    /// does not place it.
-    fn place(&self, item_type: &str, attribute: &str) -> String {
-        let Some(item) = self.items.get(item_type) else {
-            return format!("(the dictionary has no item type {item_type})");
-        };
-        let Some(attribution) = self
-            .attributions
-            .get(&(item.clone(), attribute.to_string()))
-        else {
-            return format!("(item type {item_type} has no attribution {attribute})");
-        };
-        let Some((entity, column)) = self.unique.get(attribution) else {
-            return format!("(attribution {attribution} is not in UNIQUEATTS)");
-        };
-        format!(
-            "{}.{}",
-            self.entities.get(entity).map_or("?", String::as_str),
-            self.attributes.get(column).map_or("?", String::as_str)
-        )
-    }
-
-    fn places(&self, item_type: &str, attribute: &str) -> bool {
-        self.items
-            .get(item_type)
-            .and_then(|item| {
-                self.attributions
-                    .get(&(item.clone(), attribute.to_string()))
-            })
-            .is_some_and(|attribution| self.unique.contains_key(attribution))
-    }
-}
-
-/// The first `INSERT INTO "name"` of an Oracle `exp` dump with each cell as
-/// text: national text as written, an integer `NUMBER` in decimal, and
-/// `None` for NULL, a date, a fraction or database-charset text.
-struct ExpTable {
-    name: String,
-    columns: Vec<String>,
-    rows: Vec<Vec<Option<String>>>,
-}
-
-impl ExpTable {
-    fn read(dump: &[u8], name: &str) -> Result<Self, String> {
-        let fail = |detail: &str| format!("{name}: {detail}");
-        let marker = format!("INSERT INTO \"{name}\"");
-        let at = dump
-            .windows(marker.len())
-            .position(|window| window == marker.as_bytes())
-            .ok_or_else(|| fail("no INSERT in the dump"))?;
-        let line_end = dump[at..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| at + offset)
-            .ok_or_else(|| fail("the INSERT line does not end"))?;
-        let line = std::str::from_utf8(&dump[at..line_end])
-            .map_err(|_| fail("the INSERT line is not ASCII"))?;
-        let list = line
-            .find('(')
-            .zip(line.find(") VALUES"))
-            .and_then(|(open, close)| line.get(open + 1..close))
-            .ok_or_else(|| fail("the INSERT line has no column list"))?;
-        let columns: Vec<String> = list
-            .split(',')
-            .map(|piece| piece.trim().trim_matches('"').to_string())
-            .collect();
-        let word = |pos: usize| {
-            dump.get(pos..pos + 2)
-                .map(|bytes| usize::from(u16::from_le_bytes([bytes[0], bytes[1]])))
-                .ok_or_else(|| fail("the table is cut short"))
-        };
-        let mut pos = line_end + 1;
-        if word(pos)? != columns.len() {
-            return Err(fail(
-                "the header and the INSERT line disagree on the columns",
-            ));
-        }
-        pos += 2;
-        // Per column: is it national text (charset 2000, form 2), is it a number.
-        let mut kinds = Vec::with_capacity(columns.len());
-        for _ in &columns {
-            let kind = word(pos)?;
-            pos += 2;
-            match kind {
-                1 => {
-                    let (charset, form) = (word(pos + 2)?, word(pos + 4)?);
-                    pos += 6;
-                    kinds.push((charset == 2000 && form == 2, false));
-                }
-                2 | 12 => {
-                    pos += 2;
-                    kinds.push((false, kind == 2));
-                }
-                _ => return Err(fail("a column type this probe does not read")),
-            }
-        }
-        if dump.get(pos..pos + 4) != Some(&[0, 0, 0, 0]) {
-            return Err(fail("the column header does not end"));
-        }
-        pos += 4;
-        let mut rows = Vec::new();
-        while word(pos)? != 0xFFFF {
-            let mut row = Vec::with_capacity(columns.len());
-            for (text, number) in &kinds {
-                let len = word(pos)?;
-                pos += 2;
-                if len == 0xFFFE {
-                    row.push(None);
-                    continue;
-                }
-                let raw = dump
-                    .get(pos..pos + len)
-                    .ok_or_else(|| fail("a cell runs past the dump"))?;
-                pos += len;
-                row.push(if *text {
-                    let (pairs, _) = raw.as_chunks::<2>();
-                    let units: Vec<u16> =
-                        pairs.iter().map(|pair| u16::from_be_bytes(*pair)).collect();
-                    Some(String::from_utf16_lossy(&units))
-                } else if *number {
-                    oracle_integer(raw).map(|value| value.to_string())
-                } else {
-                    None
-                });
-            }
-            if dump.get(pos..pos + 2) != Some(&[0, 0]) {
-                return Err(fail("a row does not end"));
-            }
-            pos += 2;
-            rows.push(row);
-        }
-        Ok(Self {
-            name: name.to_string(),
-            columns,
-            rows,
-        })
-    }
-}
-
-/// An Oracle `NUMBER` that is a non-negative integer: `80` is 0, `c1 02` is
-/// 1, `c2 1a 34` is 2551. Anything else is `None`.
-fn oracle_integer(raw: &[u8]) -> Option<u64> {
-    let (&first, digits) = raw.split_first()?;
-    if first == 0x80 && digits.is_empty() {
-        return Some(0);
-    }
-    let exponent = usize::from(first.checked_sub(193)?);
-    if digits.len() > exponent + 1 {
-        return None;
-    }
-    let mut total: u64 = 0;
-    for index in 0..=exponent {
-        let digit = match digits.get(index) {
-            Some(byte) => u64::from(byte.checked_sub(1).filter(|digit| *digit < 100)?),
-            None => 0,
-        };
-        total = total.checked_mul(100)?.checked_add(digit)?;
-    }
-    Some(total)
 }
 
 struct Arguments {
@@ -468,7 +197,10 @@ fn run(arguments: &Arguments) -> Result<(), String> {
         Some(path) => {
             let dump =
                 std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-            Some(Dictionary::read(&dump).map_err(|error| format!("{}: {error}", path.display()))?)
+            Some(
+                DumpDictionary::read(&dump)
+                    .map_err(|error| format!("{}: {error}", path.display()))?,
+            )
         }
     };
     println!(
@@ -493,7 +225,7 @@ fn run(arguments: &Arguments) -> Result<(), String> {
                 let item_type = map
                     .class(&property.class_uid)
                     .map_or("?", |class| class.name.as_str());
-                if dictionary.places(item_type, &property.name) {
+                if dictionary.place(item_type, &property.name).is_ok() {
                     property.targets.len()
                 } else {
                     0
@@ -502,8 +234,8 @@ fn run(arguments: &Arguments) -> Result<(), String> {
             .sum::<usize>();
         println!(
             "dump dictionary: {} item types, {} attributions; it places {placed} of the property rels in a table and column",
-            dictionary.items.len(),
-            dictionary.attributions.len()
+            dictionary.item_type_count(),
+            dictionary.attribution_count()
         );
     }
 
@@ -625,21 +357,28 @@ fn run(arguments: &Arguments) -> Result<(), String> {
             ", by values"
         }
     );
+    let no_dictionary = DumpDictionary::default();
     for ((class, interface, attribute), tally) in ordered.into_iter().take(shown) {
-        let mut sources = map.sources(class, attribute);
-        let mut rule = "";
-        if sources.is_empty() {
-            sources = sources_by_item_type(&map, class, attribute);
-            if !sources.is_empty() {
-                rule = " (through the item type; the rel names another class)";
-            }
-        }
-        let from = if sources.is_empty() {
+        let placements = place_property(
+            &map,
+            dictionary.as_ref().unwrap_or(&no_dictionary),
+            class,
+            attribute,
+        );
+        let rule = if placements
+            .first()
+            .is_some_and(|placement| placement.through_item_type)
+        {
+            " (through the item type; the rel names another class)"
+        } else {
+            ""
+        };
+        let from = if placements.is_empty() {
             "nothing in the map".to_string()
         } else {
-            sources
+            placements
                 .iter()
-                .map(|source| describe(&map, source, dictionary.as_ref()))
+                .map(|placement| describe(&map, placement, dictionary.is_some()))
                 .collect::<Vec<_>>()
                 .join(" | ")
         };

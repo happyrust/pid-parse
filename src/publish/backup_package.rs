@@ -596,6 +596,13 @@ fn publish_one(
                 )
                 .map(|_| ())
             });
+        if let (Ok(()), Some(map)) = (&attached, loaded.datamap.as_ref()) {
+            let stored =
+                super::stored_values::attach_stored_values(&mut drawing, &loaded.tables, map);
+            for reason in stored.unread {
+                notes.push(format!("a stored value column was not read: {reason}"));
+            }
+        }
         if let Err(error) = attached {
             let detail = error.to_string();
             tally

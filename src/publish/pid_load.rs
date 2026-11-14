@@ -128,6 +128,10 @@ pub enum PidValueSource {
     },
     /// The same value on every reference object of the publish class.
     ClassConstant,
+    /// A column of the item's own row in the plant-database backup, which
+    /// the data map and the dump's data dictionary place
+    /// ([`super::placement::place_property`]).
+    PlacedColumn(super::placement::DumpColumn),
 }
 
 /// One published attribute value of an item.

@@ -21,6 +21,7 @@ use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
 };
+use super::placement::{DumpColumn, DumpDictionary};
 
 const CHARSET_AL16UTF16: u16 = 2000;
 const CHARSET_FORM: u16 = 2;
@@ -286,8 +287,9 @@ pub struct DrawingPorts {
 /// [`Self::read`] loads the port, connectivity, composition, OPC, model
 /// item and plant item tables the publish stages follow, `T_EQUIPMENT` and
 /// `T_VESSEL` (their SI values), the first `CODELISTS` insert (pipeline
-/// names spell codelist 19) and `T_DRAWING` (the package index and the
-/// revision check). `APPLICATIONS` is pinned first and is not kept: a dump
+/// names spell codelist 19), `T_DRAWING` (the package index and the
+/// revision check) and the dump's data dictionary ([`Self::dictionary`]).
+/// `APPLICATIONS` is pinned first and is not kept: a dump
 /// that fails the pin returns [`ExpError::FormatUnpinned`] and the other
 /// tables are not read.
 ///
@@ -325,6 +327,7 @@ pub struct ExpTables {
     vessel: Table,
     pipingcomp: Table,
     instrument: Table,
+    dictionary: DumpDictionary,
 }
 
 impl ExpTables {
@@ -334,7 +337,9 @@ impl ExpTables {
     ///
     /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not
     /// pin the row format, and [`ExpError::Table`] when a stored table's
-    /// bytes do not frame. `CODELISTS` is the first insert of that name.
+    /// bytes do not frame or the dump carries part of a data dictionary
+    /// ([`DumpDictionary::read`]). `CODELISTS` is the first insert of that
+    /// name.
     pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
         Self::pin(dump)?;
         Ok(Self {
@@ -357,7 +362,84 @@ impl ExpTables {
             vessel: read_optional_table(dump, "T_VESSEL")?,
             pipingcomp: read_optional_table(dump, "T_PIPINGCOMP")?,
             instrument: read_optional_table(dump, "T_INSTRUMENT")?,
+            dictionary: DumpDictionary::read(dump)?,
         })
+    }
+
+    /// The table [`Self::read`] holds under the `INSERT INTO` name `name`.
+    fn table_named(&self, name: &str) -> Option<&Table> {
+        [
+            &self.piperun,
+            &self.nozzle,
+            &self.modelitem,
+            &self.plantitem,
+            &self.inlinecomp,
+            &self.equipment,
+            &self.vessel,
+            &self.pipingcomp,
+            &self.instrument,
+        ]
+        .into_iter()
+        .find(|table| table.name == name)
+    }
+
+    /// The cells of a placed column, keyed by the row's `SP_ID` folded like
+    /// [`backup_uid_key`]. A NULL cell and an empty text are left out.
+    ///
+    /// `Ok(None)` when [`Self::read`] does not hold the column's table, or
+    /// the dump's insert of it has no such column: the attribute is then not
+    /// read from this dump at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when the table has no `SP_ID`, or the
+    /// column holds a cell that was not read (database-charset text, a
+    /// `NUMBER` or a `DATE` that does not decode).
+    pub fn stored_column(
+        &self,
+        column: &DumpColumn,
+    ) -> Result<Option<HashMap<String, StoredCell>>, ExpError> {
+        let Some(table) = self.table_named(&column.insert_table()) else {
+            return Ok(None);
+        };
+        let name = column.insert_column();
+        let Some(declared) = table
+            .columns
+            .iter()
+            .find(|candidate| candidate.name == name)
+        else {
+            return Ok(None);
+        };
+        let wanted = match declared.kind {
+            Kind::Num | Kind::Decimal => Kind::Decimal,
+            kind => kind,
+        };
+        let Some(index) = optional_column_index(table, &name, wanted)? else {
+            return Ok(None);
+        };
+        let id = column_index(table, "SP_ID", Kind::Char)?;
+        let mut cells = HashMap::new();
+        for row in &table.rows {
+            let Some(id) = text_of(row, id) else {
+                continue;
+            };
+            let cell = match row.get(index) {
+                Some(Field::Text(text)) if !text.is_empty() => StoredCell::Text(text.clone()),
+                Some(Field::Date(text)) => StoredCell::Text(text.clone()),
+                Some(Field::Int(value)) => StoredCell::Integer(*value),
+                Some(Field::Number(number)) => StoredCell::Number(number.clone()),
+                _ => continue,
+            };
+            cells.insert(norm_uid(id), cell);
+        }
+        Ok(Some(cells))
+    }
+
+    /// The dump's own data dictionary, read with the tables. Empty when the
+    /// dump carries none.
+    #[must_use]
+    pub fn dictionary(&self) -> &DumpDictionary {
+        &self.dictionary
     }
 
     /// Projected piping and signal port rows.
@@ -759,6 +841,7 @@ impl ExpTables {
             vessel: Table::blank("T_VESSEL"),
             pipingcomp: Table::blank("T_PIPINGCOMP"),
             instrument: Table::blank("T_INSTRUMENT"),
+            dictionary: DumpDictionary::default(),
         }
     }
 
@@ -848,6 +931,17 @@ impl ItemTable {
             Self::PipeRun => "T_PIPERUN",
         }
     }
+}
+
+/// One cell of a placed column ([`ExpTables::stored_column`]), as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredCell {
+    /// National text, or a `DATE` as `YYYY/MM/DD HH:MM:SS`.
+    Text(String),
+    /// A `NUMBER` that is an integer `i64` holds: a code, a count, a flag.
+    Integer(i64),
+    /// Any other `NUMBER`.
+    Number(OracleNumber),
 }
 
 /// One `T_PIPERUN` row the pipeline name is spelled from.
@@ -2344,6 +2438,53 @@ fn read_optional_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
         return Ok(Table::blank(name));
     }
     read_table_tolerant(dump, name)
+}
+
+/// The cells of `columns` in the first insert of `name`, row by row, each
+/// as text: national text as stored, an integer `NUMBER` in decimal, and
+/// `None` for NULL or any other cell. `Ok(None)` when the dump has no
+/// insert of that name.
+///
+/// # Errors
+///
+/// Returns [`ExpError::Table`] when the table's bytes do not frame or it
+/// lacks one of `columns`.
+pub(crate) fn read_text_cells(
+    dump: &[u8],
+    name: &str,
+    columns: &[&str],
+) -> Result<Option<Vec<Vec<Option<String>>>>, ExpError> {
+    let marker = format!("INSERT INTO \"{name}\"");
+    if find_slice(dump, marker.as_bytes()).is_none() {
+        return Ok(None);
+    }
+    let table = read_table_tolerant(dump, name)?;
+    let indices = columns
+        .iter()
+        .map(|column| {
+            table
+                .columns
+                .iter()
+                .position(|candidate| candidate.name == *column)
+                .ok_or_else(|| table_error(name, format!("column {column} is missing")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(
+        table
+            .rows
+            .iter()
+            .map(|row| {
+                indices
+                    .iter()
+                    .map(|index| match row.get(*index) {
+                        Some(Field::Text(text)) => Some(text.clone()),
+                        Some(Field::Int(value)) => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect(),
+    ))
 }
 
 fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {

@@ -748,6 +748,24 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             drawing.pipeline_synthesis.fluid_code_missing,
             drawing.pipeline_synthesis.fluid_system_unmapped,
         );
+        if let Some(map) = &datamap {
+            let stored = pid_parse::publish::stored_values::attach_stored_values(
+                &mut drawing,
+                &exp_tables,
+                map,
+            );
+            eprintln!(
+                "oracle-exp stored values: {} written, {} labels confirmed, {} labels kept \
+                 where the dump says otherwise, {} left out unspelled",
+                stored.written,
+                stored.confirmed_labels,
+                stored.disagreeing_labels,
+                stored.unspelled,
+            );
+            for reason in &stored.unread {
+                eprintln!("oracle-exp stored values: not read: {reason}");
+            }
+        }
         let (written, left_out) = connectivity_rel_counts(&drawing);
         eprintln!(
             "oracle-exp connectivity: {} pairs, {written} written as <Rel>, \

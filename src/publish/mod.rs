@@ -44,6 +44,11 @@
 //!   cells, spelled by `SPPIDDataMap.xml`.
 //! * [`unit_values`] — values with a unit (`50 mm`, `3 m`) from the dump's
 //!   SI columns, spelled as `SmartPlant` spells a double.
+//! * [`placement`] — where a published property is stored in an Oracle
+//!   `exp` dump: the data map's attribute placed in a table and a column
+//!   by the dump's own data dictionary.
+//! * [`stored_values`] — the published properties the dump stores as they
+//!   are, read through [`placement`] onto the items a `.pid` publishes.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
 //!   provenance record (`PidValueSource`).
 //! * [`pid_writer`] — that DTO → `_Data.xml` / `_Meta.xml` / `_Coverage.json`.
@@ -104,8 +109,10 @@ pub mod oracle_exp;
 pub mod pid_load;
 pub mod pid_writer;
 pub mod pipeline;
+pub mod placement;
 #[cfg(feature = "backup-mdf")]
 pub mod sqlite_load;
+pub mod stored_values;
 pub mod unit_values;
 pub mod xml_writer;
 
