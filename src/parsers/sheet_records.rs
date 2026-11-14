@@ -5310,6 +5310,10 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 /// * `0x67` line — `tag + 4×f64` (start, end), 33 bytes;
 /// * `0x68` point run — `tag + u32 count + 2-byte tail +
 ///   count × 16-byte (x, y)`, closed onto its first point;
+/// * `0x73` ellipse — `tag + 5×f64`
+///   `(centre_x, centre_y, major_x, major_y, ratio)` plus a direction
+///   byte, 42 bytes; a circle is `(radius, 0)` and ratio one
+///   ([`IGSYMBOUNDARY_CIRCLE_TAG`]);
 /// * `0x74` arc of an ellipse — `tag + 7×f64`
 ///   `(start, end, centre_x, centre_y, major_x, major_y, ratio)` plus a
 ///   direction byte ([`igboundary_arc_sweep`]), the arc of a circle being
@@ -5409,7 +5413,8 @@ fn decode_igboundary_template_payload(
 }
 
 /// Read `member_count` members of the linked-template vocabulary — `0x67`
-/// line, `0x68` point run, `0x74` arc of an ellipse, `0x7F` B-spline — from
+/// line, `0x68` point run, `0x73` ellipse, `0x74` arc of an ellipse,
+/// `0x7F` B-spline — from
 /// `payload[pos..]`, none starting at or past `members_end`, flattening
 /// each to chords appended to `segments`. Returns the offset after the last
 /// member.
@@ -5582,6 +5587,64 @@ fn igboundary_template_members(
                 let vertices = igboundary_bspline_vertices(&curve)?;
                 for pair in vertices.windows(2) {
                     push_segment(pos, pair[0], pair[1])?;
+                }
+                pos = member_end;
+            }
+            IGSYMBOUNDARY_CIRCLE_TAG => {
+                let member_end = pos.checked_add(IGBOUNDARY2D_CIRCLE_MEMBER_LEN)?;
+                if member_end > members_end {
+                    return None;
+                }
+                let cx = check(read_f64(pos + 1)?)?;
+                let cy = check(read_f64(pos + 9)?)?;
+                let major = (check(read_f64(pos + 17)?)?, check(read_f64(pos + 25)?)?);
+                let ratio = check(read_f64(pos + 33)?)?;
+                let direction = *payload.get(pos + 41)?;
+                if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
+                    return None;
+                }
+                // A circle — major semi-axis `(radius, 0)`, ratio one — is
+                // cut into the same chords the strict grammar emits, so a
+                // sheet that already draws one (the `EF井场` dot) is
+                // unchanged when this arm is what flattens it. Any other
+                // ellipse is the full turn an `igEllipse2d` draws.
+                if major.1 == 0.0 && ratio == 1.0 {
+                    if major.0 <= 0.0 {
+                        return None;
+                    }
+                    let radius = major.0;
+                    let sweep = if direction == 0 {
+                        -std::f64::consts::TAU
+                    } else {
+                        std::f64::consts::TAU
+                    };
+                    let steps =
+                        (std::f64::consts::TAU / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize;
+                    let at = |step: usize| {
+                        let angle = sweep * step as f64 / steps as f64;
+                        (cx + radius * angle.cos(), cy + radius * angle.sin())
+                    };
+                    for step in 0..steps {
+                        push_segment(pos, at(step), at(step + 1))?;
+                    }
+                } else {
+                    let (poles, weights, knots) = crate::bspline::elliptical_arc_directed(
+                        (cx, cy),
+                        major,
+                        ratio,
+                        0.0,
+                        std::f64::consts::TAU,
+                        direction == 0,
+                    )?;
+                    let vertices = crate::bspline::try_sample(
+                        &poles,
+                        &weights,
+                        &knots,
+                        crate::bspline::SEGMENTS_PER_SPAN,
+                    )?;
+                    for pair in vertices.windows(2) {
+                        push_segment(pos, pair[0], pair[1])?;
+                    }
                 }
                 pos = member_end;
             }
@@ -5805,27 +5868,23 @@ fn decode_igboundary_curved_loop_payload(
 }
 
 // ---------------------------------------------------------------------------
-// PSM `igBoundary2d` (type `0x0013`), symbol-cache variant — loose member
-// read for `.sym` libraries and the drawing's `JSite` definition cache.
+// PSM `igBoundary2d` (type `0x0013`) in a `.sym` or a `JSite` cache.
 //
-// The strict decoder above answers the drawing-side question (`0x0010`
-// sub-type, `0x67` line members re-listing `igLine2d` strokes). The same
-// family inside a `.sym` or a `JSite` storage carries a different member
-// vocabulary: `Wellhead Christmas Tree 02.sym` files 22 records whose
-// sub-type word is `0x0000` and whose segment groups open with `0x73`
-// followed by `(centre_x, centre_y, radius, unused)` — the flange-dot
-// circles `SmartPlant`'s plot fills solid. Each carries a fill-family
-// style index, which is what marks them as fills rather than outlines.
-//
-// This read shares the 18-byte prefix, the `u32 == 1` marker at `+18`
-// and the segment count at `+22` with the strict one, maps each segment
-// group by its tag byte, and leaves the trailer unread — the strict
-// grammar's `0x67`-only rule rejects every corpus member here, and its
-// exact `49 + 41n` length arithmetic does not hold for this variant.
+// The same grammar as a sheet boundary that names its members
+// ([`decode_igboundary_loops_payload`]): loop count at `+18`, each loop a
+// member count, two bytes and that many members, then the anchor, a flag
+// byte, a reference count and the references, closing the payload. A
+// `0x73` member is the 42-byte ellipse, and a circle is `(radius, 0)` with
+// ratio one. The old stride-48 read of a `+18 > 1` record was this grammar
+// on a loop of one circle: the six bytes of the next loop's header sit in
+// what that read called a separator, and every such record in the corpora
+// is a two-loop record. Records that name no member write `1e30` for the
+// anchor, as a sheet's do.
 
-/// Segment tag of a circular `igBoundary2d` member (`.sym`/cache
-/// layout): the group's four words are `centre_x, centre_y, radius,
-/// unused`.
+/// Segment tag of an elliptical `igBoundary2d` member (`0x73`): centre,
+/// major semi-axis, ratio and a direction byte — an `igEllipse2d` after
+/// its sub-header. A circle is the ellipse of major semi-axis `(radius, 0)`
+/// and ratio one.
 pub const IGSYMBOUNDARY_CIRCLE_TAG: u8 = 0x73;
 
 /// Bytes one `0x73` circle member takes in a drawing's `igBoundary2d`:
@@ -5835,35 +5894,82 @@ pub const IGSYMBOUNDARY_CIRCLE_TAG: u8 = 0x73;
 /// the `igCircle2d` its member reference names.
 pub const IGBOUNDARY2D_CIRCLE_MEMBER_LEN: usize = 1 + 5 * 8 + 1;
 
-/// One member shape of an `igBoundary2d` record, keyed by the segment
-/// group's tag byte rather than resolved through the member-reference
-/// trailer.
+/// One member of an `igBoundary2d`, as the curve it re-lists.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IgBoundaryMember {
-    /// Segment tag [`IGBOUNDARY2D_SEGMENT_TAG`] (`0x67`): the group's
-    /// words are `(start_x, start_y, end_x, end_y)` — the layout
-    /// drawing-side records carry.
+    /// Tag [`IGBOUNDARY2D_SEGMENT_TAG`] (`0x67`): `(start, end)`.
     Line {
         /// Member start.
         start: (f64, f64),
         /// Member end.
         end: (f64, f64),
     },
-    /// Segment tag [`IGSYMBOUNDARY_CIRCLE_TAG`] (`0x73`): the group's
-    /// words are `(centre_x, centre_y, radius, unused)` — the layout
-    /// `.sym` libraries and `JSite` caches carry.
+    /// Tag [`IGSYMBOUNDARY_CIRCLE_TAG`] (`0x73`) when the ellipse is a
+    /// circle: major semi-axis `(radius, 0)` or any axis with ratio one.
     Circle {
         /// Member centre.
         center: (f64, f64),
         /// Member radius.
         radius: f64,
     },
+    /// Tag `0x73` when the ratio is not one: a full ellipse.
+    Ellipse {
+        /// Ellipse centre.
+        center: (f64, f64),
+        /// Major semi-axis.
+        major: (f64, f64),
+        /// Minor semi-axis as a fraction of the major.
+        ratio: f64,
+        /// `true` when the direction byte is `0` (clockwise).
+        clockwise: bool,
+    },
+    /// Tag [`IGBOUNDARY2D_ARC_TAG`] (`0x74`) of a circle: major semi-axis
+    /// `(radius, 0)` and ratio one.
+    Arc {
+        /// Arc centre.
+        center: (f64, f64),
+        /// Radius.
+        radius: f64,
+        /// Start angle, radians, counter-clockwise from +X.
+        start_angle: f64,
+        /// End angle, same convention.
+        end_angle: f64,
+        /// `true` when the direction byte is `0`.
+        clockwise: bool,
+    },
+    /// Tag `0x74` of an ellipse that is not a circle.
+    EllipticalArc {
+        /// Arc centre.
+        center: (f64, f64),
+        /// Major semi-axis.
+        major: (f64, f64),
+        /// Minor semi-axis as a fraction of the major.
+        ratio: f64,
+        /// Start parameter.
+        start_angle: f64,
+        /// End parameter.
+        end_angle: f64,
+        /// `true` when the direction byte is `0`.
+        clockwise: bool,
+    },
+    /// Tag [`IGBOUNDARY2D_POINTRUN_TAG`] (`0x68`): the run's points.
+    Polyline {
+        /// Vertices in record order.
+        points: Vec<(f64, f64)>,
+    },
+    /// Tag [`IGBOUNDARY2D_BSPLINE_TAG`] (`0x7F`).
+    Spline {
+        /// Control points.
+        poles: Vec<(f64, f64)>,
+        /// One weight per pole, or empty for a polynomial curve.
+        weights: Vec<f64>,
+        /// Knot vector.
+        knots: Vec<f64>,
+    },
 }
 
-/// One `igBoundary2d` record read the loose symbol-cache way: prefix,
-/// sub-header marker and segment groups are shared with
-/// [`SheetIgBoundary2dDecoded`]; the sub-type word, tag vocabulary and
-/// trailer are not held to its rules.
+/// One `igBoundary2d` from a `.sym` or a definition cache, read by the
+/// member-named grammar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecodedIgSymBoundaryRecord {
     /// Object identifier from payload offset 0.
@@ -5875,96 +5981,265 @@ pub struct DecodedIgSymBoundaryRecord {
     /// where the record fills, resolvable through
     /// [`crate::style_link::DocumentStyleTable::resolve_fill`].
     pub index: u32,
-    /// The members the region is filled over, in record order.
+    /// The members the region is filled over, in record order, loops
+    /// concatenated.
     pub members: Vec<IgBoundaryMember>,
+    /// How many [`Self::members`] each loop owns, in loop order. A record
+    /// of one loop is a one-element vector.
+    pub loop_counts: Vec<u32>,
 }
 
-/// Decode the payload of one `igBoundary2d` record the symbol-cache
-/// way. `None` when the prefix, marker, count or geometry reads fail.
-/// Groups whose tag names no known member shape are dropped; a record
-/// left with no member is not a fill anyone can draw.
+/// Decode one `igBoundary2d` payload the way a sheet boundary that names
+/// its members is read. `None` when the grammar does not close the payload
+/// or a member is not a curve in the coordinate domain.
+///
+/// The anchor may be the pair `1e30`: a record that names no member does
+/// not write one. Any other anchor has to lie in the coordinate domain.
 pub fn decode_igsym_boundary_payload(payload: &[u8]) -> Option<DecodedIgSymBoundaryRecord> {
-    let read_u32 = |pos: usize| -> Option<u32> {
-        payload
-            .get(pos..pos + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    };
-    let read_f64 = |pos: usize| -> Option<f64> {
-        payload
-            .get(pos..pos + 8)
-            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-    };
-    let oid = read_u32(0)?;
-    let sheet_layer_ref = read_u32(8)?;
-    let index = read_u32(14)?;
-    // Two member layouts share this record type. The single-word-at-a-time
-    // layout every corpus record used until the plug valves surfaced: count
-    // at +22, members contiguous at 33 bytes each. The separator-joined
-    // layout those carry instead: count at +18 (+22 stays 1), and each
-    // 35-byte member block (`04 01` prefix + tag + four f64 words) joined
-    // to the next by 13 bytes of an `f64` and `01 01 00 00 00` — a 48-byte
-    // stride, re-checked against the `04 01` prefix so the count cannot
-    // invent members. A `+18 != 1` guard drops the plug valves' outer
-    // discs, the fills their PDFs draw.
-    let (count, stride, gated) = if read_u32(18)? > 1 {
-        (read_u32(18)? as usize, 48usize, true)
-    } else {
-        (read_u32(22)? as usize, 33usize, false)
-    };
-    if !(1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT as usize).contains(&count) {
+    let oid = u32_le(payload, 0)?;
+    let sheet_layer_ref = u32_le(payload, 8)?;
+    let index = u32_le(payload, 14)?;
+    let loop_count = usize::try_from(u32_le(payload, 18)?).ok()?;
+    if loop_count == 0 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
         return None;
     }
-    if payload.len()
-        < 26usize
-            .checked_add(stride.checked_mul(count.checked_sub(1)?)?)?
-            .checked_add(35)?
-    {
+    let mut pos = 22usize;
+    let mut members = Vec::new();
+    let mut loop_counts = Vec::with_capacity(loop_count);
+    for _ in 0..loop_count {
+        let count = u32_le(payload, pos)?;
+        if count == 0 || usize::try_from(count).ok()? > payload.len() {
+            return None;
+        }
+        pos = pos.checked_add(6)?;
+        let before = members.len();
+        for _ in 0..count {
+            let (member, next) = igboundary_member_at(payload, pos)?;
+            members.push(member);
+            pos = next;
+        }
+        loop_counts.push(u32::try_from(members.len() - before).ok()?);
+    }
+    let anchor = (f64_le(payload, pos)?, f64_le(payload, pos.checked_add(8)?)?);
+    let sentinel = anchor.0 == 1e30 && anchor.1 == 1e30;
+    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
+    if !sentinel && !(in_domain(anchor.0) && in_domain(anchor.1)) {
         return None;
     }
-    let mut members = Vec::with_capacity(count);
-    for i in 0..count {
-        let at = 28 + i * stride;
-        // Separator-joined member blocks open with their own `04 01`
-        // prefix two bytes ahead of the tag; a record that loses it is not
-        // this layout.
-        if gated && payload.get(at - 2..at) != Some(&[0x04, 0x01][..]) {
-            return None;
-        }
-        let v = [
-            read_f64(at + 1)?,
-            read_f64(at + 9)?,
-            read_f64(at + 17)?,
-            read_f64(at + 25)?,
-        ];
-        if v.iter()
-            .any(|v| !v.is_finite() || v.abs() > COORDINATE_DOMAIN_LIMIT)
-        {
-            return None;
-        }
-        let member = match payload[at] {
-            IGBOUNDARY2D_SEGMENT_TAG => IgBoundaryMember::Line {
-                start: (v[0], v[1]),
-                end: (v[2], v[3]),
-            },
-            IGSYMBOUNDARY_CIRCLE_TAG => {
-                if v[2] <= 0.0 {
-                    return None;
-                }
-                IgBoundaryMember::Circle {
-                    center: (v[0], v[1]),
-                    radius: v[2],
-                }
-            }
-            _ => continue,
-        };
-        members.push(member);
+    let _flag = *payload.get(pos.checked_add(16)?)?;
+    let reference_count = usize::try_from(u32_le(payload, pos.checked_add(17)?)?).ok()?;
+    let references_at = pos.checked_add(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+    if references_at.checked_add(reference_count.checked_mul(8)?)? != payload.len() {
+        return None;
     }
     (!members.is_empty()).then_some(DecodedIgSymBoundaryRecord {
         oid,
         sheet_layer_ref,
         index,
         members,
+        loop_counts,
     })
+}
+
+/// One member at `pos`: the shape and the offset after it. `None` when the
+/// tag is not one this grammar reads or the geometry leaves the coordinate
+/// domain.
+fn igboundary_member_at(payload: &[u8], pos: usize) -> Option<(IgBoundaryMember, usize)> {
+    let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
+    let read = |at: usize| f64_le(payload, at).filter(|value| in_domain(*value));
+    match *payload.get(pos)? {
+        IGBOUNDARY2D_SEGMENT_TAG => {
+            let start = (read(pos + 1)?, read(pos + 9)?);
+            let end = (read(pos + 17)?, read(pos + 25)?);
+            Some((IgBoundaryMember::Line { start, end }, pos + 33))
+        }
+        IGBOUNDARY2D_POINTRUN_TAG => {
+            let count = u32_le(payload, pos + 1)?;
+            if !(2..=IGBOUNDARY2D_MAX_POINTRUN_COUNT).contains(&count) {
+                return None;
+            }
+            let count = count as usize;
+            let end = pos.checked_add(7)?.checked_add(count.checked_mul(16)?)?;
+            if end > payload.len() {
+                return None;
+            }
+            let mut points = Vec::with_capacity(count);
+            for i in 0..count {
+                points.push((read(pos + 7 + i * 16)?, read(pos + 15 + i * 16)?));
+            }
+            Some((IgBoundaryMember::Polyline { points }, end))
+        }
+        IGSYMBOUNDARY_CIRCLE_TAG => {
+            let end = pos.checked_add(IGBOUNDARY2D_CIRCLE_MEMBER_LEN)?;
+            if end > payload.len() {
+                return None;
+            }
+            let center = (read(pos + 1)?, read(pos + 9)?);
+            let major = (read(pos + 17)?, read(pos + 25)?);
+            let ratio = read(pos + 33)?;
+            let clockwise = *payload.get(pos + 41)? == 0;
+            if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
+                return None;
+            }
+            let member = if ratio == 1.0 {
+                let radius = if major.1 == 0.0 {
+                    major.0
+                } else {
+                    major.0.hypot(major.1)
+                };
+                if radius <= 0.0 {
+                    return None;
+                }
+                IgBoundaryMember::Circle { center, radius }
+            } else {
+                IgBoundaryMember::Ellipse {
+                    center,
+                    major,
+                    ratio,
+                    clockwise,
+                }
+            };
+            Some((member, end))
+        }
+        IGBOUNDARY2D_ARC_TAG => {
+            let end = pos.checked_add(58)?;
+            if end > payload.len() {
+                return None;
+            }
+            let start_angle = read(pos + 1)?;
+            let end_angle = read(pos + 9)?;
+            let center = (read(pos + 17)?, read(pos + 25)?);
+            let major = (read(pos + 33)?, read(pos + 41)?);
+            let ratio = read(pos + 49)?;
+            let clockwise = *payload.get(pos + 57)? == 0;
+            if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
+                return None;
+            }
+            let member = if major.1 == 0.0 && ratio == 1.0 {
+                if major.0 <= 0.0 {
+                    return None;
+                }
+                IgBoundaryMember::Arc {
+                    center,
+                    radius: major.0,
+                    start_angle,
+                    end_angle,
+                    clockwise,
+                }
+            } else {
+                IgBoundaryMember::EllipticalArc {
+                    center,
+                    major,
+                    ratio,
+                    start_angle,
+                    end_angle,
+                    clockwise,
+                }
+            };
+            Some((member, end))
+        }
+        IGBOUNDARY2D_BSPLINE_TAG => {
+            let (curve, end) = bspcurve_geometry_from(payload, pos.checked_add(1)?)?;
+            igboundary_bspline_vertices(&curve)?;
+            Some((
+                IgBoundaryMember::Spline {
+                    poles: curve.poles,
+                    weights: curve.weights,
+                    knots: curve.knots,
+                },
+                end,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Vertices of one member, in the order the ring runs. A circle or an arc
+/// of a circle is cut into chords of [`IGBOUNDARY2D_ARC_CHORD_STEP`]; an
+/// ellipse, an elliptical arc and a B-spline are the polyline their own
+/// record is drawn as. `None` when that curve does not exist.
+pub(crate) fn igboundary_member_points(member: &IgBoundaryMember) -> Option<Vec<(f64, f64)>> {
+    let circle_points = |center: (f64, f64), radius: f64, sweep: f64, start: f64| {
+        let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
+        Some(
+            (0..=chords)
+                .map(|i| {
+                    let angle = start + sweep * (i as f64 / chords as f64);
+                    (
+                        center.0 + radius * angle.cos(),
+                        center.1 + radius * angle.sin(),
+                    )
+                })
+                .collect(),
+        )
+    };
+    match member {
+        IgBoundaryMember::Line { start, end } => Some(vec![*start, *end]),
+        IgBoundaryMember::Polyline { points } => Some(points.clone()),
+        IgBoundaryMember::Circle { center, radius } => {
+            circle_points(*center, *radius, std::f64::consts::TAU, 0.0)
+        }
+        IgBoundaryMember::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => {
+            let sweep = igboundary_arc_sweep(*start_angle, *end_angle, u8::from(!*clockwise));
+            circle_points(*center, *radius, sweep, *start_angle)
+        }
+        IgBoundaryMember::Ellipse {
+            center,
+            major,
+            ratio,
+            clockwise,
+        } => sampled_ellipse(
+            *center,
+            *major,
+            *ratio,
+            0.0,
+            std::f64::consts::TAU,
+            *clockwise,
+        ),
+        IgBoundaryMember::EllipticalArc {
+            center,
+            major,
+            ratio,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => sampled_ellipse(
+            *center,
+            *major,
+            *ratio,
+            *start_angle,
+            *end_angle,
+            *clockwise,
+        ),
+        IgBoundaryMember::Spline {
+            poles,
+            weights,
+            knots,
+        } => crate::bspline::try_sample(poles, weights, knots, crate::bspline::SEGMENTS_PER_SPAN)
+            .filter(|vertices| vertices.len() >= 2),
+    }
+}
+
+/// The polyline an elliptical arc is drawn as, or `None` when the arc
+/// sweeps nothing.
+fn sampled_ellipse(
+    center: (f64, f64),
+    major: (f64, f64),
+    ratio: f64,
+    start: f64,
+    end: f64,
+    clockwise: bool,
+) -> Option<Vec<(f64, f64)>> {
+    let (poles, weights, knots) =
+        crate::bspline::elliptical_arc_directed(center, major, ratio, start, end, clockwise)?;
+    crate::bspline::try_sample(&poles, &weights, &knots, crate::bspline::SEGMENTS_PER_SPAN)
+        .filter(|vertices| vertices.len() >= 2)
 }
 
 /// Try to decode a single `igBoundary2d` record starting at `offset`,
@@ -14308,11 +14583,101 @@ mod tests {
         }
     }
 
-    /// The template grammar still refuses this record -- its member walk
-    /// knows no `0x73` and its 21-byte trailer is not this one -- so the
-    /// fall-through is what decodes it, and it does not loosen anything
-    /// else: a circle with no radius, or one that leaves a byte unread, is
-    /// refused.
+    /// A symbol-cache boundary uses the same member grammar. The `EF井场`
+    /// dot is one circle; a plug valve is two loops of one circle each; a
+    /// record that names no member may carry the `1e30` anchor.
+    #[test]
+    fn igsym_boundary_reads_circles_arcs_and_a_sentinel_anchor() {
+        let dot = decode_igsym_boundary_payload(&EF_CIRCLE_BOUNDARY_PAYLOAD).expect("dot");
+        assert_eq!(dot.oid, 52844);
+        assert_eq!(dot.loop_counts, vec![1]);
+        match &dot.members[..] {
+            [IgBoundaryMember::Circle { radius, .. }] => {
+                assert!((radius - 0.000_463).abs() < 1e-6, "{radius}");
+            }
+            other => panic!("expected one circle, got {other:?}"),
+        }
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&14u32.to_le_bytes());
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        let circle = |buf: &mut Vec<u8>, radius: f64, flag: u8| {
+            buf.extend_from_slice(&1u32.to_le_bytes());
+            buf.extend_from_slice(&[0x04, 0x01]);
+            buf.push(IGSYMBOUNDARY_CIRCLE_TAG);
+            for value in [0.0, 0.0, radius, 0.0, 1.0] {
+                buf.extend_from_slice(&value.to_le_bytes());
+            }
+            buf.push(flag);
+        };
+        circle(&mut payload, 0.000_952, 1);
+        circle(&mut payload, 0.000_648, 0);
+        payload.extend_from_slice(&(-0.000_474_f64).to_le_bytes());
+        payload.extend_from_slice(&(-0.000_632_f64).to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        let valve = decode_igsym_boundary_payload(&payload).expect("two discs");
+        assert_eq!(valve.loop_counts, vec![1, 1]);
+        match &valve.members[..] {
+            [IgBoundaryMember::Circle { radius: outer, .. }, IgBoundaryMember::Circle { radius: inner, .. }] =>
+            {
+                assert!((outer - 0.000_952).abs() < 1e-12);
+                assert!((inner - 0.000_648).abs() < 1e-12);
+            }
+            other => panic!("expected two circles, got {other:?}"),
+        }
+
+        let mut arc_payload = Vec::new();
+        arc_payload.extend_from_slice(&7u32.to_le_bytes());
+        arc_payload.extend_from_slice(&0u32.to_le_bytes());
+        arc_payload.extend_from_slice(&3u32.to_le_bytes());
+        arc_payload.extend_from_slice(&0u16.to_le_bytes());
+        arc_payload.extend_from_slice(&4u32.to_le_bytes());
+        arc_payload.extend_from_slice(&1u32.to_le_bytes());
+        arc_payload.extend_from_slice(&1u32.to_le_bytes());
+        arc_payload.extend_from_slice(&[0x02, 0x01]);
+        arc_payload.push(IGBOUNDARY2D_ARC_TAG);
+        for value in [0.0_f64, 1.0, 0.0, 0.0, 0.01, 0.0, 1.0] {
+            arc_payload.extend_from_slice(&value.to_le_bytes());
+        }
+        arc_payload.push(1);
+        arc_payload.extend_from_slice(&0.0f64.to_le_bytes());
+        arc_payload.extend_from_slice(&0.0f64.to_le_bytes());
+        arc_payload.push(1);
+        arc_payload.extend_from_slice(&0u32.to_le_bytes());
+        let arc = decode_igsym_boundary_payload(&arc_payload).expect("arc");
+        assert!(matches!(
+            arc.members[..],
+            [IgBoundaryMember::Arc {
+                radius,
+                clockwise: false,
+                ..
+            }] if (radius - 0.01).abs() < 1e-12
+        ));
+
+        let mut sentinel = payload;
+        let anchor_at = sentinel.len() - 1 - 4 - 16;
+        sentinel[anchor_at..anchor_at + 8].copy_from_slice(&1e30f64.to_le_bytes());
+        sentinel[anchor_at + 8..anchor_at + 16].copy_from_slice(&1e30f64.to_le_bytes());
+        assert!(
+            decode_igsym_boundary_payload(&sentinel).is_some(),
+            "1e30 is the missing anchor, not a refusal"
+        );
+        sentinel[anchor_at..anchor_at + 8].copy_from_slice(&1e10f64.to_le_bytes());
+        assert!(decode_igsym_boundary_payload(&sentinel).is_none());
+        assert!(decode_igsym_boundary_payload(&[]).is_none());
+        assert!(decode_igsym_boundary_payload(&[0; 40]).is_none());
+    }
+
+    /// The template grammar still refuses this record. Its `0x73` member is
+    /// 42 bytes and the references follow, so the member does not end on
+    /// the 21-byte trailer the template read requires. The fall-through is
+    /// what decodes it, and it does not loosen anything else: a circle with
+    /// no radius, or one that leaves a byte unread, is refused.
     #[test]
     fn igboundary2d_circle_member_must_close_the_payload() {
         let record = ef_circle_boundary_record();

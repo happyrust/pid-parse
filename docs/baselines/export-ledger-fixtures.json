@@ -581,8 +581,8 @@
           "placements": {
             "cached": 1
           },
-          "total": 170,
-          "produced": 162,
+          "total": 182,
+          "produced": 174,
           "dropped": {
             "body_layer_hidden": 0,
             "body_line_on_sheet_edge": 8
@@ -594,9 +594,9 @@
           "trailing_empty_lines": 0
         },
         "primitives": {
-          "laid_out": 165,
+          "laid_out": 177,
           "off_sheet": 0,
-          "on_page": 165,
+          "on_page": 177,
           "partial": 2,
           "marks": {
             "segments_dropped": 2
@@ -1457,8 +1457,8 @@
           "placements": {
             "cached": 31
           },
-          "total": 181,
-          "produced": 157,
+          "total": 217,
+          "produced": 193,
           "dropped": {
             "body_layer_hidden": 24
           },
@@ -1469,9 +1469,9 @@
           "trailing_empty_lines": 0
         },
         "primitives": {
-          "laid_out": 478,
+          "laid_out": 514,
           "off_sheet": 0,
-          "on_page": 473,
+          "on_page": 509,
           "dropped": {
             "segment_too_short": 3,
             "text_whitespace_only": 2

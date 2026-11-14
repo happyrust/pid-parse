@@ -964,7 +964,7 @@ impl From<crate::parsers::sheet_records::PsmStandardRelationDecoded>
 
 /// One member shape of a definition-cache `igBoundary2d` record — the
 /// model twin of [`crate::parsers::sheet_records::IgBoundaryMember`].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum IgSymBoundaryMember {
     /// Segment tag `0x67`: a straight member `(start, end)`.
     Line {
@@ -973,13 +973,65 @@ pub enum IgSymBoundaryMember {
         /// Member end.
         end: (f64, f64),
     },
-    /// Segment tag `0x73`: a circular member `(centre, radius)` — the
-    /// flange-dot discs `SmartPlant` fills solid.
+    /// Segment tag `0x73` when the ellipse is a circle.
     Circle {
         /// Member centre.
         center: (f64, f64),
         /// Member radius.
         radius: f64,
+    },
+    /// Segment tag `0x73` when the ratio is not one.
+    Ellipse {
+        /// Ellipse centre.
+        center: (f64, f64),
+        /// Major semi-axis.
+        major: (f64, f64),
+        /// Minor semi-axis as a fraction of the major.
+        ratio: f64,
+        /// `true` when the member runs clockwise.
+        clockwise: bool,
+    },
+    /// Segment tag `0x74` of a circle.
+    Arc {
+        /// Arc centre.
+        center: (f64, f64),
+        /// Radius.
+        radius: f64,
+        /// Start angle in radians.
+        start_angle: f64,
+        /// End angle in radians.
+        end_angle: f64,
+        /// `true` when the arc runs clockwise.
+        clockwise: bool,
+    },
+    /// Segment tag `0x74` of an ellipse that is not a circle.
+    EllipticalArc {
+        /// Arc centre.
+        center: (f64, f64),
+        /// Major semi-axis.
+        major: (f64, f64),
+        /// Minor semi-axis as a fraction of the major.
+        ratio: f64,
+        /// Start parameter.
+        start_angle: f64,
+        /// End parameter.
+        end_angle: f64,
+        /// `true` when the arc runs clockwise.
+        clockwise: bool,
+    },
+    /// Segment tag `0x68`: a point run.
+    Polyline {
+        /// Vertices in record order.
+        points: Vec<(f64, f64)>,
+    },
+    /// Segment tag `0x7F`: a B-spline.
+    Spline {
+        /// Control points.
+        poles: Vec<(f64, f64)>,
+        /// One weight per pole, or empty.
+        weights: Vec<f64>,
+        /// Knot vector.
+        knots: Vec<f64>,
     },
 }
 
@@ -1001,8 +1053,12 @@ pub struct DecodedIgSymBoundaryRecord {
     /// storage's own `StyleCluster`, resolved through
     /// [`crate::style_link::DocumentStyleTable::resolve_fill`].
     pub index: u32,
-    /// The member shapes the region fills over, in record order.
+    /// The member shapes the region fills over, in record order, loops
+    /// concatenated.
     pub members: Vec<IgSymBoundaryMember>,
+    /// How many [`Self::members`] each loop owns, in loop order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_counts: Vec<u32>,
 }
 
 impl From<crate::parsers::sheet_records::DecodedIgSymBoundaryRecord>
@@ -1023,8 +1079,60 @@ impl From<crate::parsers::sheet_records::DecodedIgSymBoundaryRecord>
                     crate::parsers::sheet_records::IgBoundaryMember::Circle { center, radius } => {
                         IgSymBoundaryMember::Circle { center, radius }
                     }
+                    crate::parsers::sheet_records::IgBoundaryMember::Ellipse {
+                        center,
+                        major,
+                        ratio,
+                        clockwise,
+                    } => IgSymBoundaryMember::Ellipse {
+                        center,
+                        major,
+                        ratio,
+                        clockwise,
+                    },
+                    crate::parsers::sheet_records::IgBoundaryMember::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        end_angle,
+                        clockwise,
+                    } => IgSymBoundaryMember::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        end_angle,
+                        clockwise,
+                    },
+                    crate::parsers::sheet_records::IgBoundaryMember::EllipticalArc {
+                        center,
+                        major,
+                        ratio,
+                        start_angle,
+                        end_angle,
+                        clockwise,
+                    } => IgSymBoundaryMember::EllipticalArc {
+                        center,
+                        major,
+                        ratio,
+                        start_angle,
+                        end_angle,
+                        clockwise,
+                    },
+                    crate::parsers::sheet_records::IgBoundaryMember::Polyline { points } => {
+                        IgSymBoundaryMember::Polyline { points }
+                    }
+                    crate::parsers::sheet_records::IgBoundaryMember::Spline {
+                        poles,
+                        weights,
+                        knots,
+                    } => IgSymBoundaryMember::Spline {
+                        poles,
+                        weights,
+                        knots,
+                    },
                 })
                 .collect(),
+            loop_counts: record.loop_counts,
         }
     }
 }

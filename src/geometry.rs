@@ -1881,28 +1881,18 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                 let fill = style_table
                     .and_then(|table| table.resolve_fill(boundary.index))
                     .map(|resolved| PrimitiveFill::from_resolved(&resolved));
-                let members: Vec<SymbolPrimitive> = boundary
-                    .members
-                    .iter()
-                    .map(|member| match member {
-                        crate::model::IgSymBoundaryMember::Line { start, end } => {
-                            SymbolPrimitive::Line {
-                                start: *start,
-                                end: *end,
-                            }
-                        }
-                        crate::model::IgSymBoundaryMember::Circle { center, radius } => {
-                            SymbolPrimitive::Circle {
-                                center: *center,
-                                radius: *radius,
-                            }
-                        }
-                    })
-                    .filter(|member| {
-                        seen_boundary_members
-                            .insert(crate::symbol_library::boundary_member_key(member, fill))
-                    })
-                    .collect();
+                let parser_members: Vec<crate::parsers::sheet_records::IgBoundaryMember> =
+                    boundary.members.iter().map(model_boundary_member).collect();
+                let members: Vec<SymbolPrimitive> = crate::symbol_library::boundary_primitives(
+                    &parser_members,
+                    &boundary.loop_counts,
+                )
+                .into_iter()
+                .filter(|member| {
+                    seen_boundary_members
+                        .insert(crate::symbol_library::boundary_member_key(member, fill))
+                })
+                .collect();
                 if members.is_empty() {
                     continue;
                 }
@@ -3135,6 +3125,75 @@ fn rings_joined(ring: &[PidPoint], other: &[PidPoint]) -> (Vec<PidPoint>, f64) {
     (joined, distance)
 }
 
+/// The parser member a cached boundary's model member is.
+fn model_boundary_member(
+    member: &crate::model::IgSymBoundaryMember,
+) -> crate::parsers::sheet_records::IgBoundaryMember {
+    use crate::model::IgSymBoundaryMember;
+    use crate::parsers::sheet_records::IgBoundaryMember;
+    match member {
+        IgSymBoundaryMember::Line { start, end } => IgBoundaryMember::Line {
+            start: *start,
+            end: *end,
+        },
+        IgSymBoundaryMember::Circle { center, radius } => IgBoundaryMember::Circle {
+            center: *center,
+            radius: *radius,
+        },
+        IgSymBoundaryMember::Ellipse {
+            center,
+            major,
+            ratio,
+            clockwise,
+        } => IgBoundaryMember::Ellipse {
+            center: *center,
+            major: *major,
+            ratio: *ratio,
+            clockwise: *clockwise,
+        },
+        IgSymBoundaryMember::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => IgBoundaryMember::Arc {
+            center: *center,
+            radius: *radius,
+            start_angle: *start_angle,
+            end_angle: *end_angle,
+            clockwise: *clockwise,
+        },
+        IgSymBoundaryMember::EllipticalArc {
+            center,
+            major,
+            ratio,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => IgBoundaryMember::EllipticalArc {
+            center: *center,
+            major: *major,
+            ratio: *ratio,
+            start_angle: *start_angle,
+            end_angle: *end_angle,
+            clockwise: *clockwise,
+        },
+        IgSymBoundaryMember::Polyline { points } => IgBoundaryMember::Polyline {
+            points: points.clone(),
+        },
+        IgSymBoundaryMember::Spline {
+            poles,
+            weights,
+            knots,
+        } => IgBoundaryMember::Spline {
+            poles: poles.clone(),
+            weights: weights.clone(),
+            knots: knots.clone(),
+        },
+    }
+}
+
 /// The area the loops of one boundary fill, as one ring, with how many of
 /// the loops are holes and the longest crossing that joins two of them.
 ///
@@ -3142,14 +3201,14 @@ fn rings_joined(ring: &[PidPoint], other: &[PidPoint]) -> (Vec<PidPoint>, f64) {
 /// an even number bounds an area. That is the even-odd rule, the rule the
 /// vendor's own plots paint every fill with (`f*`), made explicit: every
 /// area is walked counter-clockwise and every hole clockwise, and the loops
-/// are joined by crossings walked both ways ([`rings_joined`]), so one ring
+/// are joined by crossings walked both ways (`rings_joined`), so one ring
 /// paints the same under the even-odd rule and by winding number and a
 /// renderer holding one ring per record needs no rule of its own.
 ///
 /// A boundary of one loop is that loop, untouched. Whether one loop lies in
 /// another is asked of its first vertex: loops that touch or cross are not
 /// told apart, and the corpora hold none.
-fn boundary_fill_ring(loops: &[Vec<PidPoint>]) -> (Vec<PidPoint>, usize, f64) {
+pub fn boundary_fill_ring(loops: &[Vec<PidPoint>]) -> (Vec<PidPoint>, usize, f64) {
     let Some((first, rest)) = loops.split_first() else {
         return (Vec::new(), 0, 0.0);
     };

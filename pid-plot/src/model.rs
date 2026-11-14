@@ -4614,17 +4614,25 @@ fn push_symbol_primitive(
                 closed: false,
             }
         }
-        // A boundary is a filled region over members that are also stroked
-        // on their own — the flange dots and plug-valve discs `SmartPlant`
-        // prints solid. Each circle fills its own ring (concentric members
-        // stay solid, never punched through); line members that chain into
-        // a ring fill the polygon they close, and a chain that does not
-        // close falls back to stroking its members like before.
+        // A boundary is a filled region. Each circle is its own solid disc
+        // — concentric plug-valve discs stay solid. Lines that chain into a
+        // ring fill that polygon. Any other loop arrives as one closed
+        // polyline; several of those are one fill with holes
+        // ([`pid_parse::boundary_fill_ring`]).
         SymbolPrimitive::Boundary { members, fill } => {
             let rgb = fill.as_ref().and_then(|fill| fill.rgb);
             let mut ring: Vec<[f64; 2]> = Vec::new();
+            let mut polylines: Vec<Vec<[f64; 2]>> = Vec::new();
             let mut circle_degenerate = false;
             let mut member_unsupported = false;
+            let place = |point: (f64, f64)| {
+                place_metres(
+                    [point.0, point.1],
+                    placement.insertion,
+                    placement.rotation,
+                    placement.scale,
+                )
+            };
             for member in members {
                 match member {
                     SymbolPrimitive::Circle { center, radius } => {
@@ -4650,24 +4658,26 @@ fn push_symbol_primitive(
                         }
                     }
                     SymbolPrimitive::Line { start, end } => {
-                        let start_mm = place_metres(
-                            [start.0, start.1],
-                            placement.insertion,
-                            placement.rotation,
-                            placement.scale,
-                        );
-                        let end_mm = place_metres(
-                            [end.0, end.1],
-                            placement.insertion,
-                            placement.rotation,
-                            placement.scale,
-                        );
+                        let start_mm = place(*start);
+                        let end_mm = place(*end);
                         if ring.last().is_none_or(|last| {
                             (last[0] - start_mm[0]).hypot(last[1] - start_mm[1]) > 1e-3
                         }) {
                             ring.push(start_mm);
                         }
                         ring.push(end_mm);
+                    }
+                    SymbolPrimitive::Polyline {
+                        vertices,
+                        is_closed,
+                    } => {
+                        let points = closed_fill_ring(
+                            vertices.iter().copied().map(place).collect(),
+                            *is_closed,
+                        );
+                        if points.len() >= 3 {
+                            polylines.push(points);
+                        }
                     }
                     _ => {
                         member_unsupported = true;
@@ -4698,6 +4708,43 @@ fn push_symbol_primitive(
                             start_mm: pair[0],
                             end_mm: pair[1],
                         },
+                    ));
+                }
+            }
+            if polylines.len() == 1 {
+                out.push(primitive(
+                    entity,
+                    placement,
+                    None,
+                    PaperShape::Fill {
+                        chain_mm: polylines.pop().unwrap_or_default(),
+                        rgb,
+                    },
+                ));
+            } else if polylines.len() > 1 {
+                let loops: Vec<Vec<pid_parse::PidPoint>> = polylines
+                    .iter()
+                    .map(|points| {
+                        points
+                            .iter()
+                            .map(|point| pid_parse::PidPoint {
+                                x: point[0],
+                                y: point[1],
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let (joined, _, _) = pid_parse::boundary_fill_ring(&loops);
+                let chain_mm = closed_fill_ring(
+                    joined.iter().map(|point| [point.x, point.y]).collect(),
+                    true,
+                );
+                if chain_mm.len() >= 3 {
+                    out.push(primitive(
+                        entity,
+                        placement,
+                        None,
+                        PaperShape::Fill { chain_mm, rgb },
                     ));
                 }
             }
@@ -4736,6 +4783,31 @@ fn push_symbol_primitive(
             dropped: Some(DropReason::BodyLineOnSheetEdge),
         }
     }
+}
+
+/// Drop vertices a fill would draw closer together than the stroke account
+/// keeps (1e-4 mm). The reader of the written path counts any positive
+/// length, including one the account drops, so those vertices never reach
+/// the path. A closed ring whose last vertex sits on its first is ended on
+/// that first vertex, and the closing edge of no length is not a segment.
+fn closed_fill_ring(points: Vec<[f64; 2]>, close: bool) -> Vec<[f64; 2]> {
+    let mut out = Vec::new();
+    for point in points {
+        if out
+            .last()
+            .is_some_and(|last: &[f64; 2]| (last[0] - point[0]).hypot(last[1] - point[1]) < 1e-4)
+        {
+            continue;
+        }
+        out.push(point);
+    }
+    if close
+        && let (Some(first), Some(last)) = (out.first().copied(), out.last_mut())
+        && (first[0] - last[0]).hypot(first[1] - last[1]) < 1e-4
+    {
+        *last = first;
+    }
+    out
 }
 
 /// A circle as a closed vertex ring in paper millimetres, placed through
@@ -5283,6 +5355,77 @@ mod tests {
             scale: [1.0, 1.0],
             symbol: Some("valve.sym".to_string()),
         }
+    }
+
+    /// Concentric discs each fill solid. Two polyline loops are one ring
+    /// with the inner loop wound as a hole, not two separate discs.
+    #[test]
+    fn a_boundary_keeps_concentric_circles_solid_and_joins_polyline_loops() {
+        let mut out = Vec::new();
+        let discs = SymbolPrimitive::Boundary {
+            members: vec![
+                SymbolPrimitive::Circle {
+                    center: (0.0, 0.0),
+                    radius: 0.001,
+                },
+                SymbolPrimitive::Circle {
+                    center: (0.0, 0.0),
+                    radius: 0.0005,
+                },
+            ],
+            fill: None,
+        };
+        let layout = push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            plain_item(&discs),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(layout.produced, 2, "one fill per disc");
+        assert!(
+            out.iter()
+                .all(|primitive| matches!(primitive.shape, PaperShape::Fill { .. }))
+        );
+
+        out.clear();
+        let square = |at: f64, size: f64| SymbolPrimitive::Polyline {
+            vertices: vec![
+                (at, at),
+                (at + size, at),
+                (at + size, at + size),
+                (at, at + size),
+            ],
+            is_closed: true,
+        };
+        let holed = SymbolPrimitive::Boundary {
+            members: vec![square(0.0, 0.01), square(0.004, 0.002)],
+            fill: None,
+        };
+        let layout = push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            plain_item(&holed),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(layout.produced, 1, "the two loops are one fill");
+        let PaperShape::Fill { chain_mm, .. } = &out[0].shape else {
+            panic!("expected one fill");
+        };
+        assert!(
+            chain_mm.len() > 8,
+            "the hole is joined into the outer ring, {} vertices",
+            chain_mm.len()
+        );
     }
 
     /// A boxed record letters from its box's left edge, not from the
