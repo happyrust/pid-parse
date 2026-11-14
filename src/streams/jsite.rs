@@ -89,11 +89,10 @@ fn dimension_kind(data: &[u8], header: &PsmHeader) -> Option<u16> {
 /// cannot disagree about which bytes are whose. Connect points (`0x005E`),
 /// associations (`0x0021`/`0x007B`), `0x8000` native skips, and non-linear
 /// dimensions (`0x0115` with `kind != 1`) are excluded from refusal tracking.
-/// Template-grammar `0x0013` boundaries (`igBoundary2d` carrying `0x68`/`0x74`
-/// members in caches such as `/JSite7559/PSMcluster0` and
-/// `/JSite19/PSMcluster0`) will surface here until `#66` (`fix-66`) teaches
-/// the cache boundary decoder that grammar; once `fix-parse` and `fix-66`
-/// merge, both drop to zero.
+/// Cache `0x0013` (`igBoundary2d`) records share the member-named grammar
+/// with sheets (`decode_igsym_boundary_payload`), so intact caches emit their
+/// curved/multi-loop fills cleanly while any genuinely malformed or
+/// out-of-domain graphic record surfaces as a refusal.
 fn decode_nested_geometry(data: &[u8]) -> (JSiteNestedGeometry, Vec<SheetRefusedRecord>) {
     use crate::parsers::sheet_records::{
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,

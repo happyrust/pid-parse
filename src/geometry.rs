@@ -3563,7 +3563,7 @@ impl GeometryEmitter for IgBspCurve2dEmitter {
 /// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every sheet-level
 /// `igEllipticalArc2d` (PSM `0x007E`): the exact rational B-spline
 /// [`crate::bspline::elliptical_arc_directed`] builds from the record,
-/// sampled span by span through [`crate::bspline::sample`] -- the curve, and
+/// sampled span by span through [`crate::bspline::try_sample`] -- the curve, and
 /// the reading of the direction byte, a cached symbol body draws the same
 /// record with, so the two paths cannot disagree on an arc. It is a leaf,
 /// like `igBspCurve2d`: nothing lists it, so it has to be emitted to be

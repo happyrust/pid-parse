@@ -18,8 +18,9 @@
 //! * how many sheets a file has, how many of them are normal views, and
 //!   which of the reader's ways the body is picked by;
 //! * the records the native reader skips (`0x8000` in the type word) on a
-//!   symbol's sheets, which the symbol reader decodes and the reader of a
-//!   drawing does not;
+//!   symbol's sheets, counted directly from the stream bytes (since
+//!   2026-11-14 the symbol reader also skips `0x8000` into
+//!   `SymbolGeometry::retired_records`, matching the drawing reader);
 //! * whether any of those streams holds no byte, and whether a file has no
 //!   `PSMcluster0` in its root: the two things the chain walk has no word
 //!   for and the symbol reader takes for a stream read short (since

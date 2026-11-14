@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### pdf-plot 与解析器收口：#66 符号/缓存填充边界统一、`.sym` 对齐 `0x8000`/根簇、缓存拒收显性告警与顶点域加固（2026-11-15）
+
+- **#66（`b4db725`，`fix(boundary)`）：符号库（`.sym`）与图纸定义缓存（`/JSite*/PSMcluster0`）的 `0x0013 igBoundary2d` 统一按点名成员语法读取。** 补齐 `0x73`（42 字节圆/椭圆）、`0x74`（圆弧/椭圆弧）、`0x68`（点列）、`0x7F`（B 样条）及多环/带孔填充边界：全仓 774 个 `.sym` 中 256 / 256 活记录、111 个文档缓存中 200 / 200 活记录全部闭合读通；同心插头阀圆盘保持各自实心圆填充，多折线环与带孔环经 `boundary_fill_ring` 合并成单环；仅两张夹具页新增填充（`工艺管道及仪表流程-1.pid` +36、`DWG-0201GP06-01.pid` +12），11 张参考图与 53 张厂区备份账本可疑项 0。`paper_model_golden` 7 份合计 `4 286 668 bytes (4.09 MiB)` / `7 780` 图元与 `docs/baselines/export-ledger-fixtures.json` 相应重钉；分析见 `docs/analysis/2026-11-15-symbol-boundaries-use-the-member-named-grammar.md`。
+- **解析与导出门禁加固（`46ad2ff`）：**
+  1. **`.sym` 读取器对齐（`ct13`）：** `src/symbol_library.rs` 在 `SheetChain::walk` 基础上跳过 `0x8000` 取代记录并计入 `SymbolGeometry::retired_records`，同时引入 `RootSheets` 读取根 `/PSMcluster0` 图形记录并归入目标图纸（`Circle.sym` Sheet 6 拿到 oid 267 根圆；`sym_file_chain_faults` `ARCHIVED` `a length of zero` 3 条从 `Whole` 移入 `Less`）。
+  2. **缓存拒收显性上报与 `try_sample` 审计：** `src/streams/jsite.rs` 记录 `/JSite*/PSMcluster0` 可绘制族拒收条目（`JSite::refused_records`），经 `NormalizedPidGeometry`、`LayoutLedger::refused_record_warnings` 送往 `pid_plot` stderr 与账本可疑项（`cli_pid_plot` 47 → 48 条）；`src/geometry.rs` 椭圆与椭圆弧改走 `bspline::try_sample`。
+  3. **圆/弧/椭圆顶点坐标域守卫：** 为 `0x0059 igCircle2d`、`0x0061 igArc2d`、`0x0063 igEllipse2d` 及其 `.sym`/边界成员增设 `circle_keeps_to_the_domain`、`arc_keeps_to_the_domain`、`ellipse_keeps_to_the_domain` 与展平顶点域校验。
+  4. **#51 真实路径与测试路径护栏：** 新增 `SymbolLibrary::resolved_relative` 与 `SymbolChainFault::resolved`，断链告警在提供额外路径信息时附带 `(resolved to …)`；`export_plant_backup.rs` 与 `style_witness.rs` 将本地绝对路径回退限制在 `named_corpus().is_none()` 条件下。
+
 ### publish：带单位的值从 dump 的 SI 列写出（S9 后一半，2026-11-15）
 
 **`--oracle-exp` 与整包两种模式下，dump 的 SI 列有值的对象多写出带单位的属性；53 张的整包里这五列一格都没有，重发与 `publish-v5` 逐字节相同。** `.pid` 单独发布不变。
