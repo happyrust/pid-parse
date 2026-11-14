@@ -56,3 +56,6 @@ test-file/*.zip
 # Throwaway probes kept out of `cargo --all-targets`; promote with a
 # `probe_<question>.rs` name in `examples/` when the answer is worth citing.
 /pid-plot/scratch/
+
+# Python bytecode beside the scripts under tools/
+__pycache__/

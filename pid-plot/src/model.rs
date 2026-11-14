@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::ledger::{
     Asymmetry, BodyItemLayout, BodyTally, DropReason, EntityLayout, EntityOutcome, LedgerDomain,
     LedgerRecorder, PlacementLayout, PlacementSource, SourceKind, SourceName, TemplateTrace,
-    TextNormalization,
+    TextNormalization, UnplacedRecords, UnplacedWhy,
 };
 use crate::write::carries_a_pen;
 
@@ -58,7 +58,32 @@ pub struct PaperModel {
     /// Which symbol library was searched, in order.
     pub library: Vec<String>,
     /// Page width and height in millimetres, when the drawing states them.
+    ///
+    /// The page is the paper the sheet states: the `0x0114 JSheet` record of
+    /// the drawing's root storage names it behind its list of children
+    /// (`pid_parse::parsers::sheet_display_order::SheetPaper`), 594 × 420,
+    /// 841 × 594 or 1189 × 841 mm on every file on hand, and the eleven
+    /// reference plots are printed on exactly that paper. A drawing whose
+    /// sheet states none is as large as its border frame says
+    /// ([`Self::frame_mm`]); one with neither is measured
+    /// ([`Self::resolved_page_mm`]).
     pub page_mm: Option<[f64; 2]>,
+    /// The sheet the drawing's border frame states, in millimetres: the
+    /// frame's own rectangle or, where no frame is read, the size the
+    /// template it links is named for. `None` for a sheet with no frame.
+    ///
+    /// Until the paper was read this was the page. It is still what picks
+    /// the border template and what the lettering is set against, and it
+    /// need not be the paper: a frame may be a little larger than its paper
+    /// and put its template off the paper's corner. The nine
+    /// `CPECCHB-SQ-A2` sheets state 594.328 × 420.566 mm for a 594 × 420 mm
+    /// paper and place the template at (0.388, 0.566) mm, so the top and the
+    /// right edge of its outline lie off the paper — where the A2 reference
+    /// plot inks nothing either. What a frame holds past the paper stays in
+    /// [`Self::primitives`] and is not printed
+    /// (`DropReason::SegmentBeyondThePaper`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_mm: Option<[f64; 2]>,
     /// The `.igr` border template drawn under the content, when the sheet has
     /// one.
     ///
@@ -87,7 +112,9 @@ pub struct PaperModel {
     /// The parser keeps those as inferred lines because they are the evidence
     /// for how the record reads at all; a page draws what the drawing states.
     pub skipped_endpoint_pairs: usize,
-    /// Symbol files the drawing names and the library does not have.
+    /// Symbol files the drawing names and the library does not have — or
+    /// has in a file too damaged to draw from, which the name then says:
+    /// `… (the library's file is damaged and is not drawn from)`.
     pub missing_symbols: Vec<String>,
     /// Template stems the drawing's frame links that this corpus could not put
     /// furniture behind.
@@ -170,7 +197,10 @@ pub enum SymbolBodySource {
     /// `(JSheet, LdcSite)` pair, resolved against the file's definition cache.
     Cached,
     /// Neither body: nothing was drawn, and the page carries a box where the
-    /// placement stood.
+    /// placement stood. Also a placement whose library file is damaged in
+    /// a way that leaves nothing of its body that can be drawn as the sound
+    /// file's (`SymbolGeometry::displayed`): the file is there, and is said
+    /// to be damaged, and the placement is left its box.
     Missing,
 }
 
@@ -270,16 +300,45 @@ impl PaperModel {
         })
     }
 
+    /// The order the sheet paints the page in: every index into
+    /// [`Self::primitives`] once, the first painted first.
+    ///
+    /// The primitives are kept in the order the layout visits the entities;
+    /// what is drawn over what is the order the sheet lists its objects in,
+    /// which the layout records beside the model
+    /// (`LayoutLedger::paint_order`). `None` for a model that carries no such
+    /// order — one built by hand, or a drawing whose sheet states none — and
+    /// for one whose recorded order is not a permutation of its primitives:
+    /// the writer then paints the strokes and the labels as it holds them.
+    #[must_use]
+    pub fn paint_sequence(&self) -> Option<Vec<usize>> {
+        let count = self.primitives.len();
+        let stated = &self.ledger.paint_order;
+        if count == 0 || stated.len() != count {
+            return None;
+        }
+        let mut seen = vec![false; count];
+        let whole = stated.iter().all(|index| {
+            usize::try_from(*index)
+                .ok()
+                .and_then(|index| seen.get_mut(index))
+                .is_some_and(|slot| !std::mem::replace(slot, true))
+        });
+        whole.then(|| stated.iter().map(|index| *index as usize).collect())
+    }
+
     /// The page the PDF will be given.
     ///
-    /// A drawing that states its sheet — a decoded `igSmartFrame2d` whose
-    /// extent is the page, or a template name — has that sheet here, exactly as
+    /// A drawing that states its sheet — the paper its `JSheet` record names
+    /// or, failing that, a decoded `igSmartFrame2d` whose extent is the page
+    /// or a template name — has that sheet here, exactly as
     /// [`PaperModel::page_mm`] reports it. One that states none is measured
     /// instead: the smallest [`STANDARD_SHEETS_MM`] sheet its ink fits, and only
-    /// when it fits none of them its ink's own box. Four drawings across the
-    /// plant backup and the five-drawing corpus take that path (their `.pid`
-    /// carries neither a frame nor a template name); the rule is stated once,
-    /// here, so the writer and every gate agree on the same number.
+    /// when it fits none of them its ink's own box. No drawing on hand takes
+    /// that path any more — the four that carry neither a frame nor a
+    /// template name state their paper, and it is the sheet they used to be
+    /// measured at; the rule is stated once, here, so the writer and every
+    /// gate agree on the same number.
     ///
     /// `None` means the drawing states no page **and** has no ink to measure.
     #[must_use]
@@ -1272,6 +1331,7 @@ pub fn lay_out_with_symbol_roots(
     let line_styles = pid_parse::style_link::line_styles_for_document(&doc);
     let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
     let as_drawn = as_drawn_style_ids(&doc);
+    let box_heights = text_box_heights(&doc);
     let geometry = build_normalized_geometry(&doc);
     recorder.parse(
         LedgerDomain::Drawing,
@@ -1279,9 +1339,49 @@ pub fn lay_out_with_symbol_roots(
         &doc.jsites,
         &geometry,
     );
-    let page_mm = geometry
+    // Two rectangles, and they need not be the same one. The frame's is the
+    // sheet as the border frame states it; the page is the paper the sheet's
+    // own record states, which is what a plot is printed on.
+    let frame_mm = geometry
         .page_dimensions_mm
         .map(|(width, height)| [width, height]);
+    // The paper is the page when it is the frame's paper. One that lies
+    // farther from the frame than any real drawing's is not taken — it
+    // would cut the page to whatever it says — and the page is the frame's
+    // rectangle, which holds the drawing as long as the frame is no smaller
+    // than the sheet. That holds one reading to another. A drawing no frame
+    // of which gives a page has, in `frame_mm`, the size its template's
+    // name stands for: a label, of the template the drawing was started
+    // from. It refuses no paper — the paper is the page — and a paper that
+    // is not the size the name states is said and filed
+    // (`DropReason::PaperUnlikeTheTemplateName`). A sheet with neither has
+    // nothing to hold its paper against but its own ink, and ink of the
+    // drawing's that falls off the page is filed as suspect
+    // (`DropReason::DrawingSegmentBeyondThePaper`).
+    let sheet_rectangle = if pid_parse::framed_page_dimensions_mm(&doc).is_some() {
+        crate::ledger::SheetRectangle::Frame
+    } else {
+        crate::ledger::SheetRectangle::TemplateName
+    };
+    let stated_paper = stated_paper_mm(&doc);
+    let (paper_refused, paper_unlike_the_name) = match (stated_paper, frame_mm, sheet_rectangle) {
+        (Some(paper), Some(frame), crate::ledger::SheetRectangle::Frame)
+            if !paper_is_the_frames(paper, frame) =>
+        {
+            (Some((paper, frame)), None)
+        }
+        (Some(paper), Some(named), crate::ledger::SheetRectangle::TemplateName)
+            if !paper_is_the_named_sheet(paper, named) =>
+        {
+            (None, Some((paper, named)))
+        }
+        _ => (None, None),
+    };
+    let page_mm = if paper_refused.is_some() {
+        frame_mm
+    } else {
+        stated_paper.or(frame_mm)
+    };
     let mut primitives = Vec::new();
     let mut placements = SymbolPlacements::default();
     let mut seen_sheet_fills = std::collections::HashSet::new();
@@ -1314,7 +1414,10 @@ pub fn lay_out_with_symbol_roots(
     // that name is the ticket every templated sheet was picked on — `Q井场`
     // links `CPECCHB-SQ-A1.igr` twice and its ink measures `841 × 594`, that
     // template exactly, so it wears the frame its own file asks for.
-    let furniture_page = match page_mm {
+    //
+    // The frame's rectangle picks the template, not the paper: a paper is
+    // stated by every sheet, framed or not, and `换热器CD` states one too.
+    let furniture_page = match frame_mm {
         Some(page) => Some(page),
         None if linked_prefixes.is_empty() => None,
         None => plottable_sheet_mm(&geometry),
@@ -1331,13 +1434,27 @@ pub fn lay_out_with_symbol_roots(
         recorder.template_search(&trace);
         found.map(|furniture| (page, furniture))
     });
+    // What a page laid out without a refused border frame is told about its
+    // template: whether the drawing names one, and whether the sheet one was
+    // sought for is a sheet something states or the one its strokes fit.
+    let names_a_template = !linked_prefixes.is_empty();
+    let sought_for_a_fitted_sheet = frame_mm.is_none();
     if furniture_page.is_some() && furniture.is_none() {
         // A page that named a template and got none is missing furniture, not
         // a page that never asked for any: report the name that went
         // unanswered so the gap is readable rather than silent.
         missing_templates = linked_prefixes;
     }
+    // The order the template's own sheet draws its records in; kept for the
+    // page's paint order once the template's document is gone.
+    let mut template_order = None;
+    let mut template_gaps = None;
+    // The damaged symbol files the template's placements are drawn from;
+    // kept for the account once the template's tally is gone.
+    let mut furniture_faulted = Vec::new();
     if let Some((page, furniture)) = furniture {
+        template_order = Some(furniture.doc.sheet_display_order.clone());
+        template_gaps = Some(furniture.doc.sheet_without_display_order.clone());
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
@@ -1420,6 +1537,7 @@ pub fn lay_out_with_symbol_roots(
                 }
             }
         }
+        furniture_faulted = furniture_placements.faulted();
         template = Some(BorderTemplate {
             path: furniture.path.display().to_string(),
             extent_mm: furniture.extent_mm,
@@ -1466,6 +1584,9 @@ pub fn lay_out_with_symbol_roots(
             continue;
         }
         let outcome: EntityOutcome = match &entity.kind {
+            // The rail a border template would have drawn is told by the
+            // frame's own rectangle, as it was before the paper was read; a
+            // sheet with no frame has no such rail.
             PidGraphicKind::SymbolInstance { .. } => push_symbol_instance(
                 &mut primitives,
                 entity,
@@ -1473,20 +1594,24 @@ pub fn lay_out_with_symbol_roots(
                 &mut symbols,
                 &line_styles,
                 &as_drawn,
-                page_mm,
+                frame_mm,
                 &mut placements,
             )
             .into(),
-            _ => push_entity(
-                &mut primitives,
-                entity,
-                page_mm,
-                &styles,
-                &line_styles,
-                &fill_styles,
-                &mut seen_sheet_fills,
-            )
-            .into(),
+            _ => {
+                let before = primitives.len();
+                let layout = push_entity(
+                    &mut primitives,
+                    entity,
+                    frame_mm,
+                    &styles,
+                    &line_styles,
+                    &fill_styles,
+                    &mut seen_sheet_fills,
+                );
+                hang_in_the_box(&mut primitives[before..], entity, &box_heights);
+                layout.into()
+            }
         };
         recorder.finish(index, outcome, primitives.len());
     }
@@ -1511,14 +1636,21 @@ pub fn lay_out_with_symbol_roots(
     // into a diagonal across the page that no plot has. The parse side keeps
     // them on purpose (they are audit evidence for the endpoint-pair reading,
     // pinned by `tests/parse_real_files.rs`); the page refuses them.
+    //
+    // What is held to is the sheet at its largest: the paper and the frame's
+    // rectangle together. A primitive inside the frame and off the paper is
+    // not a stroke that cannot reach the sheet — it is what the sheet's own
+    // frame put there — so it stays in the model, and the writer leaves it
+    // unprinted for what it is (`DropReason::SegmentBeyondThePaper`).
     let mut off_sheet = 0usize;
     if let Some(page) = page_mm {
+        let reach = frame_mm.map_or(page, |frame| [page[0].max(frame[0]), page[1].max(frame[1])]);
         // The ledger needs to know which primitive left, and `Vec::retain`
         // visits each element exactly once in order — so the survivors are
         // rebuilt as they are seen rather than searched for afterwards.
         let mut index = 0usize;
         primitives.retain(|primitive| {
-            let printable = !beyond_the_sheet(&primitive.shape, page);
+            let printable = !beyond_the_sheet(&primitive.shape, reach);
             if !printable {
                 off_sheet += 1;
             }
@@ -1528,9 +1660,90 @@ pub fn lay_out_with_symbol_roots(
         });
     }
 
+    // The recorder has seen every entity and every primitive by now; its
+    // ledger is the page's own account. The field is not serialized, so it
+    // changes no page's bytes.
+    let mut ledger = recorder.into_ledger();
+    let orders = PageOrders {
+        drawing: &doc.sheet_display_order,
+        embedded: &doc.embedded_sheet_display_order,
+        template: template_order.as_ref(),
+        frame_place: border_frame_place(&doc),
+        drawing_gaps: Some(&doc.sheet_without_display_order),
+        template_gaps: template_gaps.as_ref(),
+    };
+    ledger.paint_order = paint_order(&primitives, &orders);
+    // What the page is, where it is not the paper the sheet states, and
+    // which rectangle it is instead; and a paper that is the page beside a
+    // template's name that states another size.
+    ledger.paper_refused = paper_refused.map(|(paper, frame)| crate::ledger::PaperRefused {
+        paper_um: paper.map(crate::ledger::micrometres),
+        frame_um: frame.map(crate::ledger::micrometres),
+    });
+    ledger.paper_unlike_the_name =
+        paper_unlike_the_name.map(|(paper, named)| crate::ledger::PaperBesideAName {
+            paper_um: paper.map(crate::ledger::micrometres),
+            named_um: named.map(crate::ledger::micrometres),
+        });
+    if stated_paper.is_none() {
+        ledger.page_for_want_of_a_paper = frame_mm.map(|frame| crate::ledger::PageInstead {
+            from: sheet_rectangle,
+            um: frame.map(crate::ledger::micrometres),
+        });
+    }
+    // A border frame of the drawing's own sheet that the frame rule refuses
+    // gave no page and places nothing: the sheet was laid out above as one
+    // with no frame, unless another frame of it decodes. Which record, why,
+    // and what the page is without it are said and filed. A frame in a
+    // nested storage is no page of the drawing's, and one whose flag words
+    // read as empty or as linked inside the drawing states none when it
+    // decodes; those stay with the refused records of their streams.
+    //
+    // What the page is without the frame is read off what was laid out, not
+    // supposed: a template is picked for the frame's rectangle, so a frame
+    // that is refused can take the template with it — and with it everything
+    // on a sheet that has no ink of its own.
+    let template_on_the_page = template_without_the_frame(
+        template.is_some(),
+        furniture_page,
+        sought_for_a_fitted_sheet,
+        names_a_template,
+    );
+    let primitives_on_the_page = u64::try_from(primitives.len()).unwrap_or(u64::MAX);
+    let page_without_the_frame = match (sheet_rectangle, stated_paper, frame_mm) {
+        (crate::ledger::SheetRectangle::Frame, ..) => {
+            crate::ledger::PageWithoutTheFrame::AnotherFrame
+        }
+        (_, Some(_), _) => crate::ledger::PageWithoutTheFrame::Paper,
+        (_, None, Some(_)) => crate::ledger::PageWithoutTheFrame::TemplateName,
+        (_, None, None) => crate::ledger::PageWithoutTheFrame::Unstated,
+    };
+    ledger.frames_refused = doc
+        .refused_smart_frames
+        .iter()
+        .filter(|frame| the_page_answers_for(frame))
+        .map(|frame| crate::ledger::FrameRefused {
+            stream: frame.stream_path.clone(),
+            record: u64::try_from(frame.refused.byte_range.start).unwrap_or(u64::MAX),
+            oid: frame.refused.oid,
+            why: frame.refused.why.describe(),
+            page: page_without_the_frame,
+            page_um: page_mm.map(|page| page.map(crate::ledger::micrometres)),
+            template: template_on_the_page,
+            primitives: primitives_on_the_page,
+        })
+        .collect();
+    // What the sheets' lists place nowhere is painted all the same, and
+    // said: a suspect item of the account and a line on `pid_plot`'s stderr.
+    ledger.note_unplaced(unplaced_records(&primitives, &orders));
+    // A placement drawn from a symbol file with a chain that does not hold
+    // is drawn from whatever was read of it, and said the same two ways.
+    ledger.note_symbol_chain_faults(LedgerDomain::Drawing, placements.faulted());
+    ledger.note_symbol_chain_faults(LedgerDomain::Furniture, furniture_faulted);
     Ok(PaperModel {
         library: library.to_vec(),
         page_mm,
+        frame_mm,
         template,
         primitives,
         off_sheet_primitives: off_sheet,
@@ -1540,11 +1753,554 @@ pub fn lay_out_with_symbol_roots(
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
         symbols_referenced: placements.referenced.len(),
-        // The recorder has seen every entity and every primitive by now; its
-        // ledger is the page's own account. The field is not serialized, so it
-        // changes no page's bytes.
-        ledger: recorder.into_ledger(),
+        ledger,
     })
+}
+
+/// What a page laid out without a refused border frame draws of the
+/// drawing's border template, from what the layout did: whether a template
+/// was laid out; the sheet one was sought for, when one was sought; whether
+/// that sheet is the one the drawing's own lines and curves fit rather than
+/// one a frame or the template's name states; and whether the drawing names
+/// a template at all.
+///
+/// A template that is laid out is that, however it was found. One sought
+/// and not found is said with the sheet it was sought for. None is sought
+/// for a drawing that names no template unless a frame gives a rectangle,
+/// nor for one that names a template when nothing states a sheet and its
+/// own lines and curves fit none.
+fn template_without_the_frame(
+    laid_out: bool,
+    sought_for_mm: Option<[f64; 2]>,
+    fitted: bool,
+    names_a_template: bool,
+) -> crate::ledger::TemplateWithoutTheFrame {
+    use crate::ledger::TemplateWithoutTheFrame as Template;
+    match (laid_out, sought_for_mm) {
+        (true, _) => Template::Drawn,
+        (false, Some(sheet)) => Template::NotFound {
+            sheet_um: sheet.map(crate::ledger::micrometres),
+            fitted,
+        },
+        (false, None) if names_a_template => Template::NoSheet,
+        (false, None) => Template::NotNamed,
+    }
+}
+
+/// Whether a frame record the frame rule refuses is one the page answers
+/// for: a record of the drawing's own sheet that could have stated the
+/// sheet's page.
+///
+/// Two conditions, and a record has to meet both. Its stream is a sheet of
+/// the document's root storage: a frame in a nested storage is a cached
+/// sheet's — a symbol's, an embedded template's — and no page of the
+/// drawing's. And its flag words read as an embedded or a linked frame, or
+/// cannot be read (`RefusedSmartFrame::may_state_a_page`): an empty frame,
+/// and one linked inside the drawing, state no page when they decode. A
+/// record that fails either stays with the refused records of its stream,
+/// which the parse account counts, and the page says nothing of it —
+/// `A01.pid` holds one of each kind, the embedded frame of its sheet and a
+/// frame linked inside the drawing in `/JSite204/Sheet6`.
+fn the_page_answers_for(frame: &pid_parse::RefusedSmartFrame) -> bool {
+    let of_the_drawings_own_sheet = frame.stream_path.matches('/').count() == 1;
+    of_the_drawings_own_sheet && frame.may_state_a_page()
+}
+
+/// How far a side of a border frame's rectangle may lie from the same side
+/// of the paper its sheet states, in millimetres, for the paper to be taken
+/// for the page.
+///
+/// The paper is two doubles in the tail of the sheet's `JSheet` record and
+/// nothing in the file holds it to anything else. The frame's rectangle is
+/// read from another record altogether, and the two describe one sheet, so
+/// each is the check on the other. How near they lie on real drawings is
+/// measured, not chosen (`probe_how_far_a_frame_is_from_its_paper`): of the
+/// 65 distinct drawings on hand — the plant backup, the acceptance sheets,
+/// the fixtures, the shared five — 60 state both; 39 lie within a
+/// micrometre, and the farthest is `N井场`, whose frame is 2.456811 mm
+/// wider and 2.706782 mm taller than its paper. Then the two `凝析油稳定塔`
+/// sheets (2.085102 and 1.537317 mm), the sheets on `CPECCHB-SQ-A2`
+/// (0.565694), `O井场` and `P井场` (0.400007), `DWG-0202GP06-01`, whose
+/// frame is the smaller of the two (−0.370831), `DWG-0201GP06-01`
+/// (0.313725) and `A井场` (0.305344). The limit is that farthest reading
+/// to the micrometre above it: a paper is the frame's when no drawing on
+/// hand has the two farther apart.
+///
+/// What the measurement is worth. The limit is the largest reading of the
+/// sample with a fifth of a micrometre to spare, and the sample is
+/// thirteen placements, not sixty drawings: sheets that wear one template
+/// the same way read alike to the last bit, so the 60 show 13 distinct
+/// distances, and four of those are frames placed by hand (the ninth
+/// review's count). No reading witnesses 2.707 mm as a boundary — from
+/// there to the 87 mm of the next ISO size there is none, and the limit
+/// stands at the bottom of that gap, the tightest it can be without
+/// refusing a drawing on hand. So a sound drawing whose frame was placed a
+/// little further off than `N井场`'s is refused as well. It is not cut: it
+/// gets the page it had before papers were read, its frame's rectangle,
+/// with one warning and one suspect item.
+///
+/// It is not a tolerance on a drawing's geometry: a paper inside it is the
+/// page exactly, and the frame's rectangle places nothing on that page.
+/// Nor is it used where no frame was read: a paper beside a template's
+/// name alone is held to [`PAPER_NAME_REACH_MM`], and is the page either
+/// way.
+pub const PAPER_FRAME_REACH_MM: f64 = 2.707;
+
+/// Whether `paper_mm` is the paper of the sheet whose border frame states
+/// the rectangle `frame_mm`: each side of the frame within
+/// [`PAPER_FRAME_REACH_MM`] of the same side of the paper.
+///
+/// A paper that is not is refused — the page is then the frame's rectangle,
+/// as every page was before papers were read. The drawing is whole on that
+/// page as long as the frame holds the sheet. A frame smaller than its
+/// paper by more than the limit — an A3 border on an A2 sheet — gives a
+/// page smaller than the sheet; no drawing on hand has one, and the only
+/// frames smaller than their papers are `DWG-0202GP06-01`'s, by a third of
+/// a millimetre. A paper half the frame's width, one with a side of no
+/// length, one a metre too large, one turned on its side and one too tall
+/// alone are all refused; a side that is not a number is too.
+#[must_use]
+pub fn paper_is_the_frames(paper_mm: [f64; 2], frame_mm: [f64; 2]) -> bool {
+    (0..2).all(|side| (frame_mm[side] - paper_mm[side]).abs() <= PAPER_FRAME_REACH_MM)
+}
+
+/// How far a side of the paper may lie from the same side of the size its
+/// template's name states, in millimetres, for the two to be one sheet.
+///
+/// Half a millimetre, and that is a matter of how each is written, not of
+/// anything measured. A name states a size the way a label does: `A2` is
+/// 594 by 420, whole millimetres, which is as fine as ISO 216 states a
+/// sheet. The paper is read to the nanometre. So a paper that is the named
+/// sheet is the named size once rounded to the millimetre, and one half a
+/// millimetre or more away rounds to another number and is another size.
+/// The 2.707 mm of [`PAPER_FRAME_REACH_MM`] says nothing here: it is how
+/// far frames placed by hand lie from their papers.
+///
+/// **Nothing witnesses this path.** None of the 65 drawings on hand states
+/// a paper beside a template's name alone: three carry a `Template` tag at
+/// all and each of the three has a frame (the ninth review's count). The
+/// papers on hand are exact ISO sizes and so are the names', so a paper
+/// and a name would differ by nothing or by 87 mm and more, and any limit
+/// between the two says the same of them.
+pub const PAPER_NAME_REACH_MM: f64 = 0.5;
+
+/// Whether `paper_mm` is the sheet the template's name states, `named_mm`:
+/// each side less than [`PAPER_NAME_REACH_MM`] from the same side of the
+/// name's.
+///
+/// One that is not is the page all the same. A name is a label — of the
+/// template the drawing was started from, which a sheet resized since no
+/// longer matches — and overrules no reading. What it can do is disagree,
+/// and that is said (`DropReason::PaperUnlikeTheTemplateName`): with no
+/// frame read, a paper read wrong has nothing else to show it.
+///
+/// A name states its sheet lying on its long side — `A2` is 594 by 420,
+/// never 420 by 594 — and the sides are held in that order. So a sheet of
+/// the named size that stands on its short side is not the named sheet
+/// here, and is said to be unlike its template's name as well. That is
+/// true of the rectangle the name gives and need not mean the paper was
+/// read wrong: whoever reads the item should look at which side is which
+/// before taking it for a misread paper.
+#[must_use]
+pub fn paper_is_the_named_sheet(paper_mm: [f64; 2], named_mm: [f64; 2]) -> bool {
+    (0..2).all(|side| (named_mm[side] - paper_mm[side]).abs() < PAPER_NAME_REACH_MM)
+}
+
+/// The paper the drawing's sheets state, `[width, height]` in millimetres:
+/// the one every `JSheet` record that states a paper agrees on.
+///
+/// The record states metres as two doubles — 0.594 and 0.42 on an A2 sheet —
+/// and the millimetres are read to the nanometre, so that the page is
+/// `594 × 420` and not the last bit of `0.594 × 1000`.
+fn stated_paper_mm(doc: &PidDocument) -> Option<[f64; 2]> {
+    let millimetres = |metres: f64| (metres * 1e9).round() / 1e6;
+    let mut papers = doc
+        .sheet_display_order
+        .values()
+        .filter_map(|order| order.paper)
+        .map(|paper| [millimetres(paper.width_m), millimetres(paper.height_m)]);
+    let first = papers.next()?;
+    papers.all(|paper| paper == first).then_some(first)
+}
+
+/// The height of the box each `igTextBox` record of a document states, in
+/// millimetres, by its stream and oid; a record that states none is left
+/// out.
+type TextBoxHeights = std::collections::HashMap<(String, u32), f64>;
+
+fn text_box_heights(doc: &PidDocument) -> TextBoxHeights {
+    let mut heights = TextBoxHeights::new();
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+        for record in &geometry.decoded_igtextboxes {
+            if record.text_box_height_m > 0.0 && record.text_box_height_m.is_finite() {
+                heights.insert(
+                    (sheet.path.clone(), record.oid),
+                    record.text_box_height_m * MM_PER_METRE,
+                );
+            }
+        }
+    }
+    heights
+}
+
+/// The anchor code of the one class of boxed label the reference plots
+/// letter: every one of their 141 boxed records carries it.
+const BOXED_LINE_ANCHOR: u8 = 0x48;
+
+/// The tallest box a reference plot letters a line in, millimetres, and a
+/// micrometre: the A2 sheet's four are 4.034 276 mm.
+const TALLEST_WITNESSED_BOX_MM: f64 = 4.035_3;
+
+/// How much taller than its line's cell a box may be and still be that cell,
+/// millimetres of lift: half a micrometre.
+const BOX_IS_THE_CELL_MM: f64 = 0.000_5;
+
+/// Letter a boxed line where its box puts it: hung from the top of the box.
+///
+/// An `igTextBox` may state a box. Its insertion point is the box's centre,
+/// and the line is set from the box's top edge down — its baseline the
+/// face's ascent below that edge:
+///
+/// ```text
+/// baseline = insertion + box height / 2 − ascent
+/// ```
+///
+/// A box as tall as the face's cell, which is what 123 of the 127 lettered
+/// boxes of the eleven reference plots are (3.689 mm for their FangSong),
+/// puts the cell's middle on the insertion point: that is the middle line
+/// the label already letters from, and nothing moves. A taller box lifts
+/// the line by half of what it is taller by. The A2 sheet's `低压放空总管` and
+/// `仪表风管线`, two of each, sit in boxes of 4.034 mm and were lettered
+/// 0.122 and 0.198 mm under the reference for want of that 0.173 mm.
+///
+/// Only the class the reference plots letter is moved: the record's anchor
+/// code is `0x48`, it letters one line, in FangSong, from the middle line,
+/// and its box is no taller than the tallest of those. The plant backup
+/// holds 37 boxes taller than that (5.966 and 8.309 mm) and 30 records with
+/// another code, and no plot shows where their lines sit
+/// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
+fn hang_in_the_box(
+    lettered: &mut [PaperPrimitive],
+    entity: &PidGraphicEntity,
+    box_heights: &TextBoxHeights,
+) {
+    let PidGraphicKind::Text {
+        anchor_code,
+        text_box_width,
+        ..
+    } = &entity.kind
+    else {
+        return;
+    };
+    if *anchor_code != BOXED_LINE_ANCHOR || !text_box_width.is_some_and(|width| width > 0.0) {
+        return;
+    }
+    let box_mm = entity.source.stream_path.as_ref().and_then(|stream| {
+        entity
+            .graphic_oid
+            .and_then(|oid| box_heights.get(&(stream.clone(), oid)))
+    });
+    let (Some(box_mm), [line]) = (box_mm.copied(), lettered) else {
+        return;
+    };
+    let PaperShape::Text {
+        origin_mm,
+        height_mm: Some(height_mm),
+        rotation,
+        value,
+        font,
+        line: TextLine::Middle,
+        height_basis: TextHeightBasis::Cap,
+        ..
+    } = &mut line.shape
+    else {
+        return;
+    };
+    let face = crate::fonts::typeface_key(font.as_deref(), value);
+    let Some(cap72) = crate::write::reference_cap_px(face, TextHeightBasis::Cap) else {
+        return;
+    };
+    if face != "FangSong" || box_mm > TALLEST_WITNESSED_BOX_MM {
+        return;
+    }
+    // The cell the line is set in: the face's 72 reference units, of which
+    // the style height measures the cap's share.
+    let cell_mm = *height_mm * 72.0 / cap72;
+    let lift_mm = (box_mm - cell_mm) / 2.0;
+    // A box that is the cell to the micrometre is the cell: the 3.688 799 mm
+    // boxes stand beside a cell of 3.688 796 mm, and their lines stay where
+    // the middle line puts them.
+    if lift_mm.is_nan() || lift_mm <= BOX_IS_THE_CELL_MM {
+        return;
+    }
+    // Up across the run: the same normal a label's line pitch steps down.
+    origin_mm[0] -= rotation.sin() * lift_mm;
+    origin_mm[1] += rotation.cos() * lift_mm;
+}
+
+/// The display order of each sheet stream of a document, by the stream's
+/// path.
+type SheetOrders =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::SheetDisplayOrder>;
+
+/// Where the sheet lists its border frame among its objects, if it lists
+/// one: the place the template is drawn at.
+///
+/// A drawing can carry the same frame more than once (`DWG-0201` repeats it
+/// six times); the template is drawn once, where the first of them stands.
+fn border_frame_place(doc: &PidDocument) -> Option<u32> {
+    doc.sheet_streams
+        .iter()
+        .filter_map(|sheet| {
+            let order = doc.sheet_display_order.get(&sheet.path)?;
+            sheet
+                .geometry
+                .as_ref()?
+                .decoded_igsmartframes
+                .iter()
+                .filter(|frame| frame.page_extent_m().is_some())
+                .filter_map(|frame| order.ranks.get(&frame.byte_start))
+                .map(|rank| rank.place)
+                .min()
+        })
+        .min()
+}
+
+/// The display order of each sheet the drawing's frames embed, by the
+/// nested stream's path.
+type EmbeddedOrders =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::EmbeddedSheetOrder>;
+
+/// What the sheets of a page say about the order it is painted in.
+struct PageOrders<'a> {
+    /// The drawing's own sheets.
+    drawing: &'a SheetOrders,
+    /// The sheets the drawing's frames embed.
+    embedded: &'a EmbeddedOrders,
+    /// The border template's sheets, when the page wears one.
+    template: Option<&'a SheetOrders>,
+    /// Where the drawing lists its border frame, if it lists one.
+    frame_place: Option<u32>,
+    /// Why each of the drawing's sheets that states no order has none.
+    drawing_gaps: Option<&'a SheetGaps>,
+    /// The same for the border template's sheets.
+    template_gaps: Option<&'a SheetGaps>,
+}
+
+/// Why each sheet stream that has no display order has none, by its path
+/// (`PidDocument::sheet_without_display_order`).
+type SheetGaps =
+    std::collections::BTreeMap<String, pid_parse::parsers::sheet_display_order::NoDisplayOrder>;
+
+/// Why a record of a stream no order was read for takes no place, as the
+/// page's account says it: the one reason that is the stream's own doing —
+/// it holds no record of the sheet's to hold a list to — apart from every
+/// way of there being no list.
+fn why_no_order(
+    gap: Option<&pid_parse::parsers::sheet_display_order::NoDisplayOrder>,
+) -> UnplacedWhy {
+    use pid_parse::parsers::sheet_display_order::NoDisplayOrder;
+    match gap {
+        Some(NoDisplayOrder::NoRecordOfTheSheet) => UnplacedWhy::NoRecordOfTheSheet,
+        Some(
+            NoDisplayOrder::NoCluster | NoDisplayOrder::NoTable | NoDisplayOrder::TableNotTheSheets,
+        )
+        | None => UnplacedWhy::NoList,
+    }
+}
+
+/// Where a primitive is painted: the place on the sheet, the template ahead
+/// of the record that stands there, and the rank within the place.
+type PaintKey = (u32, u8, (u32, u32));
+
+/// Each embedded sheet's records in the order that sheet draws them: for
+/// every record offset, how many of the sheet's records are drawn before it.
+type EmbeddedOrdinals<'a> =
+    std::collections::BTreeMap<&'a str, std::collections::HashMap<usize, u32>>;
+
+impl PageOrders<'_> {
+    /// Whether any sheet of the page states an order: without one the page
+    /// is painted as it was before any list was read.
+    fn states_an_order(&self) -> bool {
+        let states = |orders: &SheetOrders| orders.values().any(|order| order.children > 0);
+        states(self.drawing) || self.template.is_some_and(states)
+    }
+
+    fn embedded_ordinals(&self) -> EmbeddedOrdinals<'_> {
+        self.embedded
+            .iter()
+            .map(|(stream, sheet)| {
+                let mut drawn: Vec<_> = sheet
+                    .order
+                    .ranks
+                    .iter()
+                    .map(|(start, rank)| (*rank, *start))
+                    .collect();
+                drawn.sort_unstable();
+                let ordinals = drawn
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, (_, start))| {
+                        (start, u32::try_from(ordinal).unwrap_or(u32::MAX))
+                    })
+                    .collect();
+                (stream.as_str(), ordinals)
+            })
+            .collect()
+    }
+
+    /// Where `primitive` is painted, or why no sheet says.
+    fn place(
+        &self,
+        primitive: &PaperPrimitive,
+        ordinals: &EmbeddedOrdinals<'_>,
+    ) -> Result<PaintKey, UnplacedWhy> {
+        let (Some(stream), Some(range)) = (primitive.stream_path.as_deref(), primitive.byte_range)
+        else {
+            return Err(UnplacedWhy::NoRecord);
+        };
+        let start = range[0];
+        if primitive.furniture {
+            // The template stands where the drawing lists its border frame,
+            // first when it lists none, its own in the order its sheet
+            // lists them.
+            let order = self
+                .template
+                .and_then(|orders| orders.get(stream))
+                .ok_or_else(|| {
+                    why_no_order(self.template_gaps.and_then(|gaps| gaps.get(stream)))
+                })?;
+            let rank = order.ranks.get(&start).ok_or(UnplacedWhy::NotReached)?;
+            return Ok((self.frame_place.unwrap_or(0), 0, (rank.place, rank.inner)));
+        }
+        if let Some(order) = self.drawing.get(stream) {
+            let rank = order.ranks.get(&start).ok_or(UnplacedWhy::NotReached)?;
+            return Ok((rank.place, 1, (rank.inner, 0)));
+        }
+        // A sheet a frame embeds is what the frame draws: it stands at the
+        // frame's rank, behind anything the frame's own record draws, its
+        // records in the order its own sheet lists them.
+        let sheet = self
+            .embedded
+            .get(stream)
+            .ok_or_else(|| why_no_order(self.drawing_gaps.and_then(|gaps| gaps.get(stream))))?;
+        let ordinal = ordinals
+            .get(stream)
+            .and_then(|ordinals| ordinals.get(&start))
+            .ok_or(UnplacedWhy::NotReached)?;
+        let frame = sheet.frame.as_ref().ok_or(UnplacedWhy::NoFrame)?;
+        Ok((
+            frame.rank.place,
+            1,
+            (frame.rank.inner, ordinal.saturating_add(1)),
+        ))
+    }
+}
+
+/// The order the page is painted in: for each primitive an index into
+/// `primitives`, the first painted first. Empty when neither the drawing nor
+/// its template states a display order.
+///
+/// A sheet draws its objects in the order its `JSheet` record lists them
+/// (`pid_parse::parsers::sheet_display_order`), and a primitive is painted
+/// where the record it was laid out from stands in that order:
+///
+/// * a primitive of the drawing at the rank of its record — the record's own
+///   place in the list when the sheet owns it, its owner's otherwise, and
+///   within one owner the order the owner names its dependents in;
+/// * a primitive of the border template where the drawing lists its border
+///   frame, `frame_place`, and among the template's own in the order the
+///   template's sheet lists them. A sheet with a template and no listed
+///   frame draws the template first, as every page did before this;
+/// * a primitive of a sheet one of the drawing's frames embeds — a stream
+///   nested in the storage of the frame's site — where the drawing lists
+///   that frame, and among the embedded sheet's own in the order its own
+///   `JSheet` record lists them. That is the rule the reference plots show
+///   for a template carried to the other thing a frame draws; no drawing
+///   with a vendor plot embeds a sheet.
+///
+/// A primitive no list places — its sheet states no order, the list does
+/// not reach its record's owner, no listed frame embeds the sheet it is in —
+/// is painted after everything that has a place, a template's own at the
+/// template's place behind the template's others. [`unplaced_records`] names
+/// them. Primitives of one record, and any that tie, keep the order the
+/// model holds them in: a symbol's body is painted in the order the body
+/// decodes, which no list has been read for yet.
+fn paint_order(primitives: &[PaperPrimitive], orders: &PageOrders<'_>) -> Vec<u32> {
+    if !orders.states_an_order() {
+        return Vec::new();
+    }
+    let ordinals = orders.embedded_ordinals();
+    let mut keys: Vec<(PaintKey, u32)> = primitives
+        .iter()
+        .enumerate()
+        .map(|(index, primitive)| {
+            #[allow(clippy::cast_possible_truncation)]
+            let index = index as u32;
+            let key = orders.place(primitive, &ordinals).unwrap_or_else(|_| {
+                if primitive.furniture {
+                    (orders.frame_place.unwrap_or(0), 0, (u32::MAX, u32::MAX))
+                } else {
+                    (u32::MAX, 1, (u32::MAX, 0))
+                }
+            });
+            (key, index)
+        })
+        .collect();
+    keys.sort_unstable();
+    keys.into_iter().map(|(_, index)| index).collect()
+}
+
+/// The records that draw on the page and that no sheet's list places, by
+/// domain, stream and reason, in that order: what [`paint_order`] paints
+/// after the rest — or, on a page no sheet of which states an order, every
+/// record that draws.
+///
+/// Empty for a page whose every primitive stands where a list puts it,
+/// which is every page of every corpus this crate is tested on.
+fn unplaced_records(
+    primitives: &[PaperPrimitive],
+    orders: &PageOrders<'_>,
+) -> Vec<UnplacedRecords> {
+    let ordinals = orders.embedded_ordinals();
+    // (domain, stream, reason) -> the records' offsets, and the primitives.
+    let mut found: std::collections::BTreeMap<
+        (bool, String, UnplacedWhy),
+        (std::collections::BTreeSet<usize>, u64),
+    > = std::collections::BTreeMap::new();
+    for primitive in primitives {
+        let Err(why) = orders.place(primitive, &ordinals) else {
+            continue;
+        };
+        let stream = primitive.stream_path.clone().unwrap_or_default();
+        let entry = found.entry((primitive.furniture, stream, why)).or_default();
+        if let Some(range) = primitive.byte_range {
+            entry.0.insert(range[0]);
+        }
+        entry.1 = entry.1.saturating_add(1);
+    }
+    found
+        .into_iter()
+        .map(
+            |((furniture, stream, why), (records, primitives))| UnplacedRecords {
+                domain: if furniture {
+                    LedgerDomain::Furniture
+                } else {
+                    LedgerDomain::Drawing
+                },
+                stream,
+                why,
+                // A primitive that names no record is counted for one.
+                records: u64::try_from(records.len())
+                    .unwrap_or(u64::MAX)
+                    .max(u64::from(why == UnplacedWhy::NoRecord) * primitives),
+                primitives,
+            },
+        )
+        .collect()
 }
 
 /// Where the sheet's border frame puts its content and its own drawing on
@@ -1716,6 +2472,18 @@ struct SymbolPlacements {
     /// its strokes reached. Only a template's are read back
     /// ([`BorderTemplate::symbols`]).
     placed: Vec<TemplateSymbol>,
+    /// The symbol files a placement took its body from whose body carries
+    /// a chain fault, by key: the file as the placement names it, how many
+    /// placements took their body from it, whether they were drawn, and the
+    /// faults of the file.
+    faulted: std::collections::BTreeMap<String, crate::ledger::SymbolFileFaults>,
+}
+
+impl SymbolPlacements {
+    /// The damaged symbol files, as the layout ledger files them.
+    fn faulted(&self) -> Vec<crate::ledger::SymbolFileFaults> {
+        self.faulted.values().cloned().collect()
+    }
 }
 
 /// Expand one `SymbolInstance` into the strokes of its body.
@@ -1726,6 +2494,15 @@ struct SymbolPlacements {
 /// (the templates' `C:\…\Temp\BLFH.sym` is long gone) — then the `.sym` the
 /// placement names, from the symbol library. A placement that finds neither
 /// leaves a box where it stood rather than disappearing.
+///
+/// A library file with a chain stream that does not hold is drawn from as
+/// far as it can be drawn as the sound file's — part of what the sound file
+/// draws, never another sheet of the file in a short one's place — and
+/// where no part can be had the placement is not drawn: it counts as a
+/// missing symbol and leaves what one leaves, which for a placement of the
+/// drawing's own is a box (a border template's placements are tallied
+/// apart, and their boxes are not the page's). Either way the file is
+/// tallied, to be said and filed.
 ///
 /// The line-style index and the `As Drawn` set travel together because the pen
 /// a body draws with is decided from both at once; a struct holding them would
@@ -1838,31 +2615,72 @@ fn push_symbol_instance(
         source = PlacementSource::Cached;
         SymbolBodySource::Cached
     } else if let Some(body) = body {
-        let displayed = body.displayed_primitives();
-        body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
-        body_tally.dropped.insert(
-            DropReason::BodyLayerHidden,
-            u64::try_from(body.primitives.len().saturating_sub(displayed.len()))
-                .unwrap_or(u64::MAX),
-        );
-        for styled in displayed {
-            let item = push_symbol_primitive(
-                out,
-                entity,
-                &placement,
-                SymbolItem {
-                    shape: &styled.primitive,
-                    style: styled.style.as_ref(),
-                    lettering: styled.lettering.as_ref(),
-                },
-                placement_style,
-                as_drawn,
-                page_mm,
-            );
-            body_tally.count(item);
+        // The body is the library's. What a file with a chain stream that
+        // does not hold draws is part of what the sound file draws, or
+        // nothing, and the page cannot show which, so it says which file.
+        let shown = body.displayed();
+        if !body.chain_faults.is_empty()
+            && let (Some(key), Some(path)) = (key.clone(), symbol_path.as_deref())
+        {
+            let named = pid_parse::symbol_library::library_relative_path(path).unwrap_or(path);
+            let found =
+                tally
+                    .faulted
+                    .entry(key)
+                    .or_insert_with(|| crate::ledger::SymbolFileFaults {
+                        symbol: named.to_owned(),
+                        placements: 0,
+                        not_drawn: shown.as_ref().err().copied(),
+                        faults: body.chain_faults.clone(),
+                    });
+            found.placements = found.placements.saturating_add(1);
         }
-        source = PlacementSource::Library;
-        SymbolBodySource::Library
+        match shown {
+            Ok(displayed) => {
+                body_tally.total = u64::try_from(body.primitives.len()).unwrap_or(u64::MAX);
+                body_tally.dropped.insert(
+                    DropReason::BodyLayerHidden,
+                    u64::try_from(body.primitives.len().saturating_sub(displayed.len()))
+                        .unwrap_or(u64::MAX),
+                );
+                for styled in displayed {
+                    let item = push_symbol_primitive(
+                        out,
+                        entity,
+                        &placement,
+                        SymbolItem {
+                            shape: &styled.primitive,
+                            style: styled.style.as_ref(),
+                            lettering: styled.lettering.as_ref(),
+                        },
+                        placement_style,
+                        as_drawn,
+                        page_mm,
+                    );
+                    body_tally.count(item);
+                }
+                source = PlacementSource::Library;
+                SymbolBodySource::Library
+            }
+            Err(_) => {
+                // No part of the body can be drawn as the sound file's:
+                // the placement is a symbol the page has no body for. It
+                // leaves the box and the count of a missing symbol; that
+                // the file is there, and damaged, is the tally's above.
+                if let Some(key) = key.clone() {
+                    tally
+                        .missing_boxes
+                        .push(missing_box(&key, [insertion.x, insertion.y]));
+                    tally.missing.insert(format!(
+                        "{} (the library's file is damaged and is not drawn from)",
+                        missing_name(&key)
+                    ));
+                }
+                source = PlacementSource::Missing;
+                dropped = Some(DropReason::SymbolMissing);
+                SymbolBodySource::Missing
+            }
+        }
     } else {
         if let Some(key) = key.clone() {
             tally
@@ -4515,6 +5333,120 @@ mod tests {
         assert!((origin_mm[1] - 200.0).abs() < 1e-6);
     }
 
+    /// One boxed label of the sheet, laid out and then hung in its box: the
+    /// 7 pt FangSong line of an off-page connector, centred on (100, 200) mm.
+    fn boxed_line(
+        value: &str,
+        anchor_code: u8,
+        rotation: f64,
+        box_height_mm: Option<f64>,
+    ) -> Vec<PaperPrimitive> {
+        let mut record = entity(PidGraphicKind::Text {
+            insertion: PidPoint { x: 0.1, y: 0.2 },
+            value: value.to_string(),
+            height: 0.002_469_444,
+            rotation,
+            anchor_code,
+            text_box_width: Some(0.042_009),
+        });
+        record.source.stream_path = Some("/Sheet6".to_string());
+        record.graphic_oid = Some(77);
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &record,
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let boxes: super::TextBoxHeights = box_height_mm
+            .map(|height| (("/Sheet6".to_string(), 77), height))
+            .into_iter()
+            .collect();
+        super::hang_in_the_box(&mut out, &record, &boxes);
+        out
+    }
+
+    fn origin_of(primitive: &PaperPrimitive) -> [f64; 2] {
+        match &primitive.shape {
+            PaperShape::Text { origin_mm, .. } => *origin_mm,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The A2 sheet's `仪表风管线`: a box 4.034 276 mm tall round a line whose
+    /// cell is 3.688 796 mm. The line hangs from the top of the box, so it is
+    /// lettered half the difference above where a box of its own cell puts
+    /// it — 0.172 74 mm, which is what the reference plot shows — and up
+    /// means across the run, whichever way the run points.
+    #[test]
+    fn a_line_in_a_box_taller_than_its_cell_hangs_from_the_top_of_the_box() {
+        let unboxed = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, None)[0]);
+        let lift: f64 = (4.034_276 - 0.002_469_444 * 1000.0 * 72.0 / 48.2) / 2.0;
+        assert!((lift - 0.172_74).abs() < 1e-5, "{lift}");
+
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, Some(4.034_276))[0]);
+        assert!((hung[0] - unboxed[0]).abs() < 1e-12, "{hung:?}");
+        assert!((hung[1] - unboxed[1] - lift).abs() < 1e-9, "{hung:?}");
+
+        // Up the side of a pipe run the line reads upward, and its top is
+        // to the left.
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let upright = origin_of(&boxed_line("仪表风管线", 0x48, quarter, None)[0]);
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, quarter, Some(4.034_276))[0]);
+        assert!((hung[0] - upright[0] + lift).abs() < 1e-9, "{hung:?}");
+        assert!((hung[1] - upright[1]).abs() < 1e-9, "{hung:?}");
+    }
+
+    /// A box that is the line's own cell leaves the line on its middle line,
+    /// to the last bit: 542 of the lettered boxes on hand are 3.688 799 mm
+    /// round a cell of 3.688 796 mm.
+    #[test]
+    fn a_line_in_a_box_of_its_own_cell_does_not_move() {
+        let unboxed = boxed_line("DWG-0100集05-42", 0x48, 0.0, None);
+        let boxed = boxed_line("DWG-0100集05-42", 0x48, 0.0, Some(3.688_799));
+        assert_eq!(boxed, unboxed);
+        // Nor does a box shorter than the cell push the line down.
+        let short = boxed_line("DWG-0100集05-42", 0x48, 0.0, Some(3.2));
+        assert_eq!(short, unboxed);
+    }
+
+    /// The rule is held to the class the reference plots letter. A taller
+    /// box, another anchor code, a face that is not FangSong and a record of
+    /// two lines are lettered as they were: no plot shows where they sit.
+    #[test]
+    fn a_boxed_record_no_reference_letters_is_left_where_it_was() {
+        // 5.966 and 8.309 mm: the plant backup's taller boxes.
+        for height in [5.966, 8.309] {
+            assert_eq!(
+                boxed_line("仪表风管线", 0x48, 0.0, Some(height)),
+                boxed_line("仪表风管线", 0x48, 0.0, None),
+                "{height} mm"
+            );
+        }
+        // The codes the backup's other boxed records carry.
+        for code in [
+            0x32, 0x36, 0x37, 0x39, 0x40, 0x42, 0x50, 0x51, 0x01, 0x15, 0x31,
+        ] {
+            assert_eq!(
+                boxed_line("仪表风管线", code, 0.0, Some(4.034_276)),
+                boxed_line("仪表风管线", code, 0.0, None),
+                "{code:#04x}"
+            );
+        }
+        // Latin lettering is set in Arial Narrow.
+        assert_eq!(
+            boxed_line("PT-0114301", 0x48, 0.0, Some(4.034_276)),
+            boxed_line("PT-0114301", 0x48, 0.0, None)
+        );
+        // Two lines.
+        let two = boxed_line("仪表风\r管线", 0x48, 0.0, Some(4.034_276));
+        assert_eq!(two.len(), 2);
+        assert_eq!(two, boxed_line("仪表风\r管线", 0x48, 0.0, None));
+    }
+
     /// A sheet label's run partition reaches the paper, cut against the lines
     /// it letters: the record here is `AB` in one style and `CDE` in another
     /// across a break, so the first line carries the first run and the second
@@ -4877,6 +5809,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 text([12.0, -1.546], "15-TD-4101416-B2-EH40"),
@@ -5452,6 +6385,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: out,
             missing_symbols: Vec::new(),
@@ -5777,7 +6711,8 @@ mod tests {
     /// The frame's own numbers settle where `DWG-0202GP06-01`'s content
     /// goes: its A2 template, 594 × 420 mm, scaled by the frame's `s` and
     /// moved by `t − lo`, fills exactly the 593.7458 × 419.6292 mm range the
-    /// frame states.
+    /// frame states. The page is not that range: it is the 594 × 420 mm
+    /// paper the sheet states, a quarter of a millimetre larger each way.
     #[test]
     fn a_scaled_frame_fills_its_range_with_the_template() {
         let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file");
@@ -5794,19 +6729,19 @@ mod tests {
         let offset = frame.template_offset_mm();
         assert!((offset[0] - 0.270).abs() < 0.001, "{frame:?}");
         assert!(offset[1].abs() < 0.001, "{frame:?}");
-        let page = super::lay_out_drawing(&pid, &corpus)
-            .expect("lays out")
-            .page_mm
-            .expect("the frame states its page");
+        let model = super::lay_out_drawing(&pid, &corpus).expect("lays out");
+        let range = model.frame_mm.expect("the frame states its range");
         for (axis, template) in [594.0, 420.0].into_iter().enumerate() {
             assert!(
-                (frame.scale * template + offset[axis] - page[axis]).abs() < 0.001,
+                (frame.scale * template + offset[axis] - range[axis]).abs() < 0.001,
                 "axis {axis}: {} × {template} + {} ≠ {}",
                 frame.scale,
                 offset[axis],
-                page[axis]
+                range[axis]
             );
         }
+        assert_eq!(model.page_mm, Some([594.0, 420.0]), "the paper");
+        assert!((range[0] - 593.7458).abs() < 1e-4 && (range[1] - 419.6292).abs() < 1e-4);
         let drawing = frame.drawing_offset_mm();
         assert!((drawing[0] - 0.051).abs() < 0.001, "{frame:?}");
         assert!((drawing[1] + 0.355).abs() < 0.001, "{frame:?}");
@@ -5884,6 +6819,7 @@ mod tests {
             page_mm: Some([1189.0, 841.0]),
             primitives: Vec::new(),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -6062,6 +6998,7 @@ mod tests {
                     })
                     .collect(),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 missing_symbols: Vec::new(),
                 missing_templates: Vec::new(),
@@ -6382,6 +7319,356 @@ mod tests {
 
     /// A corpus with nothing in it still says where a template is looked for:
     /// its own two directories, then its parent's, and no archive.
+    /// The page is painted in the order the sheet lists its objects in: the
+    /// template where the border frame stands, each record of the drawing
+    /// where it or its owner stands, and what the list does not reach after
+    /// everything it does.
+    #[test]
+    fn a_primitive_is_painted_where_the_sheet_lists_its_record() {
+        use pid_parse::parsers::sheet_display_order::{DisplayRank, SheetDisplayOrder};
+        let at = |stream: &str, start: usize, furniture: bool| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: Some(stream.to_string()),
+            byte_range: Some([start, start + 10]),
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Line {
+                start_mm: [0.0, 0.0],
+                end_mm: [1.0, 0.0],
+            },
+            furniture,
+        };
+        let order = |ranks: &[(usize, u32, u32)]| {
+            let mut orders = super::SheetOrders::new();
+            orders.insert(
+                "/Sheet6".to_string(),
+                SheetDisplayOrder {
+                    sheet_oid: 6,
+                    children: ranks.len(),
+                    paper: None,
+                    ranks: ranks
+                        .iter()
+                        .map(|(start, place, inner)| {
+                            (
+                                *start,
+                                DisplayRank {
+                                    place: *place,
+                                    inner: *inner,
+                                },
+                            )
+                        })
+                        .collect(),
+                },
+            );
+            orders
+        };
+        // The model's order: two template rules, then the drawing's records
+        // as the layout visits them — a label's two texts, a valve whose body
+        // is two strokes, a line the sheet's list does not reach, and a
+        // primitive with no record at all.
+        let mut no_record = at("/Sheet6", 0, false);
+        no_record.byte_range = None;
+        let primitives = vec![
+            at("/Sheet6", 100, true),  // 0  template rule, listed second
+            at("/Sheet6", 200, true),  // 1  template rule, listed first
+            at("/Sheet6", 300, false), // 2  text, second of its owner's
+            at("/Sheet6", 400, false), // 3  text, first of its owner's
+            at("/Sheet6", 500, false), // 4  valve body, first stroke
+            at("/Sheet6", 500, false), // 5  valve body, second stroke
+            at("/Sheet6", 600, false), // 6  not reached by the list
+            no_record,                 // 7
+        ];
+        // The drawing lists the valve first, then its frame, then the label.
+        let drawing = order(&[(500, 0, 0), (300, 2, 2), (400, 2, 1)]);
+        let template = order(&[(100, 5, 0), (200, 1, 0)]);
+        let no_sheet = super::EmbeddedOrders::new();
+        let orders = |drawing, template, frame_place| super::PageOrders {
+            drawing,
+            embedded: &no_sheet,
+            template,
+            frame_place,
+            drawing_gaps: None,
+            template_gaps: None,
+        };
+        let painted = super::paint_order(&primitives, &orders(&drawing, Some(&template), Some(1)));
+        assert_eq!(painted, vec![4, 5, 1, 0, 3, 2, 6, 7]);
+
+        // No frame listed: the template first, as a page was always drawn.
+        let painted = super::paint_order(&primitives, &orders(&drawing, Some(&template), None));
+        assert_eq!(painted, vec![1, 0, 4, 5, 3, 2, 6, 7]);
+
+        // A template that states no order keeps the model's.
+        let painted = super::paint_order(&primitives, &orders(&drawing, None, Some(1)));
+        assert_eq!(painted, vec![4, 5, 0, 1, 3, 2, 6, 7]);
+
+        // Neither states one: no order at all, and the writer keeps its own.
+        let none = super::SheetOrders::new();
+        assert!(super::paint_order(&primitives, &orders(&none, None, None)).is_empty());
+        assert!(super::paint_order(&primitives, &orders(&none, Some(&none), Some(1))).is_empty());
+
+        // What the lists place nowhere is named, by domain, stream and
+        // reason: the line the drawing's list does not reach and the
+        // primitive with no record.
+        use crate::ledger::{LedgerDomain, UnplacedRecords, UnplacedWhy};
+        let unplaced = |domain, stream: &str, why, records, primitives| UnplacedRecords {
+            domain,
+            stream: stream.to_string(),
+            why,
+            records,
+            primitives,
+        };
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&drawing, Some(&template), Some(1))),
+            [
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NotReached,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+            ]
+        );
+        // A template whose list was not read: its two rules as well.
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&drawing, None, Some(1))),
+            [
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NotReached,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Furniture,
+                    "/Sheet6",
+                    UnplacedWhy::NoList,
+                    2,
+                    2
+                ),
+            ]
+        );
+        // No sheet states an order: every record that draws, the valve's
+        // two strokes being one record.
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders(&none, None, None)),
+            [
+                unplaced(LedgerDomain::Drawing, "/Sheet6", UnplacedWhy::NoList, 4, 5),
+                unplaced(
+                    LedgerDomain::Drawing,
+                    "/Sheet6",
+                    UnplacedWhy::NoRecord,
+                    1,
+                    1
+                ),
+                unplaced(
+                    LedgerDomain::Furniture,
+                    "/Sheet6",
+                    UnplacedWhy::NoList,
+                    2,
+                    2
+                ),
+            ]
+        );
+        // The same page where the parser says why the streams have no
+        // order. A stream that holds no record of its sheet's own is its
+        // own reason; every way of there being no list — no cluster, no
+        // table, a table of other records, a stream nothing is said of —
+        // stays the one reason it was.
+        use pid_parse::parsers::sheet_display_order::NoDisplayOrder;
+        let gap = |stream: &str, why: NoDisplayOrder| -> super::SheetGaps {
+            std::iter::once((stream.to_string(), why)).collect()
+        };
+        let reasons = |drawing_gaps: Option<&super::SheetGaps>,
+                       template_gaps: Option<&super::SheetGaps>| {
+            let orders = super::PageOrders {
+                drawing: &none,
+                embedded: &no_sheet,
+                template: None,
+                frame_place: None,
+                drawing_gaps,
+                template_gaps,
+            };
+            super::unplaced_records(&primitives, &orders)
+                .into_iter()
+                .map(|item| (item.domain, item.why, item.records))
+                .collect::<Vec<_>>()
+        };
+        let no_list = [
+            (LedgerDomain::Drawing, UnplacedWhy::NoList, 4),
+            (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+            (LedgerDomain::Furniture, UnplacedWhy::NoList, 2),
+        ];
+        let no_own = gap("/Sheet6", NoDisplayOrder::NoRecordOfTheSheet);
+        assert_eq!(
+            reasons(Some(&no_own), Some(&no_own)),
+            [
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecordOfTheSheet, 4),
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+                (LedgerDomain::Furniture, UnplacedWhy::NoRecordOfTheSheet, 2),
+            ]
+        );
+        // Each domain reads its own document's reasons.
+        assert_eq!(
+            reasons(Some(&no_own), None),
+            [
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecordOfTheSheet, 4),
+                (LedgerDomain::Drawing, UnplacedWhy::NoRecord, 1),
+                (LedgerDomain::Furniture, UnplacedWhy::NoList, 2),
+            ]
+        );
+        for why in [
+            NoDisplayOrder::NoCluster,
+            NoDisplayOrder::NoTable,
+            NoDisplayOrder::TableNotTheSheets,
+        ] {
+            let stated = gap("/Sheet6", why);
+            assert_eq!(reasons(Some(&stated), Some(&stated)), no_list, "{why:?}");
+        }
+        let another = gap("/Sheet7", NoDisplayOrder::NoRecordOfTheSheet);
+        assert_eq!(reasons(Some(&another), Some(&another)), no_list);
+        assert_eq!(reasons(None, None), no_list);
+    }
+
+    /// A sheet a frame embeds is what the frame draws: it is painted where
+    /// the drawing lists the frame, in the order the embedded sheet lists
+    /// its own objects. `A01.pid`'s frame 64 stands first and embeds the
+    /// border in `/JSite204/Sheet6`; `Q井场`'s frame 67755 stands at place
+    /// 2 937 of 2 957 and embeds eight lines.
+    #[test]
+    fn what_a_frame_embeds_is_painted_where_the_drawing_lists_the_frame() {
+        use crate::ledger::{LedgerDomain, UnplacedRecords, UnplacedWhy};
+        use pid_parse::parsers::sheet_display_order::{
+            DisplayRank, EmbeddedSheetOrder, EmbeddingFrame, SheetDisplayOrder,
+        };
+        let at = |stream: &str, start: usize| PaperPrimitive {
+            confidence: "decoded",
+            stream_path: Some(stream.to_string()),
+            byte_range: Some([start, start + 10]),
+            symbol: None,
+            stroke: None,
+            shape: PaperShape::Line {
+                start_mm: [0.0, 0.0],
+                end_mm: [1.0, 0.0],
+            },
+            furniture: false,
+        };
+        let order = |ranks: &[(usize, u32, u32)]| SheetDisplayOrder {
+            sheet_oid: 6,
+            children: ranks.len(),
+            paper: None,
+            ranks: ranks
+                .iter()
+                .map(|(start, place, inner)| {
+                    (
+                        *start,
+                        DisplayRank {
+                            place: *place,
+                            inner: *inner,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        // The drawing: a valve, the frame (its record draws nothing), a
+        // label under a dependency object at the frame's place plus one, a
+        // pipe. The embedded sheet lists its second record first.
+        let primitives = vec![
+            at("/Sheet6", 100),          // 0  valve, place 0
+            at("/Sheet6", 300),          // 1  label, place 2 inner 1
+            at("/Sheet6", 400),          // 2  pipe, place 3
+            at("/JSite204/Sheet6", 8),   // 3  embedded, listed second
+            at("/JSite204/Sheet6", 64),  // 4  embedded, listed first
+            at("/JSite204/Sheet6", 120), // 5  embedded, its list does not reach it
+            at("/JSite9/Sheet6", 8),     // 6  a nested sheet with no list read
+        ];
+        let mut drawing = super::SheetOrders::new();
+        drawing.insert(
+            "/Sheet6".to_string(),
+            order(&[(100, 0, 0), (200, 1, 0), (300, 2, 1), (400, 3, 0)]),
+        );
+        let embedded_at = |frame: Option<DisplayRank>| {
+            let mut embedded = super::EmbeddedOrders::new();
+            embedded.insert(
+                "/JSite204/Sheet6".to_string(),
+                EmbeddedSheetOrder {
+                    order: order(&[(8, 1, 0), (64, 0, 0)]),
+                    frame: frame.map(|rank| EmbeddingFrame {
+                        stream_path: "/Sheet6".to_string(),
+                        rank,
+                    }),
+                },
+            );
+            embedded
+        };
+        let embedded = embedded_at(Some(DisplayRank { place: 1, inner: 0 }));
+        let orders = super::PageOrders {
+            drawing: &drawing,
+            embedded: &embedded,
+            template: None,
+            frame_place: None,
+            drawing_gaps: None,
+            template_gaps: None,
+        };
+        // The valve, the embedded sheet's two listed records in its order,
+        // the label, the pipe, and last what no list places.
+        assert_eq!(
+            super::paint_order(&primitives, &orders),
+            vec![0, 4, 3, 1, 2, 5, 6]
+        );
+        let unplaced = |stream: &str, why, records, primitives| UnplacedRecords {
+            domain: LedgerDomain::Drawing,
+            stream: stream.to_string(),
+            why,
+            records,
+            primitives,
+        };
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders),
+            [
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NotReached, 1, 1),
+                unplaced("/JSite9/Sheet6", UnplacedWhy::NoList, 1, 1),
+            ]
+        );
+        // No frame of the drawing names the storage: the embedded sheet has
+        // an order of its own and nowhere to stand.
+        let embedded = embedded_at(None);
+        let orders = super::PageOrders {
+            drawing: &drawing,
+            embedded: &embedded,
+            template: None,
+            frame_place: None,
+            drawing_gaps: None,
+            template_gaps: None,
+        };
+        assert_eq!(
+            super::paint_order(&primitives, &orders),
+            vec![0, 1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!(
+            super::unplaced_records(&primitives, &orders),
+            [
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NotReached, 1, 1),
+                unplaced("/JSite204/Sheet6", UnplacedWhy::NoFrame, 2, 2),
+                unplaced("/JSite9/Sheet6", UnplacedWhy::NoList, 1, 1),
+            ]
+        );
+    }
     #[test]
     fn an_empty_corpus_still_names_where_a_template_is_looked_for() {
         // The corpus sits in a directory of its own, so what the parent holds
@@ -6641,7 +7928,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The reason-code coverage table (requirement 2.4)
     //
-    // Every one of the 43 codes has to be reachable and has to be *recorded*
+    // Every one of the 51 codes has to be reachable and has to be *recorded*
     // where the appendix says it is. `case_for` is an exhaustive `match` over
     // `DropReason`, so adding a code without a case does not compile — that is
     // the whole mechanism. Each arm builds the input that trips its branch and
@@ -6652,7 +7939,7 @@ mod tests {
 
     use crate::ledger::{
         Asymmetry, EntityLayout, ExportLedger, LayoutLedger, LedgerDomain, LedgerRecorder,
-        PartialMark, TemplateTrace,
+        PartialMark, PlacementSource, TemplateTrace,
     };
     use crate::write::{
         PrimitiveFate, PrimitiveOutcome, SegmentTally, TextMarks, WriteLedger, primitive_verdict,
@@ -6961,6 +8248,210 @@ mod tests {
         primitive
     }
 
+    /// The committed pressure gauge below a library's `Symbols` directory.
+    const GAUGE: [&str; 5] = [
+        "Instrumentation",
+        "Off-Line",
+        "Without Implied Components",
+        "Pressure",
+        "PG-Pressure Gauge.sym",
+    ];
+
+    /// The gauge as a placement names it: a site's path down to the file.
+    const GAUGE_AS_PLACED: &str = r"\\SITE\Project\Plant\Ref\Symbols\Instrumentation\Off-Line\Without Implied Components\Pressure\PG-Pressure Gauge.sym";
+
+    /// A symbol library of one file — the committed gauge, with the chain
+    /// of its fullest sheet, `/Sheet6`, stopped on the record `stop_at`
+    /// counts from the first — and the directory that holds the file for as
+    /// long as the guard lives. The sheet is the gauge's normal view, and
+    /// its first record is the circle a page draws.
+    fn a_library_of_the_gauge(
+        name: &str,
+        stop_at: Option<usize>,
+    ) -> (SymbolLibrary, crate::scratch::ScratchDir) {
+        use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+        let source = GAUGE.iter().fold(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols"),
+            |path, part| path.join(part),
+        );
+        let package = pid_parse::PidParser::new()
+            .parse_package(&source)
+            .expect("the committed gauge");
+        let mut plan = WritePlan::default();
+        if let Some(record) = stop_at {
+            let (stream, mut data) = package
+                .streams
+                .iter()
+                .filter(|(path, raw)| {
+                    path.rsplit('/')
+                        .next()
+                        .is_some_and(|name| name.starts_with("Sheet"))
+                        && raw.data.len() > 14
+                })
+                .map(|(path, raw)| (path.clone(), raw.data.clone()))
+                .max_by_key(|(_, data)| data.len())
+                .expect("the gauge has a sheet");
+            // An eight-byte header, then records end to end: the length of
+            // the one asked for is set to zero.
+            let at = pid_parse::parsers::sheet_records::SheetChain::walk(&data).starts[record];
+            data[at + 2..at + 6].copy_from_slice(&0u32.to_le_bytes());
+            plan.stream_replacements.push(StreamReplacement {
+                path: stream,
+                new_data: data,
+            });
+        }
+        let bytes = PidWriter::write_to_bytes(&package, &plan).expect("the gauge is written");
+        let root = crate::scratch::ScratchDir::new(name);
+        let path = GAUGE
+            .iter()
+            .fold(root.to_path_buf(), |path, part| path.join(part));
+        std::fs::create_dir_all(path.parent().expect("a directory")).expect("mkdir");
+        std::fs::write(&path, bytes).expect("the gauge is on disk");
+        (SymbolLibrary::with_roots(vec![root.to_path_buf()]), root)
+    }
+
+    /// Expand `entity` as a placement of the drawing's own against
+    /// `library`, and answer what the page drew it from and the tally.
+    fn placed_from(
+        entity: &PidGraphicEntity,
+        geometry: &NormalizedPidGeometry,
+        library: &mut SymbolLibrary,
+        tally: &mut super::SymbolPlacements,
+    ) -> PlacementSource {
+        let mut out = Vec::new();
+        push_symbol_instance(
+            &mut out,
+            entity,
+            geometry,
+            library,
+            &no_styles(),
+            &std::collections::BTreeSet::new(),
+            Some([420.0, 297.0]),
+            tally,
+        )
+        .source
+    }
+
+    /// A placement that takes its body from a library file with a chain
+    /// that does not hold is tallied: the file once, by the name the
+    /// placement gives it below `Symbols`, with every placement that takes
+    /// its body from it, whether they are drawn, and the faults of the
+    /// file. A sound file is not, and neither is a file the placement does
+    /// not take its body from — a drawing that caches the body reads the
+    /// cache.
+    #[test]
+    fn a_placement_drawn_from_a_damaged_symbol_file_is_tallied_once_a_file() {
+        // The gauge's normal view stopped past its first record, the
+        // circle: the placement is drawn from the records the chain read.
+        let (mut stopped, _kept) = a_library_of_the_gauge("a-gauge-read-short", Some(7));
+        let nothing_cached = NormalizedPidGeometry::default();
+        let gauge = symbol_placement(Some(GAUGE_AS_PLACED), None);
+        let mut tally = super::SymbolPlacements::default();
+        for _ in 0..2 {
+            assert_eq!(
+                placed_from(&gauge, &nothing_cached, &mut stopped, &mut tally),
+                PlacementSource::Library
+            );
+        }
+        let faulted = tally.faulted();
+        assert_eq!(faulted.len(), 1, "{faulted:?}");
+        let file = &faulted[0];
+        assert_eq!(file.symbol, GAUGE.join("\\"));
+        assert_eq!((file.placements, file.not_drawn), (2, None));
+        assert_eq!(file.faults.len(), 1, "{:?}", file.faults);
+        assert!(
+            file.faults[0].stream_path.contains("Sheet") && file.faults[0].stop.is_some(),
+            "{:?}",
+            file.faults
+        );
+        assert!(
+            tally.missing.is_empty() && tally.missing_boxes.is_empty(),
+            "a placement drawn as far as its file reads is no missing symbol"
+        );
+
+        // Stopped on its first record: nothing of the normal view is read.
+        // The file's other sheet is not drawn in its place; the placement
+        // is not drawn, leaves the box and the name of a missing symbol,
+        // and the file is tallied as one its placements are not drawn from.
+        let (mut unread, _kept) = a_library_of_the_gauge("a-gauge-read-nothing", Some(0));
+        let mut tally = super::SymbolPlacements::default();
+        let mut out = Vec::new();
+        let layout = push_symbol_instance(
+            &mut out,
+            &gauge,
+            &nothing_cached,
+            &mut unread,
+            &no_styles(),
+            &std::collections::BTreeSet::new(),
+            Some([420.0, 297.0]),
+            &mut tally,
+        );
+        assert_eq!(
+            (layout.source, layout.dropped),
+            (PlacementSource::Missing, Some(DropReason::SymbolMissing))
+        );
+        assert!(out.is_empty(), "nothing is drawn of it: {out:?}");
+        let faulted = tally.faulted();
+        assert_eq!(faulted.len(), 1, "{faulted:?}");
+        assert_eq!(
+            (faulted[0].placements, faulted[0].not_drawn),
+            (
+                1,
+                Some(pid_parse::symbol_library::SymbolNotDrawn::NothingToShow)
+            )
+        );
+        assert_eq!(tally.missing_boxes.len(), 1, "the box of a missing symbol");
+        assert_eq!(
+            tally.missing.iter().collect::<Vec<_>>(),
+            [&format!(
+                "{} (the library's file is damaged and is not drawn from)",
+                GAUGE.join("\\").to_ascii_lowercase()
+            )],
+            "named as a file that is there and damaged"
+        );
+        assert_eq!(
+            tally
+                .placed
+                .iter()
+                .map(|placed| (placed.body, placed.library_available))
+                .collect::<Vec<_>>(),
+            [(SymbolBodySource::Missing, true)]
+        );
+
+        // The same file, cached by the drawing: drawn from the cache, and
+        // the file is no business of the page's.
+        let cached = geometry_with(
+            vec![definition(
+                vec![SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (0.001, 0.001),
+                }],
+                Some(true),
+            )],
+            Vec::new(),
+        );
+        let held = symbol_placement(
+            Some(GAUGE_AS_PLACED),
+            Some(PidSymbolDefinitionRef { site: 12, sheet: 1 }),
+        );
+        let mut tally = super::SymbolPlacements::default();
+        assert_eq!(
+            placed_from(&held, &cached, &mut stopped, &mut tally),
+            PlacementSource::Cached
+        );
+        assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
+
+        // A sound file, drawn from.
+        let (mut sound, _kept) = a_library_of_the_gauge("a-gauge-read-whole", None);
+        let mut tally = super::SymbolPlacements::default();
+        assert_eq!(
+            placed_from(&gauge, &nothing_cached, &mut sound, &mut tally),
+            PlacementSource::Library
+        );
+        assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
+    }
+
     /// The reason `reason` names, recorded from an input built to trip it.
     ///
     /// Exhaustive over [`DropReason`]: a new code without a case here does not
@@ -7017,6 +8508,63 @@ mod tests {
                     &NormalizedPidGeometry::default(),
                 );
                 first_parse_reason(&recorder)
+            }
+            DropReason::RecordWithoutDisplayPlace => {
+                // A stroke laid out from a record of a stream no sheet's
+                // list was read for: it is on the page, and the account
+                // says no list places it.
+                let stroke = PaperPrimitive {
+                    confidence: "decoded",
+                    stream_path: Some("/Sheet6".to_string()),
+                    byte_range: Some([8, 64]),
+                    symbol: None,
+                    stroke: None,
+                    shape: PaperShape::Line {
+                        start_mm: [0.0, 0.0],
+                        end_mm: [1.0, 0.0],
+                    },
+                    furniture: false,
+                };
+                let none = super::SheetOrders::new();
+                let no_sheet = super::EmbeddedOrders::new();
+                let orders = super::PageOrders {
+                    drawing: &none,
+                    embedded: &no_sheet,
+                    template: None,
+                    frame_place: None,
+                    drawing_gaps: None,
+                    template_gaps: None,
+                };
+                let mut ledger = LayoutLedger::default();
+                ledger.note_unplaced(super::unplaced_records(&[stroke], &orders));
+                ledger
+                    .parse
+                    .drawing
+                    .items
+                    .first()
+                    .map(|item| item.reason)
+                    .expect("one parse record")
+            }
+            DropReason::SymbolFileChainFault => {
+                // A placement the drawing caches no body for, and a library
+                // whose file for it has a sheet with a chain that stops.
+                let (mut library, _kept) = a_library_of_the_gauge("a-gauge-case", Some(0));
+                let mut tally = super::SymbolPlacements::default();
+                placed_from(
+                    &symbol_placement(Some(GAUGE_AS_PLACED), None),
+                    &NormalizedPidGeometry::default(),
+                    &mut library,
+                    &mut tally,
+                );
+                let mut ledger = LayoutLedger::default();
+                ledger.note_symbol_chain_faults(LedgerDomain::Drawing, tally.faulted());
+                ledger
+                    .parse
+                    .drawing
+                    .items
+                    .first()
+                    .map(|item| item.reason)
+                    .expect("one parse record")
             }
             DropReason::RecordSymbolBodyCache => {
                 let mut nested = pid_parse::JSiteNestedGeometry::default();
@@ -7463,6 +9011,42 @@ mod tests {
                 page,
             )
             .expect("the print driver's frame is not content"),
+            // A border template's stroke wholly past the paper's right edge,
+            // on a page that wears the template where its plot shows it.
+            DropReason::SegmentBeyondThePaper => filed_past_the_paper(Some(placed_template(
+                "CPECCHB-SQ-A2.igr",
+                [0.388_407, 0.565_648],
+            ))),
+            // The same stroke of a template no plot shows placed so — and of
+            // a page that says nothing of its template at all.
+            DropReason::SegmentBeyondThePaperNoPlotOfTemplate => {
+                let reason = filed_past_the_paper(Some(placed_template(
+                    "CPECCHB-SQ-A1.igr",
+                    [1.297_400, 1.553_387],
+                )));
+                for unwitnessed in [
+                    Some(placed_template("CPE-SQ-A1.igr", [1.042_526, 1.042_526])),
+                    Some(placed_template("CPECCHB-SQ-A2.igr", [0.150_015, 0.399_965])),
+                    None,
+                ] {
+                    assert_eq!(filed_past_the_paper(unwitnessed), reason);
+                }
+                reason
+            }
+            // The same stroke as the drawing's own: the writer states the
+            // one fact, and the account files it as suspect.
+            DropReason::DrawingSegmentBeyondThePaper => {
+                // Whatever template the page wears: the stroke is not its.
+                let reason = drawing_filed_past_the_paper(None);
+                assert_eq!(
+                    drawing_filed_past_the_paper(Some(placed_template(
+                        "CPECCHB-SQ-A2.igr",
+                        [0.388_407, 0.565_648],
+                    ))),
+                    reason
+                );
+                reason
+            }
             DropReason::TextEmpty => write_reason(&write_label([10.0, 10.0], Some(2.5), ""), page)
                 .expect("an empty string letters nothing"),
             DropReason::TextPlacementNonFinite => {
@@ -7514,7 +9098,318 @@ mod tests {
                 assert_eq!(model.missing_templates, vec!["XA-A1".to_string()]);
                 DropReason::TemplateMissing
             }
+            DropReason::PaperUnlikeTheFrame => {
+                // A page whose layout refused the paper it read: the page
+                // account files it once, with the two rectangles as its site.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [594.328, 420.566],
+                );
+                model.ledger.paper_refused = Some(crate::ledger::PaperRefused {
+                    paper_um: [297_000, 420_000],
+                    frame_um: [594_328, 420_566],
+                });
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                assert_eq!(
+                    assembled.page.suspect_sites[0].name.as_deref(),
+                    Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm")
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
+            DropReason::PaperUnlikeTheTemplateName => {
+                // A page that is its paper, beside a name that states
+                // another size: nothing is left undrawn, and the page
+                // account files the two sizes once.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [297.0, 420.0],
+                );
+                model.ledger.paper_unlike_the_name = Some(crate::ledger::PaperBesideAName {
+                    paper_um: [297_000, 420_000],
+                    named_um: [594_000, 420_000],
+                });
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                assert_eq!(
+                    assembled.page.suspect_sites[0].name.as_deref(),
+                    Some("paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm")
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                assert_eq!(
+                    assembled.drawing.primitives.on_page, 1,
+                    "the stroke is drawn"
+                );
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
+            DropReason::PageFrameRefused => {
+                // A page laid out without its drawing's border frame, which
+                // the frame rule refused: the one stroke is drawn, and the
+                // page account files the record once, with why. The model
+                // carries no border template and its drawing names none.
+                let mut model = one_stroke_model(
+                    write_primitive(
+                        PaperShape::Line {
+                            start_mm: [10.0, 10.0],
+                            end_mm: [50.0, 10.0],
+                        },
+                        0.25,
+                    ),
+                    [594.0, 420.0],
+                );
+                model.ledger.frames_refused = vec![crate::ledger::FrameRefused {
+                    stream: "/Sheet6".to_string(),
+                    record: 2_048,
+                    oid: Some(22),
+                    why: "it states a width of 0 m and a height of 0.42 m, and a frame's \
+                          sides are lengths above zero"
+                        .to_string(),
+                    page: crate::ledger::PageWithoutTheFrame::Paper,
+                    page_um: Some([594_000, 420_000]),
+                    template: crate::ledger::TemplateWithoutTheFrame::NotNamed,
+                    primitives: 1,
+                }];
+                let write = crate::write::write_ledger(&model).expect("the page writes");
+                let assembled = ExportLedger::assemble(&model, &write);
+                let site = &assembled.page.suspect_sites[0];
+                assert_eq!(
+                    (site.stream.as_deref(), site.oid, site.type_code),
+                    (Some("/Sheet6"), Some(22), Some(0x003D))
+                );
+                assert_eq!(assembled.summary().suspect, 1);
+                assert_eq!(
+                    assembled.drawing.primitives.on_page, 1,
+                    "the stroke is drawn"
+                );
+                assert_eq!(
+                    model.ledger.page_warnings(),
+                    [
+                        "the border frame of /Sheet6, the record at +2048, oid 22, is refused: it \
+                      states a width of 0 m and a height of 0.42 m, and a frame's sides are \
+                      lengths above zero; the sheet is laid out as one with no frame: the page \
+                      is the paper its sheet states, 594.000 x 420.000 mm, and no border \
+                      template is drawn: the drawing names none, and only a frame's rectangle \
+                      picks one for a drawing that names none; the drawing's ink lies where it \
+                      does without the frame's offsets"
+                    ]
+                );
+                *assembled
+                    .page
+                    .dropped
+                    .keys()
+                    .next()
+                    .expect("one page-level item")
+            }
         }
+    }
+
+    /// A page of one stroke, with the layout ledger a one-entity page has.
+    fn one_stroke_model(stroke: PaperPrimitive, page_mm: [f64; 2]) -> PaperModel {
+        let domain = if stroke.furniture {
+            LedgerDomain::Furniture
+        } else {
+            LedgerDomain::Drawing
+        };
+        let mut recorder = LedgerRecorder::new();
+        let index = recorder.begin(
+            domain,
+            &entity(PidGraphicKind::Unknown {
+                note: String::new(),
+            }),
+        );
+        recorder.finish(index, EntityLayout::default().into(), 0);
+        let mut ledger = recorder.into_ledger();
+        *ledger.entity_totals.get_mut(domain) = 1;
+        ledger.primitive_origin = vec![0];
+        PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some(page_mm),
+            off_sheet_primitives: 0,
+            frame_mm: None,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![stroke],
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger,
+        }
+    }
+
+    /// A border template as a page wears it: the file and where the frame
+    /// puts it.
+    fn placed_template(path: &str, offset_mm: [f64; 2]) -> BorderTemplate {
+        BorderTemplate {
+            path: path.to_string(),
+            extent_mm: [841.0, 594.0],
+            offset_mm,
+            scale: 1.0,
+            primitives: 1,
+            symbols: Vec::new(),
+        }
+    }
+
+    /// The code the account files a template's stroke under when its whole
+    /// pen lies past the page's right edge, on a page that wears `template`.
+    fn filed_past_the_paper(template: Option<BorderTemplate>) -> DropReason {
+        stroke_filed_past_the_paper(true, template)
+    }
+
+    /// The same for a stroke of the drawing's own.
+    fn drawing_filed_past_the_paper(template: Option<BorderTemplate>) -> DropReason {
+        stroke_filed_past_the_paper(false, template)
+    }
+
+    /// The code the account files a stroke under when its whole pen lies
+    /// past the page's right edge: the writer's verdict on a real page of
+    /// one stroke, read back out of `assemble`.
+    fn stroke_filed_past_the_paper(
+        furniture: bool,
+        template: Option<BorderTemplate>,
+    ) -> DropReason {
+        let mut stroke = write_primitive(
+            PaperShape::Line {
+                start_mm: [841.328, 0.566],
+                end_mm: [841.328, 300.0],
+            },
+            0.25,
+        );
+        stroke.furniture = furniture;
+        let mut model = one_stroke_model(stroke, [841.0, 594.0]);
+        model.template = template;
+        let write = crate::write::write_ledger(&model).expect("the page writes");
+        // The writer states one fact, whoever drew the segment.
+        assert_eq!(
+            write.fate(0).and_then(|fate| fate.reason()),
+            Some(DropReason::SegmentBeyondThePaper)
+        );
+        let assembled = ExportLedger::assemble(&model, &write);
+        assert!(assembled.conservation_breaches().is_empty());
+        let account = if furniture {
+            &assembled.furniture
+        } else {
+            &assembled.drawing
+        };
+        let segments: Vec<DropReason> = account.segments.dropped.keys().copied().collect();
+        let primitives: Vec<DropReason> = account.primitives.dropped.keys().copied().collect();
+        let entities: Vec<DropReason> = account.entities.dropped.keys().copied().collect();
+        assert_eq!(
+            segments, primitives,
+            "the segment and its primitive, one code"
+        );
+        assert_eq!(segments, entities, "and its entity");
+        assert_eq!(segments.len(), 1);
+        segments[0]
+    }
+
+    /// A paper is the sheet a template's name states when it rounds to the
+    /// name's whole millimetres, and is another size half a millimetre off.
+    #[test]
+    fn a_paper_is_the_named_sheet_to_the_millimetre_the_name_is_written_in() {
+        use super::{PAPER_NAME_REACH_MM, paper_is_the_named_sheet};
+        let a2 = [594.0, 420.0];
+        // The papers on hand are the ISO sizes to the nanometre.
+        assert!(paper_is_the_named_sheet([594.0, 420.0], a2));
+        assert!(paper_is_the_named_sheet([594.000_001, 419.999_999], a2));
+        assert!(paper_is_the_named_sheet([594.499, 420.0], a2));
+        // Half a millimetre off rounds to another number.
+        assert!(!paper_is_the_named_sheet([594.5, 420.0], a2));
+        assert!(!paper_is_the_named_sheet([594.0, 419.5], a2));
+        // What a frame's limit lets through is another size beside a name.
+        assert!(!paper_is_the_named_sheet([595.0, 420.0], a2));
+        assert!(!paper_is_the_named_sheet([594.0, 422.7], a2));
+        // The next ISO size, the sheet turned, half the width, no number.
+        for paper in [
+            [841.0, 594.0],
+            [420.0, 594.0],
+            [297.0, 420.0],
+            [594.0, f64::NAN],
+            [f64::INFINITY, 420.0],
+        ] {
+            assert!(!paper_is_the_named_sheet(paper, a2), "{paper:?}");
+        }
+        assert!((PAPER_NAME_REACH_MM - 0.5).abs() < f64::EPSILON);
+    }
+
+    /// A paper is the frame's when no drawing on hand has the two farther
+    /// apart, and not when it is.
+    #[test]
+    fn a_paper_is_the_frames_when_no_drawing_has_them_farther_apart() {
+        use super::{PAPER_FRAME_REACH_MM, paper_is_the_frames};
+        // The farthest any drawing on hand shows, each with its paper and
+        // its frame's rectangle: all of them are their frame's papers.
+        for (name, paper, frame) in [
+            ("N井场", [841.0, 594.0], [843.456811, 596.706782]),
+            (
+                "凝析油稳定塔 1200td",
+                [841.0, 594.0],
+                [843.085102, 596.085095],
+            ),
+            (
+                "CPECCHB-SQ-A2 sheets",
+                [594.0, 420.0],
+                [594.327890, 420.565694],
+            ),
+            ("O井场", [841.0, 594.0], [841.150036, 594.400007]),
+            // A frame smaller than its paper.
+            ("DWG-0202GP06-01", [594.0, 420.0], [593.745838, 419.629169]),
+            ("A井场", [1189.0, 841.0], [1189.305344, 841.305249]),
+            ("A01", [594.0, 420.0], [594.001041, 420.001017]),
+        ] {
+            assert!(paper_is_the_frames(paper, frame), "{name}");
+        }
+        // The papers the seventh review wrote into a copy of `D06`, against
+        // that drawing's frame: none of them is.
+        let frame = [594.327890, 420.565694];
+        for paper in [
+            [297.0, 420.0],
+            [420.0, 594.0],
+            [1000.0, 0.0],
+            [1594.0, 1420.0],
+            [594.0, f64::NAN],
+            [f64::INFINITY, 420.0],
+        ] {
+            assert!(!paper_is_the_frames(paper, frame), "{paper:?}");
+        }
+        // The limit is the farthest reading, to the micrometre above it.
+        assert!(paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0, 594.0 + PAPER_FRAME_REACH_MM]
+        ));
+        assert!(!paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0, 594.0 + PAPER_FRAME_REACH_MM + 0.001]
+        ));
+        assert!(!paper_is_the_frames(
+            [841.0, 594.0],
+            [841.0 - PAPER_FRAME_REACH_MM - 0.001, 594.0]
+        ));
+        assert!((PAPER_FRAME_REACH_MM - 2.707).abs() < f64::EPSILON);
     }
 
     /// Read the one reason `parse` recorded for `geometry` and check it is
@@ -7582,7 +9477,7 @@ mod tests {
                 reason.code()
             );
         }
-        assert_eq!(DropReason::all().len(), 43, "the appendix's 43 rows");
+        assert_eq!(DropReason::all().len(), 51, "the appendix's 51 rows");
     }
 
     /// The marks a one-primitive page's ledger records for one text run.
@@ -7610,6 +9505,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![write_label([10.0, 10.0], Some(2.5), "PT-101")],
             missing_symbols: Vec::new(),
@@ -7691,6 +9587,7 @@ mod tests {
                     template: None,
                     page_mm: Some([100.0, 100.0]),
                     off_sheet_primitives: 0,
+                    frame_mm: None,
                     skipped_endpoint_pairs: 0,
                     primitives: vec![write_label([50.0, 100.9], Some(2.5), "PT-101")],
                     missing_symbols: Vec::new(),
@@ -7922,5 +9819,114 @@ mod tests {
                 Ok(())
             })
             .expect("the body conservation equation holds");
+    }
+
+    /// Which refused frame records the page answers for: those of the
+    /// drawing's own sheets — streams of the document's root — whose flag
+    /// words read as an embedded or a linked frame, or cannot be read. Each
+    /// half of the rule is held by itself: a frame of the drawing's own
+    /// sheet that states no page when it decodes, and a frame that could
+    /// state a page in a sheet that is not the drawing's own.
+    #[test]
+    fn only_a_refused_frame_of_the_drawings_own_sheet_that_could_state_a_page_is_the_pages() {
+        use pid_parse::parsers::sheet_records::{
+            SheetSmartFrame2dState as State, SheetSmartFrameRefused, SmartFrameRefusal,
+        };
+        let refused = |stream: &str, state: Option<State>| pid_parse::RefusedSmartFrame {
+            stream_path: stream.to_string(),
+            refused: SheetSmartFrameRefused {
+                byte_range: 8..170,
+                oid: Some(22),
+                state,
+                why: SmartFrameRefusal::NotLengths {
+                    width_m: 0.0,
+                    height_m: 0.42,
+                },
+            },
+        };
+        for (stream, state, the_pages) in [
+            ("/Sheet6", Some(State::Embedded), true),
+            ("/Sheet6", Some(State::Linked), true),
+            // A payload too short to reach the flag words: it may have
+            // been either.
+            ("/Sheet6", None, true),
+            // The state half: a frame of the drawing's own sheet that
+            // states no page when it decodes.
+            ("/Sheet6", Some(State::Empty), false),
+            ("/Sheet6", Some(State::LocallyLinked), false),
+            // The storage half: a frame that could state a page, in a
+            // sheet that is not the drawing's own.
+            ("/JSite204/Sheet6", Some(State::Embedded), false),
+            ("/JSite204/Sheet6", Some(State::Linked), false),
+            ("/JSite204/Sheet6", None, false),
+            // Neither.
+            ("/JSite204/Sheet6", Some(State::LocallyLinked), false),
+            ("/JSite204/JSite16/Sheet6", Some(State::Empty), false),
+        ] {
+            assert_eq!(
+                super::the_page_answers_for(&refused(stream, state)),
+                the_pages,
+                "{stream} {state:?}"
+            );
+        }
+    }
+
+    /// What a page laid out without a refused frame is told of its border
+    /// template is read off four facts of the layout, and each outcome has
+    /// its own: a template laid out; one sought for a sheet and not found —
+    /// the sheet a frame or a name states, or the one the drawing's lines
+    /// fit; none sought because the drawing names none; none sought
+    /// because nothing gives a sheet to seek the named one for.
+    #[test]
+    fn what_a_page_without_its_frame_draws_of_the_template_is_read_off_the_layout() {
+        use crate::ledger::TemplateWithoutTheFrame as Template;
+        let a2 = Some([594.0, 420.0]);
+        let a3 = Some([420.0, 297.0]);
+        for (laid_out, sought_for, fitted, names, is) in [
+            // Laid out, whatever it was sought for and by.
+            (true, a2, true, true, Template::Drawn),
+            (true, a2, false, false, Template::Drawn),
+            // Sought for the sheet the drawing's lines fit, and not found.
+            (
+                false,
+                a3,
+                true,
+                true,
+                Template::NotFound {
+                    sheet_um: [420_000, 297_000],
+                    fitted: true,
+                },
+            ),
+            // Sought for a sheet a name or another frame states.
+            (
+                false,
+                a2,
+                false,
+                true,
+                Template::NotFound {
+                    sheet_um: [594_000, 420_000],
+                    fitted: false,
+                },
+            ),
+            (
+                false,
+                Some([689.6, 554.302]),
+                false,
+                false,
+                Template::NotFound {
+                    sheet_um: [689_600, 554_302],
+                    fitted: false,
+                },
+            ),
+            // Not sought.
+            (false, None, true, false, Template::NotNamed),
+            (false, None, true, true, Template::NoSheet),
+        ] {
+            assert_eq!(
+                super::template_without_the_frame(laid_out, sought_for, fitted, names),
+                is,
+                "laid out {laid_out}, sought for {sought_for:?}, fitted {fitted}, names one {names}"
+            );
+        }
     }
 }

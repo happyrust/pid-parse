@@ -110,6 +110,67 @@ pub struct PidDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sheet_layers: BTreeMap<String, Vec<SheetLayer>>,
 
+    /// The order each top-level sheet displays its records in, keyed by the
+    /// sheet stream's path (`/Sheet6`): the sheet's `0x0114 JSheet` record
+    /// lists the objects it owns in the order it draws them, and every live
+    /// record of the stream takes its rank from that list
+    /// ([`crate::parsers::sheet_display_order`]). A sheet whose record was
+    /// not found, or lists something that is not the sheet's own, has no
+    /// entry.
+    ///
+    /// Not part of the document's serialized form or its schema yet: the
+    /// plot writer is its one reader.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub sheet_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::SheetDisplayOrder>,
+
+    /// The display order of each sheet a frame of the drawing embeds, keyed
+    /// by the nested stream's path (`/JSite204/Sheet6`): the order the
+    /// embedded sheet's own `JSheet` record states, read from the
+    /// `PSMcluster0` of the storage it is in, and where the drawing lists
+    /// the frame whose site that storage is
+    /// ([`crate::parsers::sheet_display_order::EmbeddedSheetOrder`]). Kept
+    /// apart from [`Self::sheet_display_order`], which holds the drawing's
+    /// own sheets and nothing else: an embedded sheet states a paper of its
+    /// own, which is not the drawing's.
+    ///
+    /// Not serialized, like the map beside it.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub embedded_sheet_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::EmbeddedSheetOrder>,
+
+    /// Why each sheet stream that has no entry in
+    /// [`Self::sheet_display_order`] or [`Self::embedded_sheet_display_order`]
+    /// has none, keyed by the stream's path
+    /// ([`crate::parsers::sheet_display_order::NoDisplayOrder`]): its storage
+    /// holds no cluster, the cluster no `JSheet` record of the sheet, the
+    /// stream no record of the sheet's own as far as it was read, or the
+    /// record is not of the stream's records. A reader that has to say why a
+    /// drawing states no order reads it here; a stream whose chain stopped
+    /// ahead of the sheet's own records is the third, beside a table that
+    /// may be sound.
+    ///
+    /// Not serialized, like the two maps above.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub sheet_without_display_order:
+        BTreeMap<String, crate::parsers::sheet_display_order::NoDisplayOrder>,
+
+    /// The live `igSmartFrame2d` records of the document's `Sheet*` streams
+    /// that the frame decoder refuses, in the order the streams were read,
+    /// each with why ([`RefusedSmartFrame`]). Such a record is counted with
+    /// the refused graphic records of its stream; this says which record
+    /// and which part of the frame rule it fails, for a reader that has to
+    /// say what a page was laid out without. Empty on every document of the
+    /// corpora.
+    ///
+    /// Not serialized, like the maps above.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub refused_smart_frames: Vec<RefusedSmartFrame>,
+
     /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
     /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
     /// one `JSheet` and states, for the layers that sheet's manager
@@ -263,6 +324,10 @@ impl Default for PidDocument {
             psm_segment_table: None,
             psm_space_maps: BTreeMap::new(),
             sheet_layers: BTreeMap::new(),
+            sheet_display_order: BTreeMap::new(),
+            embedded_sheet_display_order: BTreeMap::new(),
+            sheet_without_display_order: BTreeMap::new(),
+            refused_smart_frames: Vec::new(),
             view_filter_sets: BTreeMap::new(),
             style_tables: BTreeMap::new(),
             version_history: None,

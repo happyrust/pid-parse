@@ -194,7 +194,6 @@ pub(super) fn advance(
         .collect();
     if widths_em.len() < 2 || !(sx.is_finite() && sx > 0.0) {
         return RunAdvance {
-            tc_pt: 0.0,
             width_mm: run_width_mm(lender, size_pt, bytes),
             steps_px: Vec::new(),
             glyphs: Vec::new(),

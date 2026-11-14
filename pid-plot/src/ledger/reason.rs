@@ -1,7 +1,7 @@
 //! The reason catalog: every branch of the export path that draws nothing,
 //! named once.
 //!
-//! [`DropReason`] is a closed set of 43 codes, one per row of appendix A of
+//! [`DropReason`] is a closed set of 51 codes, one per row of appendix A of
 //! `.kiro/specs/pdf-export-ledger/requirements.md`. The declaration order is
 //! that appendix's row order (A.1 → A.2 → A.3 → A.4 → A.5 → A.8), so the
 //! derived [`Ord`] **is** "where the code sits in the appendix" — which is what
@@ -104,6 +104,37 @@ pub enum DropReason {
     /// is counted once, with the bytes left unread
     /// (`LedgerRecorder::parse`).
     SheetStreamWithoutGeometry,
+    /// A record that draws on the page and takes no place in the order its
+    /// sheet draws in (`pid_parse::parsers::sheet_display_order`): the sheet
+    /// states no list of its objects that could be read, the list does not
+    /// reach the record's owner, or the record is in a sheet nested in the
+    /// drawing that no frame of the drawing was found to embed. Nothing is
+    /// missing from the page — what such a record draws is painted after
+    /// everything that has a place, or, when no sheet of the page states an
+    /// order at all, the page is painted strokes first and lettering after —
+    /// but what covers what is then not read from the drawing. Counted in
+    /// records, once per stream (`LayoutLedger::note_unplaced`); no page of
+    /// the corpora this crate is tested on has one.
+    RecordWithoutDisplayPlace,
+    /// A placement that takes its body from a symbol library file with a
+    /// chain stream that does not hold
+    /// (`pid_parse::symbol_library::SymbolGeometry::chain_faults`). The
+    /// symbol reader reads such a stream as far as its chain holds, and
+    /// what is drawn of the file is part of what the sound file draws, or
+    /// nothing (`SymbolGeometry::displayed`): the strokes before a stop on
+    /// the sheet that draws the body, never the file's other sheet in its
+    /// place; the whole body for a fault that loses no record; and where no
+    /// part can be had the placement is not drawn and is a
+    /// [`Self::SymbolMissing`] as well. The page cannot show which. Counted
+    /// once a symbol file and stream on a page with a placement of that
+    /// file, with the bytes its chain left unread
+    /// (`LayoutLedger::symbol_chain_faults`, which also says whether the
+    /// placements are drawn); `pid_plot` says it. A file no placement takes
+    /// its body from costs the page nothing and is not counted: a drawing
+    /// caches the body of every symbol it places, and no page of the
+    /// corpora this crate is tested on draws a placement from the library
+    /// at all.
+    SymbolFileChainFault,
     /// A record inside a nested `JSite*/PSMcluster0` storage: symbol-body
     /// content, drawn through the placement that references it rather than as
     /// page content of its own.
@@ -172,8 +203,12 @@ pub enum DropReason {
     /// which carry byte provenance but no reading a page could draw.
     KindUnknown,
     /// A placement that names a symbol path no library answers — cached body
-    /// and library body both absent. The writer draws no placeholder box; the
-    /// count is `PaperModel::missing_boxes` too.
+    /// and library body both absent — or one the library answers with a file
+    /// read short in a way that leaves nothing of its body to draw as the
+    /// sound file's (`pid_parse::symbol_library::SymbolNotDrawn`; the file
+    /// is then a [`Self::SymbolFileChainFault`] of the page too). The writer
+    /// draws no placeholder box; the count is `PaperModel::missing_boxes`
+    /// too.
     SymbolMissing,
     /// A placement with neither a symbol path nor a resolvable cached body.
     /// Silent until the ledger: nothing anywhere counted it.
@@ -238,6 +273,64 @@ pub enum DropReason {
     /// the sheet edge — within 0.282 mm on one axis and past 0.9 of the page
     /// on the other. Counted per segment.
     SegmentOnSheetEdge,
+    /// `stroke_runs`: a segment the whole pen of which lies past one edge of
+    /// the paper — both ends at least half the pen it is stroked with beyond
+    /// the same edge — so it leaves no ink on the page. Counted per segment.
+    ///
+    /// A sheet states its paper, and its border frame may place the template
+    /// past the paper's corner: the nine `CPECCHB-SQ-A2` sheets by
+    /// (0.388, 0.566) mm, which puts the top and the right edge of the
+    /// template's outline off the paper. The A2 reference plot is the
+    /// witness that this ink is not printed: of the 4 586 `m` / `l`
+    /// operands of its content stream four lie outside the page box, all in
+    /// the outline's own path — the top edge is not written at all, the two
+    /// upright edges are cut one device unit past the paper, and the line
+    /// that restates the right edge (oid 109 of the template) is in no path.
+    /// A furniture segment is not exempt, as it is from
+    /// [`Self::SegmentOnSheetEdge`]: what is off the paper is off it
+    /// whichever file drew it.
+    ///
+    /// This is the code of a border template a vendor's plot shows put past
+    /// its paper so: the template and the offset are a row of
+    /// `witness::PAPER_EDGE_WITNESSES`. The writer states the one fact for
+    /// every segment past the paper, and the account files it by whose
+    /// segment it is (`ExportLedger::assemble`): a template no plot shows
+    /// placed so is [`Self::SegmentBeyondThePaperNoPlotOfTemplate`], and the
+    /// same segment of the drawing's own is
+    /// [`Self::DrawingSegmentBeyondThePaper`].
+    SegmentBeyondThePaper,
+    /// A segment of a border template the whole pen of which lies past one
+    /// edge of the paper, where **no vendor plot on hand shows this template
+    /// put past its paper by this offset**: the fact of
+    /// [`Self::SegmentBeyondThePaper`] without its witness.
+    ///
+    /// The reference plots show three templates. `CPECCHB-SQ-A2` is plotted
+    /// off its paper's corner and is the witnessed case. `CPE-SQ-A0` and
+    /// `CPE-SQ-A1` are plotted only with the template on the paper's corner,
+    /// which says nothing of an outline past the paper, and `CPECCHB-SQ-A1`
+    /// is on no plot at all. Six sheets of the plant backup wear one of
+    /// those three off the corner — `A井场`, `N井场`, `O井场`, `P井场` and the
+    /// two `凝析油稳定塔` sheets — and the top and the right piece of each
+    /// one's outline are filed here: left unprinted by the rule the A2 plot
+    /// witnesses, carried over to a placement no plot shows.
+    ///
+    /// Intentional all the same, and counted apart so that what rests on a
+    /// plot and what is carried over from one are not one number. Once the
+    /// page is the paper, a segment wholly past the paper's edge can leave
+    /// no ink on it whatever a plotter does; what no plot shows for these
+    /// sheets is that their page is their paper. Counted per segment.
+    SegmentBeyondThePaperNoPlotOfTemplate,
+    /// A segment of the drawing's own the whole pen of which lies past one
+    /// edge of the page: the fact of [`Self::SegmentBeyondThePaper`], on
+    /// ink no plot shows left off. A border template can be put past the
+    /// paper's corner by its frame, and the plots do not print what then
+    /// lies off the paper. A drawing's own stroke off its own page says
+    /// something else — the page is not the sheet the drawing was drawn on
+    /// (a paper read wrong where there is no frame to hold it against), or
+    /// the drawing keeps ink off its sheet — so it is not printed and it is
+    /// suspect. No page of the corpora this crate is tested on has one.
+    /// Counted per segment.
+    DrawingSegmentBeyondThePaper,
     /// `show_text`: the text is the empty string.
     TextEmpty,
     /// `show_text`: the rotation or the origin is not finite.
@@ -257,6 +350,60 @@ pub enum DropReason {
     /// The page names a template and no file answers it, so the page wears no
     /// furniture. Counted as `PaperModel::missing_templates` too.
     TemplateMissing,
+    /// The paper the sheet states is not the border frame's: a side of the
+    /// frame's rectangle lies farther from the same side of the paper than
+    /// it does on any drawing on hand (`model::PAPER_FRAME_REACH_MM`). Such
+    /// a paper is not taken for the page — a paper read wrong would cut the
+    /// page to whatever it said — and the page is the frame's rectangle, as
+    /// every page was before papers were read. The drawing is whole on it
+    /// as long as the frame holds the sheet; a frame smaller than its paper
+    /// by more than the limit gives a page smaller than the sheet.
+    /// Counted once a page (`LayoutLedger::paper_refused`); no page of the
+    /// corpora this crate is tested on has one.
+    ///
+    /// Only where a frame was read: the code is of a paper held to a
+    /// frame's rectangle, one reading against another. A paper beside a
+    /// template's name alone is [`Self::PaperUnlikeTheTemplateName`].
+    PaperUnlikeTheFrame,
+    /// The paper the sheet states is not the size the name of its template
+    /// states, in a drawing no frame of which gave a page: a side is half a
+    /// millimetre or more from the name's (`model::PAPER_NAME_REACH_MM`).
+    ///
+    /// Nothing is refused and nothing is left undrawn for it: the paper is
+    /// the page. A name is a label, of the template the drawing was started
+    /// from, and overrules no reading; that the two differ is worth a look
+    /// — the paper may have been read wrong, with no frame to show it, or
+    /// the sheet may have been resized since — so it is counted once a page
+    /// (`LayoutLedger::paper_unlike_the_name`) and `pid_plot` says it.
+    /// Nothing witnesses this path: no drawing on hand states a paper
+    /// beside a template's name alone.
+    PaperUnlikeTheTemplateName,
+    /// A border frame of the drawing's own sheet is a record the frame rule
+    /// refuses (`pid_parse::parsers::sheet_records::refused_smartframes`):
+    /// the ratio it states is not its height over its width, or its sides
+    /// are not lengths — a width of zero among them. The rule is what tells
+    /// a frame from the bytes a walk reads off a broken chain, so a real
+    /// frame that fails it states no page and places nothing, and the
+    /// sheet is laid out as one with no frame is: the page is the paper
+    /// its sheet states, or the size its template's name states, or
+    /// neither — or, where another border frame of the drawing still
+    /// states its sheet, the page that one lays out. What is on that page
+    /// depends on the drawing, because a border template is picked for the
+    /// frame's rectangle: the template may be drawn without the frame's
+    /// offsets, a third of a millimetre from where the drawing states it,
+    /// or not be drawn at all, and a sheet with no ink of its own is then
+    /// a blank page. Which of these the page is, is recorded with the item
+    /// (`FrameRefused::template`, `FrameRefused::primitives`) from what
+    /// was laid out. The page looks like a finished export and is not the
+    /// one the drawing states.
+    ///
+    /// Counted once a refused frame record of the drawing's own sheet that
+    /// could have stated a page — embedded or linked, as far as its flag
+    /// words read (`LayoutLedger::frames_refused`) — and `pid_plot` says
+    /// it. The record itself is one of the parse layer's
+    /// [`Self::RecordRefused`]; this is what the page is for want of it.
+    /// No page of the corpora this crate is tested on has one.
+    PageFrameRefused,
 }
 
 /// Every code, in appendix A's row order.
@@ -265,11 +412,13 @@ pub enum DropReason {
 /// in appendix A" by taking the minimum, so this array and the derived `Ord`
 /// must not drift apart. `all_codes_match_the_appendix` holds them against the
 /// appendix's own table.
-pub const ALL: [DropReason; 43] = [
+pub const ALL: [DropReason; 51] = [
     DropReason::RecordNoDecoder,
     DropReason::RecordRefused,
     DropReason::RecordNativeSkip,
     DropReason::SheetStreamWithoutGeometry,
+    DropReason::RecordWithoutDisplayPlace,
+    DropReason::SymbolFileChainFault,
     DropReason::RecordSymbolBodyCache,
     DropReason::CacheDefinitionUnplaced,
     DropReason::RecordAuditOnlyFamily,
@@ -303,12 +452,18 @@ pub const ALL: [DropReason; 43] = [
     DropReason::SegmentNonFinite,
     DropReason::SegmentTooShort,
     DropReason::SegmentOnSheetEdge,
+    DropReason::SegmentBeyondThePaper,
+    DropReason::SegmentBeyondThePaperNoPlotOfTemplate,
+    DropReason::DrawingSegmentBeyondThePaper,
     DropReason::TextEmpty,
     DropReason::TextPlacementNonFinite,
     DropReason::TextHeightInvalid,
     DropReason::TextWhitespaceOnly,
     DropReason::TemplateCandidateUnreadable,
     DropReason::TemplateMissing,
+    DropReason::PaperUnlikeTheFrame,
+    DropReason::PaperUnlikeTheTemplateName,
+    DropReason::PageFrameRefused,
 ];
 
 impl DropReason {
@@ -327,6 +482,8 @@ impl DropReason {
             Self::RecordRefused => "record_refused",
             Self::RecordNativeSkip => "record_native_skip",
             Self::SheetStreamWithoutGeometry => "sheet_stream_without_geometry",
+            Self::RecordWithoutDisplayPlace => "record_without_display_place",
+            Self::SymbolFileChainFault => "symbol_file_chain_fault",
             Self::RecordSymbolBodyCache => "record_symbol_body_cache",
             Self::CacheDefinitionUnplaced => "cache_definition_unplaced",
             Self::RecordAuditOnlyFamily => "record_audit_only_family",
@@ -360,12 +517,20 @@ impl DropReason {
             Self::SegmentNonFinite => "segment_non_finite",
             Self::SegmentTooShort => "segment_too_short",
             Self::SegmentOnSheetEdge => "segment_on_sheet_edge",
+            Self::SegmentBeyondThePaper => "segment_beyond_the_paper",
+            Self::SegmentBeyondThePaperNoPlotOfTemplate => {
+                "segment_beyond_the_paper_no_plot_of_template"
+            }
+            Self::DrawingSegmentBeyondThePaper => "drawing_segment_beyond_the_paper",
             Self::TextEmpty => "text_empty",
             Self::TextPlacementNonFinite => "text_placement_non_finite",
             Self::TextHeightInvalid => "text_height_invalid",
             Self::TextWhitespaceOnly => "text_whitespace_only",
             Self::TemplateCandidateUnreadable => "template_candidate_unreadable",
             Self::TemplateMissing => "template_missing",
+            Self::PaperUnlikeTheFrame => "paper_unlike_the_frame",
+            Self::PaperUnlikeTheTemplateName => "paper_unlike_the_template_name",
+            Self::PageFrameRefused => "page_frame_refused",
         }
     }
 
@@ -376,6 +541,8 @@ impl DropReason {
             Self::RecordNoDecoder
             | Self::RecordRefused
             | Self::SheetStreamWithoutGeometry
+            | Self::RecordWithoutDisplayPlace
+            | Self::SymbolFileChainFault
             | Self::RecordEmitterOutOfRange
             | Self::RecordEmitterShapeRejected
             | Self::KindMisrouted
@@ -391,10 +558,14 @@ impl DropReason {
             | Self::PenWidthInvalid
             | Self::ChainEmpty
             | Self::SegmentNonFinite
+            | Self::DrawingSegmentBeyondThePaper
             | Self::TextPlacementNonFinite
             | Self::TextHeightInvalid
             | Self::TemplateCandidateUnreadable
-            | Self::TemplateMissing => Tier::Suspect,
+            | Self::TemplateMissing
+            | Self::PaperUnlikeTheFrame
+            | Self::PaperUnlikeTheTemplateName
+            | Self::PageFrameRefused => Tier::Suspect,
             Self::RecordNativeSkip
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
@@ -414,6 +585,8 @@ impl DropReason {
             | Self::ProbeOnly
             | Self::SegmentTooShort
             | Self::SegmentOnSheetEdge
+            | Self::SegmentBeyondThePaper
+            | Self::SegmentBeyondThePaperNoPlotOfTemplate
             | Self::TextEmpty
             | Self::TextWhitespaceOnly => Tier::Intentional,
         }
@@ -427,6 +600,8 @@ impl DropReason {
             | Self::RecordRefused
             | Self::RecordNativeSkip
             | Self::SheetStreamWithoutGeometry
+            | Self::RecordWithoutDisplayPlace
+            | Self::SymbolFileChainFault
             | Self::RecordSymbolBodyCache
             | Self::CacheDefinitionUnplaced
             | Self::RecordAuditOnlyFamily
@@ -460,10 +635,17 @@ impl DropReason {
             | Self::TextPlacementNonFinite
             | Self::TextHeightInvalid
             | Self::TextWhitespaceOnly => ReasonLayer::Primitive,
-            Self::SegmentNonFinite | Self::SegmentTooShort | Self::SegmentOnSheetEdge => {
-                ReasonLayer::Segment
-            }
-            Self::TemplateCandidateUnreadable | Self::TemplateMissing => ReasonLayer::Page,
+            Self::SegmentNonFinite
+            | Self::SegmentTooShort
+            | Self::SegmentOnSheetEdge
+            | Self::SegmentBeyondThePaper
+            | Self::SegmentBeyondThePaperNoPlotOfTemplate
+            | Self::DrawingSegmentBeyondThePaper => ReasonLayer::Segment,
+            Self::TemplateCandidateUnreadable
+            | Self::TemplateMissing
+            | Self::PaperUnlikeTheFrame
+            | Self::PaperUnlikeTheTemplateName
+            | Self::PageFrameRefused => ReasonLayer::Page,
         }
     }
 }
@@ -681,12 +863,14 @@ mod tests {
     ///
     /// Written out here rather than derived from [`ALL`] so that the two can
     /// disagree: this is the test's own copy of the specification.
-    const APPENDIX_A: [&str; 43] = [
+    const APPENDIX_A: [&str; 51] = [
         // A.1 parse: records that never became entities
         "record_no_decoder",
         "record_refused",
         "record_native_skip",
         "sheet_stream_without_geometry",
+        "record_without_display_place",
+        "symbol_file_chain_fault",
         "record_symbol_body_cache",
         "cache_definition_unplaced",
         "record_audit_only_family",
@@ -724,6 +908,9 @@ mod tests {
         "segment_non_finite",
         "segment_too_short",
         "segment_on_sheet_edge",
+        "segment_beyond_the_paper",
+        "segment_beyond_the_paper_no_plot_of_template",
+        "drawing_segment_beyond_the_paper",
         "text_empty",
         "text_placement_non_finite",
         "text_height_invalid",
@@ -731,6 +918,9 @@ mod tests {
         // A.8 page facts
         "template_candidate_unreadable",
         "template_missing",
+        "paper_unlike_the_frame",
+        "paper_unlike_the_template_name",
+        "page_frame_refused",
     ];
 
     #[test]
@@ -741,11 +931,110 @@ mod tests {
             APPENDIX_A.to_vec(),
             "DropReason::ALL must list appendix A's codes in its row order"
         );
-        assert_eq!(ALL.len(), 43, "the catalog is 43 codes");
+        assert_eq!(ALL.len(), 51, "the catalog is 51 codes");
+    }
+
+    /// Appendix A's tier column, code by code: the suspect ones.
+    ///
+    /// The test's own copy, like [`APPENDIX_A`], so that a code moved from
+    /// one tier to the other fails here by its name. Nothing else holds a
+    /// tier: a ledger baseline pins counts under codes and reads each
+    /// code's tier from [`DropReason::tier`] when it compares, so a code
+    /// turned suspect passes both ledger gates — its pinned count becomes a
+    /// ceiling — and the count of each tier stays what it was if another
+    /// code is turned the other way with it.
+    const SUSPECT: [&str; 28] = [
+        "record_no_decoder",
+        "record_refused",
+        "sheet_stream_without_geometry",
+        "record_without_display_place",
+        "symbol_file_chain_fault",
+        "record_emitter_out_of_range",
+        "record_emitter_shape_rejected",
+        "kind_misrouted",
+        "point_marker_degenerate",
+        "kind_annotation",
+        "symbol_missing",
+        "symbol_unresolvable",
+        "symbol_body_empty",
+        "body_boundary_circle_degenerate",
+        "body_boundary_member_unsupported",
+        "off_sheet",
+        "fill_degenerate",
+        "pen_width_invalid",
+        "chain_empty",
+        "segment_non_finite",
+        "drawing_segment_beyond_the_paper",
+        "text_placement_non_finite",
+        "text_height_invalid",
+        "template_candidate_unreadable",
+        "template_missing",
+        "paper_unlike_the_frame",
+        "paper_unlike_the_template_name",
+        "page_frame_refused",
+    ];
+
+    /// The intentional ones.
+    const INTENTIONAL: [&str; 23] = [
+        "record_native_skip",
+        "record_symbol_body_cache",
+        "cache_definition_unplaced",
+        "record_audit_only_family",
+        "layer_hidden",
+        "layer_consistency_checks",
+        "endpoint_pair_guess",
+        "line_on_sheet_edge",
+        "fill_duplicate",
+        "point_no_marker",
+        "kind_unknown",
+        "body_layer_hidden",
+        "body_null_placeholder",
+        "body_line_on_sheet_edge",
+        "text_control_char",
+        "text_trailing_empty_line",
+        "probe_only",
+        "segment_too_short",
+        "segment_on_sheet_edge",
+        "segment_beyond_the_paper",
+        "segment_beyond_the_paper_no_plot_of_template",
+        "text_empty",
+        "text_whitespace_only",
+    ];
+
+    #[test]
+    fn every_code_is_in_the_tier_the_appendix_gives_it() {
+        // Each name is a code of the catalog, and no code is in both lists
+        // or in one twice.
+        for name in SUSPECT.iter().chain(&INTENTIONAL) {
+            assert!(APPENDIX_A.contains(name), "{name} is not a reason code");
+            let listed = SUSPECT
+                .iter()
+                .chain(&INTENTIONAL)
+                .filter(|other| *other == name)
+                .count();
+            assert_eq!(listed, 1, "{name} is listed {listed} times");
+        }
+        // Every code is in one of them, and it is the tier the code states.
+        for reason in ALL {
+            let pinned = if SUSPECT.contains(&reason.code()) {
+                Tier::Suspect
+            } else if INTENTIONAL.contains(&reason.code()) {
+                Tier::Intentional
+            } else {
+                panic!("{} is in neither tier's list", reason.code());
+            };
+            assert_eq!(
+                reason.tier(),
+                pinned,
+                "{} is {} in the appendix",
+                reason.code(),
+                pinned.code()
+            );
+        }
     }
 
     #[test]
-    fn tiers_split_22_suspect_21_intentional() {
+    fn tiers_split_28_suspect_23_intentional() {
         let suspect = ALL
             .iter()
             .filter(|reason| reason.tier() == Tier::Suspect)
@@ -754,9 +1043,9 @@ mod tests {
             .iter()
             .filter(|reason| reason.tier() == Tier::Intentional)
             .count();
-        assert_eq!(suspect, 22, "appendix A's suspect column");
-        assert_eq!(intentional, 21, "appendix A's intentional column");
-        assert_eq!(suspect + intentional, 43);
+        assert_eq!(suspect, 28, "appendix A's suspect column");
+        assert_eq!(intentional, 23, "appendix A's intentional column");
+        assert_eq!(suspect + intentional, 51);
     }
 
     #[test]

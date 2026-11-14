@@ -54,7 +54,7 @@ fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
         let Some(ref_set) = reference_ifaces.get(tag) else {
             // A01 fixture doesn't exercise this tag — no parity
             // to check. Still log it for diagnostic visibility.
-            eprintln!("[A23] tag `{tag}`: not present in A01 reference; skipping");
+            eprintln!("skipping: [A23] tag `{tag}`: not present in the A01 reference");
             continue;
         };
         let Some(gen_set) = generated_ifaces.get(tag) else {

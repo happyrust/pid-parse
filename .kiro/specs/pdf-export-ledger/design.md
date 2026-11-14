@@ -168,8 +168,8 @@ pub enum DropReason {
 ```
 
 - 每个变体的 rustdoc 写明判据与代码位置，与附录 A 逐行对应。
-- `DropReason::ALL: [DropReason; 43]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
-- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 22 个，有意 21 个。
+- `DropReason::ALL: [DropReason; 51]` 按声明顺序列出全部变体；单测断言它的 `code()` 序列等于附录 A 的码表。
+- `tier() -> Tier` 按附录 A 的「档位」列（需求 2.2）：可疑 28 个，有意 23 个（起初是 22 / 21；2026-11-11 加了有意的 `segment_beyond_the_paper` 与可疑的 `record_without_display_place`；2026-11-12 加了可疑的 `drawing_segment_beyond_the_paper` 与 `paper_unlike_the_frame`、有意的 `segment_beyond_the_paper_no_plot_of_template`）；第七轮加了可疑的 `paper_unlike_the_template_name`；第八轮加了可疑的 `symbol_file_chain_fault`；解析线第六轮加了可疑的 `page_frame_refused`）。
 - `layer() -> ReasonLayer`：`Parse`、`Entity`、`Body`、`Primitive`、`Segment`、`TextNormalization`、`Page`。`segment_*` 属段层，一个笔画的段全部丢掉时也作为该图元的原因出现（需求 5.3）。
 
 不是丢弃的三类另有类型：
@@ -484,6 +484,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `record_refused` | `refused_graphic_records` | 同上 |
 | `record_native_skip` | `skipped_graphic_records` | 同上 |
 | `sheet_stream_without_geometry` | `doc.sheet_streams` 中 `geometry` 为 `None` 者 | 计数项（流），另记 `size` 字节数 |
+| `record_without_display_place` | 排版结束时 `unplaced_records`：页上图元所出自的记录里，`PageOrders::place` 给不出位置的 | 计数项（记录），按域与流各一项；原因与图元数在 `LayoutLedger::unplaced`（2026-11-11 加）；原因里「流里没有图纸自己的记录」由 `why_no_order` 从解析侧的 `NoDisplayOrder` 取，`display_order_warnings` 对已有带停点链故障的流上的这一种不另起一句（2026-11-12） |
 | `record_symbol_body_cache` | `doc.jsites[..].nested_geometry` 的 `len()` | 计数项（存储路径） |
 | `cache_definition_unplaced` | `geometry.symbol_definitions` 中没有任何 `SymbolInstance.definition` 指向的定义 | 计数项（`JSite<site>`），值为定义数，另记其体图元数 |
 | `record_audit_only_family` | `emitter_accounts` 中 `audit_only` 行的 `decoded` | 计数项（流，族） |
@@ -508,7 +509,7 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `point_marker_degenerate` | Point 臂：有 marker 但 `draws()` 为假（D2 推荐口径） |
 | `kind_annotation` | `push_entity_with` 的 `Annotation` 臂（约 2469 行） |
 | `kind_unknown` | 同处的 `Unknown` 臂 |
-| `symbol_missing` | `push_symbol_instance` 的 `Missing` 分支，`symbol_path` 有值（约 1268–1277 行，与 `missing_boxes.push` 同处） |
+| `symbol_missing` | `push_symbol_instance` 的 `Missing` 分支，`symbol_path` 有值（与 `missing_boxes.push` 同处）；以及库符号体分支里 `SymbolGeometry::displayed` 返回 `Err` 的那一支（文件读短、画不出来，同样 `missing_boxes.push`） |
 | `symbol_unresolvable` | 同一分支，`symbol_path` 为 `None`；来源记流路径与 oid（需求 4.2） |
 | `symbol_body_empty` | `Cached` 或 `Library` 分支之后 `out.len() == before` |
 
@@ -541,6 +542,9 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `segment_non_finite` | `segment_fate`（`stroke_runs` 约 702 行 `prints` 表达式的端点有限性两项） |
 | `segment_too_short` | 同上，段长 `>= 1e-4` 一项 |
 | `segment_on_sheet_edge` | 同上，`read::sheet_edge_mm` 一项（家具段豁免） |
+| `segment_beyond_the_paper` | 同上，整支笔落在纸张一条边之外（家具段不豁免；2026-11-11 加） |
+| `segment_beyond_the_paper_no_plot_of_template` | 写出器不产生这个码。`ledger::assemble` 的 `PaperEdge::of(domain, model)`：家具域里，`witness::paper_edge_witness(&BorderTemplate)`（文件名、偏移到一微米、1:1）在 `PAPER_EDGE_WITNESSES` 里找不到这一页的模板摆放时，段、图元、实体三处都记本码；找得到则记 `segment_beyond_the_paper`（2026-11-12 加） |
+| `drawing_segment_beyond_the_paper` | 写出器不产生这个码：它对两个域都报 `segment_beyond_the_paper`。`ledger::assemble` 的 `PaperEdge::of(domain)` 在三处把图纸域的这个事实改记到本码——段层的计数、图元的 `Dropped` 原因、实体取第一原因时（2026-11-12 加） |
 | `text_empty` | `text_fate`（`show_text` 约 962 行） |
 | `text_placement_non_finite` | 同一行的旋转与原点两项 |
 | `text_height_invalid` | 约 966 行 |
@@ -558,6 +562,9 @@ ledger entities 4821 on_page 4310 intentional 503 suspect 8 unattributed 0
 | `furniture_endpoint_pair_drawn` | 家具循环里 `record_kind` 为 `EndpointPair` 的实体，经 `furniture_observations` |
 | `template_candidate_unreadable` | `load_border_template`（约 1862 行）的三处 `continue`（约 1873、1879、1882 行），经 `load_border_template_traced` 记候选名 |
 | `template_missing` | `missing_templates`（约 1009 行），汇总时取长度，来源记模板名 |
+| `paper_unlike_the_frame` | `lay_out_drawing` 定页面时 `paper_is_the_frames` 不成立：页面取页框矩形，`LayoutLedger::paper_refused` 记下两个矩形（微米）；汇总时页级记 1 项、来源记 `PaperRefused::sides()`；`LayoutLedger::page_warnings` 给 `pid_plot` 那一行 `warning:`；只在读到图框时成立（2026-11-12 加） |
+| `paper_unlike_the_template_name` | `lay_out_drawing` 定页面时没有读到图框、`paper_is_the_named_sheet` 不成立：页面仍是纸张，`LayoutLedger::paper_unlike_the_name` 记下两个尺寸（微米）；汇总时页级记 1 项、来源记 `PaperBesideAName::sides()`；`LayoutLedger::page_warnings` 给那一行 `warning:`（2026-11-12 第七轮加） |
+| `page_frame_refused` | `lay_out_drawing` 收尾时读 `PidDocument::refused_smart_frames`，留下根存储图纸流上、`RefusedSmartFrame::may_state_a_page()` 为真的记录（`model::the_page_answers_for`，规则的两半各有单测），连同页面的去向（`PageWithoutTheFrame`：纸张 / 模板名 / 另一条图框 / 都没有）、边框模板的去向（`TemplateWithoutTheFrame`：照排 / 找过没找到，带图幅与它是不是按线估出来的 / 不点名所以没找 / 点了名却没有图幅可找；由 `model::template_without_the_frame` 从排版自己的四个事实得出）与页面上的图元数记进 `LayoutLedger::frames_refused`；汇总时页级每条记 1 项，来源记流、oid、类型码 `0x003D` 与原因；`LayoutLedger::page_warnings` 给那一行 `warning:`（`frame_refused_warning`：每个分句都从记下来的事实来——模板没画就说没画和为什么，页面空白就说空白），并在这种页上不再另起「纸张不是模板名的页幅」那一句（那一句说的「没有读到图框」不属实），两个尺寸并进本句（2026-11-12 解析线第六轮加；同日第十一轮改句子的后半，补上各种页面去向的用例） |
 | `page_size_source` | 汇总时由 `page_mm` 与 `resolved_page_mm()` 定为 declared、measured 或 none |
 
 ## Data Models

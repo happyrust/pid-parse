@@ -10,14 +10,23 @@
 //! - every drawing lays out at all (a decoder that stops seeing a record
 //!   family shows up as a page of the wrong size, or none);
 //! - no stroke is refused for not fitting the sheet (`off_sheet_primitives`);
-//! - exactly one primitive reaches past its page — a sideways run in `N井场`
-//!   whose origin sits 0.208 mm under the bottom edge, so its first glyph is
-//!   clipped there; the writer clips an overhang the way a printer does, and
-//!   the count is what keeps the reading from drifting to two or to none (the
-//!   rule is [`PaperModel::primitives_past_the_edge`]; why a text is not judged
-//!   by its origin is stated at `beyond_the_sheet` in `model.rs`). Which label
-//!   it is and where it starts are pinned too ([`PAST_THE_PAGE`]), so another
-//!   run of that sheet cannot take its place unnoticed;
+//! - every page is the paper its sheet states, exactly, and the 53 state
+//!   three papers ([`PAPERS`]);
+//! - exactly one primitive of a drawing's own reaches past its page — a
+//!   sideways run in `N井场` whose origin sits 0.208 mm under the bottom edge,
+//!   so its first glyph is clipped there; the writer clips an overhang the way
+//!   a printer does, and the count is what keeps the reading from drifting to
+//!   two or to none (the rule is [`PaperModel::primitives_past_the_edge`]; why
+//!   a text is not judged by its origin is stated at `beyond_the_sheet` in
+//!   `model.rs`). Which label it is and where it starts are pinned too
+//!   ([`PAST_THE_PAGE`]), so another run of that sheet cannot take its place
+//!   unnoticed;
+//! - what a border frame holds past the paper, sheet by sheet: on the fifteen
+//!   sheets whose frame puts the template off the paper's corner, the
+//!   template's sheet outline and — on the nine `CPECCHB-SQ-A2` sheets — the
+//!   line that restates its right edge, each with how far past the right and
+//!   the top edge it reaches ([`TEMPLATE_PAST_THE_PAPER`]). That ink is in
+//!   the model and is not printed;
 //! - no label reaches the writer with a line break in it — the writer has no
 //!   face for `U+000D`, and one such label took the whole page down;
 //! - no placement falls back to a placeholder box: a symbol the `.sym`
@@ -54,9 +63,9 @@
 //!   for — disk when a template directory of the corpus holds a file of that
 //!   name, a `RefData~*.zip` otherwise — which is all 50 from the archive in
 //!   a package and all 50 from disk in a share, held sheet by sheet;
-//! - the written page reads back at the size the model resolved — the declared
-//!   sheet, or the standard sheet measured for the four drawings that state
-//!   none — and weighs what a subset-embedded page weighs: each page is
+//! - the written page reads back at the size the model resolved — the paper
+//!   the sheet states, which every one of the 53 does ([`DERIVED_PAGES`]) —
+//!   and weighs what a subset-embedded page weighs: each page is
 //!   313–676 KiB (the lightest is `D03`, which has no object of its own and
 //!   carries its template alone). A subset used to carry the whole face's
 //!   vertical metrics, its signature and its hinting tool's private table,
@@ -180,7 +189,7 @@ use pid_plot::model::{
     PaperModel, PaperPrimitive, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource,
     border_template_places, lay_out_drawing,
 };
-use pid_plot::read::read_plot;
+use pid_plot::read::{LineCap, LineJoin, read_plot, read_plot_pens};
 use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_ledger, write_plot_audited};
 
 /// The reference share this machine keeps the licensed faces in.
@@ -389,13 +398,219 @@ const EDGE_SLACK_MM: f64 = 0.1;
 
 /// Sheets whose `.pid` states no page at all.
 ///
-/// `D井场`, `Q井场`, `换热器CD` and `凝析油一级闪蒸分离器B气相出口改造` carry
-/// neither an `igSmartFrame2d` nor a template name, so
-/// [`PaperModel::resolved_page_mm`] measures one instead: A0, A1, A1 and A2
-/// respectively. Pinned as an equality, both ways round — a new drawing with no
-/// sheet fails here rather than quietly taking the ink's own box, and a sheet
-/// that starts stating its page lowers this number deliberately.
-const DERIVED_PAGES: usize = 4;
+/// None. Four sheets give the layout no frame rectangle to take a page from,
+/// and until the paper was read [`PaperModel::resolved_page_mm`] measured one
+/// for them: A0, A1, A1 and A2. Three of the four — `D井场`, `换热器CD` and
+/// `凝析油一级闪蒸分离器B气相出口改造` — carry neither an `igSmartFrame2d`
+/// nor a template name, and are the bare sheets of [`BARE_SHEETS`]. `Q井场`
+/// is not one of those: it has two frame records, one linking the border
+/// template it wears (`CPECCHB-SQ-A1`) and one embedding a sheet of eight
+/// lines, and a page is taken from the frames only when they state one
+/// extent between them. Each of the four states its paper in its `JSheet`
+/// record like every other sheet, and it is the sheet they were measured at,
+/// so this was 4 and is 0 with no page of theirs changed. Pinned as an
+/// equality, both ways round — a new drawing that states neither fails here
+/// rather than quietly taking the ink's own box.
+const DERIVED_PAGES: usize = 0;
+
+/// The papers the 53 sheets state, as `[width, height]` in millimetres, with
+/// how many sheets state each: every page is exactly its sheet's paper.
+///
+/// Until 2026-11-11 a page was the rectangle of its border frame, which is
+/// the paper to a ten-thousandth of a millimetre on 34 sheets and is not on
+/// the fifteen of [`FRAME_OFFSET_SHEETS`]: 594.33 × 420.57 mm on the nine
+/// `CPECCHB-SQ-A2` sheets, 1189.31 × 841.31 on `A井场`, 841.15 × 594.40 on
+/// `O井场` and `P井场`, 842.54 × 595.54 and 843.09 × 596.09 on the two
+/// `凝析油稳定塔` sheets, 843.46 × 596.71 on `N井场`. The eleven reference
+/// plots are printed on the paper, the one of those fifteen that has a plot
+/// included.
+const PAPERS: [([f64; 2], usize); 3] = [
+    ([594.0, 420.0], 17),
+    ([841.0, 594.0], 27),
+    ([1189.0, 841.0], 9),
+];
+
+/// What each sheet's border frame holds past the paper: the sheet, how many
+/// primitives of its template reach past the paper by more than
+/// [`EDGE_SLACK_MM`], and how far past its right and its top edge the
+/// furthest of them reaches, in millimetres.
+///
+/// These are the fifteen sheets of [`FRAME_OFFSET_SHEETS`], whose frame puts
+/// the template off the paper's corner, and on every one of them what is
+/// past the paper is the template's sheet outline — a polyline whose top and
+/// right pieces lie off the paper — and nothing else of the template but, on
+/// the nine `CPECCHB-SQ-A2` sheets, the line that restates the outline's
+/// right edge. The title block and the inner frame are on the paper on all
+/// fifteen. None of this ink is printed, as none of it is on the A2
+/// reference plot; it was on the page while the page was the frame's
+/// rectangle, which is why this pin did not exist before 2026-11-11. That
+/// plot shows one template at one offset, so the ledger files the nine
+/// sheets it covers and the six it does not under two codes
+/// ([`PLOTTED_PAST_THE_PAPER`], [`UNPLOTTED_PAST_THE_PAPER`]).
+const TEMPLATE_PAST_THE_PAPER: [(&str, usize, [f64; 2]); 15] = [
+    (
+        "00/00/A井场 注采阀组工艺及自控流程图.pid",
+        1,
+        [0.152593, 0.152593],
+    ),
+    (
+        "00/00/N井场 注采阀组工艺及自控流程图.pid",
+        1,
+        [1.297400, 1.553387],
+    ),
+    (
+        "00/00/O井场 注采阀组工艺及自控流程图.pid",
+        1,
+        [0.150015, 0.399965],
+    ),
+    (
+        "00/00/P井场 注采阀组工艺及自控流程图.pid",
+        1,
+        [0.150015, 0.399965],
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(1200td)工艺及自控流程图.pid",
+        1,
+        [1.042526, 1.042526],
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(600td)工艺及自控流程图.pid",
+        1,
+        [0.768634, 0.768634],
+    ),
+    (
+        "00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid",
+        2,
+        [0.327801, 0.565648],
+    ),
+    (
+        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+        2,
+        [0.327801, 0.565648],
+    ),
+    (
+        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
+        2,
+        [0.327801, 0.565648],
+    ),
+    ("test/U01/D01.pid", 2, [0.327801, 0.565648]),
+    ("test/U01/D03.pid", 2, [0.327801, 0.565648]),
+    ("test/U01/D04.pid", 2, [0.327801, 0.565648]),
+    ("test/U01/D06.pid", 2, [0.327801, 0.565648]),
+    ("test/U01/D07.pid", 2, [0.327801, 0.565648]),
+    ("test/U01/TESTDWG-0002TP03-01.pid", 2, [0.327801, 0.565648]),
+];
+
+/// The code the ledger files a template's unprinted segment under where a
+/// vendor's plot shows the template placed so.
+const PLOTTED_CODE: &str = "segment_beyond_the_paper";
+
+/// The code it files the same segment under where no plot does.
+const UNPLOTTED_CODE: &str = "segment_beyond_the_paper_no_plot_of_template";
+
+/// The template every sheet of [`PLOTTED_PAST_THE_PAPER`] wears.
+const PLOTTED_TEMPLATE: &str = "CPECCHB-SQ-A2.igr";
+
+/// The sheets whose template ink past the paper is left unprinted **as a
+/// reference plot shows it**, with how many segments of it the ledger files
+/// under [`PLOTTED_CODE`].
+///
+/// All nine wear `CPECCHB-SQ-A2` where the plot of
+/// `轻烃分离器I气出口接口位置改造` is printed with it, (0.388407, 0.565648) mm
+/// off the paper's corner (`pid_plot::witness::PAPER_EDGE_WITNESSES`): the
+/// top and the right piece of the template's outline and the line that
+/// restates its right edge, three segments.
+const PLOTTED_PAST_THE_PAPER: [(&str, u64); 9] = [
+    ("00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid", 3),
+    (
+        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+        3,
+    ),
+    (
+        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
+        3,
+    ),
+    ("test/U01/D01.pid", 3),
+    ("test/U01/D03.pid", 3),
+    ("test/U01/D04.pid", 3),
+    ("test/U01/D06.pid", 3),
+    ("test/U01/D07.pid", 3),
+    ("test/U01/TESTDWG-0002TP03-01.pid", 3),
+];
+
+/// The sheets whose template ink past the paper is left unprinted **with no
+/// plot of that template placed so**: the sheet, the template it wears and
+/// how many segments the ledger files under [`UNPLOTTED_CODE`].
+///
+/// `A井场` wears `CPE-SQ-A0` and the two `凝析油稳定塔` sheets `CPE-SQ-A1`
+/// off the paper's corner, and the plots of those two templates show them
+/// on it; `N井场`, `O井场` and `P井场` wear `CPECCHB-SQ-A1`, of which there is
+/// no plot at all. Two segments on each, the top and the right piece of the
+/// outline, left unprinted by the rule the A2 plot shows carried over to a
+/// placement none shows.
+///
+/// Which side a sheet falls on is decided by the witness table and not by
+/// these names: the two tables pin what that decision comes to on the 53
+/// sheets, so that a row added to the witnesses, or one lost, moves a sheet
+/// here and says so.
+const UNPLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 6] = [
+    (
+        "00/00/A井场 注采阀组工艺及自控流程图.pid",
+        "CPE-SQ-A0.igr",
+        2,
+    ),
+    (
+        "00/00/N井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/O井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/P井场 注采阀组工艺及自控流程图.pid",
+        "CPECCHB-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(1200td)工艺及自控流程图.pid",
+        "CPE-SQ-A1.igr",
+        2,
+    ),
+    (
+        "00/00/集注站 凝析油稳定塔、泵及换热器(600td)工艺及自控流程图.pid",
+        "CPE-SQ-A1.igr",
+        2,
+    ),
+];
+
+/// How the 53 pages end their strokes, read back from the PDFs: the inked
+/// paths stroked butt-ended and mitred, and the ones stroked round-ended and
+/// round-joined. No page strokes a path any other way.
+///
+/// A page states no cap until its first stroke on a pen wider than one
+/// device unit and round ends and joins from there on (`write.rs`,
+/// `starts_round_ends`), so the butt-ended paths are what each sheet paints
+/// ahead of that pen: its border template's one-unit rules where the frame
+/// is listed first, and whatever of the drawing's own the sheet lists ahead
+/// of its first wide stroke.
+const STROKE_ENDS: (usize, usize) = (4374, 79_651);
+
+/// The sheet whose own thin strokes stand ahead of its first wide pen, and
+/// how its page ends its strokes: butt-ended paths, round-ended paths.
+///
+/// `凝析油一级闪蒸分离器B气相出口改造` wears no template, and its sheet lists
+/// thin strokes of the drawing's own ahead of the first wide one. They are
+/// stroked butt-ended, as a border's rules are on the reference plots; no
+/// plot shows a drawing's own thin stroke ahead of the first wide pen, so
+/// for this page the rule is carried over, not read. It is pinned because
+/// it is the one page on hand that tells that rule from the one before it —
+/// round ends from the drawing's first stroke on any pen — under which
+/// these paths are round.
+const THIN_AHEAD_OF_THE_WIDE_PEN: (&str, usize, usize) =
+    ("凝析油一级闪蒸分离器B气相出口改造", 47, 430);
 
 /// Runs the page cuts because the condensation floor cannot hold them.
 ///
@@ -1038,12 +1253,15 @@ const FRAME_OFFSET_SHEETS: [(&str, [f64; 2]); 15] = [
 /// micrometre or more from it is a stated offset.
 const FRAME_OFFSET_FLOOR_MM: f64 = 0.001;
 
-/// The one label that reaches past its page: the sheet it is on, its
-/// characters and its insertion point in paper millimetres.
+/// The one primitive of a drawing's own that reaches past its page — a
+/// label: the sheet it is on, its characters and its insertion point in
+/// paper millimetres.
 ///
 /// `N井场`'s sideways pipeline tag starts 0.208 mm under the bottom edge, so
 /// its first glyph is clipped there and the other nineteen are on the sheet.
 /// The count alone would be satisfied by any one primitive on that sheet.
+/// What a border template holds past the paper is pinned apart, in
+/// [`TEMPLATE_PAST_THE_PAPER`].
 const PAST_THE_PAGE: (&str, &str, [f64; 2]) =
     ("N井场", "15-TD-4101416-B2-EH40", [259.113810, -0.207788]);
 
@@ -1909,7 +2127,20 @@ fn every_backup_drawing_exports_a_readable_page() {
     // The labels among them, as the sheet, the characters and the insertion
     // point: what `PAST_THE_PAGE` is held against.
     let mut labels_past_the_edge: Vec<(String, String, [f64; 2])> = Vec::new();
+    // What each sheet's template holds past the paper: the sheet's key, how
+    // many primitives, and the furthest reach past the right and top edges.
+    let mut template_past_the_paper: Vec<(String, usize, [f64; 2])> = Vec::new();
+    // How the ledger files the segments of it the writer leaves unprinted:
+    // the sheet's key, the code, how many segments, and the template's file.
+    let mut filed_past_the_paper: Vec<(String, &'static str, u64, String)> = Vec::new();
+    // The same of a drawing's own, which no page should have.
+    let mut own_past_the_paper: Vec<String> = Vec::new();
+    let mut papers = [0usize; PAPERS.len()];
     let mut ledger_pages: Vec<(String, ExportLedger)> = Vec::new();
+    // Inked paths stroked butt-ended and round-ended, over the 53 pages and
+    // on the sheet of `THIN_AHEAD_OF_THE_WIDE_PEN`.
+    let mut stroke_ends = (0usize, 0usize);
+    let mut thin_ahead: Vec<(usize, usize)> = Vec::new();
     for (path, model) in &models {
         let name = path.display();
         assert_eq!(
@@ -1921,7 +2152,42 @@ fn every_backup_drawing_exports_a_readable_page() {
             || name.to_string(),
             |file| file.to_string_lossy().into_owned(),
         );
+        // The page is the paper the sheet states, exactly.
+        let paper = PAPERS
+            .iter()
+            .position(|(paper, _)| model.page_mm == Some(*paper))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name}: the page is {:?}, which is none of the papers in PAPERS",
+                    model.page_mm
+                )
+            });
+        papers[paper] += 1;
+        let page = model.page_mm.expect("a paper");
+        let mut of_the_template = (0usize, [0.0f64; 2]);
         for primitive in model.primitives_past_the_edge(EDGE_SLACK_MM) {
+            if primitive.furniture {
+                // A template reaches past the paper's right and top edges
+                // and no other: its frame puts it up and right of the corner.
+                let points: Vec<[f64; 2]> = match &primitive.shape {
+                    PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
+                    PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
+                    other => panic!("{name}: the template holds {other:?} past the paper"),
+                };
+                of_the_template.0 += 1;
+                for point in points {
+                    assert!(
+                        point[0] > -EDGE_SLACK_MM && point[1] > -EDGE_SLACK_MM,
+                        "{name}: the template reaches past the left or the bottom edge: {}",
+                        describe(primitive)
+                    );
+                    for axis in 0..2 {
+                        of_the_template.1[axis] =
+                            of_the_template.1[axis].max(point[axis] - page[axis]);
+                    }
+                }
+                continue;
+            }
             past_the_edge.push(format!("{sheet}: {}", describe(primitive)));
             if let PaperShape::Text {
                 origin_mm, value, ..
@@ -1929,6 +2195,13 @@ fn every_backup_drawing_exports_a_readable_page() {
             {
                 labels_past_the_edge.push((sheet.clone(), value.trim().to_string(), *origin_mm));
             }
+        }
+        if of_the_template.0 > 0 {
+            template_past_the_paper.push((
+                page_key(path, &backup),
+                of_the_template.0,
+                of_the_template.1,
+            ));
         }
         for primitive in &model.primitives {
             if let PaperShape::Text { value, .. } = &primitive.shape {
@@ -1981,6 +2254,37 @@ fn every_backup_drawing_exports_a_readable_page() {
             written.ledger.mismatches
         );
         let ledger = ExportLedger::assemble(model, &written.ledger);
+        // What the account files as past the paper, by whose it is.
+        let worn = model
+            .template
+            .as_ref()
+            .map_or_else(String::new, |template| {
+                template
+                    .path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(&template.path)
+                    .to_string()
+            });
+        for (reason, count) in &ledger.furniture.segments.dropped {
+            if reason.code().contains("beyond_the_paper") {
+                filed_past_the_paper.push((
+                    page_key(path, &backup),
+                    reason.code(),
+                    *count,
+                    worn.clone(),
+                ));
+            }
+        }
+        for (reason, count) in &ledger.drawing.segments.dropped {
+            if reason.code().contains("beyond_the_paper") {
+                own_past_the_paper.push(format!(
+                    "  {}: {count} segment(s) of the drawing's own filed as {}",
+                    page_key(path, &backup),
+                    reason.code()
+                ));
+            }
+        }
         // Requirement 5.5/5.6 on real corpus: the face-free account reaches the
         // same verdicts as the written one, except for the two marks that need
         // a typeface to measure.
@@ -2006,6 +2310,25 @@ fn every_backup_drawing_exports_a_readable_page() {
             pdf.len()
         );
         let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("{name}: read back: {error}"));
+        // How the page ends its strokes.
+        let pens = read_plot_pens(&pdf)
+            .unwrap_or_else(|error| panic!("{name}: read back the pens: {error}"));
+        let mut ends = (0usize, 0usize);
+        for stroked in &pens.ends {
+            match (stroked.cap, stroked.join) {
+                (LineCap::Butt, LineJoin::Miter) => ends.0 += stroked.paths,
+                (LineCap::Round, LineJoin::Round) => ends.1 += stroked.paths,
+                other => panic!(
+                    "{name}: {} path(s) stroked under {other:?}, which the writer never states",
+                    stroked.paths
+                ),
+            }
+        }
+        stroke_ends.0 += ends.0;
+        stroke_ends.1 += ends.1;
+        if sheet.contains(THIN_AHEAD_OF_THE_WIDE_PEN.0) {
+            thin_ahead.push(ends);
+        }
         // The page the PDF got is the page the model promised, for every
         // sheet — the ones that state a sheet and the ones measured for want
         // of one. This used to be skipped when `page_mm` was `None`, which is
@@ -2051,15 +2374,128 @@ fn every_backup_drawing_exports_a_readable_page() {
         derived, DERIVED_PAGES,
         "{derived} sheets stated no page and were measured; {DERIVED_PAGES} did when this ratchet was set"
     );
-    // One primitive reaches past its page, and it is the sideways run in
-    // `N井场`: origin 0.208 mm under the bottom edge, nineteen of its twenty
-    // glyphs on the sheet. An equality because both directions matter — a new
-    // overhang is a reading to explain, and losing this one means the run was
-    // dropped or moved.
+    // How the pages end their strokes.
+    assert_eq!(
+        stroke_ends, STROKE_ENDS,
+        "the 53 pages stroke {} path(s) butt-ended and {} round; {} and {} are pinned in \
+         STROKE_ENDS",
+        stroke_ends.0, stroke_ends.1, STROKE_ENDS.0, STROKE_ENDS.1
+    );
+    assert_eq!(
+        thin_ahead,
+        [(THIN_AHEAD_OF_THE_WIDE_PEN.1, THIN_AHEAD_OF_THE_WIDE_PEN.2)],
+        "how the page of `{}` ends its strokes (butt-ended paths, round-ended paths)",
+        THIN_AHEAD_OF_THE_WIDE_PEN.0
+    );
+    // Every page is its sheet's paper, and the papers are the three pinned.
+    for ((paper, pinned), found) in PAPERS.iter().zip(papers) {
+        assert_eq!(
+            found, *pinned,
+            "{found} sheets are on {paper:?} mm paper; {pinned} are pinned in PAPERS"
+        );
+    }
+    // What a border frame holds past the paper, sheet by sheet.
+    let mut template_differences: Vec<String> = Vec::new();
+    for (sheet, count, reach) in &template_past_the_paper {
+        match TEMPLATE_PAST_THE_PAPER
+            .iter()
+            .find(|(pinned, ..)| pinned == sheet)
+        {
+            None => template_differences.push(format!(
+                "  {sheet}: {count} template primitive(s) past the paper by ({:.6}, {:.6}) mm;                  the sheet is not in TEMPLATE_PAST_THE_PAPER",
+                reach[0], reach[1]
+            )),
+            Some((_, pinned_count, pinned_reach)) => {
+                let same = count == pinned_count
+                    && (0..2).all(|axis| (reach[axis] - pinned_reach[axis]).abs() < PLACEMENT_SLACK_MM);
+                if !same {
+                    template_differences.push(format!(
+                        "  {sheet}: {count} template primitive(s) past the paper by                          ({:.6}, {:.6}) mm; pinned {pinned_count} by ({:.6}, {:.6})",
+                        reach[0], reach[1], pinned_reach[0], pinned_reach[1]
+                    ));
+                }
+            }
+        }
+    }
+    for (sheet, ..) in &TEMPLATE_PAST_THE_PAPER {
+        if !template_past_the_paper
+            .iter()
+            .any(|(found, ..)| found == sheet)
+        {
+            template_differences.push(format!(
+                "  {sheet}: nothing of its template is past the paper; it is pinned in \
+                 TEMPLATE_PAST_THE_PAPER"
+            ));
+        }
+    }
+    assert!(
+        template_differences.is_empty(),
+        "what the border templates hold past the paper is not what is pinned:\n{}",
+        template_differences.join("\n")
+    );
+    // How the ledger files the part of it that is not printed: under the
+    // witnessed code on the sheets a plot shows placed so, under the other
+    // on the sheets none does, sheet by sheet.
+    let mut filing_differences: Vec<String> = own_past_the_paper;
+    let pinned_filing = |sheet: &str| -> Vec<(&'static str, u64, &'static str)> {
+        let plotted = PLOTTED_PAST_THE_PAPER
+            .iter()
+            .filter(|(pinned, _)| *pinned == sheet)
+            .map(|(_, segments)| (PLOTTED_CODE, *segments, PLOTTED_TEMPLATE));
+        let unplotted = UNPLOTTED_PAST_THE_PAPER
+            .iter()
+            .filter(|(pinned, ..)| *pinned == sheet)
+            .map(|(_, template, segments)| (UNPLOTTED_CODE, *segments, *template));
+        plotted.chain(unplotted).collect()
+    };
+    for (sheet, code, count, template) in &filed_past_the_paper {
+        match pinned_filing(sheet).as_slice() {
+            [(pinned_code, pinned_count, pinned_template)]
+                if pinned_code == code && pinned_count == count && pinned_template == template => {}
+            [(pinned_code, pinned_count, pinned_template)] => filing_differences.push(format!(
+                "  {sheet}: {count} segment(s) of {template} filed as {code}; pinned \
+                 {pinned_count} of {pinned_template} as {pinned_code}"
+            )),
+            pinned => filing_differences.push(format!(
+                "  {sheet}: {count} segment(s) of {template} filed as {code}; the sheet is in \
+                 {} row(s) of PLOTTED_PAST_THE_PAPER and UNPLOTTED_PAST_THE_PAPER",
+                pinned.len()
+            )),
+        }
+    }
+    let pinned_sheets = PLOTTED_PAST_THE_PAPER
+        .iter()
+        .map(|(sheet, _)| *sheet)
+        .chain(UNPLOTTED_PAST_THE_PAPER.iter().map(|(sheet, ..)| *sheet));
+    for sheet in pinned_sheets {
+        let found = filed_past_the_paper
+            .iter()
+            .filter(|(filed, ..)| filed == sheet)
+            .count();
+        if found != 1 {
+            filing_differences.push(format!(
+                "  {sheet}: the ledger files its template's ink past the paper under {found} \
+                 code(s); it is pinned under one"
+            ));
+        }
+    }
+    assert!(
+        filing_differences.is_empty(),
+        "how the ledger files what is past the paper is not what is pinned — a template a \
+         plot shows placed so under {PLOTTED_CODE}, any other under {UNPLOTTED_CODE}, nothing \
+         of a drawing's own:\n{}",
+        filing_differences.join("\n")
+    );
+    // One primitive of a drawing's own reaches past its page, and it is the
+    // sideways run in `N井场`: origin 0.208 mm under the bottom edge, nineteen
+    // of its twenty glyphs on the sheet. An equality because both directions
+    // matter — a new overhang is a reading to explain, and losing this one
+    // means the run was dropped or moved.
     assert_eq!(
         past_the_edge.len(),
         1,
-        "{} primitives reach past their page; one did when this was pinned: {past_the_edge:#?}",
+        "{} primitives of a drawing's own reach past their page; one did when this was pinned: \
+         {past_the_edge:#?}",
         past_the_edge.len()
     );
     assert!(

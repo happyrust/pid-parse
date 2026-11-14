@@ -380,3 +380,184 @@ fn every_committed_fixture_lays_out_byte_for_byte_as_its_golden_says() {
         if bless { ", blessed" } else { "" }
     );
 }
+
+fn paint_order_path(case: &GoldenCase) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("golden")
+        .join("paint-order")
+        .join(format!("{}.txt", case.slug))
+}
+
+/// Indices to a line of a paint-order golden.
+const ORDER_LINE: usize = 16;
+
+/// A paint-order golden: a comment naming the page model the indices point
+/// into, the number of primitives, then every index, sixteen to a line.
+fn render_order(case: &GoldenCase, order: &[usize]) -> String {
+    let mut text = format!(
+        "# {}: the order the page is painted in, the first painted first, as indices into\n\
+         # the primitives of tests/golden/paper/{}.json\n{}\n",
+        case.path,
+        case.slug,
+        order.len()
+    );
+    for line in order.chunks(ORDER_LINE) {
+        let line: Vec<String> = line.iter().map(usize::to_string).collect();
+        text.push_str(&line.join(" "));
+        text.push('\n');
+    }
+    text
+}
+
+/// The indices of a paint-order golden, in order.
+fn read_order(text: &str, case: &GoldenCase) -> Vec<usize> {
+    let mut lines = text.lines().filter(|line| !line.starts_with('#'));
+    let count: usize = lines
+        .next()
+        .and_then(|line| line.trim().parse().ok())
+        .unwrap_or_else(|| panic!("paint-order golden `{}` states no count", case.slug));
+    let order: Vec<usize> = lines
+        .flat_map(str::split_whitespace)
+        .map(|index| {
+            index.parse().unwrap_or_else(|_| {
+                panic!(
+                    "paint-order golden `{}`: `{index}` is not an index",
+                    case.slug
+                )
+            })
+        })
+        .collect();
+    assert_eq!(
+        order.len(),
+        count,
+        "paint-order golden `{}` states {count} indices and holds {}",
+        case.slug,
+        order.len()
+    );
+    order
+}
+
+/// What a primitive is drawn from, for a failure to name.
+fn drawn_from(model: &PaperModel, index: usize) -> String {
+    model.primitives.get(index).map_or_else(
+        || "no such primitive".to_string(),
+        |primitive| {
+            format!(
+                "{} {}{}",
+                if primitive.furniture {
+                    "template"
+                } else {
+                    "drawing"
+                },
+                primitive.stream_path.as_deref().unwrap_or("no stream"),
+                primitive
+                    .byte_range
+                    .map_or_else(String::new, |range| format!(" +{}", range[0]))
+            )
+        },
+    )
+}
+
+/// The order each fixture's page is painted in is the one committed beside
+/// its page model.
+///
+/// What a sheet draws over what is the order its `JSheet` record lists its
+/// objects in, carried onto the page by the layout
+/// ([`PaperModel::paint_sequence`]). It rides beside the model, not in it,
+/// so the page-model goldens above do not hold it; these do. Every fixture
+/// states an order — a page that fell back to strokes first and lettering
+/// after fails here — and no record of any of the seven is left without a
+/// place in it. `PID_PLOT_BLESS=1` rewrites these with the page models.
+#[test]
+fn every_committed_fixture_paints_in_the_order_its_golden_says() {
+    let corpus = corpus_dir();
+    let (roots, archives, label) = symbol_sources(&corpus);
+    let bless = bless_enabled();
+    let mut total = 0usize;
+
+    for case in GOLDEN_CASES {
+        let fixture = corpus.join(case.path);
+        let model =
+            lay_out_with_symbol_roots(&fixture, &corpus, roots.clone(), archives.clone(), &label)
+                .unwrap_or_else(|error| panic!("{}: {error}", case.path));
+        let order = model.paint_sequence().unwrap_or_else(|| {
+            panic!(
+                "{}: the page states no order to paint its {} primitives in",
+                case.path,
+                model.primitives.len()
+            )
+        });
+        assert!(
+            model.ledger.unplaced.is_empty(),
+            "{}: records that draw take no place in the display order: {:?}",
+            case.path,
+            model.ledger.unplaced
+        );
+        total += order.len();
+        let golden = paint_order_path(case);
+        if bless {
+            if let Some(parent) = golden.parent() {
+                std::fs::create_dir_all(parent).unwrap_or_else(|error| {
+                    panic!("failed to create {}: {error}", parent.display())
+                });
+            }
+            std::fs::write(&golden, render_order(case, &order))
+                .unwrap_or_else(|error| panic!("failed to write {}: {error}", golden.display()));
+            eprintln!("blessed {}: {} indices", golden.display(), order.len());
+            continue;
+        }
+        let expected_text = std::fs::read_to_string(&golden).unwrap_or_else(|error| {
+            panic!(
+                "paint-order golden `{}` for fixture `{}` is missing ({error}): run \
+                 `PID_PLOT_BLESS=1 cargo test -p pid-plot --test paper_model_golden` once to \
+                 establish it, then commit the file.",
+                case.slug, case.path
+            )
+        });
+        let expected = read_order(&expected_text, case);
+        if expected == order {
+            eprintln!(
+                "{}: {} primitives, painted in its golden order",
+                case.slug,
+                order.len()
+            );
+            continue;
+        }
+        let at = expected
+            .iter()
+            .zip(&order)
+            .position(|(expected, actual)| expected != actual)
+            .unwrap_or_else(|| expected.len().min(order.len()));
+        panic!(
+            "the page of `{}` (golden `{}`) is painted in another order: {} primitives against \
+             the golden's {}, and the two part at position {at}, where the golden paints \
+             primitive {} ({}) and the page paints {} ({}).\n\
+             If this is an intentional change of the display order, re-bless with \
+             `PID_PLOT_BLESS=1 cargo test -p pid-plot --test paper_model_golden` and call it \
+             out in the PR; otherwise the page paints its objects in another order than its \
+             sheet lists them in.",
+            case.path,
+            case.slug,
+            order.len(),
+            expected.len(),
+            expected
+                .get(at)
+                .map_or_else(|| "none".to_string(), usize::to_string),
+            expected
+                .get(at)
+                .map_or_else(String::new, |index| drawn_from(&model, *index)),
+            order
+                .get(at)
+                .map_or_else(|| "none".to_string(), usize::to_string),
+            order
+                .get(at)
+                .map_or_else(String::new, |index| drawn_from(&model, *index)),
+        );
+    }
+    eprintln!(
+        "paint order golden: {} fixtures, {total} primitives{}",
+        GOLDEN_CASES.len(),
+        if bless { ", blessed" } else { "" }
+    );
+}

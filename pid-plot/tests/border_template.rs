@@ -631,6 +631,116 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
     }
 }
 
+/// `D06`'s border frame reaches 594.33 × 420.57 mm — the `CPECCHB-SQ-A2`
+/// template, 593.94 × 420.00, where the frame puts it, 0.39 × 0.57 mm off the
+/// sheet's origin. The sheet's own record states the paper it is drawn on,
+/// 0.42 × 0.594 m, and that is the page: the eleven reference plots are each
+/// printed on the paper their sheet states, and the one that wears this
+/// template, `轻烃分离器I`, is on 594 × 420 mm with the template's top and
+/// right edges off the paper.
+///
+/// So the page is the paper, the frame's rectangle is kept beside it, the
+/// template stays where the frame puts it, and what the frame holds off the
+/// paper is in the model and is not printed: the top and the right piece of
+/// the outline, and the line that restates its right edge — which the
+/// reference's content stream does not hold either
+/// (`docs/analysis/2026-11-11-a-sheet-states-its-paper.md`).
+#[test]
+fn an_a2_sheet_is_written_on_the_paper_its_sheet_states() {
+    let fixture = fixture_dir().join("D06.pid");
+    if !fixture.is_file() {
+        eprintln!("skipping the paper; {} is absent", fixture.display());
+        return;
+    }
+    let doc = pid_parse::PidParser::new()
+        .parse_file(&fixture)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let paper = doc
+        .sheet_display_order
+        .get("/Sheet6")
+        .and_then(|order| order.paper)
+        .expect("the sheet states its paper");
+    assert_eq!(
+        (paper.width_m, paper.height_m, paper.size_code),
+        (0.594, 0.42, 33)
+    );
+    let model = lay_out_drawing(&fixture, &fixture_dir()).unwrap_or_else(|error| panic!("{error}"));
+    let page = model.resolved_page_mm().expect("a page");
+    assert!(
+        near(
+            page,
+            [paper.width_m * 1000.0, paper.height_m * 1000.0],
+            1e-6
+        ),
+        "the page is {page:?} mm; the sheet states {} × {} mm",
+        paper.width_m * 1000.0,
+        paper.height_m * 1000.0
+    );
+    assert_eq!(model.page_mm, Some([594.0, 420.0]));
+    let frame = model
+        .frame_mm
+        .expect("the border frame states its rectangle");
+    assert!(
+        near(frame, [594.327_890, 420.565_694], 1e-6),
+        "the frame's rectangle is {frame:?}"
+    );
+
+    // What the frame holds past the paper: two template primitives, the
+    // outline and the line along its right edge, 0.328 mm past the right
+    // edge and 0.566 mm past the top one. Both are still in the model.
+    let past: Vec<_> = model.primitives_past_the_edge(0.01);
+    assert_eq!(past.len(), 2, "{past:?}");
+    assert!(past.iter().all(|primitive| primitive.furniture));
+    assert_eq!(model.off_sheet_primitives, 0);
+    // The writer's account of them, which takes no typeface: the outline
+    // is on the page less its top and right pieces, the other line is not
+    // printed, and neither is a suspect drop.
+    let fates = pid_plot::write::write_ledger(&model).expect("a page to judge");
+    let of = |primitive: &pid_plot::model::PaperPrimitive| {
+        let index = model
+            .primitives
+            .iter()
+            .position(|other| std::ptr::eq(other, primitive))
+            .expect("a primitive of the model");
+        fates.fates[index]
+    };
+    let outline = past
+        .iter()
+        .find(|primitive| matches!(primitive.shape, PaperShape::Polyline { .. }))
+        .expect("the outline");
+    let fate = of(outline);
+    assert!(fate.is_on_page() && fate.segments_dropped, "{fate:?}");
+    assert_eq!(
+        (
+            fate.segments.total,
+            fate.segments.written,
+            fate.segments.beyond_the_paper
+        ),
+        (4, 2, 2),
+        "{fate:?}"
+    );
+    let restated = past
+        .iter()
+        .find(|primitive| matches!(primitive.shape, PaperShape::Line { .. }))
+        .expect("the line along the right edge");
+    assert_eq!(
+        of(restated).reason(),
+        Some(pid_plot::ledger::DropReason::SegmentBeyondThePaper)
+    );
+    let unprinted = fates
+        .fates
+        .iter()
+        .filter(|fate| fate.reason() == Some(pid_plot::ledger::DropReason::SegmentBeyondThePaper))
+        .count();
+    assert_eq!(unprinted, 1, "primitives wholly off the paper");
+    let pieces: u64 = fates
+        .fates
+        .iter()
+        .map(|fate| fate.segments.beyond_the_paper)
+        .sum();
+    assert_eq!(pieces, 3, "pieces off the paper");
+}
+
 #[test]
 fn an_a2_sheet_draws_its_linked_a2_template() {
     // `D06` states 594.33 × 420.57 mm. The A2 CCHB template measures
@@ -921,6 +1031,163 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
             ours.advance_mm
         );
     }
+}
+
+/// The template's furniture, in the order the page paints it.
+fn furniture_as_painted(model: &PaperModel) -> Vec<&pid_plot::model::PaperPrimitive> {
+    model
+        .paint_sequence()
+        .expect("the page states the order it paints in")
+        .into_iter()
+        .map(|index| &model.primitives[index])
+        .filter(|primitive| primitive.furniture)
+        .collect()
+}
+
+/// `CPECCHB-SQ-A2.igr` lists its sheet outline first and its inner frame
+/// second, and the inner frame is a `ComplexString`: a record that draws
+/// nothing and owns the four lines that do. The A2 reference plot, whose
+/// sheet wears this template, strokes them so — the outline, then the four
+/// lines as one path from the bottom left corner round to it again
+/// (`100.8 21.6 m 1664.16 21.6 l 1664.16 1172.16 l 100.8 1172.16 l
+/// 100.8 21.6 l S`), then the first labels of the title block. So a line a
+/// string owns is painted where the string stands, in the order the string
+/// lists it, and not behind the rest of the template.
+#[test]
+fn an_a2_templates_inner_frame_is_painted_where_its_complex_string_is_listed() {
+    let fixture = fixture_dir().join("D06.pid");
+    if !fixture.is_file() {
+        eprintln!(
+            "skipping the frame's place; {} is absent",
+            fixture.display()
+        );
+        return;
+    }
+    let model = lay_out_drawing(&fixture, &fixture_dir()).unwrap_or_else(|error| panic!("{error}"));
+    let painted = furniture_as_painted(&model);
+    assert_eq!(painted.len(), 116, "furniture primitives");
+
+    assert!(
+        matches!(painted[0].shape, PaperShape::Polyline { .. }),
+        "the first thing painted is {:?}, not the sheet outline",
+        painted[0].shape
+    );
+    for (primitive, (start, end)) in painted[1..5].iter().zip([
+        ([35.354, 7.071], [586.869, 7.071]),
+        ([586.869, 7.071], [586.869, 412.929]),
+        ([586.869, 412.929], [35.354, 412.929]),
+        ([35.354, 412.929], [35.354, 7.071]),
+    ]) {
+        let (start, end) = (
+            shifted(start, D06_FRAME_OFFSET),
+            shifted(end, D06_FRAME_OFFSET),
+        );
+        let PaperShape::Line { start_mm, end_mm } = &primitive.shape else {
+            panic!(
+                "{:?} is painted where the inner frame's edge {start:?} -> {end:?} stands",
+                primitive.shape
+            );
+        };
+        assert!(
+            near(*start_mm, start, 0.05) && near(*end_mm, end, 0.05),
+            "the inner frame is painted {start_mm:?} -> {end_mm:?} where the reference \
+             strokes {start:?} -> {end:?}"
+        );
+    }
+    assert!(
+        matches!(painted[5].shape, PaperShape::Text { .. }),
+        "behind the inner frame comes {:?}, not the title block's first label",
+        painted[5].shape
+    );
+}
+
+/// What the parse line added to the page of `工艺管道及仪表流程-1` — the two
+/// elliptical arcs and the two fills with a counter of `XA-A1.igr`'s
+/// wordmark — is painted where the template's sheet lists those records,
+/// like everything else the template draws: every one of its 5 024 records
+/// is the sheet's own child, so each has a place and none is left for the
+/// end.
+#[test]
+fn the_xa_template_paints_every_record_where_its_sheet_lists_it() {
+    let fixture = fixture_dir().join("工艺管道及仪表流程-1.pid");
+    let template_path = fixture_dir().join("Ref/Template Files/XA-A1.igr");
+    if !fixture.is_file() || !template_path.is_file() {
+        eprintln!(
+            "skipping the template's order; {} or {} is absent",
+            fixture.display(),
+            template_path.display()
+        );
+        return;
+    }
+    let template = pid_parse::PidParser::new()
+        .parse_file(&template_path)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let order = template
+        .sheet_display_order
+        .get("/Sheet6")
+        .expect("the template's sheet states the order it draws in");
+    assert_eq!(order.children, 5024, "children the template's sheet lists");
+    let geometry = template
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+        .and_then(|sheet| sheet.geometry.as_ref())
+        .expect("the template's sheet decodes");
+    // The records the parse line made drawable, by where they start, with
+    // the place the list gives each.
+    let arcs: Vec<usize> = geometry
+        .decoded_igellipticalarcs
+        .iter()
+        .map(|arc| arc.byte_start)
+        .collect();
+    let counters: Vec<usize> = geometry
+        .decoded_igboundaries
+        .iter()
+        .filter(|boundary| boundary.loop_segment_counts.len() == 2)
+        .map(|boundary| boundary.byte_start)
+        .collect();
+    assert_eq!((arcs.len(), counters.len()), (2, 2));
+    let place = |start: &usize| order.ranks[start].place;
+    assert_eq!(arcs.iter().map(place).collect::<Vec<_>>(), [997, 998]);
+    assert_eq!(counters.iter().map(place).collect::<Vec<_>>(), [3906, 4586]);
+
+    let model = lay_out_drawing(&fixture, &fixture_dir()).unwrap_or_else(|error| panic!("{error}"));
+    let painted = furniture_as_painted(&model);
+    // Every furniture primitive comes from a record the list places, and the
+    // page paints them in that order.
+    let ranks: Vec<_> = painted
+        .iter()
+        .map(|primitive| {
+            let start = primitive.byte_range.expect("a record's bytes")[0];
+            assert_eq!(primitive.stream_path.as_deref(), Some("/Sheet6"));
+            *order
+                .ranks
+                .get(&start)
+                .unwrap_or_else(|| panic!("the record at +{start} has no place in the list"))
+        })
+        .collect();
+    assert!(
+        ranks.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the template is not painted in the order its sheet lists it"
+    );
+    // The four are on the page, each from its own record.
+    for start in arcs.iter().chain(&counters) {
+        let drawn = painted
+            .iter()
+            .filter(|primitive| primitive.byte_range.is_some_and(|range| range[0] == *start))
+            .count();
+        assert_eq!(
+            drawn, 1,
+            "the record at +{start} draws {drawn} primitive(s)"
+        );
+    }
+    // And not at the end: the last thing the template paints is neither.
+    let last = painted
+        .last()
+        .expect("furniture")
+        .byte_range
+        .expect("bytes")[0];
+    assert!(!arcs.contains(&last) && !counters.contains(&last));
 }
 
 #[test]

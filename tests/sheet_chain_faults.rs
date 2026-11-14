@@ -38,9 +38,15 @@ use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use pid_parse::parsers::sheet_display_order::DisplayRank;
 use pid_parse::parsers::sheet_records::{
-    decode_smartframes, parse_psm_header, sheet_record_starts, PsmRecordDecoder, SheetChain,
-    SHEET_STREAM_MAGIC,
+    decode_dependency_object_at, decode_igarc_at, decode_igboundary_at, decode_igbspcurve_at,
+    decode_igcircle_at, decode_igcomplexstring_at, decode_igdimension_at,
+    decode_igellipticalarc_at, decode_iggroup_at, decode_igline_at, decode_iglinestring_at,
+    decode_igpoint_at, decode_igrectangle_at, decode_igsymbol_at, decode_igtextbox_at,
+    decode_smartframe_at, decode_smartframes, parse_psm_header, psm_type_word_opens_a_record,
+    refused_smartframes, sheet_record_starts, PsmHeader, PsmRecordDecoder, SheetChain,
+    PSM_TYPE_CODE_IGCOMPLEXSTRING2D, PSM_TYPE_CODE_IGSMARTFRAME, SHEET_STREAM_MAGIC,
 };
 use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
 use pid_parse::{
@@ -471,6 +477,158 @@ fn the_records_before_a_break_decode_as_on_the_intact_stream() {
             (expected.records_read, expected.stop.unwrap_or(broken.len())),
             "{damage:?}: records read and where the walk ends"
         );
+    }
+}
+
+/// The records a damaged stream is read as stand where the sheet's own list
+/// has them.
+///
+/// The list is the `JSheet` record of the document storage's `PSMcluster0`,
+/// which no damage here touches, so it is still the sheet's list when the
+/// stream holds fewer records than it names. Every record the damage leaves
+/// alone keeps its place in it, and the records drawn at one place keep
+/// their order among themselves, so a page of the damaged copy paints what
+/// it has in the order the whole drawing paints it. A record whose owner
+/// lies past the damage still hangs at the owner's place; only its order
+/// among the owner's other records is the stream's rather than the owner's.
+#[test]
+fn the_records_before_a_break_keep_their_place_in_the_display_order() {
+    let intact_doc = PidParser::new()
+        .parse_file(FIXTURE)
+        .unwrap_or_else(|error| panic!("{FIXTURE} should parse: {error}"));
+    let intact_order = intact_doc
+        .sheet_display_order
+        .get(SHEET)
+        .unwrap_or_else(|| panic!("{FIXTURE}'s {SHEET} states the order it draws in"));
+    assert!(
+        intact_order.ranks.len() > 100,
+        "the fixture ranks {} records",
+        intact_order.ranks.len()
+    );
+
+    for damage in ALL {
+        let (intact, broken, doc, expected) = damaged(damage);
+        let order = doc
+            .sheet_display_order
+            .get(SHEET)
+            .unwrap_or_else(|| panic!("{damage:?}: the sheet's list is still the sheet's"));
+        assert_eq!(
+            (order.sheet_oid, order.children, order.paper),
+            (
+                intact_order.sheet_oid,
+                intact_order.children,
+                intact_order.paper
+            ),
+            "{damage:?}: the same list, and the paper it states"
+        );
+        // Nothing is ranked that the walk did not read.
+        let read_to = expected.stop.unwrap_or(broken.len());
+        for at in order.ranks.keys() {
+            assert!(
+                *at < read_to,
+                "{damage:?}: +{at} is ranked, past where the walk ends at +{read_to}"
+            );
+        }
+
+        // Each record of the intact stream: where it ends, and its owner.
+        let mut ends = std::collections::HashMap::new();
+        let mut owners = std::collections::HashMap::new();
+        let mut by_oid = std::collections::HashMap::new();
+        for at in sheet_record_starts(&intact) {
+            let header = parse_psm_header(&intact, at).expect("a record of the chain");
+            let end = header.body_start + header.bytes_to_follow as usize;
+            ends.insert(at, end);
+            if header.bytes_to_follow >= 8 && !header.native_reader_skips() {
+                owners.insert(at, u32_at(&intact, header.body_start + 4));
+                by_oid
+                    .entry(u32_at(&intact, header.body_start))
+                    .or_insert(at);
+            }
+        }
+        let untouched = |at: usize| ends[&at] <= expected.first_touched;
+        // Whether the record that owns the one at `at` was read whole: the
+        // sheet owns it, or its owner is a record the damage leaves alone.
+        let owner_read = |at: usize| {
+            owners[&at] == intact_order.sheet_oid
+                || by_oid
+                    .get(&owners[&at])
+                    .is_some_and(|owner| untouched(*owner))
+        };
+
+        type Ranked = (usize, DisplayRank);
+        let before: Vec<Ranked> = intact_order
+            .ranks
+            .iter()
+            .map(|(at, rank)| (*at, *rank))
+            .filter(|(at, _)| untouched(*at))
+            .collect();
+        let after: Vec<Ranked> = order
+            .ranks
+            .iter()
+            .map(|(at, rank)| (*at, *rank))
+            .filter(|(at, _)| *at < expected.first_touched)
+            .collect();
+        assert!(!before.is_empty(), "{damage:?}: no ranked record to hold");
+        assert_eq!(
+            after.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+            before.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+            "{damage:?}: the records before +{} that have a rank",
+            expected.first_touched
+        );
+        let mut orphans = 0usize;
+        for ((at, rank), (_, whole)) in after.iter().zip(&before) {
+            assert_eq!(
+                rank.place, whole.place,
+                "{damage:?}: the record at +{at} stands at the place the list gives it"
+            );
+            if !owner_read(*at) {
+                orphans += 1;
+                assert!(
+                    rank.inner >= 1,
+                    "{damage:?}: the record at +{at} hangs under an owner that was not read"
+                );
+            }
+        }
+        // The order the page paints them in, for every record whose owner
+        // was read: the same sequence by either ranking.
+        let drawn = |ranks: &[Ranked]| {
+            let mut sequence: Vec<(DisplayRank, usize)> = ranks
+                .iter()
+                .filter(|(at, _)| owner_read(*at))
+                .map(|(at, rank)| (*rank, *at))
+                .collect();
+            sequence.sort_unstable();
+            sequence.into_iter().map(|(_, at)| at).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            drawn(&after),
+            drawn(&before),
+            "{damage:?}: the records before the break, in the order they are drawn"
+        );
+        eprintln!(
+            "{damage:?}: {} of the {} records the whole stream ranks are before the damage, \
+             {orphans} of them under an owner past it; {} ranked in all",
+            before.len(),
+            intact_order.ranks.len(),
+            order.ranks.len()
+        );
+        match damage {
+            // The chain is whole and so is the order.
+            Damage::HeaderCountPlusOne | Damage::WrongMagic => {
+                assert_eq!(order.ranks, intact_order.ranks, "{damage:?}");
+            }
+            // Half the stream is gone, and with it the owners of records
+            // that were read.
+            Damage::MiddleLengthZero => {
+                assert!(
+                    orphans > 0,
+                    "{damage:?}: no record is left without its owner"
+                );
+            }
+            Damage::LastLengthPlusOne
+            | Damage::LastLengthMinusFour
+            | Damage::CutAtTheLastRecord => {}
+        }
     }
 }
 
@@ -995,10 +1153,16 @@ fn a_style_table_reads_the_records_its_fault_says_the_chain_read() {
 /// tripwire reads past the stop on.
 const STYLE_TABLE_LENGTH_CHANGES: (usize, usize, usize) = (3, 3405, 122);
 
-/// A symbol file read as a library body. The body's reader takes a sheet
-/// whole or not at all, so a sheet whose chain stops gives it nothing — a
-/// body short of that sheet's strokes, and until now nothing that said so.
-/// The body carries the faults the parse of the file found.
+/// A symbol file read as a library body. The body's reader reads a sheet
+/// by the walk a drawing's own sheets are read by, so a sheet whose chain
+/// stops gives the body the records before the stop and nothing after — a
+/// body short of the rest of that sheet's strokes — and the body lists the
+/// fault that walk states and says which sheet it read short. (Until
+/// 2026-11-12 the reader walked a sheet by a rule of its own and took it
+/// whole or not at all; "a sheet whose chain stops gives the body nothing"
+/// was not true of a stop on a type word flagged `0x4000`, which that rule
+/// read through.) What a body with a stream read short may draw is held in
+/// `tests/sym_file_chain_faults.rs`.
 #[test]
 fn a_symbol_files_broken_sheet_is_named_on_the_body_it_leaves_short() {
     use pid_parse::symbol_library::read_symbol_geometry_from_bytes;
@@ -1061,6 +1225,13 @@ fn a_symbol_files_broken_sheet_is_named_on_the_body_it_leaves_short() {
             body.primitives.len(),
             intact.primitives.len()
         );
+        assert_eq!(
+            (body.short.sheets.len(), body.short.clusters.len()),
+            (1, 0),
+            "{label} {stream}: the one sheet read short: {:?}",
+            body.short
+        );
+        assert!(intact.short.is_empty(), "{label}: {:?}", intact.short);
         held += 1;
     }
     assert!(
@@ -1363,9 +1534,50 @@ struct Tally {
     /// being the top two bytes of a page frame's aspect ratio
     /// ([`page_ratio_hits`]).
     page_ratio_hits: usize,
+    /// Live page frames (`igSmartFrame2d`) on those chains, each distinct
+    /// stream once. Every one decodes ([`leave_the_chain`]).
+    frames: usize,
+    /// Live `ComplexString` records on those chains, each distinct stream
+    /// once. Every one decodes ([`leave_the_chain`]): the family holds a
+    /// record to closing as a string closes, and that must cost no string.
+    strings: usize,
+    /// Length changes made to those records, each distinct stream once:
+    /// every amount from −64 to +64 on every record, less those that would
+    /// state a length below zero ([`leave_the_chain`]).
+    length_changes: usize,
+    /// Records the walks after those changes read from where the chain
+    /// starts none.
+    off_the_chain: usize,
+    /// Of those, the live ones whose type word is a page frame's.
+    frame_words_off_the_chain: usize,
+    /// Of those, the ones that were a frame until the decoder held a
+    /// frame's ratio to its extent: a payload of 156 bytes or more, three
+    /// finite doubles, a width and a height not below zero.
+    frames_by_the_first_rules: usize,
+    /// Of the records off the chain, the ones a registry family decodes.
+    decoded_off_the_chain: usize,
+    /// Places off those chains where a walk would read a live record with a
+    /// page frame's type word, whatever wrong length sent it there: every
+    /// offset of each distinct stream is tried ([`leave_the_chain`]).
+    frame_words_anywhere: usize,
+    /// Of those, the ones that were a frame by the decoder's first rules.
+    frames_by_the_first_rules_anywhere: usize,
 }
 
 impl Tally {
+    /// What is read off the chains, the seven numbers a rule moves.
+    fn off_the_chain_reading(&self) -> [usize; 7] {
+        [
+            self.length_changes,
+            self.off_the_chain,
+            self.frame_words_off_the_chain,
+            self.frames_by_the_first_rules,
+            self.decoded_off_the_chain,
+            self.frame_words_anywhere,
+            self.frames_by_the_first_rules_anywhere,
+        ]
+    }
+
     fn add(&mut self, other: &Self) {
         self.documents += other.documents;
         self.repeats += other.repeats;
@@ -1376,6 +1588,15 @@ impl Tally {
         self.records += other.records;
         self.live += other.live;
         self.page_ratio_hits += other.page_ratio_hits;
+        self.frames += other.frames;
+        self.strings += other.strings;
+        self.length_changes += other.length_changes;
+        self.off_the_chain += other.off_the_chain;
+        self.frame_words_off_the_chain += other.frame_words_off_the_chain;
+        self.frames_by_the_first_rules += other.frames_by_the_first_rules;
+        self.decoded_off_the_chain += other.decoded_off_the_chain;
+        self.frame_words_anywhere += other.frame_words_anywhere;
+        self.frames_by_the_first_rules_anywhere += other.frames_by_the_first_rules_anywhere;
     }
 
     /// Whether this walk read no less than `floor` did.
@@ -1386,6 +1607,8 @@ impl Tally {
             && self.caches >= floor.caches
             && self.records >= floor.records
             && self.live >= floor.live
+            && self.frames >= floor.frames
+            && self.strings >= floor.strings
     }
 }
 
@@ -1401,8 +1624,18 @@ fn chain_stream_kind(path: &str) -> Option<bool> {
     (parts.len() == 2 && parts[0].starts_with("JSite") && leaf == "PSMcluster0").then_some(false)
 }
 
-/// Hold one parsed file to raising no fault, and count what it holds.
-fn hold_sound(label: &str, package: &PidPackage, tally: &mut Tally) {
+/// Hold one parsed file to raising no fault, and count what it holds. A
+/// chain stream whose bytes no earlier stream of the walk had (`streams`)
+/// also has its page frames held to decoding and its records' lengths
+/// changed ([`leave_the_chain`]); what a family decodes off the chain after
+/// such a change is listed in `decoded`.
+fn hold_sound(
+    label: &str,
+    package: &PidPackage,
+    tally: &mut Tally,
+    streams: &mut HashSet<(usize, u64)>,
+    decoded: &mut Vec<(&'static str, String)>,
+) {
     assert!(
         package.parsed.chain_faults.is_empty(),
         "{label}: an intact file raises no chain fault: {:#?}",
@@ -1456,6 +1689,276 @@ fn hold_sound(label: &str, package: &PidPackage, tally: &mut Tally) {
         tally.records += chain.starts.len();
         tally.live += chain.live_records;
         tally.page_ratio_hits += page_ratio_hits(&format!("{label} {path}"), &raw.data, &chain);
+        let mut hasher = DefaultHasher::new();
+        raw.data.hash(&mut hasher);
+        if streams.insert((raw.data.len(), hasher.finish())) {
+            leave_the_chain(
+                &format!("{label} {path}"),
+                &raw.data,
+                &chain,
+                tally,
+                decoded,
+            );
+        }
+    }
+}
+
+/// One registry family's decoder at an offset: the family's registry name,
+/// and whether it takes the bytes there for a record of its own.
+type FamilyAt = (&'static str, fn(&[u8], usize) -> bool);
+
+/// The sixteen registry families, each through the entry point that reads
+/// at an offset. [`no_intact_stream_of_any_corpus_raises_a_chain_fault`]
+/// holds the names against the registry.
+const FAMILIES_AT: [FamilyAt; 16] = [
+    ("igLine2d", |data, at| decode_igline_at(data, at).is_some()),
+    ("igLineString2d", |data, at| {
+        decode_iglinestring_at(data, at).is_some()
+    }),
+    ("igPoint2d", |data, at| {
+        decode_igpoint_at(data, at).is_some()
+    }),
+    ("igTextBox", |data, at| {
+        decode_igtextbox_at(data, at).is_some()
+    }),
+    ("igSymbol2d", |data, at| {
+        decode_igsymbol_at(data, at).is_some()
+    }),
+    ("igArc2d", |data, at| decode_igarc_at(data, at).is_some()),
+    ("igCircle2d", |data, at| {
+        decode_igcircle_at(data, at).is_some()
+    }),
+    ("igBoundary2d", |data, at| {
+        decode_igboundary_at(data, at).is_some()
+    }),
+    ("igSmartFrame2d", |data, at| {
+        decode_smartframe_at(data, at).is_some()
+    }),
+    ("DependencyObject", |data, at| {
+        decode_dependency_object_at(data, at).is_some()
+    }),
+    ("igRectangle2d", |data, at| {
+        decode_igrectangle_at(data, at).is_some()
+    }),
+    ("igBspCurve2d", |data, at| {
+        decode_igbspcurve_at(data, at).is_some()
+    }),
+    ("igDimension", |data, at| {
+        decode_igdimension_at(data, at).is_some()
+    }),
+    ("igComplexString2d", |data, at| {
+        decode_igcomplexstring_at(data, at).is_some()
+    }),
+    ("igGroup", |data, at| decode_iggroup_at(data, at).is_some()),
+    ("igEllipticalArc2d", |data, at| {
+        decode_igellipticalarc_at(data, at).is_some()
+    }),
+];
+
+/// The records a walk reads from `from` on, by the rule
+/// [`SheetChain::walk`] walks by: a type word the native reader has a class
+/// for, a length above zero, a payload the stream holds.
+fn records_from(data: &[u8], from: usize) -> impl Iterator<Item = (usize, PsmHeader)> + '_ {
+    let mut at = from;
+    std::iter::from_fn(move || {
+        if at >= data.len() {
+            return None;
+        }
+        let header = parse_psm_header(data, at)?;
+        if !psm_type_word_opens_a_record(header.type_word()) || header.bytes_to_follow == 0 {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(header.bytes_to_follow as usize)
+            .filter(|end| *end <= data.len())?;
+        let here = at;
+        at = end;
+        Some((here, header))
+    })
+}
+
+/// Whether the record `header` opens was a page frame by the rules the
+/// decoder had until 2026-11-11: a payload of 156 bytes or more; a width at
+/// `+76`, a height at `+84` and a ratio at `+148` that are finite, the
+/// first two not below zero.
+fn frame_by_the_first_rules(data: &[u8], header: &PsmHeader) -> bool {
+    let double_at = |at: usize| {
+        data.get(at..at + 8).map_or(f64::NAN, |bytes| {
+            f64::from_le_bytes(bytes.try_into().expect("eight bytes"))
+        })
+    };
+    let (width, height, ratio) = (
+        double_at(header.body_start + 76),
+        double_at(header.body_start + 84),
+        double_at(header.body_start + 148),
+    );
+    header.bytes_to_follow >= 156
+        && [width, height, ratio].iter().all(|v| v.is_finite())
+        && width >= 0.0
+        && height >= 0.0
+}
+
+/// Hold the page frames of one intact chain stream to decoding; then change
+/// every record's length by every amount from −64 to +64 in turn, and count
+/// what the walk after each change reads from where the chain starts no
+/// record — and what any record family makes of it.
+///
+/// The page-frame decoder is also tried at every offset off the chain
+/// where a walk would read a live record with a frame's type word. A wrong
+/// length of any size sends the walk to some offset, so this is what every
+/// such walk could come on, not only the ones 64 bytes away or nearer.
+///
+/// A walk reads a record's own bytes to find the next and nothing before
+/// them, and the bytes past a changed length field are the stream's own; so
+/// what a walk reads after a change is read here off the unchanged stream,
+/// from where the changed length ends ([`records_from`]). The first two
+/// records of every stream are also changed in a copy that
+/// [`SheetChain::walk`] walks whole, and held to the same reading; so is
+/// every change after which a family decodes something, whose copy the
+/// families' own scans then decode.
+///
+/// A page frame is the family this is for. `3D 00`, a frame's type word, is
+/// the character `=` in a label's text, and a walk that lands on one reads
+/// a "frame" out of whatever follows: 102 of the 1 371 448 records such
+/// walks read off the corpora's chains were frames by the decoder's first
+/// rules, six still were once the stated ratio was held to the height over
+/// the width — four of no width, where the comparison was skipped, and two
+/// whose quotient is infinite, which passed it — and none is since the
+/// extent has to be one a ratio can be held to
+/// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+fn leave_the_chain(
+    label: &str,
+    data: &[u8],
+    chain: &SheetChain,
+    tally: &mut Tally,
+    decoded: &mut Vec<(&'static str, String)>,
+) {
+    let starts = &chain.starts;
+    for &at in starts {
+        let header = parse_psm_header(data, at).expect("a record of the chain");
+        if header.type_code == PSM_TYPE_CODE_IGSMARTFRAME && !header.native_reader_skips() {
+            tally.frames += 1;
+            assert!(
+                decode_smartframe_at(data, at).is_some(),
+                "{label} +{at}: a live page frame of the chain decodes"
+            );
+        }
+        if header.type_code == PSM_TYPE_CODE_IGCOMPLEXSTRING2D && !header.native_reader_skips() {
+            tally.strings += 1;
+            assert!(
+                decode_igcomplexstring_at(data, at).is_some(),
+                "{label} +{at}: a live ComplexString of the chain decodes"
+            );
+        }
+    }
+    // The same said the other way, by the entry point a page's layout asks:
+    // no frame of an intact stream is refused, so no intact drawing is told
+    // its page was laid out without its frame.
+    assert_eq!(
+        refused_smartframes(data),
+        Vec::new(),
+        "{label}: a frame record the decoder refuses"
+    );
+    for at in 8..data.len().saturating_sub(1) {
+        if data[at..at + 2] != PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes()
+            || starts.binary_search(&at).is_ok()
+        {
+            continue;
+        }
+        let Some((_, header)) = records_from(data, at).next() else {
+            continue;
+        };
+        tally.frame_words_anywhere += 1;
+        if frame_by_the_first_rules(data, &header) {
+            tally.frames_by_the_first_rules_anywhere += 1;
+        }
+        if decode_smartframe_at(data, at).is_some() {
+            decoded.push((
+                "igSmartFrame2d",
+                format!(
+                    "{label}: the bytes at +{at}, {} of payload, whatever length leads a walk \
+                     there",
+                    header.bytes_to_follow
+                ),
+            ));
+        }
+    }
+    for (index, &at) in starts.iter().enumerate() {
+        let length = u32_at(data, at + 2);
+        for delta in -64_i64..=64 {
+            let Ok(wrong) = u32::try_from(i64::from(length) + delta) else {
+                continue;
+            };
+            if delta == 0 {
+                continue;
+            }
+            tally.length_changes += 1;
+            // A length of zero, or one past the stream's end, stops the
+            // walk on the changed record: nothing is read after it.
+            let past = at + 6 + wrong as usize;
+            let read_on = wrong != 0 && past <= data.len();
+            let from = if read_on { past } else { data.len() };
+            let mut decoded_here = 0usize;
+            for (cursor, header) in records_from(data, from) {
+                if starts.binary_search(&cursor).is_ok() {
+                    continue;
+                }
+                tally.off_the_chain += 1;
+                if header.type_code == PSM_TYPE_CODE_IGSMARTFRAME && !header.native_reader_skips() {
+                    tally.frame_words_off_the_chain += 1;
+                    if frame_by_the_first_rules(data, &header) {
+                        tally.frames_by_the_first_rules += 1;
+                    }
+                }
+                for (family, decodes) in FAMILIES_AT {
+                    if decodes(data, cursor) {
+                        decoded_here += 1;
+                        decoded.push((
+                            family,
+                            format!(
+                                "{label}: the record at +{at}, {length} -> {wrong}: the bytes \
+                                 at +{cursor}, {} of payload",
+                                header.bytes_to_follow
+                            ),
+                        ));
+                    }
+                }
+            }
+            tally.decoded_off_the_chain += decoded_here;
+            if index < 2 || decoded_here > 0 {
+                let mut copy = data.to_vec();
+                put_u32(&mut copy, at + 2, wrong);
+                let mut expected = starts[..index].to_vec();
+                if read_on {
+                    expected.push(at);
+                    expected.extend(records_from(data, from).map(|(cursor, _)| cursor));
+                }
+                assert_eq!(
+                    SheetChain::walk(&copy).starts,
+                    expected,
+                    "{label}: record {index} at +{at}, {length} -> {wrong}: the changed stream \
+                     walked whole, and the stream walked on from where the changed length ends"
+                );
+                if decoded_here > 0 {
+                    let by_their_scans: usize = SHEET_RECORD_FAMILIES
+                        .iter()
+                        .map(|family| {
+                            (family.decoded_ranges)(&copy)
+                                .iter()
+                                .filter(|range| starts.binary_search(&range.start).is_err())
+                                .count()
+                        })
+                        .sum();
+                    assert_eq!(
+                        by_their_scans, decoded_here,
+                        "{label}: record {index} at +{at}, {length} -> {wrong}: records off \
+                         the chain that the families' scans of the changed stream decode, and \
+                         that their entry points at an offset do"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1564,6 +2067,12 @@ struct Walk {
     /// stream; this one leaves out the string scans and the probes, which
     /// read no chain.
     parser: PidParser,
+    /// Every chain stream whose lengths were changed so far, by length and
+    /// hash: a stream several files carry is swept once.
+    streams: HashSet<(usize, u64)>,
+    /// What a record family decoded from where a chain starts no record,
+    /// after a length change: the family, and where.
+    decoded_off_the_chain: Vec<(&'static str, String)>,
 }
 
 impl Walk {
@@ -1571,6 +2080,8 @@ impl Walk {
         Self {
             seen: HashSet::new(),
             parser: PidParser::with_options(ParseOptions::geometry()),
+            streams: HashSet::new(),
+            decoded_off_the_chain: Vec::new(),
         }
     }
 
@@ -1584,7 +2095,13 @@ impl Walk {
             return;
         }
         match self.parser.parse_package_from_reader(Cursor::new(bytes)) {
-            Ok(package) => hold_sound(label, &package, tally),
+            Ok(package) => hold_sound(
+                label,
+                &package,
+                tally,
+                &mut self.streams,
+                &mut self.decoded_off_the_chain,
+            ),
             Err(_) => tally.unread += 1,
         }
     }
@@ -1634,8 +2151,32 @@ impl Walk {
 /// read where this machine has them: the plant backup and the acceptance
 /// sheets under either `pid-test-data`, and the share. Each line printed
 /// says what was read.
+///
+/// Every live page frame of those chains decodes, and no walk that a wrong
+/// length sends off a chain reads a page frame: each record's length is
+/// changed by every amount from −64 to +64 and what the walk reads after it
+/// is put to all sixteen record families ([`leave_the_chain`]). On the
+/// repository's files what that reads is pinned — one record with a
+/// frame's type word that was a frame by the decoder's first rules, and
+/// nothing any family decodes — so that a frame rule taken away shows
+/// here. On the corpora outside it no family decodes such a record
+/// either. Until 2026-11-12 one did, four times: on one sheet of the plant
+/// backup (`G井场进站生产收球筒`'s `/Sheet6`), 28 bytes into each of two
+/// `DependencyObject` records, the bytes spell a `ComplexString` of 256
+/// members in a payload of 65 536 bytes, and two length changes reach each
+/// place. A string is now held to closing as a string closes — four bytes
+/// after its last member entry on a sheet, four and a `u32` a member in a
+/// symbol cache — which those runs, with 61 919 bytes after their entries,
+/// do not; and every live `ComplexString` of every chain is held to
+/// decoding, so that the rule is seen to cost no string.
 #[test]
 fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
+    let mut asked: Vec<&str> = FAMILIES_AT.iter().map(|(name, _)| *name).collect();
+    asked.sort_unstable();
+    let mut registered: Vec<&str> = SHEET_RECORD_FAMILIES.iter().map(|f| f.name).collect();
+    registered.sort_unstable();
+    assert_eq!(asked, registered, "every registry family is asked");
+
     let mut walk = Walk::new();
     let (on_disk, archived) = walk.corpus(Path::new("test-file"));
     eprintln!("test-file, on disk: {on_disk:?}");
@@ -1657,6 +2198,27 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
         (on_disk.unread, archived.unread),
         (0, 0),
         "every file of the repository's parses"
+    );
+    // What the length changes read is pinned as well: changes made, records
+    // read off the chain, those with a page frame's type word, those the
+    // decoder's first rules took for a frame, those any family decodes; and
+    // the places where a walk could read a frame's type word at all, with
+    // those the first rules took for a frame.
+    assert_eq!(
+        on_disk.off_the_chain_reading(),
+        REPOSITORY_ON_DISK.off_the_chain_reading(),
+        "what every length change of -64..=64 reads off the chains of the repository's files"
+    );
+    #[cfg(feature = "refdata-archive")]
+    assert_eq!(
+        archived.off_the_chain_reading(),
+        REPOSITORY_ARCHIVED.off_the_chain_reading(),
+        "what every length change of -64..=64 reads off the chains in the repository's archives"
+    );
+    assert!(
+        walk.decoded_off_the_chain.is_empty(),
+        "no family decodes anything off a chain of the repository's files: {:#?}",
+        walk.decoded_off_the_chain
     );
     assert!(
         on_disk.reaches(&REPOSITORY_ON_DISK),
@@ -1697,7 +2259,10 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
     let mut read: Vec<PathBuf> = Vec::new();
     for root in roots {
         let Ok(canonical) = root.canonicalize() else {
-            eprintln!("not on this machine: {}", root.display());
+            eprintln!(
+                "skipping: {} is not on this machine, so the corpus under it is not read",
+                root.display()
+            );
             continue;
         };
         if read.contains(&canonical) {
@@ -1711,6 +2276,28 @@ fn no_intact_stream_of_any_corpus_raises_a_chain_fault() {
         total.add(&archived);
     }
     eprintln!("in all: {total:?}");
+
+    for (family, place) in &walk.decoded_off_the_chain {
+        eprintln!("decoded off a chain by {family}: {place}");
+    }
+    let frames: Vec<&str> = walk
+        .decoded_off_the_chain
+        .iter()
+        .filter(|(family, _)| *family == "igSmartFrame2d")
+        .map(|(_, place)| place.as_str())
+        .collect();
+    assert!(
+        frames.is_empty(),
+        "{} record(s) read off a chain decode as a page frame:\n{}",
+        frames.len(),
+        frames.join("\n")
+    );
+    assert!(
+        walk.decoded_off_the_chain.is_empty(),
+        "{} record(s) read off a chain are decoded by a family: {:#?}",
+        walk.decoded_off_the_chain.len(),
+        walk.decoded_off_the_chain
+    );
 }
 
 /// What `test-file` held on disk when this was written, the machine-local
@@ -1727,6 +2314,15 @@ const REPOSITORY_ON_DISK: Tally = Tally {
     records: 11_945,
     live: 11_895,
     page_ratio_hits: 3,
+    frames: 8,
+    strings: 6,
+    length_changes: 1_303_890,
+    off_the_chain: 34_887,
+    frame_words_off_the_chain: 1,
+    frames_by_the_first_rules: 1,
+    decoded_off_the_chain: 0,
+    frame_words_anywhere: 1,
+    frames_by_the_first_rules_anywhere: 1,
 };
 
 /// What the templates, symbols and drawings inside `test-file`'s committed
@@ -1749,6 +2345,15 @@ const REPOSITORY_ARCHIVED: Tally = Tally {
     records: 25_711,
     live: 25_267,
     page_ratio_hits: 7,
+    frames: 24,
+    strings: 23,
+    length_changes: 2_472_734,
+    off_the_chain: 26_173,
+    frame_words_off_the_chain: 0,
+    frames_by_the_first_rules: 0,
+    decoded_off_the_chain: 0,
+    frame_words_anywhere: 0,
+    frames_by_the_first_rules_anywhere: 0,
 };
 
 /// What every single-length change of the chain streams `test-file` holds on

@@ -103,6 +103,10 @@ fn normalized_geometry_matches_golden_snapshot() {
     for case in GOLDEN_CASES {
         let fixture = fixture_path(case);
         if !fixture.exists() {
+            eprintln!(
+                "skipping: {} is not checked out, so its golden is not compared",
+                case.path
+            );
             skipped.push(case.path);
             continue;
         }

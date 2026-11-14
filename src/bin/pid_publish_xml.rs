@@ -546,7 +546,8 @@ fn run(options: CliOptions) -> Result<i32, String> {
 ///
 /// A drawing with a chain stream whose record chain does not hold gets one
 /// `warning:` line a stream on stderr, as [`run_pid`] prints for a single
-/// `.pid`; the exit code, `_Index.json` and the coverage reports are what
+/// `.pid`, and `_Index.json` lists the same sentence among its `problems`;
+/// the exit code, the index's counts and the coverage reports are what
 /// they would be without it.
 fn run_package(options: &CliOptions) -> Result<i32, String> {
     let out_dir = options

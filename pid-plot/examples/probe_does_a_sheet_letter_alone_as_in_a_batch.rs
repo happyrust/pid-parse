@@ -1,6 +1,7 @@
 //! Whether a sheet letters every label in the same faces alone and in a batch.
 //!
-//! `pid_plot` prepares the faces for the one drawing it exports; a gate
+//! `pid_plot` prepares the faces for the one drawing it exports; a gate that
+//! keeps no page — the export gates of the plant backup and of the fixtures —
 //! prepares them once for all of its sheets. A character the face it is named
 //! in cannot draw is borrowed from another face, and which face lends it must
 //! not follow the company a sheet keeps: `pid_plot::fonts::BORROW_ORDER` is

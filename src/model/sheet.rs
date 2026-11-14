@@ -1338,11 +1338,14 @@ impl From<crate::parsers::sheet_records::SheetDependencyObjectDecoded>
 }
 
 /// One `(start, end)` segment of a decoded `igBoundary2d` record
-/// (Phase 34-D). Model-shaped mirror of
+/// (Phase 34-D): a line member whole, or one of the chords a curved member
+/// — a point run, an arc of a circle or an ellipse, a B-spline, a circle —
+/// is flattened to. Model-shaped mirror of
 /// [`crate::parsers::sheet_records::SheetIgBoundary2dSegment`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct DecodedIgBoundary2dSegment {
-    /// Payload offset of the segment group's `0x67` tag byte.
+    /// Payload offset of the tag byte of the member the segment comes
+    /// from; the chords of one curved member share it.
     pub tag_offset: usize,
     /// Segment start X in normalized sheet coordinates.
     pub start_x: f64,
@@ -1403,11 +1406,14 @@ pub struct DecodedIgBoundary2dRecord {
     /// layer and refuses the rest. See
     /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
     pub sheet_layer_ref: u32,
-    /// Sub-type word at payload offset 12. Always `0x0010`.
+    /// Sub-type word at payload offset 12: `0x0010` on a drawing's boundary
+    /// over lines, `0x0000` on a linked template's and on a drawing's over
+    /// a circle.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14.
     pub index: u32,
-    /// Number of segment groups / trailer member references.
+    /// How many members the record states, over all its loops: one segment
+    /// a member where every member is a line, several where one is curved.
     pub segment_count: u32,
     /// Sub-header bytes at payload offsets 26–27 (`[2, 1]` across
     /// all fixture records; exposed verbatim).
@@ -1421,16 +1427,20 @@ pub struct DecodedIgBoundary2dRecord {
     /// it is a hole.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loop_segment_counts: Vec<u32>,
-    /// Anchor X following the segment groups: where the fill was seeded
-    /// (inside the loop on every record that carries member references;
-    /// `1e30` on a linked template's, which carry none).
+    /// Anchor X: where the fill was seeded, on a record that names its
+    /// members ([`Self::member_refs`]) — a point inside the fill on every
+    /// such record of the corpora. A record that names none states no
+    /// anchor (the file has `1e30` twice there), and this is then the first
+    /// vertex of the ring: a point on the fill's edge, not inside it.
     pub anchor_x: f64,
-    /// Anchor Y following the segment groups.
+    /// Anchor Y; see [`Self::anchor_x`].
     pub anchor_y: f64,
     /// `u8` flag between the anchor and the member count (`1` in
     /// fixtures; exposed verbatim).
     pub trailer_flag: u8,
-    /// Trailer member references (`segment_count` entries).
+    /// Trailer member references: one to a member on all but one record of
+    /// the corpora, none on a record whose loop is its own geometry (a
+    /// linked template's logo).
     pub member_refs: Vec<DecodedIgBoundary2dMemberRef>,
     /// `true` when the segments chain end-to-start and close back
     /// onto the first start within `1e-9` per axis (20/20 fixture
@@ -1651,7 +1661,8 @@ impl DecodedIgSmartFrame2dRecord {
 }
 
 /// Why a chain stream's record walk stopped before the stream's end.
-/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`].
+/// Model-shaped mirror of [`crate::parsers::sheet_records::SheetChainStop`],
+/// with one reason more that no walk gives ([`Self::NoStream`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamChainStopReason {
@@ -1669,6 +1680,11 @@ pub enum StreamChainStopReason {
     /// ([`crate::parsers::sheet_records::psm_type_word_opens_a_record`]):
     /// the walk has left the record boundaries by here.
     NoSuchClass,
+    /// The file holds no stream of this path: there was nothing to walk.
+    /// No walk stops for this. It is what a reader says of a file of a
+    /// kind that always keeps the stream when one does not
+    /// ([`StreamChainFault::of_a_missing_stream`]).
+    NoStream,
 }
 
 /// Where a chain stream's record walk stopped, and why.
@@ -1816,6 +1832,52 @@ impl StreamChainFault {
         )
     }
 
+    /// What is wrong with a chain stream that holds no byte, said for a
+    /// reader that holds its file to keeping the stream: it is shorter than
+    /// the header a chain opens with, and the stop is at its first byte.
+    ///
+    /// [`Self::of`] finds nothing wrong with an empty stream — the walk
+    /// read every byte there is — and that is how a drawing's own streams
+    /// are read. A chain stream of a symbol file opens with its eight-byte
+    /// header whatever it holds (the shortest on the corpora is a sheet's
+    /// header and nothing else), so one with no byte was emptied, and the
+    /// reader of a `.sym` lists it
+    /// ([`crate::symbol_library::SymbolGeometry::chain_faults`]).
+    #[must_use]
+    pub fn of_an_empty_stream(stream_path: &str) -> Self {
+        Self::of_no_bytes(stream_path, StreamChainStopReason::ShortHeader)
+    }
+
+    /// What is wrong with a chain stream the file does not hold, said for
+    /// a reader that holds its file to keeping one
+    /// ([`StreamChainStopReason::NoStream`]): the `PSMcluster0` in the root
+    /// of a symbol file, where every `.sym` of the corpora keeps its layer
+    /// table and its view sets.
+    #[must_use]
+    pub fn of_a_missing_stream(stream_path: &str) -> Self {
+        Self::of_no_bytes(stream_path, StreamChainStopReason::NoStream)
+    }
+
+    /// A fault at the first byte of a stream of which no byte was read.
+    fn of_no_bytes(stream_path: &str, reason: StreamChainStopReason) -> Self {
+        Self {
+            stream_path: stream_path.to_string(),
+            stream_len: 0,
+            wrong_magic: None,
+            stop: Some(StreamChainStop {
+                offset: 0,
+                reason,
+                record_len: None,
+                type_word: None,
+                last_record_offset: None,
+            }),
+            unread_bytes: 0,
+            records_read: 0,
+            live_records_read: 0,
+            stated_records: None,
+        }
+    }
+
     /// Whether the header's live-record count differs from what the walk
     /// read. On a walk that stopped short it usually does, and the stop is
     /// the reason; on one that reached the stream's end it is the fault.
@@ -1826,9 +1888,30 @@ impl StreamChainFault {
     }
 
     /// The fault in one sentence, naming the stream and, when the walk
-    /// stopped short, the offset it stopped at and the bytes left unread.
+    /// stopped short, the offset it stopped at and the bytes left unread:
+    /// [`Self::describe_framing`], and what it means for a stream that
+    /// draws.
     #[must_use]
     pub fn describe(&self) -> String {
+        format!(
+            "{}; what the stream draws may be incomplete",
+            self.describe_framing()
+        )
+    }
+
+    /// What is wrong with the stream's framing, and nothing about what
+    /// follows from it: the stream, and, when the walk stopped short, the
+    /// offset it stopped at, why, the records read before it and the bytes
+    /// left unread; the header's count against the chain's.
+    ///
+    /// [`Self::describe`] goes on to say that what the stream draws may be
+    /// incomplete, which is the consequence for a sheet. A reader of
+    /// something else says its own after this sentence: the publish line
+    /// reads attribute rows and labels, from streams some of which draw
+    /// nothing, and says what its XML is short of
+    /// (`PublishChainFault::describe` in `publish::pid_load`).
+    #[must_use]
+    pub fn describe_framing(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(found) = self.wrong_magic {
             parts.push(format!(
@@ -1837,6 +1920,11 @@ impl StreamChainFault {
             ));
         }
         match &self.stop {
+            // Nothing was walked, so there is no place a walk stopped at
+            // and no count of what it read before.
+            Some(stop) if stop.reason == StreamChainStopReason::NoStream => {
+                parts.push("the file holds no such stream".to_string());
+            }
             Some(stop) => {
                 let why = match stop.reason {
                     StreamChainStopReason::ShortHeader => {
@@ -1859,6 +1947,8 @@ impl StreamChainFault {
                         "the type word 0x{:04X} is not one a record opens with",
                         stop.type_word.unwrap_or_default()
                     ),
+                    // Said by the arm above.
+                    StreamChainStopReason::NoStream => "the file holds no such stream".to_string(),
                 };
                 // The record whose stated length ends at the stop. When
                 // the stop is not a record's start, its length is where to
@@ -1891,9 +1981,42 @@ impl StreamChainFault {
             }
         }
         format!(
-            "the record chain of {} does not hold: {}; what the stream draws may be incomplete",
+            "the record chain of {} does not hold: {}",
             self.stream_path,
             parts.join("; ")
+        )
+    }
+}
+
+/// A live `igSmartFrame2d` record of one of a document's `Sheet*` streams
+/// that the frame decoder refuses
+/// ([`crate::parsers::sheet_records::refused_smartframes`]).
+///
+/// A frame record is taken for a frame only when the ratio it states is
+/// the height over the width it states and the two are lengths: that is
+/// what tells a frame from the bytes a walk reads off a broken chain. A
+/// drawing's own border frame that fails the rule — a ratio written wrong,
+/// a side of zero — states no page and places nothing, and the drawing is
+/// laid out as a sheet with no frame is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefusedSmartFrame {
+    /// Path of the stream the record is in.
+    pub stream_path: String,
+    /// The record, and which part of the frame rule it fails.
+    pub refused: crate::parsers::sheet_records::SheetSmartFrameRefused,
+}
+
+impl RefusedSmartFrame {
+    /// Whether the record could have stated the sheet's page: one whose
+    /// flag words read as an embedded or a linked frame, or cannot be read.
+    /// An empty frame and one linked inside the drawing state no page when
+    /// they decode.
+    #[must_use]
+    pub fn may_state_a_page(&self) -> bool {
+        use crate::parsers::sheet_records::SheetSmartFrame2dState as State;
+        !matches!(
+            self.refused.state,
+            Some(State::Empty | State::LocallyLinked)
         )
     }
 }

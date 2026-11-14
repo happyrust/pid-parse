@@ -62,7 +62,7 @@ fn the_geometry_profile_draws_what_full_draws_and_skips_only_probe_yield() {
     for fixture in FIXTURES {
         let path = Path::new(fixture);
         if !path.is_file() {
-            eprintln!("skipping {fixture}: not checked out");
+            eprintln!("skipping: {fixture} is not checked out");
             continue;
         }
 

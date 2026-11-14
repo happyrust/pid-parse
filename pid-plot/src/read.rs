@@ -295,6 +295,88 @@ pub fn read_plot_pens(pdf_bytes: &[u8]) -> Result<PlotPens, PlotReadError> {
     })
 }
 
+/// One printed piece of a path, with where the page paints it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaintedStroke {
+    /// The page's count of painted paths and glyphs when this path was
+    /// painted: a smaller step is painted earlier, and what is painted later
+    /// lies on top. Every piece of one path has the path's step.
+    pub step: u32,
+    /// The piece: a dash of a stroked path inside its clip, or one edge of a
+    /// filled path, whose width is 0. A stroke along the sheet is one piece.
+    pub segment: InkSegment,
+    /// Whether the path is painted in the paper's own colour.
+    pub paper: bool,
+    /// Whether the path is filled rather than stroked.
+    pub filled: bool,
+}
+
+/// One glyph that draws a character, with where the page paints it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaintedGlyph {
+    /// The page's count of painted paths and glyphs when this glyph was
+    /// painted; see [`PaintedStroke::step`].
+    pub step: u32,
+    /// What the glyph spells.
+    pub text: String,
+    /// Where its baseline starts, paper millimetres, y up.
+    pub origin_mm: [f64; 2],
+    /// The em it is set at, millimetres.
+    pub height_mm: f64,
+    /// How far it advances along its direction, millimetres.
+    pub advance_mm: f64,
+    /// The direction it is lettered in, paper space.
+    pub direction: [f64; 2],
+    /// Whether it is lettered in the paper's own colour.
+    pub paper: bool,
+}
+
+/// A page as the order it is painted in: what [`PlotInk`] holds, piece by
+/// piece and glyph by glyph, each with its place in the content stream.
+///
+/// [`PlotInk`] keeps the strokes in one list and the lettering in another,
+/// and says nothing of which was painted first. That is what decides what
+/// shows where two of them lie on each other: a stroke in the paper's colour
+/// takes a piece out of whatever was painted before it and none out of what
+/// is painted after.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PlotSequence {
+    /// Page width and height in millimetres.
+    pub page_mm: [f64; 2],
+    /// Every printed piece of every path, in painting order, whatever it is
+    /// painted in and a stroke along the sheet included.
+    pub strokes: Vec<PaintedStroke>,
+    /// Every glyph that draws a character, in painting order.
+    pub glyphs: Vec<PaintedGlyph>,
+}
+
+/// Read the first page of a PDF as the order it is painted in: see
+/// [`PlotSequence`].
+pub fn read_plot_sequence(pdf_bytes: &[u8]) -> Result<PlotSequence, PlotReadError> {
+    let device = interpret(pdf_bytes, Painted::All)?;
+    let [width_pt, height_pt] = device.page_pt;
+    let glyphs = device
+        .glyphs
+        .into_iter()
+        .filter(|glyph| !glyph.text.chars().all(char::is_whitespace))
+        .map(|glyph| PaintedGlyph {
+            step: glyph.step,
+            origin_mm: view_pt_to_paper_mm(glyph.origin_pt.x, glyph.origin_pt.y, height_pt),
+            height_mm: glyph.height_pt * MM_PER_PT,
+            advance_mm: glyph.advance_pt * MM_PER_PT,
+            // The view's y runs down the page and the paper's up it.
+            direction: [glyph.direction_view[0], -glyph.direction_view[1]],
+            paper: glyph.paper,
+            text: glyph.text,
+        })
+        .collect();
+    Ok(PlotSequence {
+        page_mm: [width_pt * MM_PER_PT, height_pt * MM_PER_PT],
+        strokes: device.sequence,
+        glyphs,
+    })
+}
+
 /// Run the first page of a PDF through an [`InkDevice`] that keeps the
 /// segments and glyphs `painted` names.
 fn interpret(pdf_bytes: &[u8], painted: Painted) -> Result<InkDevice, PlotReadError> {
@@ -328,6 +410,8 @@ fn interpret(pdf_bytes: &[u8], painted: Painted) -> Result<InkDevice, PlotReadEr
         edges: Vec::new(),
         ends: BTreeMap::new(),
         inks: BTreeMap::new(),
+        step: 0,
+        sequence: Vec::new(),
     };
     interpret_page(page, &mut ctx, &mut device);
     Ok(device)
@@ -343,6 +427,11 @@ struct RawGlyph {
     /// The name the PDF gives the glyph's font, without a subset's tag; empty
     /// when the interpreter has none for it.
     face: String,
+    /// The device's count of painted paths and glyphs when this one was
+    /// painted.
+    step: u32,
+    /// Whether it is lettered in the paper's own colour.
+    paper: bool,
 }
 
 /// Whether `paint` is the paper's own colour: opaque white, in whatever
@@ -379,6 +468,12 @@ struct InkDevice {
     ends: BTreeMap<(LineCap, LineJoin), EndsTally>,
     /// The colours the page inks in: paths and glyphs under each.
     inks: BTreeMap<Option<[u8; 4]>, (usize, usize)>,
+    /// How many paths and glyphs have been painted so far: the place of the
+    /// next one in the page's painting order.
+    step: u32,
+    /// Every printed piece of every path, in painting order, whatever it is
+    /// painted in and whatever `painted` keeps.
+    sequence: Vec<PaintedStroke>,
 }
 
 /// The inked stroked paths under one cap and join.
@@ -597,6 +692,18 @@ impl<'a> Device<'a> for InkDevice {
             }
             PathEl::QuadTo(_, _) | PathEl::CurveTo(_, _, _) => {}
         });
+        // Every path takes a place in the painting order, and what it
+        // prints is filed under that place in the paper's colour or not.
+        let step = self.step;
+        self.step += 1;
+        let filled = ends.is_none();
+        self.sequence
+            .extend(printed.iter().cloned().map(|segment| PaintedStroke {
+                step,
+                segment,
+                paper,
+                filled,
+            }));
         // A path that prints nothing — every piece outside its clip, or
         // painted in the paper's colour — states no ink and shows no end.
         if paper || printed_pt <= 0.0 {
@@ -632,6 +739,9 @@ impl<'a> Device<'a> for InkDevice {
         if !paints_paper(paint) && !text.chars().all(char::is_whitespace) {
             self.inks.entry(rgba_of(paint)).or_default().1 += 1;
         }
+        // Every glyph takes a place in the painting order, kept or not.
+        let step = self.step;
+        self.step += 1;
         if !self.keeps(paint) {
             return;
         }
@@ -682,6 +792,8 @@ impl<'a> Device<'a> for InkDevice {
             advance_pt,
             font_key,
             face,
+            step,
+            paper: paints_paper(paint),
         });
     }
 }
@@ -1348,6 +1460,53 @@ mod tests {
                 paths: 4,
                 glyphs: 0,
             }]
+        );
+    }
+
+    /// What is painted later lies on top, and the reader says which that
+    /// is: every path and every glyph has its place in one count.
+    #[test]
+    fn a_page_is_read_in_the_order_it_is_painted() {
+        use super::read_plot_sequence;
+        // A black rule, a white stroke across it, a second black rule, and
+        // a filled triangle: four paths, the white one second.
+        let content = "0.48 w 0 G 10 10 m 60 10 l S \
+            1 G 30 5 m 30 15 l S \
+            0 G 10 20 m 60 20 l 60 30 l S \
+            0 g 10 60 m 20 60 l 20 70 l h f";
+        let page = read_plot_sequence(&one_page_pdf(content, 100.0)).expect("read");
+        let steps: Vec<(u32, bool, bool)> = page
+            .strokes
+            .iter()
+            .map(|stroke| (stroke.step, stroke.paper, stroke.filled))
+            .collect();
+        assert_eq!(
+            steps,
+            vec![
+                (0, false, false),
+                (1, true, false),
+                // Both legs of the third path under the path's one step.
+                (2, false, false),
+                (2, false, false),
+                // The triangle's three edges.
+                (3, false, true),
+                (3, false, true),
+                (3, false, true),
+            ]
+        );
+        let mm = 25.4 / 72.0;
+        // The white stroke where it is, in the paper's millimetres.
+        let white = &page.strokes[1].segment;
+        assert!((white.start_mm[0] - 30.0 * mm).abs() < 1e-9, "{white:?}");
+        assert!((white.width_mm - 0.48 * mm).abs() < 1e-6, "{white:?}");
+        assert!(page.glyphs.is_empty());
+        // The reading that keeps no order is what it was.
+        assert_eq!(
+            read_plot(&one_page_pdf(content, 100.0))
+                .expect("read")
+                .segments
+                .len(),
+            7
         );
     }
 

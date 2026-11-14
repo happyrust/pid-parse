@@ -43,7 +43,77 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::fonts::typeface_key;
-use crate::model::{PaperModel, PaperShape};
+use crate::model::{BorderTemplate, PaperModel, PaperShape};
+
+/// A border template put past its paper's corner by a sheet's frame, as a
+/// vendor's plot shows it printed.
+///
+/// A frame may place its template off the corner of the paper, and then the
+/// top and the right edge of the template's outline lie off the paper. What
+/// a plot does with that ink is read off a plot, and a plot shows it for the
+/// template and the offset it was plotted with and for no other: a different
+/// offset puts different pieces off the paper, and another template is
+/// another outline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaperEdgeWitness {
+    /// The template's file name without its extension.
+    pub template: &'static str,
+    /// Where the frame puts the template, paper millimetres
+    /// ([`BorderTemplate::offset_mm`]), to the micrometre.
+    pub offset_mm: [f64; 2],
+    /// The drawing whose reference plot shows it, by its file name without
+    /// the extension; the plot is the `.pdf` beside it.
+    pub plot: &'static str,
+}
+
+/// Every template placement past a paper's corner that a reference plot
+/// shows.
+///
+/// One row. Of the eleven sheets that have a vendor's plot ten wear their
+/// template on the paper's corner, where nothing of it is past the paper,
+/// and one — the A2 sheet `轻烃分离器I气出口接口位置改造` — wears
+/// `CPECCHB-SQ-A2` at (0.388407, 0.565648) mm. Its plot is what shows that
+/// the outline's ink past the paper is not printed: of the 4 586 `m` / `l`
+/// operands of its content stream four lie outside the page box, all in the
+/// outline's own path.
+///
+/// This is data, and the acceptance gate holds it to the corpus: each row
+/// names a sheet of the gate's that wears that template at that offset, and
+/// no sheet of the gate's wears a template off its corner without a row
+/// (`reference_plots_acceptance.rs`). A new plot of an offset template is a
+/// new row here, and the ledger then files that placement as witnessed.
+pub const PAPER_EDGE_WITNESSES: [PaperEdgeWitness; 1] = [PaperEdgeWitness {
+    template: "CPECCHB-SQ-A2",
+    offset_mm: [0.388_407, 0.565_648],
+    plot: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+}];
+
+/// How near a template's offset has to be to a witnessed one to be it, in
+/// millimetres: a micrometre, the precision the rows are stated to.
+pub const PAPER_EDGE_OFFSET_SLACK_MM: f64 = 0.001;
+
+/// The reference plot that shows `template` placed as it is, if one does:
+/// the row of [`PAPER_EDGE_WITNESSES`] with its file name and its offset.
+///
+/// A template the frame scales is no row's: every plot on hand draws its
+/// template 1:1.
+#[must_use]
+pub fn paper_edge_witness(template: &BorderTemplate) -> Option<&'static PaperEdgeWitness> {
+    let leaf = leaf_name(&template.path);
+    let stem = leaf
+        .rsplit_once('.')
+        .map_or(leaf.as_str(), |(stem, _extension)| stem);
+    #[allow(clippy::float_cmp)]
+    let drawn_one_to_one = template.scale == 1.0;
+    PAPER_EDGE_WITNESSES.iter().find(|witness| {
+        drawn_one_to_one
+            && witness.template.eq_ignore_ascii_case(stem)
+            && (0..2).all(|axis| {
+                (witness.offset_mm[axis] - template.offset_mm[axis]).abs()
+                    <= PAPER_EDGE_OFFSET_SLACK_MM
+            })
+    })
+}
 
 /// One dimension of the style vocabulary a page draws with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -369,6 +439,7 @@ mod tests {
             template: None,
             primitives,
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -388,6 +459,67 @@ mod tests {
             primitives: 0,
             symbols: Vec::new(),
         }
+    }
+
+    /// `path` placed at `offset_mm`, drawn 1:1.
+    fn placed(path: &str, offset_mm: [f64; 2]) -> crate::model::BorderTemplate {
+        crate::model::BorderTemplate {
+            offset_mm,
+            ..template(path)
+        }
+    }
+
+    #[test]
+    fn the_a2_template_is_witnessed_at_the_offset_its_plot_shows() {
+        // Wherever the file was read from: a share's directory or a
+        // backup's archive.
+        for path in [
+            r"C:\Ref\Template Files\CPECCHB-SQ-A2.igr",
+            r"C:\pkg\RefData~4~682.zip\CPECCHB-SQ-A2.igr",
+            "/corpus/Ref/Template Files/cpecchb-sq-a2.IGR",
+        ] {
+            let witness = paper_edge_witness(&placed(path, [0.388_407, 0.565_648]))
+                .unwrap_or_else(|| panic!("{path}: no witness"));
+            assert_eq!(witness.template, "CPECCHB-SQ-A2");
+            assert!(witness.plot.contains("轻烃分离器I"));
+        }
+        // The offset as a layout computes it, the last bits off the row's.
+        assert!(
+            paper_edge_witness(&placed("CPECCHB-SQ-A2.igr", [0.388_407_4, 0.565_647_6])).is_some()
+        );
+    }
+
+    #[test]
+    fn a_placement_no_plot_shows_has_no_witness() {
+        // The six sheets of the plant backup that wear a template off the
+        // paper's corner without a plot of it: the template with a plot of
+        // another placement, and the template with no plot at all.
+        for (path, offset_mm) in [
+            ("CPE-SQ-A0.igr", [0.152_593, 0.152_593]),
+            ("CPECCHB-SQ-A1.igr", [1.297_400, 1.553_387]),
+            ("CPECCHB-SQ-A1.igr", [0.150_015, 0.399_965]),
+            ("CPE-SQ-A1.igr", [1.042_526, 1.042_526]),
+            ("CPE-SQ-A1.igr", [0.768_634, 0.768_634]),
+            // The witnessed template somewhere its plot does not show it.
+            ("CPECCHB-SQ-A2.igr", [0.150_015, 0.399_965]),
+            ("CPECCHB-SQ-A2.igr", [0.388_407, 0.565_648 + 0.002]),
+            ("CPECCHB-SQ-A2.igr", [0.388_407 - 0.002, 0.565_648]),
+            ("CPECCHB-SQ-A2.igr", [0.0, 0.0]),
+            // Another file whose name only begins the same.
+            ("CPECCHB-SQ-A2 - New.igr", [0.388_407, 0.565_648]),
+        ] {
+            assert_eq!(
+                paper_edge_witness(&placed(path, offset_mm)),
+                None,
+                "{path} at {offset_mm:?}"
+            );
+        }
+        // The witnessed template at the witnessed offset, scaled.
+        let scaled = crate::model::BorderTemplate {
+            scale: 2.0,
+            ..placed("CPECCHB-SQ-A2.igr", [0.388_407, 0.565_648])
+        };
+        assert_eq!(paper_edge_witness(&scaled), None);
     }
 
     #[test]

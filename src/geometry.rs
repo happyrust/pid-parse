@@ -980,6 +980,20 @@ fn decoded_page_frame(doc: &PidDocument) -> Option<PageFrame> {
     Some(PageFrame { width_m, height_m })
 }
 
+/// The page the drawing's own border frames state, in millimetres, when
+/// they state one between them: the half of
+/// [`NormalizedPidGeometry::page_dimensions_mm`] that is a reading.
+///
+/// `None` for a drawing no frame of which gives a page — it carries none,
+/// its frames disagree, or its stream was not read as far as one. The page
+/// dimensions such a drawing has, if it has any, are the size the name of
+/// its template stands for, which is a name and not a measurement; a caller
+/// that says where a page came from tells the two apart here.
+#[must_use]
+pub fn framed_page_dimensions_mm(doc: &PidDocument) -> Option<(f64, f64)> {
+    decoded_page_frame(doc).map(PageFrame::dimensions_mm)
+}
+
 /// Whether two framed extents are the same page, to the bit.
 fn same_extent(a: (f64, f64), b: (f64, f64)) -> bool {
     a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits()
@@ -3362,6 +3376,12 @@ const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
 /// ([`crate::style_link::line_styles_for_document`]). The drawings' own are
 /// in symbol bodies, and reach the page through
 /// [`NormalizedPidGeometry::symbol_definitions`].
+///
+/// The decoder hands over no record of a degree past
+/// [`crate::bspline::MAX_DEGREE`]; a model that was not read from bytes can
+/// hold one, and it is emitted as its poles, as every record
+/// [`crate::bspline::sample`] cannot evaluate is -- in bounded time, which
+/// is what the bound is for.
 struct IgBspCurve2dEmitter;
 
 impl GeometryEmitter for IgBspCurve2dEmitter {
@@ -5533,6 +5553,121 @@ mod tests {
         assert_eq!(account.emitted, 1);
         assert_eq!(account.out_of_range, 0);
         assert_eq!(account.shape_rejected, 2);
+    }
+
+    /// One `igBspCurve2d` record of `poles` poles on a zigzag, under the
+    /// clamped knot vector of `degree` and the weights given.
+    fn ig_bsp_curve_of_degree(
+        poles: usize,
+        degree: usize,
+        weights: Vec<f64>,
+    ) -> DecodedIgBspCurve2dRecord {
+        let spans = poles - degree;
+        let mut knots = vec![0.0; degree + 1];
+        knots.extend((1..spans).map(|span| span as f64));
+        knots.extend(std::iter::repeat_n(spans as f64, degree + 1));
+        DecodedIgBspCurve2dRecord {
+            pole_xs: (0..poles).map(|index| index as f64 * 0.001).collect(),
+            pole_ys: (0..poles).map(|index| (index % 2) as f64 * 0.001).collect(),
+            weights,
+            knots,
+            ..ig_bsp_curve(0)
+        }
+    }
+
+    /// The geometry of a sheet that holds just `curve`, if it is built within
+    /// ten seconds — the bound a case of `tests/arbitrary_bytes_never_panic.rs`
+    /// is held to. The build runs on a thread of its own, which is left
+    /// running when it is not.
+    fn emitted_in_time(curve: DecodedIgBspCurve2dRecord) -> Option<NormalizedPidGeometry> {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(sheet_stream_with(
+            SheetGeometry {
+                decoded_igbspcurves: vec![curve],
+                ..SheetGeometry::default()
+            },
+            4096,
+        ));
+        let (answer, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = answer.send(build_normalized_geometry(&doc));
+        });
+        wait.recv_timeout(std::time::Duration::from_secs(10)).ok()
+    }
+
+    /// The points of the one polyline `geometry` holds.
+    fn the_polyline(geometry: &NormalizedPidGeometry) -> &[PidPoint] {
+        assert_eq!(geometry.entities.len(), 1);
+        match &geometry.entities[0].kind {
+            PidGraphicKind::Polyline { points, closed } => {
+                assert!(!*closed);
+                points
+            }
+            other => panic!("a B-spline is emitted as a polyline, not {other:?}"),
+        }
+    }
+
+    /// A record does not have to come from the decoder — a model can be built
+    /// by hand or read back from JSON — so the emitter cannot count on the
+    /// decoder's bound, and the evaluation keeps its own: a curve of any
+    /// degree is emitted in bounded time. 4 096 poles at degree 1 024 took
+    /// 358 seconds in a debug build; at degree 2 730 the same poles asked
+    /// for three times that. Past `bspline::MAX_DEGREE` the record is drawn
+    /// as its poles, like any other that `bspline::sample` cannot evaluate.
+    #[test]
+    fn a_bspline_of_any_degree_is_emitted_in_bounded_time() {
+        const POLES: usize = 4096;
+        let highest = crate::bspline::MAX_DEGREE;
+        for (degree, points) in [
+            (1024, POLES),
+            (2730, POLES),
+            (highest + 1, POLES),
+            (highest, BSPLINE_SEGMENTS_PER_SPAN * (POLES - highest) + 1),
+        ] {
+            let geometry = emitted_in_time(ig_bsp_curve_of_degree(POLES, degree, Vec::new()))
+                .unwrap_or_else(|| {
+                    panic!("{POLES} poles at degree {degree} were not emitted in ten seconds")
+                });
+            let emitted = the_polyline(&geometry);
+            assert_eq!(emitted.len(), points, "degree {degree}");
+            assert!(emitted
+                .iter()
+                .all(|point| point.x.is_finite() && point.y.is_finite()));
+            let account = geometry
+                .emitter_account("/Sheet6", "igBspCurve2d")
+                .expect("the igBspCurve2d emitter must account for its stream");
+            assert_eq!(
+                (account.decoded, account.emitted, account.shape_rejected),
+                (1, 1, 0),
+                "degree {degree}"
+            );
+        }
+    }
+
+    /// The decoder takes any weight that is finite and above zero, and the
+    /// curve such weights state is drawn, whatever their size: weights that
+    /// are all alike draw the unweighted curve. Until 2026-11-12 weights
+    /// under `f64::EPSILON` drew every point of the curve at the origin, and
+    /// weights near the largest number drew points that are not numbers.
+    #[test]
+    fn a_bspline_under_weights_of_any_size_is_emitted_as_its_curve() {
+        let plain = emitted_in_time(ig_bsp_curve_of_degree(12, 3, Vec::new()))
+            .expect("twelve poles are emitted in time");
+        let plain = the_polyline(&plain);
+        assert_eq!(plain.len(), BSPLINE_SEGMENTS_PER_SPAN * 9 + 1);
+        for weight in [5e-324, 1e-300, 1e-20, 1.0, 1e20, 1e308] {
+            let weighted = emitted_in_time(ig_bsp_curve_of_degree(12, 3, vec![weight; 12]))
+                .expect("twelve poles are emitted in time");
+            let weighted = the_polyline(&weighted);
+            assert_eq!(weighted.len(), plain.len(), "weights of {weight:e}");
+            for (point, unweighted) in weighted.iter().zip(plain) {
+                assert!(
+                    (point.x - unweighted.x).abs() < 1e-12
+                        && (point.y - unweighted.y).abs() < 1e-12,
+                    "weights of {weight:e}: {point:?} against {unweighted:?}"
+                );
+            }
+        }
     }
 
     /// Every emitting family's row never claims more entities than it decoded,

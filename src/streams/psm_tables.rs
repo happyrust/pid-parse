@@ -65,7 +65,121 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
     parse_space_maps(cfb, doc);
     parse_sheet_layers(cfb, doc);
     link_embedded_definitions(doc);
+    parse_sheet_display_order(cfb, doc);
     Ok(())
+}
+
+/// Read the display order of every top-level sheet: the document storage's
+/// `PSMcluster0` holds one `JSheet` record per `Sheet<N>` stream, and that
+/// record lists the sheet's objects in the order it draws them
+/// ([`crate::parsers::sheet_display_order`]).
+///
+/// A sheet a frame of the drawing embeds — a stream `Sheet<M>` in the
+/// storage `JSite<N>` of the frame's site — is read the same way from that
+/// storage's own `PSMcluster0`, into
+/// [`PidDocument::embedded_sheet_display_order`], with the place the
+/// drawing lists the frame at
+/// ([`crate::parsers::sheet_display_order::smart_frame_sites`]).
+///
+/// A sheet of either kind that comes out with no order is entered in
+/// [`PidDocument::sheet_without_display_order`] with the reason.
+///
+/// A definition cache's `PSMcluster0` is a symbol body, whose records the
+/// placement draws in the order the body decodes them; nothing yet reads a
+/// list for those.
+fn parse_sheet_display_order<R: Read + std::io::Seek>(
+    cfb: &mut ::cfb::CompoundFile<R>,
+    doc: &mut PidDocument,
+) {
+    use crate::parsers::sheet_display_order::{
+        sheet_display_order_or_why, smart_frame_sites, EmbeddedSheetOrder, EmbeddingFrame,
+        NoDisplayOrder,
+    };
+
+    let paths: Vec<String> = cfb
+        .walk()
+        .filter(::cfb::Entry::is_stream)
+        .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+        .collect();
+    let sheets: Vec<(String, u32)> = paths
+        .iter()
+        .filter_map(|path| {
+            let oid = path.strip_prefix("/Sheet")?.parse::<u32>().ok()?;
+            Some((path.clone(), oid))
+        })
+        .collect();
+    if sheets.is_empty() {
+        return;
+    }
+    let Ok(Some(cluster)) = open_optional(cfb, "/PSMcluster0") else {
+        for (path, _) in sheets {
+            doc.sheet_without_display_order
+                .insert(path, NoDisplayOrder::NoCluster);
+        }
+        return;
+    };
+    // The frame that names each site, as the stream it is in and the offset
+    // of its record; the first one, should two name the same site.
+    let mut frames: BTreeMap<u32, (String, usize)> = BTreeMap::new();
+    for (path, oid) in sheets {
+        let Ok(Some(sheet)) = open_optional(cfb, &path) else {
+            continue;
+        };
+        for (at, site) in smart_frame_sites(&sheet) {
+            frames.entry(site).or_insert_with(|| (path.clone(), at));
+        }
+        match sheet_display_order_or_why(&cluster, &sheet, oid) {
+            Ok(order) => {
+                doc.sheet_display_order.insert(path, order);
+            }
+            Err(why) => {
+                doc.sheet_without_display_order.insert(path, why);
+            }
+        }
+    }
+    // The sheets nested one storage down, `/JSite<N>/Sheet<M>`: what the
+    // frame whose site is `N` embeds.
+    let embedded: Vec<(String, u32, u32)> = paths
+        .iter()
+        .filter_map(|path| {
+            let (storage, sheet) = path.strip_prefix("/JSite")?.split_once('/')?;
+            let site = storage.parse::<u32>().ok()?;
+            let oid = sheet.strip_prefix("Sheet")?.parse::<u32>().ok()?;
+            Some((path.clone(), site, oid))
+        })
+        .collect();
+    let mut clusters: BTreeMap<u32, Option<Vec<u8>>> = BTreeMap::new();
+    for (path, site, oid) in embedded {
+        let cluster = clusters.entry(site).or_insert_with(|| {
+            open_optional(cfb, &format!("/JSite{site}/PSMcluster0"))
+                .ok()
+                .flatten()
+        });
+        let Some(cluster) = cluster.as_deref() else {
+            doc.sheet_without_display_order
+                .insert(path, NoDisplayOrder::NoCluster);
+            continue;
+        };
+        let Ok(Some(sheet)) = open_optional(cfb, &path) else {
+            continue;
+        };
+        let order = match sheet_display_order_or_why(cluster, &sheet, oid) {
+            Ok(order) => order,
+            Err(why) => {
+                doc.sheet_without_display_order.insert(path, why);
+                continue;
+            }
+        };
+        let frame = frames.get(&site).and_then(|(stream_path, at)| {
+            let rank = *doc.sheet_display_order.get(stream_path)?.ranks.get(at)?;
+            Some(EmbeddingFrame {
+                stream_path: stream_path.clone(),
+                rank,
+            })
+        });
+        doc.embedded_sheet_display_order
+            .insert(path, EmbeddedSheetOrder { order, frame });
+    }
 }
 
 /// Group each definition cache's records into symbol bodies.

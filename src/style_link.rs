@@ -5044,7 +5044,7 @@ mod tests {
         for fixture in fixtures {
             let path = Path::new(fixture);
             if !path.is_file() {
-                eprintln!("skipping {fixture}: not checked out");
+                eprintln!("skipping: {fixture} is not checked out");
                 continue;
             }
             let doc = crate::api::PidParser::new()
@@ -5126,7 +5126,7 @@ mod tests {
     fn the_file_shell_is_the_document_route_after_one_parse() {
         let path = Path::new("test-file/D06.pid");
         if !path.is_file() {
-            eprintln!("skipping test-file/D06.pid: not checked out");
+            eprintln!("skipping: test-file/D06.pid is not checked out");
             return;
         }
         let doc = crate::api::PidParser::new()

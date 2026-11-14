@@ -189,7 +189,9 @@ impl ParseAccount {
 pub struct RecordItem {
     /// Which drop this is.
     pub reason: DropReason,
-    /// The Sheet stream's path, or the storage path for a body record.
+    /// The Sheet stream's path, or the storage path for a body record; for
+    /// [`DropReason::SymbolFileChainFault`], the symbol file and the stream
+    /// of it, `<file>:<stream>`.
     pub stream: String,
     /// The PSM type code, written and read as `0xNNNN`.
     #[serde(
@@ -204,7 +206,8 @@ pub struct RecordItem {
     /// How many records.
     pub count: u64,
     /// The stream's byte size, for
-    /// [`DropReason::SheetStreamWithoutGeometry`].
+    /// [`DropReason::SheetStreamWithoutGeometry`]; the bytes the stream's
+    /// chain left unread, for [`DropReason::SymbolFileChainFault`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// How many body primitives an unplaced cache definition carries, for
@@ -510,6 +513,59 @@ impl ExportLedger {
                 });
             }
         }
+        // A paper that was read and is not the border frame's is not the
+        // page: the page is the frame's rectangle, and the two rectangles
+        // are the site.
+        if let Some(refused) = &ledger.paper_refused {
+            page.dropped.insert(DropReason::PaperUnlikeTheFrame, 1);
+            page.suspect_sites.push(SuspectSite {
+                reason: DropReason::PaperUnlikeTheFrame,
+                stream: None,
+                oid: None,
+                bytes: None,
+                type_code: None,
+                family: None,
+                name: Some(refused.sides()),
+                count: 1,
+            });
+        }
+        // A paper that is the page, beside a template's name that states
+        // another size and no frame to say which the sheet is: nothing is
+        // left undrawn for it, and the two sizes are the site.
+        if let Some(beside) = &ledger.paper_unlike_the_name {
+            page.dropped
+                .insert(DropReason::PaperUnlikeTheTemplateName, 1);
+            page.suspect_sites.push(SuspectSite {
+                reason: DropReason::PaperUnlikeTheTemplateName,
+                stream: None,
+                oid: None,
+                bytes: None,
+                type_code: None,
+                family: None,
+                name: Some(beside.sides()),
+                count: 1,
+            });
+        }
+        // A border frame of the drawing's own sheet that the frame rule
+        // refuses: the page is laid out without it. The record is the
+        // site, with why it is refused; its stream's parse account counts
+        // the record itself among the refused.
+        if !ledger.frames_refused.is_empty() {
+            let count = u64::try_from(ledger.frames_refused.len()).unwrap_or(u64::MAX);
+            page.dropped.insert(DropReason::PageFrameRefused, count);
+            for refused in &ledger.frames_refused {
+                page.suspect_sites.push(SuspectSite {
+                    reason: DropReason::PageFrameRefused,
+                    stream: Some(refused.stream.clone()),
+                    oid: refused.oid,
+                    bytes: None,
+                    type_code: Some(pid_parse::parsers::sheet_records::PSM_TYPE_CODE_IGSMARTFRAME),
+                    family: Some("igSmartFrame2d".to_string()),
+                    name: Some(refused.why.clone()),
+                    count: 1,
+                });
+            }
+        }
         // A template candidate that could not be read or parsed is the other
         // page-level suspect drop; its site is the candidate's own name.
         let unreadable = u64::try_from(ledger.template_unreadable.len()).unwrap_or(u64::MAX);
@@ -687,11 +743,26 @@ impl ExportLedger {
                     .copied()
                     .unwrap_or(0),
             );
-        let expected = u64::try_from(model.primitives_past_the_edge(PAST_THE_EDGE_SLACK_MM).len())
-            .unwrap_or(u64::MAX);
+        // The mark is a partial one: it is given to a primitive that is on
+        // the page. One the writer leaves off altogether — a stroke the
+        // sheet's frame holds wholly past the paper — reaches past the edge
+        // and is no mark, so the count it is held to is of the ones written.
+        let written = |primitive: &crate::model::PaperPrimitive| {
+            model
+                .resolved_page_mm()
+                .is_none_or(|page| crate::write::primitive_verdict(primitive, page).is_on_page())
+        };
+        let expected = u64::try_from(
+            model
+                .primitives_past_the_edge(PAST_THE_EDGE_SLACK_MM)
+                .into_iter()
+                .filter(|primitive| written(primitive))
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
         if past != expected {
             mismatches.push(format!(
-                "8.7 past_the_edge {past} != primitives_past_the_edge(0.5) {expected}"
+                "8.7 past_the_edge {past} != primitives_past_the_edge(0.5) on the page {expected}"
             ));
         }
         mismatches
@@ -747,6 +818,55 @@ impl std::fmt::Display for LedgerSummary {
     }
 }
 
+/// The code a domain files a segment under when its whole pen lies past an
+/// edge of the page.
+///
+/// The writer states that one fact one way, [`DropReason::SegmentBeyondThePaper`],
+/// and does not print the segment whoever drew it. What it says of the page
+/// depends on whose it is, and the account files it three ways:
+///
+/// - a border template placed as a vendor's plot shows it
+///   ([`crate::witness::paper_edge_witness`]) keeps the code: the plot is the
+///   witness that this ink is not printed;
+/// - a border template no plot shows placed so is filed under
+///   [`DropReason::SegmentBeyondThePaperNoPlotOfTemplate`] — the same rule,
+///   carried over to a placement it was not read from, and counted apart so
+///   that the two are not one number;
+/// - a stroke of the drawing's own off its own page is not something any
+///   plot shows, and is the suspect
+///   [`DropReason::DrawingSegmentBeyondThePaper`].
+#[derive(Debug, Clone, Copy)]
+struct PaperEdge(DropReason);
+
+impl PaperEdge {
+    fn of(domain: LedgerDomain, model: &PaperModel) -> Self {
+        match domain {
+            LedgerDomain::Drawing => Self(DropReason::DrawingSegmentBeyondThePaper),
+            LedgerDomain::Furniture => {
+                let plotted = model
+                    .template
+                    .as_ref()
+                    .and_then(crate::witness::paper_edge_witness)
+                    .is_some();
+                Self(if plotted {
+                    DropReason::SegmentBeyondThePaper
+                } else {
+                    DropReason::SegmentBeyondThePaperNoPlotOfTemplate
+                })
+            }
+        }
+    }
+
+    /// `reason` as this domain files it.
+    fn files(self, reason: DropReason) -> DropReason {
+        if reason == DropReason::SegmentBeyondThePaper {
+            self.0
+        } else {
+            reason
+        }
+    }
+}
+
 /// One domain's whole account.
 fn assemble_domain(
     domain: LedgerDomain,
@@ -755,6 +875,7 @@ fn assemble_domain(
     write: &WriteLedger,
     past_the_edge: &BTreeSet<usize>,
 ) -> DomainAccount {
+    let paper_edge = PaperEdge::of(domain, model);
     let mut account = DomainAccount {
         parse: parse_account(ledger.parse.get(domain)),
         ..DomainAccount::default()
@@ -800,21 +921,20 @@ fn assemble_domain(
         }
     }
 
+    let facts = PageFacts {
+        write,
+        claimed: &claimed,
+        removed: &removed,
+        past_the_edge,
+        paper_edge,
+    };
     let mut cross: BTreeMap<EntityKind, BTreeMap<Confidence, BTreeMap<String, u64>>> =
         BTreeMap::new();
     for (index, record) in ledger.entities.iter().enumerate() {
         if record.domain != domain {
             continue;
         }
-        let outcome = entity_outcome(
-            index,
-            record,
-            write,
-            &claimed,
-            &removed,
-            past_the_edge,
-            &mut account,
-        );
+        let outcome = entity_outcome(index, record, &facts, &mut account);
         let entry = cross
             .entry(record.kind.clone())
             .or_default()
@@ -893,6 +1013,7 @@ fn assemble_domain(
                 }
             }
             PrimitiveOutcome::Dropped(reason) => {
+                let reason = paper_edge.files(reason);
                 let entry = account.primitives.dropped.entry(reason).or_insert(0);
                 *entry = entry.saturating_add(1);
                 if reason.tier() == Tier::Suspect {
@@ -919,6 +1040,7 @@ fn assemble_domain(
             (DropReason::SegmentNonFinite, fate.segments.non_finite),
             (DropReason::SegmentTooShort, fate.segments.too_short),
             (DropReason::SegmentOnSheetEdge, fate.segments.on_sheet_edge),
+            (paper_edge.0, fate.segments.beyond_the_paper),
         ] {
             if count > 0 {
                 let entry = account.segments.dropped.entry(reason).or_insert(0);
@@ -987,21 +1109,38 @@ fn assemble_domain(
     account
 }
 
+/// What a domain's entities are judged by: the page's own facts, the same
+/// for every entity of the domain.
+struct PageFacts<'a> {
+    /// The writer's verdict on each page primitive.
+    write: &'a WriteLedger,
+    /// The page primitives each entity claimed, in model order.
+    claimed: &'a BTreeMap<usize, Vec<usize>>,
+    /// How many primitives of each entity the layout's `retain` removed.
+    removed: &'a BTreeMap<usize, u64>,
+    /// The primitive-level A.6 mark, already resolved by
+    /// [`assemble_domain`]'s caller; the entity-level partial count reads
+    /// the same set so the two layers can never disagree about a primitive
+    /// that reaches past the sheet.
+    past_the_edge: &'a BTreeSet<usize>,
+    /// How this domain files a segment past the paper's edge.
+    paper_edge: PaperEdge,
+}
+
 /// One entity's outcome, counted into `account` (requirement 1).
-///
-/// `past_the_edge` is the primitive-level A.6 mark, already resolved by
-/// [`assemble_domain`]'s caller; the entity-level partial count reads the same
-/// set so the two layers can never disagree about a primitive that reaches
-/// past the sheet.
 fn entity_outcome(
     index: usize,
     record: &EntityRecord,
-    write: &WriteLedger,
-    claimed: &BTreeMap<usize, Vec<usize>>,
-    removed: &BTreeMap<usize, u64>,
-    past_the_edge: &BTreeSet<usize>,
+    facts: &PageFacts<'_>,
     account: &mut DomainAccount,
 ) -> EntityVerdict {
+    let PageFacts {
+        write,
+        claimed,
+        removed,
+        past_the_edge,
+        paper_edge,
+    } = *facts;
     // 1. the layout layer already answered.
     if let Some(reason) = record.dropped {
         count_entity_drop(account, reason);
@@ -1039,7 +1178,7 @@ fn entity_outcome(
             {
                 partial = true;
             }
-        } else if let Some(reason) = fate.reason() {
+        } else if let Some(reason) = fate.reason().map(|reason| paper_edge.files(reason)) {
             // Design deviation I2: an entity is partially on the page when one
             // of its page primitives carries an A.6 mark *or one of them did
             // not reach the page at all*. This is the second half of that
@@ -1805,6 +1944,7 @@ mod tests {
             template: None,
             primitives,
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
             missing_templates: Vec::new(),
@@ -2123,6 +2263,7 @@ mod tests {
                                     non_finite: 0,
                                     too_short: 0,
                                     on_sheet_edge: 1,
+                                    beyond_the_paper: 0,
                                 },
                                 segments_dropped: true,
                                 text: None,
@@ -2305,6 +2446,7 @@ mod tests {
                             non_finite,
                             too_short,
                             on_sheet_edge: on_edge,
+                            beyond_the_paper: 0,
                         },
                         segments_dropped,
                         text: None,
@@ -2448,6 +2590,7 @@ mod tests {
                 non_finite: 0,
                 too_short: 0,
                 on_sheet_edge: 1,
+                beyond_the_paper: 0,
             },
             segments_dropped: true,
             text: None,
@@ -2505,6 +2648,7 @@ mod tests {
                 non_finite: 0,
                 too_short: 0,
                 on_sheet_edge: 1,
+                beyond_the_paper: 0,
             },
             segments_dropped: true,
             text: None,
@@ -2782,10 +2926,22 @@ mod tests {
         assert!(mismatches[0].starts_with("8.6"), "{mismatches:?}");
 
         // 8.7: the page has ink past the edge and the ledger never marked it.
-        model.primitives = vec![a_line([10.0, 10.0], [841.9, 10.0])];
+        model.primitives = vec![a_line([800.0, 10.0], [841.9, 10.0])];
         let mismatches = assembled.cross_check(&model, None, None);
         assert_eq!(mismatches.len(), 1, "{mismatches:?}");
         assert!(mismatches[0].starts_with("8.7"), "{mismatches:?}");
+        // A stroke the writer leaves off the page altogether is past the
+        // edge and owes no mark: one that lies wholly beyond the paper, and
+        // one the reader takes for the sheet's own edge.
+        for unwritten in [
+            a_line([841.9, 10.0], [841.9, 90.0]),
+            a_line([10.0, 10.0], [841.9, 10.0]),
+        ] {
+            model.primitives = vec![unwritten];
+            assert_eq!(model.primitives_past_the_edge(0.5).len(), 1);
+            let mismatches = assembled.cross_check(&model, None, None);
+            assert!(mismatches.is_empty(), "{mismatches:?}");
+        }
     }
 
     #[test]

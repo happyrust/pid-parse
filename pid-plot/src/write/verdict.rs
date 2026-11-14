@@ -15,7 +15,7 @@
 //! changes what the page draws — the 71-page byte comparison is the guardrail
 //! on the second of those.
 //!
-//! # The eleven reasons, in the appendix's order
+//! # The twelve reasons, in the appendix's order
 //!
 //! | Reason | Where the predicate lives |
 //! |---|---|
@@ -26,6 +26,7 @@
 //! | `segment_non_finite` | [`segment_fate`] |
 //! | `segment_too_short` | [`segment_fate`] |
 //! | `segment_on_sheet_edge` | [`segment_fate`] (furniture exempt) |
+//! | `segment_beyond_the_paper` | [`segment_fate`] |
 //! | `text_empty` | [`text_fate`] |
 //! | `text_placement_non_finite` | [`text_fate`] |
 //! | `text_height_invalid` | [`text_fate`] |
@@ -48,7 +49,7 @@
 use crate::model::{PaperPrimitive, PaperShape, PaperStroke};
 use crate::read::sheet_edge_mm;
 
-use super::{DEFAULT_TEXT_MM, STROKE_MM, finite, hypot, is_plotted, shape_chain};
+use super::{DEFAULT_TEXT_MM, STROKE_MM, finite, hypot, is_plotted, pen_width_mm, shape_chain};
 
 /// A segment shorter than this does not print. The same 1e-4 mm
 /// `stroke_runs` has always used.
@@ -69,8 +70,8 @@ pub enum PrimitiveOutcome {
 ///
 /// A segment is one adjacent vertex pair of the shape's chain, so a stroke with
 /// `n` chain points has `n - 1` of them. `total = written + non_finite +
-/// too_short + on_sheet_edge`; that is the write layer's conservation equation
-/// (requirement 6.3).
+/// too_short + on_sheet_edge + beyond_the_paper`; that is the write layer's
+/// conservation equation (requirement 6.3).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SegmentTally {
     /// Every adjacent pair the shape's chain holds.
@@ -83,6 +84,8 @@ pub struct SegmentTally {
     pub too_short: u64,
     /// Non-furniture pairs the reader calls on the sheet edge.
     pub on_sheet_edge: u64,
+    /// Pairs the whole pen of which lies past one edge of the paper.
+    pub beyond_the_paper: u64,
 }
 
 /// The two ways a written run falls short of the width the drawing set.
@@ -265,14 +268,17 @@ pub(crate) fn pen_fate(width_mm: f64) -> Option<crate::ledger::DropReason> {
 ///
 /// Copied from `stroke_runs`' `prints` expression, in its own order: finite
 /// endpoints first, then the 1e-4 mm floor, then the sheet-edge rule for
-/// anything that is not furniture. `keep_sheet_edge` is `primitive.furniture`
-/// — a border template's outer frame *is* a line along the page edge, so the
-/// furniture domain keeps it while the drawing's own frame rail is dropped.
+/// anything that is not furniture, then the paper's own edge.
+/// `keep_sheet_edge` is `primitive.furniture` — a border template's outer
+/// frame *is* a line along the page edge, so the furniture domain keeps it
+/// while the drawing's own frame rail is dropped. `half_pen_mm` is half the
+/// width the segment is stroked at ([`beyond_the_paper`]).
 pub(crate) fn segment_fate(
     start: [f64; 2],
     end: [f64; 2],
     page_mm: [f64; 2],
     keep_sheet_edge: bool,
+    half_pen_mm: f64,
 ) -> Option<crate::ledger::DropReason> {
     if !finite(start) || !finite(end) {
         Some(crate::ledger::DropReason::SegmentNonFinite)
@@ -280,9 +286,53 @@ pub(crate) fn segment_fate(
         Some(crate::ledger::DropReason::SegmentTooShort)
     } else if !keep_sheet_edge && sheet_edge_mm(start, end, page_mm) {
         Some(crate::ledger::DropReason::SegmentOnSheetEdge)
+    } else if beyond_the_paper(start, end, page_mm, half_pen_mm) {
+        Some(crate::ledger::DropReason::SegmentBeyondThePaper)
     } else {
         None
     }
+}
+
+/// Whether the whole pen of `start` → `end` lies past one edge of the page:
+/// both ends at least `half_pen_mm` beyond the same edge.
+///
+/// Such a segment leaves no ink on the paper, and the reference plots do not
+/// print it. The page is the paper the sheet states, and a border frame may
+/// put its template past the paper's corner: on the A2 reference sheet the
+/// template's outline has its top edge 0.566 mm above the paper and its
+/// right edge 0.328 mm to the right of it, and neither inks the plot — the
+/// top edge is not in the content stream at all.
+///
+/// A segment whose centre line is on the paper's edge, or past it by less
+/// than half its pen, still prints the part of its pen that is on the
+/// paper: the `CPE-SQ` templates' outlines run along the page edge itself
+/// and the reference plots show half of them. A segment that crosses an
+/// edge is written whole and the page box cuts it, as before.
+pub(crate) fn beyond_the_paper(
+    start: [f64; 2],
+    end: [f64; 2],
+    page_mm: [f64; 2],
+    half_pen_mm: f64,
+) -> bool {
+    let reach = if half_pen_mm.is_finite() {
+        half_pen_mm.max(0.0)
+    } else {
+        0.0
+    };
+    // Left, bottom, right, top: how far each end lies past the edge.
+    let past = |point: [f64; 2]| {
+        [
+            -point[0],
+            -point[1],
+            point[0] - page_mm[0],
+            point[1] - page_mm[1],
+        ]
+    };
+    let (start, end) = (past(start), past(end));
+    start
+        .iter()
+        .zip(&end)
+        .any(|(a, b)| *a >= reach && *b >= reach && (*a > 0.0 || *b > 0.0))
 }
 
 /// Why one label is not lettered, if it is not.
@@ -397,6 +447,7 @@ fn stroke_verdict(primitive: &PaperPrimitive, page_mm: [f64; 2]) -> PrimitiveFat
     if chain.len() < 2 {
         return dropped(crate::ledger::DropReason::ChainEmpty);
     }
+    let half_pen_mm = pen_width_mm(pen.width_mm) / 2.0;
     let mut tally = SegmentTally::default();
     let mut first_reason: Option<crate::ledger::DropReason> = None;
     for pair in chain.windows(2) {
@@ -404,7 +455,7 @@ fn stroke_verdict(primitive: &PaperPrimitive, page_mm: [f64; 2]) -> PrimitiveFat
             continue;
         };
         tally.total = tally.total.saturating_add(1);
-        match segment_fate(start, end, page_mm, primitive.furniture) {
+        match segment_fate(start, end, page_mm, primitive.furniture, half_pen_mm) {
             None => tally.written = tally.written.saturating_add(1),
             Some(reason) => {
                 match reason {
@@ -416,6 +467,9 @@ fn stroke_verdict(primitive: &PaperPrimitive, page_mm: [f64; 2]) -> PrimitiveFat
                     }
                     crate::ledger::DropReason::SegmentOnSheetEdge => {
                         tally.on_sheet_edge = tally.on_sheet_edge.saturating_add(1);
+                    }
+                    crate::ledger::DropReason::SegmentBeyondThePaper => {
+                        tally.beyond_the_paper = tally.beyond_the_paper.saturating_add(1);
                     }
                     _ => {}
                 }
@@ -454,11 +508,14 @@ fn stroke_verdict(primitive: &PaperPrimitive, page_mm: [f64; 2]) -> PrimitiveFat
 #[allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        PrimitiveFate, PrimitiveOutcome, SegmentTally, WriteLedger, fill_fate, pen_fate,
-        primitive_verdict, segment_fate, text_fate,
+        PrimitiveFate, PrimitiveOutcome, SegmentTally, WriteLedger, beyond_the_paper, fill_fate,
+        pen_fate, primitive_verdict, segment_fate, text_fate,
     };
     use crate::ledger::DropReason;
     use crate::model::{PaperPrimitive, PaperShape, PaperStroke};
+
+    /// Half the thin pen, the one a template's outline is stroked with.
+    const HALF_PEN: f64 = 0.169 / 2.0;
 
     fn primitive(shape: PaperShape) -> PaperPrimitive {
         PaperPrimitive {
@@ -593,17 +650,17 @@ mod tests {
     fn segment_non_finite_on_either_endpoint() {
         let page = [100.0, 100.0];
         assert_eq!(
-            segment_fate([f64::NAN, 10.0], [50.0, 10.0], page, false),
+            segment_fate([f64::NAN, 10.0], [50.0, 10.0], page, false, HALF_PEN),
             Some(DropReason::SegmentNonFinite)
         );
         assert_eq!(
-            segment_fate([10.0, 10.0], [50.0, f64::INFINITY], page, false),
+            segment_fate([10.0, 10.0], [50.0, f64::INFINITY], page, false, HALF_PEN),
             Some(DropReason::SegmentNonFinite)
         );
         // Finiteness is checked before the length, so a NaN segment is never
         // also "too short".
         assert_eq!(
-            segment_fate([f64::NAN, 10.0], [f64::NAN, 10.0], page, false),
+            segment_fate([f64::NAN, 10.0], [f64::NAN, 10.0], page, false, HALF_PEN),
             Some(DropReason::SegmentNonFinite)
         );
     }
@@ -613,12 +670,18 @@ mod tests {
     fn segment_too_short_at_one_e_minus_four() {
         let page = [100.0, 100.0];
         assert_eq!(
-            segment_fate([0.0, 10.0], [0.9e-4, 10.0], page, false),
+            segment_fate([0.0, 10.0], [0.9e-4, 10.0], page, false, HALF_PEN),
             Some(DropReason::SegmentTooShort)
         );
-        assert_eq!(segment_fate([0.0, 10.0], [1.1e-4, 10.0], page, false), None);
+        assert_eq!(
+            segment_fate([0.0, 10.0], [1.1e-4, 10.0], page, false, HALF_PEN),
+            None
+        );
         // The boundary itself prints: the rule is `>= 1e-4`, not `>`.
-        assert_eq!(segment_fate([0.0, 10.0], [1e-4, 10.0], page, false), None);
+        assert_eq!(
+            segment_fate([0.0, 10.0], [1e-4, 10.0], page, false, HALF_PEN),
+            None
+        );
     }
 
     /// `segment_on_sheet_edge` straddles the reader's 0.8/72 in short side and
@@ -636,27 +699,42 @@ mod tests {
         // A long horizontal run: across-axis difference 0, along-axis 92 of
         // the 100 mm page — on the edge.
         assert_eq!(
-            segment_fate([4.0, 0.2], [96.0, 0.2], page, false),
+            segment_fate([4.0, 0.2], [96.0, 0.2], page, false, HALF_PEN),
             Some(DropReason::SegmentOnSheetEdge)
         );
         // Tilted past the short side (0.35 mm across): not the frame.
         assert_eq!(
-            segment_fate([4.0, 0.2], [96.0, 0.2 + short + 0.07], page, false),
+            segment_fate(
+                [4.0, 0.2],
+                [96.0, 0.2 + short + 0.07],
+                page,
+                false,
+                HALF_PEN
+            ),
             None
         );
         // Just inside the short side: still the frame.
         assert_eq!(
-            segment_fate([4.0, 0.2], [96.0, 0.2 + short - 0.02], page, false),
+            segment_fate(
+                [4.0, 0.2],
+                [96.0, 0.2 + short - 0.02],
+                page,
+                false,
+                HALF_PEN
+            ),
             Some(DropReason::SegmentOnSheetEdge)
         );
         // A long vertical run 0.2 mm inside the left edge: on the edge. The
         // along axis has to pass 0.9 of the page *height*, 45 mm here.
         assert_eq!(
-            segment_fate([0.2, 2.0], [0.2, 48.0], page, false),
+            segment_fate([0.2, 2.0], [0.2, 48.0], page, false, HALF_PEN),
             Some(DropReason::SegmentOnSheetEdge)
         );
         // A run that is on the short side but not long enough is not the frame.
-        assert_eq!(segment_fate([4.0, 0.2], [50.0, 0.2], page, false), None);
+        assert_eq!(
+            segment_fate([4.0, 0.2], [50.0, 0.2], page, false, HALF_PEN),
+            None
+        );
     }
 
     /// The furniture domain keeps a line along the page edge — a border
@@ -665,10 +743,13 @@ mod tests {
     fn furniture_segment_exempt_from_edge_rule() {
         let page = [100.0, 50.0];
         assert_eq!(
-            segment_fate([4.0, 0.2], [96.0, 0.2], page, false),
+            segment_fate([4.0, 0.2], [96.0, 0.2], page, false, HALF_PEN),
             Some(DropReason::SegmentOnSheetEdge)
         );
-        assert_eq!(segment_fate([4.0, 0.2], [96.0, 0.2], page, true), None);
+        assert_eq!(
+            segment_fate([4.0, 0.2], [96.0, 0.2], page, true, HALF_PEN),
+            None
+        );
 
         let mut furniture = line([4.0, 0.2], [96.0, 0.2]);
         furniture.furniture = true;
@@ -976,6 +1057,18 @@ mod tests {
                             reasons.push(DropReason::SegmentOnSheetEdge);
                             continue;
                         }
+                        // Both ends half the stroked pen or more past one
+                        // edge of the page.
+                        let half = crate::write::pen_width_mm(width) / 2.0;
+                        let off = |low: f64, high: f64, side: f64| {
+                            (high <= -half && low < 0.0) || (low >= side + half && high > side)
+                        };
+                        if off(start[0].min(end[0]), start[0].max(end[0]), page[0])
+                            || off(start[1].min(end[1]), start[1].max(end[1]), page[1])
+                        {
+                            reasons.push(DropReason::SegmentBeyondThePaper);
+                            continue;
+                        }
                         written += 1;
                     }
                     if reasons.is_empty() {
@@ -1011,7 +1104,11 @@ mod tests {
             let tally = fate.segments;
             prop_assert_eq!(
                 tally.total,
-                tally.written + tally.non_finite + tally.too_short + tally.on_sheet_edge
+                tally.written
+                    + tally.non_finite
+                    + tally.too_short
+                    + tally.on_sheet_edge
+                    + tally.beyond_the_paper
             );
         });
     }
@@ -1026,6 +1123,121 @@ mod tests {
             shape,
             furniture,
         }
+    }
+
+    /// The A2 reference sheet in its own numbers. The paper is 594 × 420 mm
+    /// and the border frame puts `CPECCHB-SQ-A2.igr` at (0.388, 0.566) mm,
+    /// so the template's outline runs from (0.388, 0.566) to
+    /// (594.328, 420.566): its bottom and left edges are on the paper and
+    /// cross its far edges, its top and right edges are off it. The plot
+    /// writes the first two and inks neither of the others.
+    #[test]
+    fn a_segment_the_whole_pen_of_which_is_off_the_paper_does_not_print() {
+        let page = [594.0, 420.0];
+        let (low, high) = ([0.388, 0.566], [594.328, 420.566]);
+        let beyond = Some(DropReason::SegmentBeyondThePaper);
+        let fate = |start, end| segment_fate(start, end, page, true, HALF_PEN);
+        // bottom and left: on the paper, running off its far edge
+        assert_eq!(fate(low, [high[0], low[1]]), None);
+        assert_eq!(fate([low[0], high[1]], low), None);
+        // right and top: off it
+        assert_eq!(fate([high[0], low[1]], high), beyond);
+        assert_eq!(fate(high, [low[0], high[1]]), beyond);
+        // A template is not exempt, and neither is the drawing.
+        assert_eq!(
+            segment_fate([high[0], 10.0], [high[0], 60.0], page, false, HALF_PEN),
+            beyond
+        );
+
+        // The pen decides, not the centre line: an edge on the paper's own
+        // edge prints half its pen, and so does one a hair past it. `A01`'s
+        // frame puts its template 0.001 mm off the corner.
+        assert_eq!(fate([594.0, 0.0], [594.0, 420.0]), None);
+        assert_eq!(fate([594.001, 0.001], [594.001, 420.001]), None);
+        assert_eq!(
+            fate(
+                [594.0 + HALF_PEN - 1e-9, 0.0],
+                [594.0 + HALF_PEN - 1e-9, 420.0]
+            ),
+            None
+        );
+        assert_eq!(
+            fate([594.0 + HALF_PEN, 0.0], [594.0 + HALF_PEN, 420.0]),
+            beyond
+        );
+        // A heavier pen reaches further back onto the paper.
+        assert_eq!(
+            segment_fate([594.328, 0.0], [594.328, 420.0], page, true, 0.35),
+            None
+        );
+
+        // Each of the four edges, and only when both ends are past the same
+        // one: a stroke round the corner outside the paper is written and
+        // left to the page box.
+        for (start, end) in [
+            ([-1.0, 10.0], [-1.0, 90.0]),
+            ([10.0, -1.0], [90.0, -1.0]),
+            ([595.0, 10.0], [595.0, 90.0]),
+            ([10.0, 421.0], [90.0, 421.0]),
+            ([600.0, 430.0], [700.0, 500.0]),
+        ] {
+            assert_eq!(fate(start, end), beyond, "{start:?} -> {end:?}");
+        }
+        assert_eq!(fate([595.0, 10.0], [10.0, 421.0]), None);
+        assert_eq!(fate([-5.0, 10.0], [10.0, 10.0]), None);
+
+        // No pen at all is the centre line's own answer, and a pen that is
+        // not a number reaches nowhere.
+        assert!(!beyond_the_paper([594.0, 0.0], [594.0, 420.0], page, 0.0));
+        assert!(beyond_the_paper([594.0, 0.0], [594.001, 420.0], page, 0.0));
+        assert!(beyond_the_paper(
+            [595.0, 0.0],
+            [595.0, 420.0],
+            page,
+            f64::NAN
+        ));
+    }
+
+    /// The outline as the page holds it: one closed polyline, half of it off
+    /// the paper. It is on the page with two pieces dropped; the line that
+    /// restates its right edge is dropped whole, for the same reason.
+    #[test]
+    fn an_outline_half_off_the_paper_keeps_the_half_that_is_on_it() {
+        let page = [594.0, 420.0];
+        let mut outline = primitive(PaperShape::Polyline {
+            points_mm: vec![
+                [0.388, 0.566],
+                [594.328, 0.566],
+                [594.328, 420.566],
+                [0.388, 420.566],
+                [0.388, 0.566],
+            ],
+            closed: false,
+        });
+        outline.stroke = Some(pen(0.25));
+        outline.furniture = true;
+        let fate = primitive_verdict(&outline, page);
+        assert!(fate.is_on_page());
+        assert!(fate.segments_dropped);
+        assert_eq!(
+            fate.segments,
+            SegmentTally {
+                total: 4,
+                written: 2,
+                beyond_the_paper: 2,
+                ..SegmentTally::default()
+            }
+        );
+
+        let mut restated = line([594.328, 420.566], [594.328, 0.566]);
+        restated.stroke = Some(pen(0.25));
+        restated.furniture = true;
+        let fate = primitive_verdict(&restated, page);
+        assert_eq!(
+            fate.outcome,
+            PrimitiveOutcome::Dropped(DropReason::SegmentBeyondThePaper)
+        );
+        assert_eq!(fate.segments.beyond_the_paper, 1);
     }
 
     /// The fate type answers the two questions a caller asks, and a dropped

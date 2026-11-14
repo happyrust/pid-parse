@@ -255,6 +255,8 @@
 | `record_refused` | 可疑 | 有解码器的类型码，记录形状被拒：`refused_graphic_records` | 已计数并告警 |
 | `record_native_skip` | 有意 | 类型字带 `0x8000` 原生跳过位，是文件自己退役的旧副本：`skipped_graphic_records` | 已计数，不告警 |
 | `sheet_stream_without_geometry` | 可疑 | `SheetStream::geometry` 为 `None`：流打不开，或没有任何族解码出记录且探针一无所获；这时该流的三类普查在 `sheet_geometry_from_probe`（`src/streams/cluster.rs`）里一并丢掉 | 静默（新发现） |
+| `record_without_display_place` | 可疑 | `paint_order` / `unplaced_records`（`pid-plot/src/model.rs`）：页上有图元、却在图纸的显示次序里没有位置的记录——图纸没有读到自己的对象表（`JSheet` 记录缺失，或它列的不全是这条流的记录），表够不到这条记录的拥有者，或记录在一张嵌入的图纸里而图纸列出的图框没有一个嵌着它。这样的记录照样画，画在有位置的全部之后；整页没有一张图纸给出次序时退到「先笔画后文字」。页上不少东西，少的是「谁盖住谁」的依据。按流记一项，计数是记录数；`LayoutLedger::unplaced` 留着原因与图元数，`pid_plot` 在 stderr 上各说一行（2026-11-11 加，附录由 44 行变 45 行，可疑 23 / 有意 22）。手头 71 页一项都没有。原因按流取自解析侧（`PidDocument::sheet_without_display_order`）：流里没有图纸自己的记录（`UnplacedWhy::NoRecordOfTheSheet`）与「没有表」分开记；链停在图纸自己的记录之前留下的正是前一种，这时账本照记本项，stderr 由链故障那一行说，不另起一行（2026-11-12） | 静默（审查发现） |
+| `symbol_file_chain_fault` | 可疑 | `push_symbol_instance`（`pid-plot/src/model.rs`）的库符号体分支：放置的体取自符号库的 `.sym`，而这个文件有一条链流立不住（`pid_parse::symbol_library::SymbolGeometry::chain_faults` 非空；每张 `Sheet*`、每个 `PSMcluster0`、每个 `StyleCluster` 都算，根簇在内）。符号读取器把这样的流读到链立得住的地方，画出来的是完好文件所画的一部分或者不画（`SymbolGeometry::displayed`，2026-11-12 起）：画符号体的那张图纸停了，画停点之前的笔画，不拿文件里另一张图纸顶替；没有少读记录的故障（魔数不对而链走到流尾、流头条数少写）画完好文件的体；拿不到这一部分时放置不画，另记一项 `symbol_missing`（根簇读短、作正常视图的图纸读短而读到的一笔都不显示、要按笔画数挑图纸而有图纸读短）。页面显不出是哪一种，所以只要文件有故障就记。按「符号文件 + 流」记一项，计数 1、字节数是链没读的那部分，记在放置所在的域；`LayoutLedger::symbol_chain_faults` 留着文件名、放置数、放置画没画（`not_drawn`）与故障本身，`pid_plot` 在 stderr 上各说一行（点名符号文件、流与停点；没画时说没画和原因）。没有放置取它的体的文件不记也不说：图纸缓存着自己放置的每个符号的体，只有图纸里没有缓存体的放置才读符号库（2026-11-12 加，附录由 49 行变 50 行，可疑 27 / 有意 23；同日 #67 改了画法，码表不变）。手头 71 页没有一个放置是从符号库画的，所以一项都没有 | 静默（工单） |
 | `record_symbol_body_cache` | 有意 | 嵌套 `JSite*/PSMcluster0` 的符号体记录，经引用它的放置画出，本身不是页面内容 | 只有告警文字 |
 | `cache_definition_unplaced` | 有意 | 缓存定义没有任何放置引用（例如参数化符号缓存的模板体），其记录不上页 | 未计数（新发现） |
 | `record_audit_only_family` | 有意 | 已解码，所属族在 `EMITTERS` 中是无操作发射器：`igSmartFrame2d`、`DependencyObject`、`0x0010` 子记录、属性片段、`igRectangle2d`、`igDimension` | 未计数（新发现） |
@@ -283,7 +285,7 @@
 | `point_marker_degenerate` | 可疑 | `Point`：marker 的笔画全部 `is_degenerate` | 未计数 |
 | `kind_annotation` | 可疑 | `PidGraphicKind::Annotation`；当前没有发射器产出，应为 0 | 未计数 |
 | `kind_unknown` | 有意 | `PidGraphicKind::Unknown`：探针证据、`JStyleOverride` 等 | 未计数 |
-| `symbol_missing` | 可疑 | 放置有符号路径，缓存体与符号库体都没有；写出端不画方框 | 已计数（`missing_symbols` / `missing_boxes`） |
+| `symbol_missing` | 可疑 | 放置有符号路径，缓存体与符号库体都没有；或者符号库里的文件有流读短了、画不出完好文件所画的任何一部分（`SymbolGeometry::displayed` 返回 `Err`，2026-11-12 起；这个文件同时是一项 `symbol_file_chain_fault`，`missing_symbols` 里的名字后面注明 `the library's file is damaged and is not drawn from`）；写出端不画方框 | 已计数（`missing_symbols` / `missing_boxes`） |
 | `symbol_unresolvable` | 可疑 | 放置既没有符号路径，也没有可解析的缓存体；今天任何地方都不记 | 静默（新发现） |
 | `symbol_body_empty` | 可疑 | 解析到了符号体，但体内图元全部按 A.3 的原因丢掉，一个页面图元也没产出 | 未计数（新发现） |
 
@@ -320,6 +322,9 @@
 | `segment_non_finite` | 可疑 | `stroke_runs`：段端点非有限；按段计 | 未计数 |
 | `segment_too_short` | 有意 | `stroke_runs`：段长 < 1e-4 mm；按段计 | 未计数 |
 | `segment_on_sheet_edge` | 有意 | `stroke_runs`：非家具段被 `read::sheet_edge_mm` 判为贴页边（一个方向的差 < 0.282 mm，另一个方向的差 > 0.9 倍页边；对测得的页幅同样生效）；按段计 | 未计数 |
+| `segment_beyond_the_paper` | 有意 | `stroke_runs`：整支笔都落在纸张某一条边之外的段（两端都在同一条边之外至少半个笔宽），家具段不豁免；图框把模板放到纸角之外时模板外轮廓的上边、右边属于这一类，见证是 A2 参考图（内容流里页面框之外的坐标只有外轮廓那一条路径的 4 个，上边整条没写）；按段计（2026-11-11 加，附录由 43 行变 44 行） | 未计数 |
+| `segment_beyond_the_paper_no_plot_of_template` | 有意 | 同一个事实，落在**没有原厂出图见证这样摆放**的模板上。写出器只陈述事实，`ExportLedger::assemble` 的 `PaperEdge` 查 `witness::PAPER_EDGE_WITNESSES`（参考图上出现过的「模板 + 图框偏移」，一行：`CPECCHB-SQ-A2` 在 (0.388407, 0.565648) mm，见证是 `轻烃分离器I气出口接口位置改造` 的参考图）：页面穿的模板在表里，记 `segment_beyond_the_paper`；不在表里，记本码。备份里 6 张图 12 段（`A井场` 穿 `CPE-SQ-A0`、两张 `凝析油稳定塔` 穿 `CPE-SQ-A1`——这两个模板的参考图都只在纸角上；`N井场`、`O井场`、`P井场` 穿 `CPECCHB-SQ-A1`——没有参考图），夹具 `DWG-0201GP06-01`（`XIONGANA2`）2 段。仍是有意：页面是纸张之后，整支笔在纸外的段按几何不可能上纸；没有见证的是「这几张图的页面就是它们写的纸张」。与有见证的分开记数；按段计（2026-11-12 加，附录由 47 行变 48 行） | 新增 |
+| `drawing_segment_beyond_the_paper` | 可疑 | 同一个事实（整支笔落在页面某一条边之外），落在图纸自己的段上。写出器只陈述事实（`segment_beyond_the_paper`），`ExportLedger::assemble` 按段属于哪个域归码（`PaperEdge`）。模板被图框放到纸角之外，是参考图不印的墨；图纸自己的笔画落在自己的页面之外，没有一张参考图见过——要么页面不是这张图画在上面的那张纸（没有页框可对照的图上纸张读错），要么图纸把墨留在了图外——照样不印，记可疑。71 页上一段都没有；按段计（2026-11-12 加，附录由 45 行变 47 行） | 新增 |
 | `text_empty` | 有意 | `show_text`：文本为空串 | 未计数 |
 | `text_placement_non_finite` | 可疑 | `show_text`：旋转角或原点非有限 | 未计数 |
 | `text_height_invalid` | 可疑 | `show_text`：高度非有限或 ≤ 0，包括排版层在记录与样式都没给高度时填的 `Some(0.0)`；`None` 回落到 `DEFAULT_TEXT_MM`，不算 | 未计数 |
@@ -351,6 +356,9 @@
 |---|---|---|---|
 | `template_candidate_unreadable` | 可疑 | `load_border_template` 中模板候选读不出（`read_archive_file`）或解析失败（`parse_file` / `parse_reader`）后 `continue` | 静默（新发现） |
 | `template_missing` | 可疑 | 页面点名的模板没有文件可答，页面不穿家具 | 已计数（`missing_templates`） |
+| `paper_unlike_the_frame` | 可疑 | `lay_out_drawing`：图纸声明的纸张与页框矩形有一边相差超过 `model::PAPER_FRAME_REACH_MM`（2.707 mm）。限值是量出来的：手头 65 张图里 60 张两者都有，相差最远的是 `N井场`（页框比纸张宽 2.456811 mm、高 2.706782 mm），限值取到这个读数上面的一个微米（`probe_how_far_a_frame_is_from_its_paper`）。这样的纸张不作页面——读错的纸张会把页面裁成它说的任何大小——页面取页框矩形，图纸完整。每页记 1 项，来源记两个矩形；`pid_plot` 在 stderr 打一行 `warning:`，退出码不变。71 页上一项都没有（2026-11-12 加）。只用在读到了图框的图纸上；限值是样本的最大值（60 张图只有 13 种不同的读数，其中 4 种是手拖的图框），完好的图也可能触发，触发时得到的是读纸张之前的页面；页框比纸张小超过限值时页面会小于图纸（2026-11-12 第七轮写实） | 新增 |
+| `paper_unlike_the_template_name` | 可疑 | `lay_out_drawing`：没有读到图框（`pid_parse::framed_page_dimensions_mm` 为 `None`），图纸声明的纸张与模板名给出的页幅有一边相差 0.5 mm 或更多（`model::PAPER_NAME_REACH_MM`：模板名的页幅写到整毫米，纸张读到纳米，同一张纸四舍五入到毫米应当相同）。**不拒收**：页面照用纸张——模板名是标签（而且是图纸起稿时的模板），纸张是读数；只记本项、来源记两个尺寸，`pid_plot` 在 stderr 打一行，退出码不变。这条路没有见证：手头 65 张真实图纸没有一张只凭模板名带着纸张（2026-11-12 第七轮加，附录由 48 行变 49 行） | 新增 |
+| `page_frame_refused` | 可疑 | `lay_out_drawing`：图纸自己的图纸流（根存储下的 `Sheet*`）上有一条活的 `igSmartFrame2d` 记录被页框判定拒收（`pid_parse::parsers::sheet_records::refused_smartframes`；`PidDocument::refused_smart_frames`）——声明的比值不是自己的 高/宽，或宽、高不是长度（宽为 0 即此类），或载荷不够长——而且它的标志字读作嵌入或链接（空框与图内链接的框本来就不给页面）。这条记录既不给页幅也不给放置，图纸按「没有图框」排：页面是图纸声明的纸张，没有纸张时是模板名给出的页幅，两者都没有时按内容；图纸上另有一条图框给出页幅时，页面由那一条排。**页面上实际有什么，按排出来的结果记**（`FrameRefused::template` / `primitives`），不按设想写：边框模板是按图框的矩形挑的——没有图框矩形时按模板名给出的页幅，两者都没有而图纸点了模板名时，按图纸自己的直线与曲线放得下的最小标准图幅——所以图框被拒可以把模板一起带走。四种去向：模板照排，只是不带图框的偏移；找过而没找到（记下为哪张图幅找的、那张图幅是不是按图纸的线估出来的）；没有找，因为图纸不点模板名，只有图框的矩形能给它挑模板；没有找，因为点了名却没有图幅可找（图纸没有自己的线，或线超出最大的标准图幅）。页面上一个图元都没有时是空白页，同样记下。每条这样的记录记 1 项，来源记流、oid、类型码与被拒的原因；`pid_plot` 在 stderr 打一行（流、记录的偏移与 oid、原因、页面是按什么排的、边框模板画没画与没画的原因、页面是不是空白），退出码不变。记录本身仍由解析层的 `record_refused` 计数，本项说的是页面因此成了什么。71 页上没有一处（2026-11-12 解析线第六轮加，附录由 50 行变 51 行；同日第十一轮按独立审查的应修把「图纸的墨与模板都不带图框的偏移」这句一概而论的话改成按排版结果说：71 张图的 68 条根页框各在一份副本里拒掉，57 份模板照排，7 份因图纸的线只放得下 A3 而找不到模板，`A01` 不点模板名所以不找、175 个模板图元全没了，`D03` 没有自己的墨而成空白页，`Q井场` 的两条框各由另一条接手、其中一份没有模板） | 新增 |
 | `page_size_source` | — | 页幅来自声明（`page_mm`）还是测得（`resolved_page_mm`） | 门禁读数 |
 
 ### A.9 不入账的内容

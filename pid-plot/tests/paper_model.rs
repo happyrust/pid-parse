@@ -2,9 +2,10 @@
 //! (`RefData~4~681.zip` unpacked to `Ref/Symbols`), and the found/referenced
 //! counts stay pinned, including the one absent pulsation-damper symbol.
 //!
-//! Every drawing's circles and lines are also held to its page: the sheet the
-//! `.pid` states or, for the one drawing that states none, the standard sheet
-//! its ink is measured onto. Which drawing takes which path is pinned too.
+//! Every drawing's circles and lines are also held to its page, which is the
+//! paper its sheet states: all five state one, the drawing with no border
+//! frame included. Which paper each is on, and which of them has a frame, is
+//! pinned too.
 
 use std::path::PathBuf;
 
@@ -19,40 +20,50 @@ fn corpus_dir() -> PathBuf {
 #[test]
 fn five_drawings_match_the_symbol_gap() {
     let dir = corpus_dir();
-    // File name, symbols found, symbols referenced and, for a drawing that
-    // states no sheet, the page it is measured onto.
+    // File name, symbols found, symbols referenced, the paper its sheet
+    // states, and whether the sheet has a border frame.
     let samples = [
-        ("I井场 注采阀组工艺及自控流程图.pid", 58, 59, None),
+        (
+            "I井场 注采阀组工艺及自控流程图.pid",
+            58,
+            59,
+            [1189.0, 841.0],
+            true,
+        ),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图.pid",
             29,
             29,
-            None,
+            [841.0, 594.0],
+            true,
         ),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid",
             28,
             28,
-            None,
+            [841.0, 594.0],
+            true,
         ),
         (
             "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图.pid",
             33,
             33,
-            None,
+            [841.0, 594.0],
+            true,
         ),
         (
             "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图.pid",
             38,
             38,
-            Some([841.0, 594.0]),
+            [841.0, 594.0],
+            false,
         ),
     ];
     if !dir.join(samples[0].0).is_file() {
         eprintln!("skipping paper models; {} is absent", dir.display());
         return;
     }
-    for (name, found, referenced, measured_page) in samples {
+    for (name, found, referenced, paper, framed) in samples {
         let model = lay_out_drawing(&dir.join(name), &dir)
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
@@ -75,27 +86,36 @@ fn five_drawings_match_the_symbol_gap() {
         }
         assert!(!model.library.is_empty(), "{name} names the library");
         assert!(!model.primitives.is_empty(), "{name} has primitives");
-        // Four of the five state their sheet. `换热器CD` carries neither an
-        // `igSmartFrame2d` nor a template name, so its page is the standard
-        // sheet its ink fits, A1. Pinned both ways round: a drawing that stops
-        // stating its sheet is a decode regression, and one that starts
-        // stating it moves the page every guard below is held to.
+        // Every one of the five states its paper, and that is its page.
+        // `换热器CD` carries neither an `igSmartFrame2d` nor a template name;
+        // until the paper was read its page was measured, onto the same A1
+        // sheet its `JSheet` record states. Four have a border frame, whose
+        // rectangle is the paper to a ten-thousandth of a millimetre here.
+        // Pinned both ways round: a drawing that stops stating its paper is
+        // a decode regression, and so is a frame that comes or goes.
         let page = model
             .resolved_page_mm()
             .unwrap_or_else(|| panic!("{name}: the model resolved no page"));
-        match measured_page {
-            None => assert!(
-                model.page_mm.is_some(),
-                "{name} is pinned as stating its sheet and states none; \
-                 its page was measured as {page:?}"
-            ),
-            Some(sheet) => {
-                assert_eq!(model.page_mm, None, "{name} is pinned as stating no sheet");
-                assert_eq!(page, sheet, "{name} is measured onto another sheet");
-            }
+        assert_eq!(
+            model.page_mm,
+            Some(paper),
+            "{name}: the paper its sheet states"
+        );
+        assert_eq!(page, paper, "{name}: the page is the paper");
+        assert_eq!(
+            model.frame_mm.is_some(),
+            framed,
+            "{name}: its border frame states {:?}",
+            model.frame_mm
+        );
+        if let Some(frame) = model.frame_mm {
+            assert!(
+                (frame[0] - paper[0]).abs() < 0.001 && (frame[1] - paper[1]).abs() < 0.001,
+                "{name}: the frame's rectangle {frame:?} is not its paper"
+            );
         }
-        // The guards run against the resolved page, not only a stated one, so
-        // the drawing whose sheet is measured is held to it like the rest.
+        // The guards run against the page, so the drawing with no frame is
+        // held to its paper like the rest.
         let [page_w, page_h] = page;
         let mut circles = 0_usize;
         let mut lines = 0_usize;
@@ -138,11 +158,12 @@ fn five_drawings_match_the_symbol_gap() {
             }
         }
         eprintln!(
-            "{name}: {} page {page_w:.3} x {page_h:.3} mm holds {circles} circles and {lines} lines",
-            if measured_page.is_some() {
-                "measured"
+            "{name}: the {page_w:.3} x {page_h:.3} mm paper its sheet states ({}) holds {circles} \
+             circles and {lines} lines",
+            if framed {
+                "with a border frame"
             } else {
-                "stated"
+                "no border frame"
             }
         );
     }

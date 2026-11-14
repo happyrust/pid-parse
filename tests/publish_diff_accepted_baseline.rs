@@ -249,7 +249,7 @@ fn assert_acceptance_figure(key: &str) {
     let reference = acceptance_dir().join(format!("{stem}_Data.xml"));
     if !pid.is_file() || !reference.is_file() {
         eprintln!(
-            "skip: {key} acceptance drawing is absent ({})",
+            "skipping: {key} acceptance drawing is absent ({})",
             pid.display()
         );
         return;
@@ -268,7 +268,7 @@ fn assert_acceptance_figure(key: &str) {
         ];
         if mode == "oracle-exp" {
             if !dump.is_file() || !datamap.is_file() {
-                eprintln!("skip: {key} {mode} needs the exp dump and the datamap");
+                eprintln!("skipping: {key} {mode} needs the exp dump and the datamap");
                 continue;
             }
             args.extend([
@@ -565,7 +565,7 @@ fn the_ijingchang_run_never_leaves_the_registered_item() {
     let pid = ij_pid();
     let reference = ij_reference();
     if !pid.is_file() || !reference.is_file() {
-        eprintln!("skip: I井场 corpus is absent ({})", pid.display());
+        eprintln!("skipping: I井场 corpus is absent ({})", pid.display());
         return;
     }
 
@@ -582,7 +582,7 @@ fn the_ijingchang_run_never_leaves_the_registered_item() {
         args.push("P01".into());
         if mode == "oracle-exp" {
             if !dump.is_file() || !datamap.is_file() {
-                eprintln!("skip: I井场 {mode} needs the exp dump and the datamap");
+                eprintln!("skipping: I井场 {mode} needs the exp dump and the datamap");
                 continue;
             }
             args.push("--oracle-exp".into());
@@ -641,7 +641,7 @@ fn the_ijingchang_alias_stem_reproduces_the_registered_item() {
     let pid = ij_pid();
     let reference = ij_reference();
     if !pid.is_file() || !reference.is_file() {
-        eprintln!("skip: I井场 corpus is absent ({})", pid.display());
+        eprintln!("skipping: I井场 corpus is absent ({})", pid.display());
         return;
     }
 
@@ -733,7 +733,7 @@ fn a_drawing_absent_from_the_dump_is_refused_not_silently_published() {
     let datamap = package_dir().join("RefData~4~804.zip");
     if !dump.is_file() || !datamap.is_file() {
         eprintln!(
-            "skip: the exp dump or the datamap is absent ({})",
+            "skipping: the exp dump or the datamap is absent ({})",
             dump.display()
         );
         return;
@@ -746,7 +746,7 @@ fn a_drawing_absent_from_the_dump_is_refused_not_silently_published() {
         let reference = acceptance_dir().join(format!("{stem}_Data.xml"));
         if !pid.is_file() || !reference.is_file() {
             eprintln!(
-                "skip: {key} acceptance drawing is absent ({})",
+                "skipping: {key} acceptance drawing is absent ({})",
                 pid.display()
             );
             continue;

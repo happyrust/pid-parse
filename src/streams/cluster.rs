@@ -156,6 +156,17 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                 if let Some(fault) = crate::model::StreamChainFault::of_stream(&path, &data) {
                     doc.chain_faults.push(fault);
                 }
+                // A live frame record the frame rule refuses is counted
+                // with the stream's refused records; which record and why is
+                // kept here, for a caller that lays out a page without it.
+                doc.refused_smart_frames.extend(
+                    crate::parsers::sheet_records::refused_smartframes(&data)
+                        .into_iter()
+                        .map(|refused| crate::model::RefusedSmartFrame {
+                            stream_path: path.clone(),
+                            refused,
+                        }),
+                );
 
                 (m, tag, hdr, records, Some(summary), geometry)
             } else {

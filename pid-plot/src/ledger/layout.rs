@@ -73,6 +73,335 @@ pub struct LayoutLedger {
     /// order the `retain` visited them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub off_sheet: Vec<u32>,
+    /// The order the page is painted in: an index into
+    /// `PaperModel::primitives` for every primitive, the first painted
+    /// first.
+    ///
+    /// The model keeps its primitives in the order the layout visits the
+    /// entities, which is the order of the record families, not of the
+    /// sheet. What a sheet draws over what is the order its `JSheet` record
+    /// lists its objects in (`pid_parse::parsers::sheet_display_order`), and
+    /// this is that order carried onto the page: the border template where
+    /// the sheet lists its frame, each record of the drawing where the sheet
+    /// lists it or its owner. Empty when no sheet of the page states an
+    /// order; the page is then painted in the model's.
+    ///
+    /// It rides here, beside the model rather than in it, so that the
+    /// model's own JSON is what it was: see
+    /// [`PaperModel::paint_sequence`](crate::model::PaperModel::paint_sequence).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint_order: Vec<u32>,
+    /// The records that draw on the page and take no place in the order
+    /// its sheets draw in, by domain, stream and reason. Each stream of them
+    /// is also one [`DropReason::RecordWithoutDisplayPlace`] item of
+    /// [`Self::parse`]; this is what was found, kept so that a caller can
+    /// say it ([`Self::display_order_warnings`]). Empty on every page of
+    /// every corpus this crate is tested on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced: Vec<UnplacedRecords>,
+    /// The symbol files a placement of the page is drawn from that have a
+    /// chain stream whose framing does not hold: the placement is drawn
+    /// from whatever was read of such a file. Each is also one
+    /// [`DropReason::SymbolFileChainFault`] item of [`Self::parse`]; this
+    /// is what was found, kept so that a caller can say it
+    /// ([`Self::symbol_chain_fault_warnings`]). Empty on every page of
+    /// every corpus this crate is tested on, none of which draws a
+    /// placement from a library body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbol_chain_faults: Vec<SymbolChainFault>,
+    /// The paper the drawing's sheet states, when it was read and not taken
+    /// for the page because it is not the border frame's
+    /// (`model::paper_is_the_frames`). The page is then the frame's
+    /// rectangle; the page account files one suspect
+    /// [`DropReason::PaperUnlikeTheFrame`] and `pid_plot` says it
+    /// ([`Self::page_warnings`]). Only for a drawing a frame of which gave a
+    /// page. `None` on every page of every corpus this crate is tested on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_refused: Option<PaperRefused>,
+    /// The paper the drawing's sheet states and the size its template's
+    /// name states, when no frame gave a page and the two are not one sheet
+    /// (`model::paper_is_the_named_sheet`). The paper is the page all the
+    /// same — a name overrules no reading — and the page account files one
+    /// suspect [`DropReason::PaperUnlikeTheTemplateName`] and `pid_plot`
+    /// says it ([`Self::page_warnings`]). `None` on every page of every
+    /// corpus this crate is tested on, none of which states a paper beside
+    /// a name alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_unlike_the_name: Option<PaperBesideAName>,
+    /// What the page is, and where that was read, when it is not a paper
+    /// because none was read: the sheet's `JSheet` record, which states the
+    /// paper behind its list of objects, was not found, is not the sheet's,
+    /// or had no record of the sheet's to be held to. A sheet whose list is
+    /// not read says so already ([`Self::display_order_warnings`]), and
+    /// that sentence says this too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_for_want_of_a_paper: Option<PageInstead>,
+    /// The border frames of the drawing's own sheets that the frame rule
+    /// refuses, each with why and with what the page is without it — its
+    /// size, whether a border template is laid out and, where none is, why,
+    /// and whether anything is drawn at all: the sheet is then laid out as
+    /// one with no frame. Each is one suspect
+    /// [`DropReason::PageFrameRefused`] of the page account, beside the
+    /// refused record its stream's parse account counts, and `pid_plot`
+    /// says it ([`Self::page_warnings`]). Empty on every page of every
+    /// corpus this crate is tested on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames_refused: Vec<FrameRefused>,
+}
+
+/// What a page that is laid out without a border frame of its drawing's
+/// own sheet draws of the drawing's border template, and why it draws
+/// none where it draws none.
+///
+/// A template is picked for a sheet: the rectangle a border frame of the
+/// drawing states; failing that the size the template's name states; and
+/// failing both, for a drawing that names its template, the smallest
+/// standard sheet that the lines and curves of the drawing's own which are
+/// plotted fit — its labels and symbol placements do not count. A drawing
+/// that names a template wears only one it names, and one that names none
+/// is given the template of its frame's rectangle. So a frame that is
+/// refused can take the template with it. On the 68 border frames of the
+/// 71 drawings on hand, each refused in a copy of its own (2026-11-12): 57
+/// copies draw their template where they did or within the frame's offsets
+/// of it, seven draw none because none is the size their lines fit, one
+/// because nothing but the frame picked it, one draws nothing at all — the
+/// drawing has no ink of its own to pick a template by — and of the two
+/// frames of a drawing that states two, one leaves the page to the other
+/// with its template and one without.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateWithoutTheFrame {
+    /// A border template is laid out.
+    Drawn,
+    /// One was sought and none was found.
+    NotFound {
+        /// The sheet it was sought for, `[width, height]` in micrometres.
+        sheet_um: [u64; 2],
+        /// Whether that sheet is one nothing states: the smallest standard
+        /// sheet the drawing's own plotted lines and curves fit, taken for
+        /// want of a frame's rectangle and of a size in the template's
+        /// name.
+        fitted: bool,
+    },
+    /// None was sought: the drawing names no template, and only a frame's
+    /// rectangle picks one for a drawing that names none.
+    NotNamed,
+    /// None was sought: the drawing names one, neither a frame nor the
+    /// name states the sheet to pick it for, and the drawing's own plotted
+    /// lines and curves fit no standard sheet — it has none, or they reach
+    /// past the largest.
+    NoSheet,
+}
+
+/// What a page is when a border frame of its drawing is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageWithoutTheFrame {
+    /// The paper the drawing's sheet states.
+    Paper,
+    /// The size the name of the drawing's template stands for.
+    TemplateName,
+    /// Another border frame of the drawing gives the page, and places what
+    /// a frame places: the refused record is not the sheet's only frame.
+    AnotherFrame,
+    /// Nothing states a size: the page is fitted to what is drawn.
+    Unstated,
+}
+
+/// A border frame of a drawing's own sheet that the frame rule refuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameRefused {
+    /// The sheet stream the record is in.
+    pub stream: String,
+    /// Where the record starts in the stream.
+    pub record: u64,
+    /// The record's oid, when its payload reaches one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid: Option<u32>,
+    /// Which part of the frame rule the record fails, as the decoder words
+    /// it (`pid_parse::parsers::sheet_records::SmartFrameRefusal::describe`).
+    pub why: String,
+    /// What the page is without the frame.
+    pub page: PageWithoutTheFrame,
+    /// That page's `[width, height]` in micrometres, when it has a size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_um: Option<[u64; 2]>,
+    /// What the page draws of the drawing's border template.
+    pub template: TemplateWithoutTheFrame,
+    /// How many primitives the page holds, the template's among them. None
+    /// is a blank page, or — where nothing states a size either — no page
+    /// at all.
+    pub primitives: u64,
+}
+
+/// The rectangle a drawing has for its sheet beside the paper: what a page
+/// is when no paper is taken, and what a paper is held to.
+///
+/// The two are not the same kind of thing, and a sentence about a page has
+/// to say which it had. A border frame states its rectangle to the
+/// nanometre, and every drawing on hand that states both keeps its paper
+/// within `model::PAPER_FRAME_REACH_MM` of it. A template's name states a
+/// size the way a label does — `A2` is 594 by 420 — and is what the parser
+/// falls back to for a drawing no frame of which gives a page
+/// (`pid_parse::framed_page_dimensions_mm`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetRectangle {
+    /// The rectangle the drawing's border frame states.
+    Frame,
+    /// The size the name of the drawing's template stands for: no frame
+    /// gave a page — the drawing carries none, its frames disagree, or its
+    /// stream was not read as far as one.
+    TemplateName,
+}
+
+impl SheetRectangle {
+    /// The rectangle as a sentence names it: `the border frame's rectangle`
+    /// or `the size its template's name states`.
+    #[must_use]
+    pub fn named(self) -> &'static str {
+        match self {
+            Self::Frame => "the border frame's rectangle",
+            Self::TemplateName => "the size its template's name states",
+        }
+    }
+}
+
+/// The page of a sheet no paper was read for: which rectangle it is, and
+/// its `[width, height]` in micrometres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageInstead {
+    /// Where the rectangle was read.
+    pub from: SheetRectangle,
+    /// Its sides.
+    pub um: [u64; 2],
+}
+
+/// A paper that was read and refused: the paper and the border frame's
+/// rectangle, each `[width, height]` in micrometres.
+///
+/// Whole micrometres rather than millimetres so that the ledger stays
+/// comparable for equality; a side that is not a positive finite length is
+/// kept as zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaperRefused {
+    /// The paper the sheet's record states.
+    pub paper_um: [u64; 2],
+    /// The rectangle the border frame states.
+    pub frame_um: [u64; 2],
+}
+
+/// A paper that is the page beside a template's name that states another
+/// size: the two, each `[width, height]` in micrometres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaperBesideAName {
+    /// The paper the sheet's record states, which is the page.
+    pub paper_um: [u64; 2],
+    /// The size the template's name stands for.
+    pub named_um: [u64; 2],
+}
+
+/// A length in millimetres as whole micrometres; zero for one that is not
+/// a positive finite length.
+#[must_use]
+pub fn micrometres(millimetres: f64) -> u64 {
+    if millimetres.is_finite() && millimetres > 0.0 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        {
+            (millimetres * 1000.0).round() as u64
+        }
+    } else {
+        0
+    }
+}
+
+/// `[width, height]` in micrometres, written `W x H mm` to the micrometre.
+fn sides_mm(sides_um: [u64; 2]) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let millimetres = |side: u64| side as f64 / 1000.0;
+    format!(
+        "{:.3} x {:.3} mm",
+        millimetres(sides_um[0]),
+        millimetres(sides_um[1])
+    )
+}
+
+impl PaperRefused {
+    /// The two rectangles, for the page account's suspect site and the
+    /// warning: `paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm`.
+    #[must_use]
+    pub fn sides(&self) -> String {
+        format!(
+            "paper {}, frame {}",
+            sides_mm(self.paper_um),
+            sides_mm(self.frame_um)
+        )
+    }
+}
+
+impl PaperBesideAName {
+    /// The two sizes, for the page account's suspect site: `paper 297.000 x
+    /// 420.000 mm, template name's size 594.000 x 420.000 mm`.
+    #[must_use]
+    pub fn sides(&self) -> String {
+        format!(
+            "paper {}, template name's size {}",
+            sides_mm(self.paper_um),
+            sides_mm(self.named_um)
+        )
+    }
+}
+
+/// Why a record that draws on a page takes no place in the order its sheet
+/// draws in (`pid_parse::parsers::sheet_display_order`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnplacedWhy {
+    /// The sheet the record is in states no list of its objects that could
+    /// be read: no `JSheet` record of its storage's cluster names the
+    /// stream's records, or the stream is one nothing reads a list for.
+    NoList,
+    /// The stream holds no record of the sheet's own, as far as it was
+    /// read, so the list its sheet states — which is there — has nothing to
+    /// be held to (`NoDisplayOrder::NoRecordOfTheSheet` of
+    /// `pid_parse::parsers::sheet_display_order`). The records that draw
+    /// hang under objects of the sheet's the stream does not hold.
+    ///
+    /// A chain that stops ahead of the sheet's first own record leaves a
+    /// stream like that, and the stream's chain fault is then the word on
+    /// it: [`LayoutLedger::display_order_warnings`] starts no sentence of
+    /// its own for records a stopped chain already accounts for.
+    NoRecordOfTheSheet,
+    /// The sheet's list was read and does not reach the record: nothing it
+    /// hangs under is listed.
+    NotReached,
+    /// The record is in a sheet nested in the drawing, which has a list of
+    /// its own, and no frame the drawing lists was found to embed it.
+    NoFrame,
+    /// The primitive names no record.
+    NoRecord,
+}
+
+/// The records of one stream that draw on the page and that no sheet's list
+/// places, for one reason.
+///
+/// Such a record is painted all the same — after everything that has a
+/// place, or, on a page no sheet of which states an order, strokes first and
+/// lettering after — so the page lacks nothing; what it does not have is the
+/// drawing's word on what covers what. The account says so as a suspect
+/// item, and `pid_plot` on stderr.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnplacedRecords {
+    /// The drawing's own, or the border template's.
+    pub domain: LedgerDomain,
+    /// The stream the records are in; empty when the primitives name none.
+    pub stream: String,
+    /// Why they take no place.
+    pub why: UnplacedWhy,
+    /// How many records.
+    pub records: u64,
+    /// How many primitives of the page they draw.
+    pub primitives: u64,
 }
 
 /// One chain stream — a `Sheet*` stream or a symbol cache's `PSMcluster0` —
@@ -91,24 +420,464 @@ pub struct ChainFaultRecord {
     pub fault: pid_parse::StreamChainFault,
 }
 
+/// One chain stream of a symbol file whose framing does not hold, in a file
+/// a placement of the page takes its body from, and the domain of that
+/// placement.
+///
+/// The symbol reader reads such a stream as far as its chain holds, by the
+/// walk a drawing's own sheets are read by, and what it draws of the file
+/// is part of what the sound file draws or nothing
+/// (`pid_parse::symbol_library::SymbolGeometry::displayed`): a sheet read
+/// short draws the strokes before the stop; a fault that loses no record —
+/// a wrong magic, a header that counts too few — draws the sound file's
+/// body. Where the part cannot be had ([`Self::not_drawn`]) the placement
+/// is not drawn and counts as a symbol the library does not hold. The page
+/// cannot show which of these it is: the account says the file is damaged,
+/// as a suspect item, and `pid_plot` does, on stderr.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolChainFault {
+    /// The drawing's own placement, or the border template's.
+    pub domain: LedgerDomain,
+    /// The symbol file, as the placement names it below the library's
+    /// `Symbols` directory.
+    pub symbol: String,
+    /// How many placements of the page take their body from the file:
+    /// drawn from it, or — with [`Self::not_drawn`] — left undrawn for it.
+    pub placements: u64,
+    /// Why those placements are not drawn, when the damage leaves no part
+    /// of the body that can be drawn as the sound file's. Each of them is
+    /// then one [`DropReason::SymbolMissing`] of the account as well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_drawn: Option<pid_parse::symbol_library::SymbolNotDrawn>,
+    /// What the parser found wrong with the stream.
+    pub fault: pid_parse::StreamChainFault,
+}
+
+/// A symbol file with chain streams that do not hold, as a page's
+/// placements met it: what [`LayoutLedger::note_symbol_chain_faults`] files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolFileFaults {
+    /// The symbol file, as the placements name it below the library's
+    /// `Symbols` directory.
+    pub symbol: String,
+    /// How many placements of the page take their body from the file.
+    pub placements: u64,
+    /// Why they are not drawn, when they are not.
+    pub not_drawn: Option<pid_parse::symbol_library::SymbolNotDrawn>,
+    /// The faults the file's body lists, one a stream.
+    pub faults: Vec<pid_parse::StreamChainFault>,
+}
+
 impl LayoutLedger {
+    /// File the symbol files with a chain stream that does not hold that
+    /// `domain`'s placements take their body from: one suspect
+    /// [`DropReason::SymbolFileChainFault`] item a
+    /// file and stream, with the bytes its chain left unread, and the
+    /// finding itself in [`Self::symbol_chain_faults`]. `faults` is one
+    /// entry a symbol file: its name, how many placements take their body
+    /// from it, whether they are drawn, and the faults its body carries.
+    pub fn note_symbol_chain_faults(
+        &mut self,
+        domain: LedgerDomain,
+        faults: impl IntoIterator<Item = SymbolFileFaults>,
+    ) {
+        for file in faults {
+            for fault in file.faults {
+                self.parse.get_mut(domain).push_record(
+                    ParseRecord::new(
+                        DropReason::SymbolFileChainFault,
+                        format!("{}:{}", file.symbol, fault.stream_path),
+                        1,
+                    )
+                    .of_bytes(u64::try_from(fault.unread_bytes).unwrap_or(u64::MAX)),
+                );
+                self.symbol_chain_faults.push(SymbolChainFault {
+                    domain,
+                    symbol: file.symbol.clone(),
+                    placements: file.placements,
+                    not_drawn: file.not_drawn,
+                    fault,
+                });
+            }
+        }
+    }
+
+    /// One sentence per symbol file and stream whose chain does not hold
+    /// and that a placement of the page takes its body from: the file, how
+    /// many placements, and the reader's own sentence of the stream — its
+    /// path, where its chain stops and what is left unread. Where the
+    /// damage leaves nothing of the body that can be drawn as the sound
+    /// file's, the sentence says that the placements are not drawn, and
+    /// why. One in the border template's placements says that it is the
+    /// template's. Empty for a page whose symbol files are sound, and for
+    /// one that draws every placement from the body its drawing caches —
+    /// which is every page of every corpus this crate is tested on.
+    #[must_use]
+    pub fn symbol_chain_fault_warnings(&self) -> Vec<String> {
+        self.symbol_chain_faults
+            .iter()
+            .map(|found| {
+                let whose = match found.domain {
+                    LedgerDomain::Drawing => "",
+                    LedgerDomain::Furniture => "in the border template, ",
+                };
+                match found.not_drawn {
+                    None => format!(
+                        "{whose}the symbol file {}, which {} placement(s) on the page are \
+                         drawn from, is damaged: {}",
+                        found.symbol,
+                        found.placements,
+                        found.fault.describe()
+                    ),
+                    Some(why) => format!(
+                        "{whose}the symbol file {} is damaged and the {} placement(s) on the \
+                         page that name it are not drawn, each counted as a missing symbol: \
+                         {}; {}",
+                        found.symbol,
+                        found.placements,
+                        why.describe(),
+                        found.fault.describe_framing()
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    /// File the records no sheet's list places: one suspect
+    /// [`DropReason::RecordWithoutDisplayPlace`] item per domain and stream,
+    /// counted in records, and the finding itself in [`Self::unplaced`].
+    pub fn note_unplaced(&mut self, unplaced: Vec<UnplacedRecords>) {
+        for item in &unplaced {
+            self.parse
+                .get_mut(item.domain)
+                .push_record(ParseRecord::new(
+                    DropReason::RecordWithoutDisplayPlace,
+                    item.stream.clone(),
+                    item.records,
+                ));
+        }
+        self.unplaced = unplaced;
+    }
+
+    /// What a page laid out without a border frame of its drawing's own
+    /// sheet says of that frame: the stream, the record, why it is refused,
+    /// and what the layout made of the page without it, each clause read
+    /// off what was laid out ([`FrameRefused`]) rather than supposed.
+    ///
+    /// What the page is: the paper the sheet states, the size its
+    /// template's name states, a size fitted to what is drawn — or, where
+    /// another border frame of the drawing still states its sheet, the
+    /// page that one lays out. Then the border template: where one is laid
+    /// out on a sheet with no frame, that it and the drawing's ink lie
+    /// where they do without the frame's offsets; where none is, that none
+    /// is drawn and why ([`TemplateWithoutTheFrame`]) — a frame that is
+    /// refused can take the template with it. Last, a page that holds no
+    /// primitive is said to draw nothing.
+    fn frame_refused_warning(&self, refused: &FrameRefused) -> String {
+        let oid = refused
+            .oid
+            .map_or_else(String::new, |oid| format!(", oid {oid}"));
+        let size = refused
+            .page_um
+            .map_or_else(String::new, |um| format!(", {}", sides_mm(um)));
+        let blank = refused.primitives == 0;
+        // Why no border template is drawn, where none is.
+        let no_template = match refused.template {
+            TemplateWithoutTheFrame::Drawn => None,
+            TemplateWithoutTheFrame::NotFound { sheet_um, fitted } => Some(format!(
+                "a template was sought for a sheet of {}{} and none was found",
+                sides_mm(sheet_um),
+                if fitted {
+                    ", the smallest standard sheet the drawing's own lines and curves fit,"
+                } else {
+                    ""
+                }
+            )),
+            TemplateWithoutTheFrame::NotNamed => Some(
+                "the drawing names none, and only a frame's rectangle picks one for a drawing \
+                 that names none"
+                    .to_string(),
+            ),
+            TemplateWithoutTheFrame::NoSheet => Some(
+                "the one the drawing names is sought for the sheet a frame or its name states \
+                 and, failing both, for the smallest standard sheet the drawing's own lines \
+                 and curves fit, and there is none: it plots no line or curve of its own, or \
+                 they reach past the largest standard sheet"
+                    .to_string(),
+            ),
+        };
+        // The page of a sheet laid out with no frame; `None` where another
+        // frame lays it out.
+        let page = match refused.page {
+            PageWithoutTheFrame::AnotherFrame => None,
+            PageWithoutTheFrame::Paper => {
+                let named = self
+                    .paper_unlike_the_name
+                    .map_or_else(String::new, |beside| {
+                        format!(
+                            ", which is not the size its template's name states, {}",
+                            sides_mm(beside.named_um)
+                        )
+                    });
+                Some(format!(
+                    "the page is the paper its sheet states{size}{named}"
+                ))
+            }
+            PageWithoutTheFrame::TemplateName => Some(format!(
+                "the page is the size its template's name states{size}"
+            )),
+            PageWithoutTheFrame::Unstated if blank => Some(
+                "no paper and no template name states its page, and nothing is drawn to fit \
+                 one to"
+                    .to_string(),
+            ),
+            PageWithoutTheFrame::Unstated => Some(
+                "no paper and no template name states its page, which is fitted to what is \
+                 drawn"
+                    .to_string(),
+            ),
+        };
+        // A page with a size and nothing on it; one with neither has said
+        // so already.
+        let nothing_drawn = if blank && refused.page != PageWithoutTheFrame::Unstated {
+            "; nothing is drawn on the page"
+        } else {
+            ""
+        };
+        let laid_out = match page {
+            None => {
+                let template = no_template.map_or_else(String::new, |why| {
+                    format!(", and no border template is drawn: {why}")
+                });
+                format!(
+                    "another border frame of the drawing states its sheet{size}, and the page \
+                     is laid out by that one{template}{nothing_drawn}"
+                )
+            }
+            Some(page) => {
+                let placed = match no_template {
+                    None => "nothing is placed by the frame: the drawing's ink and its border \
+                             template lie where they do without the frame's offsets"
+                        .to_string(),
+                    Some(why) if blank => {
+                        format!("no border template is drawn: {why}{nothing_drawn}")
+                    }
+                    Some(why) => format!(
+                        "no border template is drawn: {why}; the drawing's ink lies where it \
+                         does without the frame's offsets"
+                    ),
+                };
+                format!("the sheet is laid out as one with no frame: {page}, and {placed}")
+            }
+        };
+        format!(
+            "the border frame of {}, the record at +{}{oid}, is refused: {}; {laid_out}",
+            refused.stream, refused.record, refused.why
+        )
+    }
+
+    /// What is to be said of the page itself. One sentence for each border
+    /// frame of the drawing's own sheet that the frame rule refuses: the
+    /// stream, the record, why it is refused, and what the page is without
+    /// it — what it is laid out by, whether its border template is drawn
+    /// and, where none is, why, and whether anything is drawn at all. One
+    /// sentence when the paper
+    /// the sheet states was refused for not being the border frame's, with
+    /// the paper, the frame's rectangle and that the page is the frame's.
+    /// One sentence when no frame was read and the paper is not the size
+    /// the template's name states, with both sizes and that the page is the
+    /// paper: a name refuses nothing. Where a frame was refused that last
+    /// sentence is not started — "no border frame was read" is not what
+    /// happened — and the frame's sentence says the two sizes instead.
+    /// Empty for a page written on the paper
+    /// its sheet states with nothing to say against it, which is every page
+    /// of every corpus this crate is tested on.
+    #[must_use]
+    pub fn page_warnings(&self) -> Vec<String> {
+        let frames = self
+            .frames_refused
+            .iter()
+            .map(|refused| self.frame_refused_warning(refused));
+        let limit_mm = crate::model::PAPER_FRAME_REACH_MM;
+        let refused = self.paper_refused.iter().map(|refused| {
+            format!(
+                "the paper its sheet states, {}, is not its border frame's, {}: no \
+                 drawing on hand has the two more than {limit_mm} mm apart on a side, so \
+                 the paper is not taken for the page and the page is the frame's rectangle",
+                sides_mm(refused.paper_um),
+                sides_mm(refused.frame_um)
+            )
+        });
+        let beside_a_name = self
+            .paper_unlike_the_name
+            .iter()
+            .filter(|_| self.frames_refused.is_empty())
+            .map(|beside| {
+                format!(
+                    "the paper its sheet states, {}, is not the size its template's name \
+                     states, {}, and no border frame was read to say which the sheet is: a \
+                     name is a label and the paper a reading, so the page is the paper",
+                    sides_mm(beside.paper_um),
+                    sides_mm(beside.named_um)
+                )
+            });
+        frames.chain(refused).chain(beside_a_name).collect()
+    }
+
+    /// One sentence per stream and reason for the records that draw on the
+    /// page and take no place in its display order: how many, how many
+    /// primitives they draw, why, and where they are painted instead. One in
+    /// the border template's file says that it is the template's. Empty for
+    /// a page whose every record stands where a sheet lists it, which is
+    /// every page of every corpus this crate is tested on.
+    ///
+    /// A drawing's own sheet whose list was not read has no paper either —
+    /// the record that lists the objects states the paper behind them — so
+    /// its sentence goes on to say what the page is instead, and where that
+    /// was read ([`Self::page_for_want_of_a_paper`]).
+    ///
+    /// Records a stopped chain already accounts for get no sentence here:
+    /// a stream that holds no record of the sheet's own
+    /// ([`UnplacedWhy::NoRecordOfTheSheet`]) and whose chain is reported as
+    /// stopping short ([`Self::chain_fault_warnings`]) has one cause, and
+    /// that sentence names it. The account keeps both items. Any other
+    /// reason is said beside a chain fault, being another matter; so is
+    /// this one on a stream whose chain reads to its end.
+    #[must_use]
+    pub fn display_order_warnings(&self) -> Vec<String> {
+        let painted = if self.paint_order.is_empty() {
+            "no sheet of the page states an order, and it is painted strokes first and \
+             lettering after"
+        } else {
+            "they are painted after everything that has a place"
+        };
+        self.unplaced
+            .iter()
+            .filter(|item| !self.a_stopped_chain_accounts_for(item))
+            .map(|item| {
+                let whose = match item.domain {
+                    LedgerDomain::Drawing => "",
+                    LedgerDomain::Furniture => "in the border template, ",
+                };
+                let of = if item.stream.is_empty() {
+                    String::new()
+                } else {
+                    format!(" of {}", item.stream)
+                };
+                let why = match item.why {
+                    UnplacedWhy::NoList => {
+                        "the sheet states no list of its objects that could be read"
+                    }
+                    UnplacedWhy::NoRecordOfTheSheet => {
+                        "the stream holds no record of the sheet's own, so the list its \
+                         sheet states has nothing to be held to"
+                    }
+                    UnplacedWhy::NotReached => {
+                        "the sheet's list of its objects does not reach them"
+                    }
+                    UnplacedWhy::NoFrame => {
+                        "no frame the drawing lists was found to embed the sheet they are in"
+                    }
+                    UnplacedWhy::NoRecord => "they name no record",
+                };
+                // The drawing's own sheet: a stream of the document's root.
+                let own_sheet = item.domain == LedgerDomain::Drawing
+                    && matches!(
+                        item.why,
+                        UnplacedWhy::NoList | UnplacedWhy::NoRecordOfTheSheet
+                    )
+                    && item.stream.matches('/').count() == 1;
+                let page = match self.page_for_want_of_a_paper {
+                    Some(page) if own_sheet => format!(
+                        "; the paper is stated in the same record and was not read either, so \
+                         the page is {}, {}",
+                        page.from.named(),
+                        sides_mm(page.um)
+                    ),
+                    _ => String::new(),
+                };
+                format!(
+                    "{whose}{} record(s){of}, {} primitive(s) on the page, take no place in \
+                     the display order: {why}; {painted}{page}",
+                    item.records, item.primitives
+                )
+            })
+            .collect()
+    }
+
+    /// Whether a chain fault of the same stream is already the word on
+    /// `item`: its records take no place because the stream holds no record
+    /// of the sheet's own, and the stream's chain is one that stopped.
+    fn a_stopped_chain_accounts_for(&self, item: &UnplacedRecords) -> bool {
+        item.why == UnplacedWhy::NoRecordOfTheSheet
+            && self.chain_faults.iter().any(|record| {
+                record.domain == item.domain
+                    && record.fault.stream_path == item.stream
+                    && record.fault.stop.is_some()
+            })
+    }
+
     /// One sentence per chain stream that was not read whole, naming the
     /// stream, the offset its record walk stopped at and the bytes left
     /// unread, in the order the streams were met. A fault in the border
     /// template's file says that it is the template's. Empty for a page all
     /// of whose streams are sound, which is every page of every corpus this
     /// crate is tested on.
+    ///
+    /// Where the stop left the records it read without a place in the
+    /// display order — none of them the sheet's own, so the sheet's list was
+    /// not taken ([`UnplacedWhy::NoRecordOfTheSheet`]) — the sentence goes
+    /// on to say that, and, for a drawing's own sheet, what the page is for
+    /// want of the paper that list's record states
+    /// ([`Self::page_for_want_of_a_paper`]). It is still one sentence:
+    /// [`Self::display_order_warnings`] starts none for those records.
     #[must_use]
     pub fn chain_fault_warnings(&self) -> Vec<String> {
         self.chain_faults
             .iter()
-            .map(|record| match record.domain {
-                LedgerDomain::Drawing => record.fault.describe(),
-                LedgerDomain::Furniture => {
-                    format!("in the border template, {}", record.fault.describe())
+            .map(|record| {
+                let said = match record.domain {
+                    LedgerDomain::Drawing => record.fault.describe(),
+                    LedgerDomain::Furniture => {
+                        format!("in the border template, {}", record.fault.describe())
+                    }
+                };
+                match self.what_a_stop_left_without_a_place(record) {
+                    Some(more) => format!("{said}{more}"),
+                    None => said,
                 }
             })
             .collect()
+    }
+
+    /// The rest of a stopped chain's sentence, where the stop is why records
+    /// of its stream take no place: how many, and what the page is instead
+    /// of the paper when the stream is the drawing's own sheet.
+    fn what_a_stop_left_without_a_place(&self, record: &ChainFaultRecord) -> Option<String> {
+        // Only a chain that stopped: one read to its end left nothing unread.
+        record.fault.stop.as_ref()?;
+        let item = self.unplaced.iter().find(|item| {
+            item.why == UnplacedWhy::NoRecordOfTheSheet
+                && item.domain == record.domain
+                && item.stream == record.fault.stream_path
+        })?;
+        let own_sheet =
+            item.domain == LedgerDomain::Drawing && item.stream.matches('/').count() == 1;
+        let page = match self.page_for_want_of_a_paper {
+            Some(page) if own_sheet => format!(
+                ", and the paper stated with that list was not read either, so the page is \
+                 {}, {}",
+                page.from.named(),
+                sides_mm(page.um)
+            ),
+            _ => String::new(),
+        };
+        Some(format!(
+            "; none of the records read is the sheet's own, so the sheet's list has nothing \
+             to be held to and {} record(s), {} primitive(s) on the page, take no place in \
+             the display order{page}",
+            item.records, item.primitives
+        ))
     }
 }
 
@@ -144,7 +913,9 @@ impl ParseCounts {
 pub struct ParseRecord {
     /// Which drop this is.
     pub reason: DropReason,
-    /// The Sheet stream's path, or the storage path for a body record.
+    /// The Sheet stream's path, or the storage path for a body record; for
+    /// [`DropReason::SymbolFileChainFault`], the symbol file and the stream
+    /// of it, `<file>:<stream>`.
     pub stream: String,
     /// The PSM type code, when the reason is per type code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,7 +928,9 @@ pub struct ParseRecord {
     /// For [`DropReason::SheetStreamWithoutGeometry`]: the stream's byte
     /// size when the stream yielded nothing, and the bytes its record chain
     /// left unread when it was read up to a stop
-    /// ([`LayoutLedger::chain_faults`] holds which, and where).
+    /// ([`LayoutLedger::chain_faults`] holds which, and where). For
+    /// [`DropReason::SymbolFileChainFault`]: the bytes the symbol file's
+    /// stream left unread ([`LayoutLedger::symbol_chain_faults`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// How many body primitives an unplaced cache definition carries, for
@@ -951,7 +1724,8 @@ impl ParseRecord {
         self
     }
 
-    /// The stream's byte size, for `sheet_stream_without_geometry`.
+    /// The stream's byte size, for `sheet_stream_without_geometry`; the
+    /// bytes left unread, for it and for `symbol_file_chain_fault`.
     fn of_bytes(mut self, bytes: u64) -> Self {
         self.bytes = Some(bytes);
         self
@@ -1502,6 +2276,773 @@ mod tests {
 
         // A page whose streams are all sound has nothing to say.
         assert!(LayoutLedger::default().chain_fault_warnings().is_empty());
+    }
+
+    fn unplaced(domain: LedgerDomain, stream: &str, why: UnplacedWhy) -> UnplacedRecords {
+        UnplacedRecords {
+            domain,
+            stream: stream.to_string(),
+            why,
+            records: 1,
+            primitives: 2,
+        }
+    }
+
+    fn a_chain_fault(domain: LedgerDomain, stream: &str, stops: bool) -> ChainFaultRecord {
+        let mut fault = a_fault(stream, 30_000, 143);
+        if !stops {
+            fault.stop = None;
+            fault.unread_bytes = 0;
+            fault.stated_records = Some(41);
+        }
+        ChainFaultRecord { domain, fault }
+    }
+
+    /// Records a stopped chain accounts for get no sentence of their own;
+    /// everything else that takes no place does, beside a chain fault or
+    /// without one.
+    #[test]
+    fn a_stopped_chain_is_the_word_on_the_records_it_left_without_a_place() {
+        use LedgerDomain::{Drawing, Furniture};
+        let page = |items: Vec<UnplacedRecords>, faults: Vec<ChainFaultRecord>| LayoutLedger {
+            unplaced: items,
+            chain_faults: faults,
+            // Some sheet of the page states an order.
+            paint_order: vec![0],
+            ..LayoutLedger::default()
+        };
+        let no_own = || unplaced(Drawing, "/Sheet6", UnplacedWhy::NoRecordOfTheSheet);
+
+        // The chain of the same stream stopped: its warning is the one.
+        let stopped = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", true)],
+        );
+        assert!(stopped.display_order_warnings().is_empty());
+        assert_eq!(stopped.chain_fault_warnings().len(), 1);
+        assert_eq!(stopped.unplaced.len(), 1, "the finding is kept");
+        // And its warning goes on to say what the stop left without a
+        // place — and, where the stream is the drawing's own sheet and no
+        // paper was read, what the page is.
+        let goes_on = "; none of the records read is the sheet's own, so the sheet's list has \
+                       nothing to be held to and 1 record(s), 2 primitive(s) on the page, take \
+                       no place in the display order";
+        let said = stopped.chain_fault_warnings();
+        assert!(
+            said[0].starts_with("the record chain of /Sheet6"),
+            "{}",
+            said[0]
+        );
+        assert!(said[0].ends_with(goes_on), "{}", said[0]);
+        let mut with_a_page = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", true)],
+        );
+        with_a_page.page_for_want_of_a_paper = Some(PageInstead {
+            from: SheetRectangle::TemplateName,
+            um: [594_000, 420_000],
+        });
+        let said = with_a_page.chain_fault_warnings();
+        assert!(
+            said[0].ends_with(&format!(
+                "{goes_on}, and the paper stated with that list was not read either, so the \
+                 page is the size its template's name states, 594.000 x 420.000 mm"
+            )),
+            "{}",
+            said[0]
+        );
+
+        // No chain fault at all: this sentence is the only word there is,
+        // and it says what is so — the list is there, the stream is short.
+        let sound = page(vec![no_own()], Vec::new());
+        let said = sound.display_order_warnings();
+        assert_eq!(said.len(), 1);
+        assert_eq!(
+            said[0],
+            "1 record(s) of /Sheet6, 2 primitive(s) on the page, take no place in the \
+             display order: the stream holds no record of the sheet's own, so the list its \
+             sheet states has nothing to be held to; they are painted after everything that \
+             has a place"
+        );
+        assert!(!said[0].contains("states no list"));
+
+        // A chain that reads to its end and disagrees with its header's
+        // count did not stop: both are said.
+        let counted = page(
+            vec![no_own()],
+            vec![a_chain_fault(Drawing, "/Sheet6", false)],
+        );
+        assert_eq!(counted.display_order_warnings().len(), 1);
+        assert!(!counted.chain_fault_warnings()[0].contains("take no place"));
+        // Another stream's chain, and the template's chain of a stream of
+        // the same name, are not this stream's.
+        for fault in [
+            a_chain_fault(Drawing, "/Sheet7", true),
+            a_chain_fault(Furniture, "/Sheet6", true),
+        ] {
+            assert_eq!(
+                page(vec![no_own()], vec![fault])
+                    .display_order_warnings()
+                    .len(),
+                1
+            );
+        }
+        // Any other reason is another matter than the stop, and is said
+        // beside it.
+        for why in [
+            UnplacedWhy::NoList,
+            UnplacedWhy::NotReached,
+            UnplacedWhy::NoFrame,
+            UnplacedWhy::NoRecord,
+        ] {
+            let both = page(
+                vec![unplaced(Drawing, "/Sheet6", why)],
+                vec![a_chain_fault(Drawing, "/Sheet6", true)],
+            );
+            assert_eq!(both.display_order_warnings().len(), 1, "{why:?}");
+        }
+        // The template's own, by its own chain.
+        let template = page(
+            vec![unplaced(
+                Furniture,
+                "/Sheet6",
+                UnplacedWhy::NoRecordOfTheSheet,
+            )],
+            vec![a_chain_fault(Furniture, "/Sheet6", true)],
+        );
+        assert!(template.display_order_warnings().is_empty());
+    }
+
+    /// A page that is not a paper says which rectangle it is: a frame's,
+    /// or the size a template's name states.
+    #[test]
+    fn a_page_that_is_not_a_paper_says_which_rectangle_it_is() {
+        let frame = [594_328, 420_566];
+        let named = [594_000, 420_000];
+        // No paper read, and the list with it.
+        for (from, um, says) in [
+            (
+                SheetRectangle::Frame,
+                frame,
+                "so the page is the border frame's rectangle, 594.328 x 420.566 mm",
+            ),
+            (
+                SheetRectangle::TemplateName,
+                named,
+                "so the page is the size its template's name states, 594.000 x 420.000 mm",
+            ),
+        ] {
+            for why in [UnplacedWhy::NoList, UnplacedWhy::NoRecordOfTheSheet] {
+                let ledger = LayoutLedger {
+                    unplaced: vec![unplaced(LedgerDomain::Drawing, "/Sheet6", why)],
+                    page_for_want_of_a_paper: Some(PageInstead { from, um }),
+                    ..LayoutLedger::default()
+                };
+                let said = ledger.display_order_warnings();
+                assert_eq!(said.len(), 1);
+                assert!(said[0].ends_with(says), "{from:?} {why:?}: {}", said[0]);
+                assert_eq!(
+                    said[0].contains("frame"),
+                    from == SheetRectangle::Frame,
+                    "{}",
+                    said[0]
+                );
+            }
+        }
+        // A paper read and refused: only ever for a frame's rectangle.
+        let by_a_frame = LayoutLedger {
+            paper_refused: Some(PaperRefused {
+                paper_um: [297_000, 420_000],
+                frame_um: frame,
+            }),
+            ..LayoutLedger::default()
+        };
+        assert_eq!(
+            by_a_frame.page_warnings(),
+            [
+                "the paper its sheet states, 297.000 x 420.000 mm, is not its border frame's, \
+              594.328 x 420.566 mm: no drawing on hand has the two more than 2.707 mm apart on \
+              a side, so the paper is not taken for the page and the page is the frame's \
+              rectangle"
+            ]
+        );
+        assert_eq!(
+            by_a_frame.paper_refused.map(|refused| refused.sides()),
+            Some("paper 297.000 x 420.000 mm, frame 594.328 x 420.566 mm".to_string())
+        );
+        // A paper that is the page, beside a name that states another size.
+        let beside_a_name = LayoutLedger {
+            paper_unlike_the_name: Some(PaperBesideAName {
+                paper_um: [297_000, 420_000],
+                named_um: named,
+            }),
+            ..LayoutLedger::default()
+        };
+        assert_eq!(
+            beside_a_name.page_warnings(),
+            [
+                "the paper its sheet states, 297.000 x 420.000 mm, is not the size its \
+              template's name states, 594.000 x 420.000 mm, and no border frame was read to \
+              say which the sheet is: a name is a label and the paper a reading, so the page \
+              is the paper"
+            ]
+        );
+        assert_eq!(
+            beside_a_name
+                .paper_unlike_the_name
+                .map(|beside| beside.sides()),
+            Some(
+                "paper 297.000 x 420.000 mm, template name's size 594.000 x 420.000 mm".to_string()
+            )
+        );
+        let said = &beside_a_name.page_warnings()[0];
+        assert!(
+            !said.contains("frame's") && !said.contains("not taken"),
+            "{said}"
+        );
+        // Nothing to say of a page that is its paper.
+        assert!(LayoutLedger::default().page_warnings().is_empty());
+    }
+
+    /// What every sentence of a refused border frame opens with here: the
+    /// one live frame of `D06.pid`'s sheet, its ratio three parts in a
+    /// million off.
+    const FRAME_REFUSED: &str = "the border frame of /Sheet6, the record at +8, oid 22, is \
+                                 refused: it states a ratio of 0.707634561 where its height \
+                                 over its width, 0.420566 m over 0.594328 m, is 0.707632438; ";
+
+    /// That frame as the layout files it, with what the page is without it.
+    fn frame_refused(
+        page: PageWithoutTheFrame,
+        page_um: Option<[u64; 2]>,
+        template: TemplateWithoutTheFrame,
+        primitives: u64,
+    ) -> FrameRefused {
+        FrameRefused {
+            stream: "/Sheet6".to_string(),
+            record: 8,
+            oid: Some(22),
+            why: "it states a ratio of 0.707634561 where its height over its width, 0.420566 m \
+                  over 0.594328 m, is 0.707632438"
+                .to_string(),
+            page,
+            page_um,
+            template,
+            primitives,
+        }
+    }
+
+    /// The one sentence a page with `refused` says of itself, less its
+    /// opening.
+    fn said_of(refused: FrameRefused) -> String {
+        let ledger = LayoutLedger {
+            frames_refused: vec![refused],
+            ..LayoutLedger::default()
+        };
+        let said = ledger.page_warnings();
+        assert_eq!(said.len(), 1, "{said:#?}");
+        said[0]
+            .strip_prefix(FRAME_REFUSED)
+            .unwrap_or_else(|| panic!("the sentence opens otherwise: {}", said[0]))
+            .to_string()
+    }
+
+    /// A refused border frame can take the border template with it, and
+    /// the sentence says what the page that was laid out draws: a template
+    /// is picked for the frame's rectangle, and without one for the size
+    /// its name states or the sheet the drawing's lines fit. The five
+    /// pages are the ones the drawings on hand lay out when the frame of
+    /// each is refused in a copy: `D06` keeps its template; a `收球筒`
+    /// sheet's lines fit a sheet no template of its family is the size
+    /// of; a template may be sought for a stated sheet and not be there;
+    /// `A01` names none; `D03` has no ink of its own and is a blank page.
+    /// Until 2026-11-12 every one of them was told "its border template
+    /// lie[s] where [it does] without the frame's offsets".
+    #[test]
+    fn a_refused_frame_says_what_its_page_draws_of_the_border_template() {
+        const PAPER: &str = "the sheet is laid out as one with no frame: the page is the paper \
+                             its sheet states, 594.000 x 420.000 mm, and ";
+        const INK: &str = "; the drawing's ink lies where it does without the frame's offsets";
+        let a2 = Some([594_000, 420_000]);
+        for (template, primitives, says) in [
+            (
+                TemplateWithoutTheFrame::Drawn,
+                156,
+                "nothing is placed by the frame: the drawing's ink and its border template lie \
+                 where they do without the frame's offsets"
+                    .to_string(),
+            ),
+            (
+                TemplateWithoutTheFrame::NotFound {
+                    sheet_um: [420_000, 297_000],
+                    fitted: true,
+                },
+                607,
+                format!(
+                    "no border template is drawn: a template was sought for a sheet of 420.000 x \
+                     297.000 mm, the smallest standard sheet the drawing's own lines and curves \
+                     fit, and none was found{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NotFound {
+                    sheet_um: [594_000, 420_000],
+                    fitted: false,
+                },
+                239,
+                format!(
+                    "no border template is drawn: a template was sought for a sheet of 594.000 x \
+                     420.000 mm and none was found{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NotNamed,
+                112,
+                format!(
+                    "no border template is drawn: the drawing names none, and only a frame's \
+                     rectangle picks one for a drawing that names none{INK}"
+                ),
+            ),
+            (
+                TemplateWithoutTheFrame::NoSheet,
+                0,
+                "no border template is drawn: the one the drawing names is sought for the sheet \
+                 a frame or its name states and, failing both, for the smallest standard sheet \
+                 the drawing's own lines and curves fit, and there is none: it plots no line or \
+                 curve of its own, or they reach past the largest standard sheet; nothing is \
+                 drawn on the page"
+                    .to_string(),
+            ),
+        ] {
+            let said = said_of(frame_refused(
+                PageWithoutTheFrame::Paper,
+                a2,
+                template,
+                primitives,
+            ));
+            assert_eq!(said, format!("{PAPER}{says}"), "{template:?}");
+            // Each claim, by what the page holds.
+            let drawn = template == TemplateWithoutTheFrame::Drawn;
+            assert_eq!(
+                said.contains("its border template lie where they do"),
+                drawn,
+                "{said}"
+            );
+            assert_eq!(
+                said.contains("no border template is drawn"),
+                !drawn,
+                "{said}"
+            );
+            assert_eq!(
+                said.contains("nothing is drawn on the page"),
+                primitives == 0,
+                "{said}"
+            );
+        }
+    }
+
+    /// Where another border frame of the drawing still states its sheet,
+    /// the page is that one's, and the sentence says so rather than "no
+    /// frame"; a template the other frame's rectangle finds none for is
+    /// said there too. `Q井场` states two frames: with the embedded one
+    /// refused the page is the linked one's 841 by 594 and wears its
+    /// template; with the linked one refused the page is the embedded
+    /// object's rectangle, and no template is that size.
+    #[test]
+    fn a_refused_frame_beside_another_says_the_page_is_that_ones() {
+        let with_its_template = said_of(frame_refused(
+            PageWithoutTheFrame::AnotherFrame,
+            Some([841_000, 594_000]),
+            TemplateWithoutTheFrame::Drawn,
+            4_458,
+        ));
+        assert_eq!(
+            with_its_template,
+            "another border frame of the drawing states its sheet, 841.000 x 594.000 mm, and \
+             the page is laid out by that one"
+        );
+        let without = said_of(frame_refused(
+            PageWithoutTheFrame::AnotherFrame,
+            Some([689_600, 554_302]),
+            TemplateWithoutTheFrame::NotFound {
+                sheet_um: [689_600, 554_302],
+                fitted: false,
+            },
+            4_030,
+        ));
+        assert_eq!(
+            without,
+            "another border frame of the drawing states its sheet, 689.600 x 554.302 mm, and \
+             the page is laid out by that one, and no border template is drawn: a template was \
+             sought for a sheet of 689.600 x 554.302 mm and none was found"
+        );
+        for said in [&with_its_template, &without] {
+            assert!(
+                !said.contains("with no frame") && !said.contains("without the frame's offsets"),
+                "a page another frame lays out is not one with no frame: {said}"
+            );
+        }
+        // Two frames refused are two sentences, each of its own record.
+        let mut second = frame_refused(
+            PageWithoutTheFrame::Paper,
+            Some([594_000, 420_000]),
+            TemplateWithoutTheFrame::Drawn,
+            156,
+        );
+        second.record = 2_048;
+        second.oid = None;
+        let both = LayoutLedger {
+            frames_refused: vec![
+                frame_refused(
+                    PageWithoutTheFrame::Paper,
+                    Some([594_000, 420_000]),
+                    TemplateWithoutTheFrame::Drawn,
+                    156,
+                ),
+                second,
+            ],
+            ..LayoutLedger::default()
+        };
+        let said = both.page_warnings();
+        assert_eq!(said.len(), 2, "{said:#?}");
+        assert!(said[0].starts_with(FRAME_REFUSED), "{}", said[0]);
+        assert!(
+            said[1].starts_with("the border frame of /Sheet6, the record at +2048, is refused: "),
+            "a record whose payload reaches no oid names none: {}",
+            said[1]
+        );
+    }
+
+    /// What states the page of a sheet laid out with no frame: the paper,
+    /// the size its template's name stands for, or neither — and then the
+    /// page is fitted to what is drawn, unless nothing is.
+    #[test]
+    fn a_refused_frame_says_what_states_the_page_without_it() {
+        const PLACED: &str = ", and nothing is placed by the frame: the drawing's ink and its \
+                              border template lie where they do without the frame's offsets";
+        assert_eq!(
+            said_of(frame_refused(
+                PageWithoutTheFrame::TemplateName,
+                Some([594_000, 420_000]),
+                TemplateWithoutTheFrame::Drawn,
+                339,
+            )),
+            format!(
+                "the sheet is laid out as one with no frame: the page is the size its \
+                 template's name states, 594.000 x 420.000 mm{PLACED}"
+            )
+        );
+        assert_eq!(
+            said_of(frame_refused(
+                PageWithoutTheFrame::Unstated,
+                None,
+                TemplateWithoutTheFrame::Drawn,
+                40,
+            )),
+            format!(
+                "the sheet is laid out as one with no frame: no paper and no template name \
+                 states its page, which is fitted to what is drawn{PLACED}"
+            )
+        );
+        // Nothing states a size and nothing is drawn: there is no page to
+        // fit, and the sentence does not say there is one.
+        let no_page = said_of(frame_refused(
+            PageWithoutTheFrame::Unstated,
+            None,
+            TemplateWithoutTheFrame::NotNamed,
+            0,
+        ));
+        assert_eq!(
+            no_page,
+            "the sheet is laid out as one with no frame: no paper and no template name states \
+             its page, and nothing is drawn to fit one to, and no border template is drawn: \
+             the drawing names none, and only a frame's rectangle picks one for a drawing that \
+             names none"
+        );
+        assert!(
+            !no_page.contains("fitted to what is drawn") && !no_page.contains("on the page"),
+            "{no_page}"
+        );
+    }
+
+    /// A page whose frame was refused is not one where "no border frame
+    /// was read": the paper that is not the size its template's name
+    /// states is said in the frame's own sentence, and the sentence that
+    /// opens with the paper is not started beside it.
+    #[test]
+    fn a_refused_frame_is_not_said_again_as_no_frame_read() {
+        let beside_a_name = PaperBesideAName {
+            paper_um: [297_000, 420_000],
+            named_um: [594_000, 420_000],
+        };
+        let ledger = LayoutLedger {
+            frames_refused: vec![frame_refused(
+                PageWithoutTheFrame::Paper,
+                Some([297_000, 420_000]),
+                TemplateWithoutTheFrame::Drawn,
+                156,
+            )],
+            paper_unlike_the_name: Some(beside_a_name),
+            ..LayoutLedger::default()
+        };
+        assert_eq!(
+            ledger.page_warnings(),
+            [format!(
+                "{FRAME_REFUSED}the sheet is laid out as one with no frame: the page is the \
+                 paper its sheet states, 297.000 x 420.000 mm, which is not the size its \
+                 template's name states, 594.000 x 420.000 mm, and nothing is placed by the \
+                 frame: the drawing's ink and its border template lie where they do without \
+                 the frame's offsets"
+            )],
+            "one sentence, the frame's, with both sizes"
+        );
+        // The same paper beside the same name with no frame refused: the
+        // sentence of its own, which says no frame was read.
+        let no_frame = LayoutLedger {
+            paper_unlike_the_name: Some(beside_a_name),
+            ..LayoutLedger::default()
+        };
+        let said = no_frame.page_warnings();
+        assert_eq!(said.len(), 1, "{said:#?}");
+        assert!(said[0].contains("no border frame was read"), "{}", said[0]);
+    }
+
+    /// A damaged symbol file no part of whose body can be drawn: one item
+    /// a damaged stream, as for a file that is drawn from, and one sentence
+    /// a stream that says the placements are not drawn, and why.
+    #[test]
+    fn a_damaged_symbol_file_that_is_not_drawn_from_says_so_once_a_stream() {
+        use pid_parse::symbol_library::SymbolNotDrawn;
+
+        let cluster = a_fault("/PSMcluster0", 3_000, 1_000);
+        let sheet = a_fault("/Sheet6", 2_000, 600);
+        let mut ledger = LayoutLedger::default();
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Furniture,
+            [SymbolFileFaults {
+                symbol: "Gauge.sym".to_string(),
+                placements: 2,
+                not_drawn: Some(SymbolNotDrawn::ClusterShort),
+                faults: vec![cluster.clone(), sheet.clone()],
+            }],
+        );
+        let mut items: Vec<_> = ledger
+            .parse
+            .get(LedgerDomain::Furniture)
+            .items
+            .iter()
+            .map(|item| (item.reason, item.stream.clone(), item.count, item.bytes))
+            .collect();
+        items.sort();
+        assert_eq!(
+            items,
+            [
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/PSMcluster0".to_string(),
+                    1,
+                    Some(2_000)
+                ),
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/Sheet6".to_string(),
+                    1,
+                    Some(1_400)
+                ),
+            ],
+            "one item a damaged stream"
+        );
+        assert!(ledger.parse.get(LedgerDomain::Drawing).items.is_empty());
+        assert_eq!(
+            ledger
+                .symbol_chain_faults
+                .iter()
+                .map(|found| (found.placements, found.not_drawn))
+                .collect::<Vec<_>>(),
+            [(2, Some(SymbolNotDrawn::ClusterShort)); 2]
+        );
+        let said = ledger.symbol_chain_fault_warnings();
+        assert_eq!(
+            said,
+            [&cluster, &sheet].map(|fault| format!(
+                "in the border template, the symbol file Gauge.sym is damaged and the 2 \
+                 placement(s) on the page that name it are not drawn, each counted as a \
+                 missing symbol: {}; {}",
+                SymbolNotDrawn::ClusterShort.describe(),
+                fault.describe_framing()
+            ))
+        );
+        for sentence in &said {
+            assert!(
+                !sentence.contains("are drawn from") && !sentence.contains("what the stream draws"),
+                "{sentence}"
+            );
+        }
+        assert!(
+            said[0].contains("/PSMcluster0") && said[1].contains("/Sheet6"),
+            "{said:#?}"
+        );
+    }
+
+    /// A symbol file with a chain that does not hold, drawn from: one item
+    /// a file and stream in the domain of the placement, and one sentence
+    /// that names the file and says the reader's own of the stream.
+    #[test]
+    fn a_damaged_symbol_file_is_filed_and_said_once_a_stream() {
+        let fault = a_fault("/Sheet6", 2_000, 600);
+        let mut ledger = LayoutLedger::default();
+        let file = |symbol: &str, placements, faults| SymbolFileFaults {
+            symbol: symbol.to_string(),
+            placements,
+            not_drawn: None,
+            faults,
+        };
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Drawing,
+            [file(
+                r"Piping\Valves\Gate Valve.sym",
+                3,
+                vec![fault.clone()],
+            )],
+        );
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Furniture,
+            [file("Logo.sym", 1, vec![fault.clone()])],
+        );
+        // A file with no fault files nothing.
+        ledger.note_symbol_chain_faults(LedgerDomain::Drawing, [file("Sound.sym", 9, Vec::new())]);
+        let items = |domain| {
+            ledger
+                .parse
+                .get(domain)
+                .items
+                .iter()
+                .map(|item| (item.reason, item.stream.clone(), item.count, item.bytes))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            items(LedgerDomain::Drawing),
+            [(
+                DropReason::SymbolFileChainFault,
+                r"Piping\Valves\Gate Valve.sym:/Sheet6".to_string(),
+                1,
+                Some(1_400)
+            )]
+        );
+        assert_eq!(
+            items(LedgerDomain::Furniture),
+            [(
+                DropReason::SymbolFileChainFault,
+                "Logo.sym:/Sheet6".to_string(),
+                1,
+                Some(1_400)
+            )]
+        );
+        let said = ledger.symbol_chain_fault_warnings();
+        assert_eq!(
+            said,
+            [
+                format!(
+                    r"the symbol file Piping\Valves\Gate Valve.sym, which 3 placement(s) on the page are drawn from, is damaged: {}",
+                    fault.describe()
+                ),
+                format!(
+                    "in the border template, the symbol file Logo.sym, which 1 placement(s) \
+                     on the page are drawn from, is damaged: {}",
+                    fault.describe()
+                ),
+            ]
+        );
+        assert!(
+            said[0].contains("/Sheet6") && said[0].contains("stops at +600 "),
+            "{}",
+            said[0]
+        );
+        assert!(
+            LayoutLedger::default()
+                .symbol_chain_fault_warnings()
+                .is_empty()
+        );
+    }
+
+    /// A symbol file with two streams that do not hold is two items and
+    /// two sentences, one a stream: each stream is filed with what its own
+    /// chain left unread and said in the reader's own sentence of it, of
+    /// the one file and the one count of placements.
+    #[test]
+    fn a_symbol_file_with_two_damaged_streams_is_filed_and_said_once_for_each() {
+        let sheet = a_fault("/Sheet68", 127, 78);
+        let pens = a_fault("/StyleCluster", 3_584, 2_690);
+        let mut ledger = LayoutLedger::default();
+        ledger.note_symbol_chain_faults(
+            LedgerDomain::Drawing,
+            [SymbolFileFaults {
+                symbol: "Gauge.sym".to_string(),
+                placements: 2,
+                not_drawn: None,
+                faults: vec![sheet.clone(), pens.clone()],
+            }],
+        );
+        let items: Vec<_> = ledger
+            .parse
+            .get(LedgerDomain::Drawing)
+            .items
+            .iter()
+            .map(|item| (item.reason, item.stream.as_str(), item.count, item.bytes))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/Sheet68",
+                    1,
+                    Some(49)
+                ),
+                (
+                    DropReason::SymbolFileChainFault,
+                    "Gauge.sym:/StyleCluster",
+                    1,
+                    Some(894)
+                ),
+            ]
+        );
+        assert!(ledger.parse.get(LedgerDomain::Furniture).items.is_empty());
+        assert_eq!(
+            ledger.symbol_chain_faults,
+            [
+                SymbolChainFault {
+                    domain: LedgerDomain::Drawing,
+                    symbol: "Gauge.sym".to_string(),
+                    placements: 2,
+                    not_drawn: None,
+                    fault: sheet.clone(),
+                },
+                SymbolChainFault {
+                    domain: LedgerDomain::Drawing,
+                    symbol: "Gauge.sym".to_string(),
+                    placements: 2,
+                    not_drawn: None,
+                    fault: pens.clone(),
+                },
+            ]
+        );
+        assert_eq!(
+            ledger.symbol_chain_fault_warnings(),
+            [
+                format!(
+                    "the symbol file Gauge.sym, which 2 placement(s) on the page are drawn \
+                     from, is damaged: {}",
+                    sheet.describe()
+                ),
+                format!(
+                    "the symbol file Gauge.sym, which 2 placement(s) on the page are drawn \
+                     from, is damaged: {}",
+                    pens.describe()
+                ),
+            ]
+        );
+        assert_ne!(sheet.describe(), pens.describe());
     }
 
     #[test]

@@ -351,7 +351,7 @@ fn find_drawing(dir: &Path, name: &str) -> Option<PathBuf> {
 fn once_refusing_backup_sheet() -> Option<NormalizedPidGeometry> {
     let Some(backup) = backup_dir() else {
         eprintln!(
-            "skipping {ONCE_REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present"
+            "skipping: {ONCE_REFUSING_BACKUP_SHEET}: no backup-plant-data directory is present"
         );
         return None;
     };
@@ -378,6 +378,211 @@ fn once_refusing_template() -> Option<NormalizedPidGeometry> {
         .parse_file(ONCE_REFUSING_TEMPLATE)
         .unwrap_or_else(|err| panic!("{ONCE_REFUSING_TEMPLATE} should parse: {err}"));
     Some(build_normalized_geometry(&parsed))
+}
+
+/// Every file under `dir` the walk is asked for, path-sorted, at any depth;
+/// the machine-local symbol library a checkout may link in is not walked.
+fn committed_files(dir: &Path, wanted: &dyn Fn(&Path) -> bool, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "symbols-full") {
+                continue;
+            }
+            committed_files(&path, wanted, out);
+        } else if wanted(&path) {
+            out.push(path);
+        }
+    }
+}
+
+/// What a set of documents' sheets were found to hold.
+#[derive(Debug, Default, PartialEq)]
+struct TemplateCensus {
+    /// Distinct documents read.
+    documents: usize,
+    /// `igBoundary2d` records their sheets decode.
+    boundaries: usize,
+    /// Graphic records a wired family refused.
+    refused: usize,
+    /// Graphic records no family decodes.
+    undecoded: usize,
+}
+
+/// Count one parsed document into `census`, and name it in `gaps` when a
+/// graphic record of its sheets is refused or has no decoder.
+fn count_document(
+    label: &str,
+    parsed: &pid_parse::PidDocument,
+    census: &mut TemplateCensus,
+    gaps: &mut Vec<String>,
+) {
+    let geometry = build_normalized_geometry(parsed);
+    let refused: usize = geometry
+        .refused_graphic_records
+        .iter()
+        .map(|entry| entry.count)
+        .sum();
+    let undecoded: usize = geometry
+        .dropped_graphic_records
+        .iter()
+        .map(|entry| entry.count)
+        .sum();
+    census.documents += 1;
+    census.boundaries += parsed
+        .sheet_streams
+        .iter()
+        .filter_map(|sheet| sheet.geometry.as_ref())
+        .map(|sheet| sheet.decoded_igboundaries.len())
+        .sum::<usize>();
+    census.refused += refused;
+    census.undecoded += undecoded;
+    if refused + undecoded > 0 {
+        gaps.push(format!(
+            "{label}: refused {:?}, without a decoder {:?}",
+            geometry
+                .refused_graphic_records
+                .iter()
+                .map(|entry| format!(
+                    "{} 0x{:04X} x {}",
+                    entry.stream_path, entry.type_code, entry.count
+                ))
+                .collect::<Vec<_>>(),
+            geometry
+                .dropped_graphic_records
+                .iter()
+                .map(|entry| format!(
+                    "{} 0x{:04X} x {}",
+                    entry.stream_path, entry.type_code, entry.count
+                ))
+                .collect::<Vec<_>>(),
+        ));
+    }
+}
+
+/// No border template the repository commits refuses a graphic record or
+/// holds one without a decoder — the five on disk, and every distinct
+/// `.igr` and `.pid` the two committed backup packages keep inside their
+/// `RefData~*.zip` and `PlantData~*.zip`.
+///
+/// The fixture rows above are drawings read with no template; `refused: 0`
+/// over them said nothing of the templates. Four of those inside
+/// `RefData~4~682.zip` — `A0-W.igr` to `A3-W.igr` — refused the five fills of
+/// their logo each, and the four `.pid` templates beside them, which embed
+/// the same frames, five more each: forty refused `igBoundary2d` in all,
+/// until the family read a loop of arcs, elliptical arcs and B-splines that
+/// names its members (`tests/boundary_members.rs`). No page of the corpora
+/// wears one of them, so no export changed; the census had simply not been
+/// taken where the refusals were.
+///
+/// The counts are of distinct files: the two packages keep the same
+/// templates, and a package keeps its template directory in two archives.
+#[test]
+fn the_committed_templates_refuse_nothing() {
+    let mut gaps: Vec<String> = Vec::new();
+
+    let mut on_disk = TemplateCensus::default();
+    let mut templates = Vec::new();
+    committed_files(
+        Path::new("test-file"),
+        &|path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("igr"))
+        },
+        &mut templates,
+    );
+    for path in &templates {
+        let parsed = PidParser::new()
+            .parse_file(path)
+            .unwrap_or_else(|err| panic!("{} should parse: {err}", path.display()));
+        count_document(
+            &path.display().to_string(),
+            &parsed,
+            &mut on_disk,
+            &mut gaps,
+        );
+    }
+
+    #[cfg_attr(not(feature = "refdata-archive"), allow(unused_mut))]
+    let mut archived = TemplateCensus::default();
+    #[cfg(feature = "refdata-archive")]
+    {
+        use pid_parse::refdata_archive::{archive_members, read_archive_file};
+        let mut archives = Vec::new();
+        committed_files(
+            Path::new("test-file"),
+            &|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        (name.starts_with("RefData~") || name.starts_with("PlantData~"))
+                            && name.ends_with(".zip")
+                    })
+            },
+            &mut archives,
+        );
+        assert!(
+            archives.len() >= 14,
+            "{} committed archive(s) under test-file; two packages keep seven each",
+            archives.len()
+        );
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        for archive in &archives {
+            for extension in ["igr", "pid"] {
+                let members = archive_members(archive, extension)
+                    .unwrap_or_else(|error| panic!("{}: {error}", archive.display()));
+                for member in members {
+                    let label = member.label().display().to_string();
+                    let bytes = read_archive_file(&member)
+                        .unwrap_or_else(|error| panic!("{label}: {error}"));
+                    if seen.contains(&bytes) {
+                        continue;
+                    }
+                    let package = pid_parse::PidPackage::from_bytes(&bytes)
+                        .unwrap_or_else(|error| panic!("{label} should parse: {error}"));
+                    seen.push(bytes);
+                    count_document(&label, &package.parsed, &mut archived, &mut gaps);
+                }
+            }
+        }
+    }
+
+    eprintln!("templates on disk: {on_disk:?}\nin the committed archives: {archived:?}");
+    assert!(
+        gaps.is_empty(),
+        "{} committed template(s) hold a graphic record that reaches no drawing:\n{}",
+        gaps.len(),
+        gaps.join("\n")
+    );
+    // `CPE-SQ-A0/A1/A2.igr`, `CPECCHB-SQ-A2.igr` and `XA-A1.igr`.
+    assert_eq!(
+        on_disk,
+        TemplateCensus {
+            documents: 5,
+            boundaries: 53,
+            refused: 0,
+            undecoded: 0,
+        },
+        "the border templates committed on disk"
+    );
+    // Thirty-two distinct documents — eleven `.igr` templates, twelve
+    // `.pid` templates, eight drawings and an assembly. Of their 92
+    // boundaries, 40 are the ones that used to be refused.
+    #[cfg(feature = "refdata-archive")]
+    assert_eq!(
+        archived,
+        TemplateCensus {
+            documents: 32,
+            boundaries: 92,
+            refused: 0,
+            undecoded: 0,
+        },
+        "the templates and drawings inside the committed archives"
+    );
 }
 
 /// Panics unless every row of the drawing's refused-graphic list is named in

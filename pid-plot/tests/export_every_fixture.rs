@@ -83,7 +83,7 @@ use std::path::{Path, PathBuf};
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing, lay_out_with_symbol_roots};
-use pid_plot::read::read_plot;
+use pid_plot::read::{LineCap, LineJoin, read_plot, read_plot_pens};
 use pid_plot::write::{PlotFont, WriteLedger, stroked_segments, write_plot_audited};
 
 /// The reference share: where this machine keeps the licensed faces, and the
@@ -130,6 +130,39 @@ const FIXTURE_TEMPLATES: [(&str, &str); 7] = [
     (
         "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid",
         "CPE-SQ-A1.igr",
+    ),
+];
+
+/// How each fixture's page ends its strokes, read back from the PDF: the
+/// fixture's path under `test-file/`, the inked paths stroked butt-ended and
+/// mitred, and the inked paths stroked round-ended and round-joined.
+///
+/// A page states no cap until its first stroke on a pen wider than one
+/// device unit, and round ends and joins from there on (`write.rs`,
+/// `starts_round_ends`): the butt-ended paths are everything the sheet
+/// paints ahead of that pen. Which those are is the sheet's display order,
+/// and on three of the seven they include strokes of the drawing's own — a
+/// thin line the sheet lists ahead of its first wide one — which is the case
+/// only this reading tells apart from a writer that starts round ends at the
+/// drawing's first stroke of any pen, as it did until the page was painted
+/// in the sheet's order. The eleven reference plots do not show such a
+/// page, so the rule there is the one they show for a border, carried over;
+/// what is pinned is that the writer keeps it.
+const FIXTURE_ENDS: [(&str, usize, usize); 7] = [
+    ("D06.pid", 1, 108),
+    ("DWG-0201GP06-01.pid", 0, 253),
+    ("DWG-0202GP06-01.pid", 68, 168),
+    ("export-test/publish-data/A01/A01.pid", 127, 77),
+    (
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+        68,
+        168,
+    ),
+    ("工艺管道及仪表流程-1.pid", 4903, 389),
+    (
+        "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid",
+        127,
+        451,
     ),
 ];
 
@@ -266,27 +299,54 @@ fn inked_characters(text: &str) -> impl Iterator<Item = char> + '_ {
     text.chars().filter(|character| !character.is_whitespace())
 }
 
-/// Every character the writer lettered, in the order it wrote them: the
-/// `decoded` layer and then the `inferred` one, each in model order.
+/// The primitives a page is written from, by index, in the order they are
+/// put on it — stated here, not taken from the writer: the `decoded` layer
+/// and then the `inferred` one, and within a layer the order the sheet
+/// draws its objects in when the page model states one
+/// ([`PaperModel::paint_sequence`]), strokes first and labels after, each in
+/// the model's own order, when it states none. `probe_only` primitives are
+/// not written.
+fn painted_order(model: &PaperModel) -> Vec<usize> {
+    let sequence = model.paint_sequence();
+    let mut order = Vec::new();
+    for confidence in ["decoded", "inferred"] {
+        let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+        match &sequence {
+            Some(sequence) => order.extend(sequence.iter().copied().filter(of_layer)),
+            None => {
+                let label = |index: &usize| {
+                    matches!(model.primitives[*index].shape, PaperShape::Text { .. })
+                };
+                let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+                order.extend(layer.iter().copied().filter(|index| !label(index)));
+                order.extend(layer.iter().copied().filter(label));
+            }
+        }
+    }
+    order
+}
+
+/// Every character the writer lettered, in the order a page is painted in
+/// ([`painted_order`]): the `decoded` layer and then the `inferred` one, each
+/// in the order the sheet draws its objects in — a label where its record
+/// stands in the sheet's list, which is neither the model's order nor the
+/// stream's.
 ///
-/// Which labels were lettered is the writer's own account of the page
-/// ([`WriteLedger`]) rather than a second copy of its rules.
+/// Which labels were lettered is the writer's own account of the page, its
+/// [`WriteLedger`]. The order is this test's statement, so a writer that
+/// letters a page in another order than the sheet states reads back
+/// differently here.
 fn lettered_characters(model: &PaperModel, ledger: &WriteLedger) -> Vec<InkedChar> {
     let mut lettered = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for (index, primitive) in model.primitives.iter().enumerate() {
-            if primitive.confidence != confidence {
-                continue;
-            }
-            let PaperShape::Text { value, .. } = &primitive.shape else {
-                continue;
-            };
-            if !ledger.fate(index).is_some_and(|fate| fate.is_on_page()) {
-                continue;
-            }
-            lettered
-                .extend(inked_characters(value).map(|character| (character, primitive.furniture)));
+    for index in painted_order(model) {
+        let primitive = &model.primitives[index];
+        let PaperShape::Text { value, .. } = &primitive.shape else {
+            continue;
+        };
+        if !ledger.fate(index).is_some_and(|fate| fate.is_on_page()) {
+            continue;
         }
+        lettered.extend(inked_characters(value).map(|character| (character, primitive.furniture)));
     }
     lettered
 }
@@ -433,6 +493,7 @@ fn every_fixture_drawing_exports_a_pdf() {
         })
         .collect();
 
+    let mut end_differences: Vec<String> = Vec::new();
     for fixture in &pages {
         let name = fixture.key.as_str();
         let model = &fixture.model;
@@ -503,6 +564,42 @@ fn every_fixture_drawing_exports_a_pdf() {
             !ink.spans.is_empty(),
             "{name}: the page carries no lettering at all"
         );
+        // How the page ends its strokes: butt until the first wide pen, round
+        // from there on, and nothing else.
+        let pens = read_plot_pens(&written.pdf)
+            .unwrap_or_else(|error| panic!("{name}: read back the pens: {error}"));
+        let paths = |cap: LineCap, join: LineJoin| -> usize {
+            pens.ends
+                .iter()
+                .filter(|ends| ends.cap == cap && ends.join == join)
+                .map(|ends| ends.paths)
+                .sum()
+        };
+        let ends = (
+            paths(LineCap::Butt, LineJoin::Miter),
+            paths(LineCap::Round, LineJoin::Round),
+        );
+        let stroked: usize = pens.ends.iter().map(|ends| ends.paths).sum();
+        assert_eq!(
+            ends.0 + ends.1,
+            stroked,
+            "{name}: paths stroked under a cap and join the writer never states: {:?}",
+            pens.ends
+                .iter()
+                .map(|ends| (ends.cap, ends.join, ends.paths))
+                .collect::<Vec<_>>()
+        );
+        let pinned = FIXTURE_ENDS
+            .iter()
+            .find(|(key, ..)| *key == name)
+            .map(|(_, butt, round)| (*butt, *round))
+            .unwrap_or_else(|| panic!("{name}: no row in FIXTURE_ENDS"));
+        end_differences.extend((ends != pinned).then(|| {
+            format!(
+                "  {name}: {} path(s) butt-ended and {} round; pinned {} and {}",
+                ends.0, ends.1, pinned.0, pinned.1
+            )
+        }));
         // A page size, some ink and some lettering are all the checks above
         // ask of the PDF, and a page written without its frame and title block
         // has all three; so the page read back is held to the model itself.
@@ -569,6 +666,13 @@ fn every_fixture_drawing_exports_a_pdf() {
         "{} fixture pages exported and read back, {} faces embedded",
         pages.len(),
         prepared.len()
+    );
+
+    assert!(
+        end_differences.is_empty(),
+        "{} fixture page(s) end their strokes otherwise than FIXTURE_ENDS pins:\n{}",
+        end_differences.len(),
+        end_differences.join("\n")
     );
 
     // The pages above search the committed symbol sources alone, so the names

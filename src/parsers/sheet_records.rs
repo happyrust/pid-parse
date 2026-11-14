@@ -2526,6 +2526,29 @@ impl SheetChain {
     pub fn is_sound(&self) -> bool {
         self.stop.is_none() && self.wrong_magic().is_none() && !self.count_differs()
     }
+
+    /// Whether the walk read the stream short of its records: it stopped
+    /// before the stream's end, or it reached the end with fewer live
+    /// records than the header states.
+    ///
+    /// The second is what a stream cut off at a record boundary reads as —
+    /// the walk ends cleanly on the new last byte, and only the count says
+    /// records are gone. It is also what a header that counts one too many
+    /// reads as, and nothing in the stream tells the two apart; a reader
+    /// that must not take a short stream for a whole one takes both for
+    /// short.
+    ///
+    /// Not short, though [`Self::is_sound`] is false: a first word that is
+    /// not the magic over a chain that reaches the end, and a header that
+    /// counts fewer live records than the chain holds. Neither left a
+    /// record unread.
+    #[must_use]
+    pub fn is_short(&self) -> bool {
+        self.stop.is_some()
+            || self.stated_records.is_some_and(|stated| {
+                usize::try_from(stated).is_ok_and(|stated| self.live_records < stated)
+            })
+    }
 }
 
 /// Every offset a record starts at in a chain stream that walks to its last
@@ -2953,6 +2976,17 @@ const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 /// as garbage (uninitialized memory, a value read from where none is
 /// stored): every family that reads doubles holds them to it.
 const COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
+
+/// Whether `point` is a finite point of the coordinate domain. What a
+/// record states is held to the domain where it is read, double by double;
+/// what a curve is flattened to — a centre plus a radius, a semi-axis times
+/// a ratio — is a vertex no field states, and is held to it by this, where
+/// the vertex is made.
+fn point_in_coordinate_domain(point: (f64, f64)) -> bool {
+    [point.0, point.1]
+        .into_iter()
+        .all(|value| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT)
+}
 
 /// PSM type code of a RAD `JStyleOverride` record.
 ///
@@ -4700,31 +4734,79 @@ pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
 /// closed outline, so consecutive pairs contribute segments.
 pub const IGBOUNDARY2D_POINTRUN_TAG: u8 = 0x68;
 
-/// Member tag of an arc `igBoundary2d` member in the linked-template
-/// (`0x0000` sub-type) layout: `tag + 7×f64` carrying
-/// `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-/// trailing byte that is the arc's direction (0 = clockwise, 1 =
-/// counter-clockwise), read the way `igArc2d`'s is. 58 bytes in total.
+/// Member tag of an elliptical-arc `igBoundary2d` member in the `0x0000`
+/// sub-type layouts: the tag, then what an `igEllipticalArc2d` record
+/// carries after its 18-byte sub-header — `7×f64`
+/// `(sweep_start, sweep_end, centre_x, centre_y, major_x, major_y, ratio)`
+/// and a trailing byte that is the arc's direction (0 = clockwise, 1 =
+/// counter-clockwise). 58 bytes in total.
+///
+/// The arc of a circle is this member too: an `igArc2d` is re-listed as the
+/// ellipse whose major semi-axis is `(radius, 0)` and whose ratio is one,
+/// its two angles the two parameters — which is all the 378 such members of
+/// the corpora's sheets are, and what this tag was first read as. The 32
+/// that are not — a major semi-axis of `(0, −5.488 mm)` and a ratio of
+/// 0.725 — are the ellipse of the `-W` templates' logo.
+///
+/// The two are flattened differently, each after the way its own record is
+/// drawn. An arc of an ellipse proper becomes the vertices of the polyline
+/// its `igEllipticalArc2d` is drawn as
+/// ([`crate::bspline::elliptical_arc_directed`] sampled at
+/// [`crate::bspline::SEGMENTS_PER_SPAN`] segments a 45° span), so the fill's
+/// edge is the line of its outline — on the logo's 32, 0.004 mm off the
+/// ellipse at most, where chords of a quarter radian stood 0.037 mm off it
+/// and a 14° arc was one straight line. The arc of a circle, whose `igArc2d`
+/// is drawn as a true arc, is cut into chords of
+/// `IGBOUNDARY2D_ARC_CHORD_STEP` radians, as it always has been.
 pub const IGBOUNDARY2D_ARC_TAG: u8 = 0x74;
 
-/// Fixed trailer length of the linked-template (`0x0000` sub-type)
-/// `igBoundary2d` variant: two identical 8-byte words followed by
-/// `u32 1` and a `u8` flag — 21 bytes.
+/// Member tag of a B-spline `igBoundary2d` member in the `0x0000` sub-type
+/// layouts: the tag, then what an `igBspCurve2d` record carries after its
+/// 18-byte sub-header — `u32 N`, the poles, the weight flag and weights,
+/// `u32 M`, the knots, a double and four bytes ([`bspcurve_geometry`]).
+///
+/// The member is not the record's own poles. Each of the 32 the corpora
+/// hold re-lists a cubic of five or seven poles as seven or thirteen: the
+/// same curve with every interior knot raised to the degree — its Bézier
+/// pieces — which reads the same at every parameter (to `1e-15` m).
+pub const IGBOUNDARY2D_BSPLINE_TAG: u8 = 0x7F;
+
+/// Bytes a boundary's trailer takes before its references: the anchor (two
+/// doubles), a flag byte and the `u32` reference count. A linked template's
+/// record ends on it — no reference, the anchor a pair of `1e30`.
 pub const IGBOUNDARY2D_TEMPLATE_TRAILER_LEN: usize = 21;
 
 /// Upper bound accepted for one `0x68` point run's vertex count.
 pub const IGBOUNDARY2D_MAX_POINTRUN_COUNT: u32 = 4096;
 
-/// Radians swept per emitted chord when an `0x74` arc member is
-/// flattened into boundary segments (≈14°; ~0.01mm sag at the logo's
-/// 3mm radii).
+/// Radians swept per emitted chord when the arc of a circle — an `0x74`
+/// member whose major semi-axis is `(radius, 0)` and whose ratio is one, or
+/// an `0x73` circle — is flattened into boundary segments (≈14°; ~0.01mm
+/// sag at the logo's 3mm radii).
+///
+/// A chord of that angle stands `0.0078 × radius` inside its arc, and the
+/// arc's own record is drawn as a true arc, so that is how far the fill's
+/// edge lies inside the centre line of its outline. The farthest any chord
+/// of the corpora's sheets stands off its arc is **0.046 mm**: the outer
+/// edge of the `-W` logo's crescent, radius 6.72 mm, in fifteen chords,
+/// which leaves that fill 1.7% short of its outline. That is inside the
+/// half width, 0.065 mm, of the 0.13 mm pen the arc is drawn with — as the
+/// chords of all 49 such members whose record resolves a pen are inside
+/// theirs — so the fill's edge stays under the ink of its own outline. It
+/// has been looked at no further: no page wears that template and no vendor
+/// plot shows the logo. The 0.65–0.69 mm arcs beside it are 0.005 mm off.
+/// `tests/boundary_members.rs` holds the logo to these readings, and
+/// `examples/probe_what_curve_each_boundary_member_relists.rs` takes them
+/// over the corpora.
 const IGBOUNDARY2D_ARC_CHORD_STEP: f64 = 0.25;
 
-/// One `(start, end)` segment decoded from an `igBoundary2d`
-/// segment group (`0x67 tag + 4×f64`).
+/// One `(start, end)` segment of an `igBoundary2d` loop: a `0x67` line
+/// member whole, or one of the chords a curved member — a point run, an
+/// arc, a B-spline, a circle — is flattened to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgBoundary2dSegment {
-    /// Payload offset of the group's `0x67` tag byte.
+    /// Payload offset of the tag byte of the member the segment comes from:
+    /// the chords of one curved member share it.
     pub tag_offset: usize,
     /// Segment start `(x, y)` in normalized sheet coordinates.
     pub start: (f64, f64),
@@ -4742,13 +4824,26 @@ pub struct SheetIgBoundary2dSegment {
 /// first member and `12` for the rest. The words are exposed
 /// verbatim without semantic naming until a native reader confirms
 /// their roles.
+///
+/// What the 5 417 references of the corpora's sheets show of the two words,
+/// each member held against the record its reference names
+/// (`examples/probe_what_curve_each_boundary_member_relists.rs`): the class
+/// word goes with the family of the record named — `0x00CB` a line,
+/// `0x00D1` a circle, `0x00D3` an arc or an elliptical arc, `0x00D4` a
+/// B-spline — and of the last word, bit 0 is set on a record's first
+/// reference and no other, and bit 2 says which way the member runs along
+/// its record: on a record's first loop it is set when the member runs the
+/// record's own way and clear when it runs against it, on the second loop
+/// of the two records that have one the other way round. No decoder rests
+/// on either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SheetIgBoundary2dMemberRef {
-    /// Object identifier of the member record (fixture evidence:
-    /// a `0x0018 igLine2d` in the same stream).
+    /// Object identifier of the member record: a live `igLine2d`,
+    /// `igCircle2d`, `igArc2d`, `igEllipticalArc2d` or `igBspCurve2d` of the
+    /// same stream.
     pub member_oid: u32,
     /// Class-like word at member offset +4 (`0x00CB` across all
-    /// fixture members).
+    /// fixture members, which are lines).
     pub class_word: u16,
     /// Sub-code word at member offset +6 (`13` / `12` in fixtures).
     pub sub_word: u16,
@@ -4789,21 +4884,26 @@ pub struct SheetIgBoundary2dDecoded {
     /// `== <n>` rule here admits one layer and refuses the rest. See
     /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
     pub sheet_layer_ref: u32,
-    /// Sub-type word at payload offset 12: `0x0010` on drawing-side
-    /// records, `0x0000` on linked-template (`.igr`) records.
+    /// Sub-type word at payload offset 12: `0x0010` on a drawing's
+    /// boundary over lines, `0x0000` on every other — a linked template's
+    /// (`.igr`), and a drawing's over a circle.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14 (21 / 24 in fixtures,
     /// constant per fixture family like the other IGDS decoders).
     pub index: u32,
-    /// `u32` at payload offset 22: number of segment groups and
-    /// trailer member references.
+    /// How many members the record states: the `u32` at payload offset 22,
+    /// and on a record of several loops the sum over them. One segment a
+    /// member where every member is a line; a curved member is several of
+    /// [`Self::segments`].
     pub segment_count: u32,
     /// Two sub-header bytes at payload offsets 26–27 (`[2, 1]`
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub sub_header_tail: [u8; 2],
-    /// Decoded segment groups (`segment_count` entries), every loop's in
-    /// turn when the record states more than one.
+    /// The record's loops as straight segments, every loop's in turn when
+    /// the record states more than one: a line member whole, a curved one
+    /// as its chords, which share a
+    /// [`tag_offset`](SheetIgBoundary2dSegment::tag_offset).
     pub segments: Vec<SheetIgBoundary2dSegment>,
     /// How many of [`Self::segments`] each loop holds, in order, on a
     /// record that states more than one loop (the `u32` at payload `+18`);
@@ -4811,16 +4911,22 @@ pub struct SheetIgBoundary2dDecoded {
     /// but two. The first loop is the outer edge of a fill and a loop
     /// inside it is a hole: see [`decode_igboundaries`].
     pub loop_segment_counts: Vec<u32>,
-    /// Anchor point following the segment groups: where the fill was
-    /// seeded. It lies inside the loop on every corpus record that carries
-    /// member references, and between the loops on the two that state two.
-    /// A linked template's records carry `(1e30, 1e30)` and no reference.
+    /// Where the fill was seeded — on a record that names its members
+    /// ([`Self::member_refs`]): the point the file states after the last
+    /// member, inside the loop on every such record of the corpora and
+    /// between the loops on the two that state two.
+    ///
+    /// A record that names no member states none: the file has
+    /// `(1e30, 1e30)` there — all 100 such records of the corpora, a linked
+    /// template's logo each — and this field then holds the first vertex of
+    /// the ring instead, **a point on the fill's edge, not inside it**.
     pub anchor: (f64, f64),
     /// `u8` flag between the anchor and the member count (`1`
     /// across all fixture records; exposed verbatim, not
     /// validated).
     pub trailer_flag: u8,
-    /// Trailer member references (`segment_count` entries).
+    /// Trailer member references: one to a member on all but one record of
+    /// the corpora, none on a record whose loop is its own geometry.
     pub member_refs: Vec<SheetIgBoundary2dMemberRef>,
 }
 
@@ -4900,6 +5006,15 @@ impl SheetIgBoundary2dDecoded {
 /// 8. trailer `member_count == segment_count`;
 /// 9. not all segment vertices are identical (non-degenerate).
 ///
+/// A record of one loop under sub-type `0x0000` that fails rule 5 or 8 —
+/// a loop that holds an arc, an arc of an ellipse or a B-spline and names
+/// its members, as the logo fills of the `-W` border templates do — is read
+/// the way rule 3 reads each loop of a fill with holes: members of the
+/// linked-template vocabulary ([`IGBOUNDARY2D_ARC_TAG`],
+/// [`IGBOUNDARY2D_BSPLINE_TAG`], [`IGBOUNDARY2D_POINTRUN_TAG`] beside the
+/// line), then the anchor, flag, reference count and references to the
+/// payload's last byte.
+///
 /// Read at each record the stream's chain starts. Panic-free and
 /// bounds-checked: adversarial bytes simply fail validation.
 pub fn decode_igboundaries(data: &[u8]) -> Vec<SheetIgBoundary2dDecoded> {
@@ -4951,7 +5066,11 @@ impl PsmRecordDecoder for IgBoundary2dDecoder {
         if payload_end > data.len() {
             return None;
         }
+        // The three grammars that read every boundary a page of the corpora
+        // draws, as they always have; then, for what they all refuse, the
+        // loop of curves that names its members.
         decode_igboundary_payload(data, offset, &header, payload_end)
+            .or_else(|| decode_igboundary_curved_loop_payload(data, offset, &header, payload_end))
     }
 
     fn advance_of(&self, record: &SheetIgBoundary2dDecoded) -> usize {
@@ -5083,6 +5202,15 @@ fn decode_igboundary_payload(
             _ => return None,
         };
         for (start, end) in chords {
+            // A chord runs between two points of the coordinate domain, as
+            // every member's of the other vocabulary does
+            // (`igboundary_template_members`). A line's four doubles were
+            // held to it above; a circle's centre and radius were, and what
+            // they add up to was not: radius 9e8 about (9e8, 9e8) reaches
+            // 1.8e9.
+            if !(point_in_coordinate_domain(start) && point_in_coordinate_domain(end)) {
+                return None;
+            }
             let reference = *first_vertex.get_or_insert(start);
             if start != reference || end != reference {
                 all_same = false;
@@ -5182,10 +5310,18 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 /// * `0x67` line — `tag + 4×f64` (start, end), 33 bytes;
 /// * `0x68` point run — `tag + u32 count + 2-byte tail +
 ///   count × 16-byte (x, y)`, closed onto its first point;
-/// * `0x74` arc — `tag + 7×f64`
-///   `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
-///   direction byte ([`igboundary_arc_sweep`]); flattened to chords of at
-///   most [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians.
+/// * `0x74` arc of an ellipse — `tag + 7×f64`
+///   `(start, end, centre_x, centre_y, major_x, major_y, ratio)` plus a
+///   direction byte ([`igboundary_arc_sweep`]), the arc of a circle being
+///   the one whose major semi-axis is `(radius, 0)` and whose ratio is one
+///   ([`IGBOUNDARY2D_ARC_TAG`]); the arc of a circle flattened to chords of
+///   at most [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians, an ellipse's as an
+///   `igEllipticalArc2d` is drawn;
+/// * `0x7F` B-spline — the tag and the fields of an `igBspCurve2d`
+///   ([`IGBOUNDARY2D_BSPLINE_TAG`]); flattened as that record is drawn.
+///
+/// Each member is a tag byte and then the geometry of one curve as that
+/// curve's own record states it after its 18-byte sub-header.
 ///
 /// Members chain end-to-start and the record ends with a fixed
 /// 21-byte trailer (two identical 8-byte words, `u32 1`, `u8` flag)
@@ -5193,6 +5329,13 @@ fn igboundary_arc_sweep(start: f64, end: f64, direction: u8) -> f64 {
 /// segment list flattens every member to chords so the shared emitter
 /// sees the same closed ring either way; `member_refs` is empty and
 /// `anchor` borrows the first vertex for lack of a trailer anchor.
+///
+/// That trailer is the one every boundary has before its references, on a
+/// record that names no member: the two words are the anchor, `1e30` twice
+/// for want of one; the `u32 1` is the flag byte `1` and the low three
+/// bytes of a reference count of zero; the last byte is that count's high
+/// byte. So the `trailer_flag` this read reports is `0`, the count's last
+/// byte, not the flag byte — kept as it has always been reported.
 fn decode_igboundary_template_payload(
     data: &[u8],
     offset: usize,
@@ -5225,16 +5368,21 @@ fn decode_igboundary_template_payload(
     if members_end < 28 {
         return None;
     }
+    // The 21-byte trailer carries two identical 8-byte words followed
+    // by `u32 1` and a flag byte on every corpus record; the marker is
+    // the only part worth holding a rule to. It is looked at before the
+    // members are read: a record that names its members ends on its
+    // references instead, the marker's place falls inside the last of
+    // them — across its class word, which is never zero — and such a
+    // record is refused here without its curves being flattened for
+    // nothing; the read that takes it flattens them once.
+    if read_u32(members_end + 16)? != 1 {
+        return None;
+    }
 
     let mut segments = Vec::new();
     let pos = igboundary_template_members(payload, 28, member_count, members_end, &mut segments)?;
     if pos != members_end || segments.is_empty() || igboundary_segments_coincide(&segments) {
-        return None;
-    }
-    // The 21-byte trailer carries two identical 8-byte words followed
-    // by `u32 1` and a flag byte on every corpus record; the marker is
-    // the only part worth holding a rule to.
-    if read_u32(members_end + 16)? != 1 {
         return None;
     }
     let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
@@ -5261,12 +5409,24 @@ fn decode_igboundary_template_payload(
 }
 
 /// Read `member_count` members of the linked-template vocabulary — `0x67`
-/// line, `0x68` point run, `0x74` arc — from `payload[pos..]`, none
-/// starting at or past `members_end`, flattening each to chords appended to
-/// `segments`. Returns the offset after the last member.
+/// line, `0x68` point run, `0x74` arc of an ellipse, `0x7F` B-spline — from
+/// `payload[pos..]`, none starting at or past `members_end`, flattening
+/// each to chords appended to `segments`. Returns the offset after the last
+/// member.
 ///
 /// One loop of a boundary is one such run of members; see
 /// [`decode_igboundary_template_payload`] for the layouts.
+///
+/// **Every chord runs between two finite points of the coordinate domain**,
+/// or the record is refused: one rule, where the chords of every kind of
+/// member are appended. A member's doubles are each held to the domain as
+/// they are read, which holds a line and a point run whole and does not
+/// hold a curve: an arc's vertices are its centre plus its semi-axes, the
+/// second of them the first times a ratio. Until 2026-11-13 an arc of an
+/// ellipse whose major semi-axis is two metres and whose ratio is 1e9
+/// decoded with its apex 2e9 out — 1e18 for a semi-axis of 1e9 — and three
+/// quarters of a circle of radius 9e8 about (9e8, 9e8) with vertices at
+/// 1.8e9.
 fn igboundary_template_members(
     payload: &[u8],
     mut pos: usize,
@@ -5288,11 +5448,15 @@ fn igboundary_template_members(
         (v.is_finite() && v.abs() <= COORDINATE_DOMAIN_LIMIT).then_some(v)
     };
     let mut push_segment = |tag_offset: usize, start: (f64, f64), end: (f64, f64)| {
+        if !(point_in_coordinate_domain(start) && point_in_coordinate_domain(end)) {
+            return None;
+        }
         segments.push(SheetIgBoundary2dSegment {
             tag_offset,
             start,
             end,
         });
+        Some(())
     };
 
     for _ in 0..member_count {
@@ -5305,7 +5469,7 @@ fn igboundary_template_members(
                 let sy = check(read_f64(pos + 9)?)?;
                 let ex = check(read_f64(pos + 17)?)?;
                 let ey = check(read_f64(pos + 25)?)?;
-                push_segment(pos, (sx, sy), (ex, ey));
+                push_segment(pos, (sx, sy), (ex, ey))?;
                 pos += 33;
             }
             IGBOUNDARY2D_POINTRUN_TAG => {
@@ -5324,7 +5488,7 @@ fn igboundary_template_members(
                         check(read_f64(pos + 7 + i * 16)?)?,
                         check(read_f64(pos + 15 + i * 16)?)?,
                     );
-                    push_segment(pos, prev, next);
+                    push_segment(pos, prev, next)?;
                     prev = next;
                 }
                 pos = run_end;
@@ -5338,22 +5502,86 @@ fn igboundary_template_members(
                 let end_ang = check(read_f64(pos + 9)?)?;
                 let cx = check(read_f64(pos + 17)?)?;
                 let cy = check(read_f64(pos + 25)?)?;
-                let radius = check(read_f64(pos + 33)?)?;
-                if !radius.is_finite()
-                    || radius <= 0.0
-                    || !start_ang.is_finite()
-                    || !end_ang.is_finite()
-                {
+                // The major semi-axis as a vector, and the other semi-axis
+                // as a fraction of it: `(radius, 0)` and one on the arc of
+                // a circle, which is what these three doubles were first
+                // read as — a radius and two constants.
+                let major = (check(read_f64(pos + 33)?)?, check(read_f64(pos + 41)?)?);
+                let ratio = check(read_f64(pos + 49)?)?;
+                if major.0.hypot(major.1) <= 0.0 || ratio <= 0.0 {
                     return None;
                 }
-                let sweep = igboundary_arc_sweep(start_ang, end_ang, *payload.get(pos + 57)?);
-                let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
-                let mut prev = (cx + radius * start_ang.cos(), cy + radius * start_ang.sin());
-                for i in 1..=chords {
-                    let angle = start_ang + sweep * (i as f64 / chords as f64);
-                    let next = (cx + radius * angle.cos(), cy + radius * angle.sin());
-                    push_segment(pos, prev, next);
-                    prev = next;
+                let direction = *payload.get(pos + 57)?;
+                // An arc of an ellipse proper re-lists an `igEllipticalArc2d`,
+                // and that record is stroked as the polyline
+                // `bspline::sample` makes of its exact rational B-spline: the
+                // member is flattened to the same vertices, so the edge of
+                // the fill is the line its own record draws. The arc of a
+                // circle — major semi-axis `(radius, 0)`, ratio one, an
+                // `igArc2d`'s — is stroked as a true arc, has no polyline to
+                // share, and is cut into chords as it always has been.
+                let stroked = if major.1 == 0.0 && ratio == 1.0 {
+                    None
+                } else {
+                    crate::bspline::elliptical_arc_directed(
+                        (cx, cy),
+                        major,
+                        ratio,
+                        start_ang,
+                        end_ang,
+                        direction == 0,
+                    )
+                };
+                if let Some((poles, weights, knots)) = stroked {
+                    // The curve or nothing, as for a B-spline member: the
+                    // poles of an arc are not its vertices.
+                    let vertices = crate::bspline::try_sample(
+                        &poles,
+                        &weights,
+                        &knots,
+                        crate::bspline::SEGMENTS_PER_SPAN,
+                    )?;
+                    for pair in vertices.windows(2) {
+                        push_segment(pos, pair[0], pair[1])?;
+                    }
+                } else {
+                    // `P(t) = C + cos t · major + sin t · minor`, `minor` the
+                    // major semi-axis turned a quarter and scaled, as an
+                    // `igEllipticalArc2d` reads. With `major = (radius, 0)`
+                    // and a ratio of one every term but `radius · cos t` and
+                    // `radius · sin t` is a zero, so the arc of a circle
+                    // comes out as it did when those were the only terms, to
+                    // the bit. (An ellipse's arc comes here only when its two
+                    // parameters are the same one, which the stroke has no
+                    // curve for: one chord of no length, as for a circle's.)
+                    let minor = (-major.1 * ratio, major.0 * ratio);
+                    let at = |angle: f64| {
+                        (
+                            cx + (angle.cos() * major.0 + angle.sin() * minor.0),
+                            cy + (angle.cos() * major.1 + angle.sin() * minor.1),
+                        )
+                    };
+                    let sweep = igboundary_arc_sweep(start_ang, end_ang, direction);
+                    let chords =
+                        ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
+                    let mut prev = at(start_ang);
+                    for i in 1..=chords {
+                        let angle = start_ang + sweep * (i as f64 / chords as f64);
+                        let next = at(angle);
+                        push_segment(pos, prev, next)?;
+                        prev = next;
+                    }
+                }
+                pos = member_end;
+            }
+            IGBOUNDARY2D_BSPLINE_TAG => {
+                let (curve, member_end) = bspcurve_geometry_from(payload, pos.checked_add(1)?)?;
+                if member_end > members_end {
+                    return None;
+                }
+                let vertices = igboundary_bspline_vertices(&curve)?;
+                for pair in vertices.windows(2) {
+                    push_segment(pos, pair[0], pair[1])?;
                 }
                 pos = member_end;
             }
@@ -5361,6 +5589,39 @@ fn igboundary_template_members(
         }
     }
     Some(pos)
+}
+
+/// The vertices a `0x7F` B-spline member is flattened to: the curve as a
+/// sheet's own `igBspCurve2d` is drawn, [`crate::bspline::SEGMENTS_PER_SPAN`]
+/// segments to each knot span, so the edge of the fill is the polyline the
+/// member's own record strokes.
+///
+/// `None` where that record is not drawn as a curve: a member is a curve or
+/// the record is refused, and the control polygon [`crate::bspline::sample`]
+/// hands back for such fields is not the curve. That is a knot vector whose
+/// parameter domain is empty, and weights that leave a point of the curve
+/// nothing to be divided by — one of them more than 2^1022 times lighter
+/// than the heaviest, which no common scale makes a ratio of. The degree is
+/// held to [`crate::bspline::MAX_DEGREE`] where the member's fields are
+/// read ([`bspcurve_geometry_from`]), as a record's is, and again here by
+/// the evaluation.
+///
+/// The vertices are held to the coordinate domain where their chords are
+/// appended, as every member's are ([`igboundary_template_members`]). The
+/// poles are points of the domain and the weights are above zero, so the
+/// curve lies among its poles, and all that can put a vertex of this member
+/// past the edge is the rounding of the last division: a pole on the edge
+/// itself, `1e9`, under weights of 0.7 comes out one bit beyond it. (Until
+/// a curve's weights were brought to one scale, weights of 1e308 overflowed
+/// de Boor's recursion and that rule was what refused the member.)
+fn igboundary_bspline_vertices(curve: &BspCurveGeometry) -> Option<Vec<(f64, f64)>> {
+    crate::bspline::try_sample(
+        &curve.poles,
+        &curve.weights,
+        &curve.knots,
+        crate::bspline::SEGMENTS_PER_SPAN,
+    )
+    .filter(|vertices| vertices.len() >= 2)
 }
 
 /// Whether every vertex of `segments` is the first one: a boundary that
@@ -5377,39 +5638,45 @@ fn igboundary_segments_coincide(segments: &[SheetIgBoundary2dSegment]) -> bool {
 /// `u32` member count, the two bytes after it, and one `0x67` line.
 const IGBOUNDARY2D_MIN_LOOP_LEN: usize = 6 + 33;
 
-/// Family-specific payload validation for an `igBoundary2d` that states
-/// more than one loop: a fill with a hole in it.
+/// Family-specific payload validation for an `igBoundary2d` read loop by
+/// loop: the whole of the record's grammar, of which the linked-template
+/// read and the strict one are the two cases met first.
 ///
-/// The `u32` at payload `+18`, which every other record of the family
-/// carries as `1`, is the loop count. Each loop is what a one-loop record
-/// holds from `+22`: a `u32` member count, the two bytes `[2, 1]`, and that
-/// many members of the linked-template vocabulary
-/// ([`igboundary_template_members`]). After the last loop comes the
-/// drawing-side trailer — the anchor, a flag byte, a `u32` reference count
-/// and that many 8-byte member references — and it closes the payload
-/// exactly.
+/// The `u32` at payload `+18` is the loop count. Each loop is a `u32` member
+/// count, two bytes, and that many members of the `0x0000` sub-type
+/// vocabulary ([`igboundary_template_members`]): a line, a point run, an
+/// arc of an ellipse, a B-spline. After the last loop comes the trailer —
+/// the anchor, a flag byte, a `u32` reference count and that many 8-byte
+/// member references — and it closes the payload exactly.
 ///
-/// Read this way the trailer closes the payload of all 2 158 boundaries on
-/// the sheet chains of the 86 documents the count was taken on — the plant
-/// backup, the acceptance sheets, the share, the fixture drawings and the
-/// two template directories — whichever grammar decodes them today (a
-/// linked template's 21-byte trailer is this one with no reference, its
-/// anchor the pair `1e30`). Two of them state two loops, both in
-/// `XA-A1.igr`: an outer loop and a loop wholly inside it wound the other
-/// way, with the anchor between the two
-/// (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
-/// §10.6).
+/// Read this way the trailer closes the payload of every one of the 1 743
+/// boundaries on the sheet chains of the 111 distinct documents in reach —
+/// the plant backup, the acceptance sheets, the share, the committed
+/// drawings and templates, and the documents inside the packages' archives
+/// (`examples/probe_what_curve_each_boundary_member_relists.rs`) —
+/// whichever of the grammars decodes it (a linked template's 21-byte trailer
+/// is this one with no reference, its anchor the pair `1e30`). Two kinds of
+/// record are read by this function alone:
 ///
-/// That is not every boundary in reach. The templates inside the committed
-/// `RefData~4~682.zip` keep 41 more on their sheet chains, and 20 of them
-/// — five in the logo of each of `A0-W.igr` to `A3-W.igr` — this grammar
-/// refuses: where a loop's first member tag `0x67` stands they carry
-/// `0x02` or `0x03`. No page wears those templates, so the refusal reaches
-/// no export; it is an open gap all the same (same document, §17.6).
+/// * **More than one loop**, a fill with a hole. Two, both in `XA-A1.igr`:
+///   an outer loop and a loop wholly inside it wound the other way, with the
+///   anchor between the two
+///   (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
+///   §10.6).
+/// * **One loop of curves that names its members**
+///   ([`decode_igboundary_curved_loop_payload`]). Forty: the five fills of
+///   the logo of each of `A0-W.igr` to `A3-W.igr`, templates a backup
+///   package keeps in its `RefData~4~682.zip`, and the same five in each of
+///   the four `.pid` templates beside them, which embed those frames. Their
+///   loops hold arcs of an ellipse and B-splines among their lines, and the
+///   record ends in references, so the linked-template read — a loop of
+///   such members and no reference — and the strict one — references, and
+///   members that are lines or a circle — each refused them
+///   (`docs/analysis/2026-11-12-a-boundary-member-is-the-curve-its-reference-names.md`).
 ///
-/// The reference count is not held to the member count. One of the two
-/// names 217 lines for its 216 members; the odd one is a line 32 µm long
-/// that its outer loop steps over.
+/// The reference count is not held to the member count. One of the two-loop
+/// records names 217 lines for its 216 members; the odd one is a line 32 µm
+/// long that its outer loop steps over.
 fn decode_igboundary_loops_payload(
     data: &[u8],
     offset: usize,
@@ -5424,7 +5691,7 @@ fn decode_igboundary_loops_payload(
     let loop_count = usize::try_from(u32_le(payload, 18)?).ok()?;
     // The count is bounded by the payload that has to hold the loops, not
     // by a constant: a letter's outline runs to 162 members here.
-    if loop_count < 2 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
+    if loop_count == 0 || loop_count > payload.len() / IGBOUNDARY2D_MIN_LOOP_LEN {
         return None;
     }
     let members_end = payload
@@ -5457,6 +5724,10 @@ fn decode_igboundary_loops_payload(
     }
     if igboundary_segments_coincide(&segments) {
         return None;
+    }
+    // A record of one loop states no tally: its segments are the loop.
+    if loop_count == 1 {
+        loop_segment_counts.clear();
     }
 
     // Anchor, flag, reference count, references: to the payload's last byte.
@@ -5502,6 +5773,35 @@ fn decode_igboundary_loops_payload(
         trailer_flag,
         member_refs,
     })
+}
+
+/// A boundary of one loop under sub-type `0x0000` that the linked-template
+/// read and the strict one both refuse: a loop of curves that names its
+/// members, read as each loop of a two-loop record is
+/// ([`decode_igboundary_loops_payload`]).
+///
+/// It is tried last, so a record either of the two reads keeps the reading
+/// it has; and it is not tried under the drawing-side sub-type `0x0010`,
+/// whose 1 599 records are lines to a member and are held to that.
+fn decode_igboundary_curved_loop_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+    if u16_le(payload, 12)? != 0x0000 || u32_le(payload, 18)? != 1 {
+        return None;
+    }
+    decode_igboundary_loops_payload(
+        data,
+        offset,
+        header,
+        payload_end,
+        u32_le(payload, 0)?,
+        u32_le(payload, 4)?,
+        u32_le(payload, 8)?,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -5762,6 +6062,197 @@ const IGSMARTFRAME_MAX_PAGE_M: f64 = 5.0;
 /// Narrowest sheet a page extent can plausibly claim, in metres.
 const IGSMARTFRAME_MIN_PAGE_M: f64 = 0.05;
 
+/// Whether a frame's extent and the ratio it states hold each other: the
+/// ratio lies within [`IGSMARTFRAME_ASPECT_TOLERANCE`] of the height over
+/// the width.
+///
+/// That can be asked only of an extent that has a ratio. The width and the
+/// height are lengths in metres: above zero, and normal numbers — a
+/// denormal is what a count or a flag word reads as when the eight bytes
+/// are not a double, and is below 2.3e-308 m besides. Their quotient is a
+/// normal number too: one that overflows, or is rounded away to nothing,
+/// is no number a stated ratio can be near. The comparison is written so
+/// that whatever cannot be compared fails it.
+///
+/// Until 2026-11-12 a width of zero skipped the comparison and a quotient
+/// of infinity passed it (nothing is further from infinity than a millionth
+/// of infinity), and so did a height of zero under a stated ratio of zero.
+/// Six of the 1 371 448 records that walks read off the corpora's chains,
+/// with one length changed by every amount from −64 to +64, were frames
+/// that way: four of no width and no height, two a count wide under a
+/// height of 3.7e62 m. The smallest frame the chains hold is a micrometre
+/// square; none states a side of zero
+/// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+///
+/// `None` for an extent a frame states; otherwise the part of the rule it
+/// fails, for a caller that has to say why a record is refused.
+fn smart_frame_extent_refusal(
+    width_m: f64,
+    height_m: f64,
+    aspect_ratio: f64,
+) -> Option<SmartFrameRefusal> {
+    let is_length = |metres: f64| metres.is_normal() && metres > 0.0;
+    if !is_length(width_m) || !is_length(height_m) {
+        return Some(SmartFrameRefusal::NotLengths { width_m, height_m });
+    }
+    let stated_by_extent = height_m / width_m;
+    if !stated_by_extent.is_normal() {
+        return Some(SmartFrameRefusal::NoQuotient { width_m, height_m });
+    }
+    let agrees = aspect_ratio.is_finite()
+        && (aspect_ratio - stated_by_extent).abs()
+            <= IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent;
+    (!agrees).then_some(SmartFrameRefusal::RatioNotTheExtents {
+        width_m,
+        height_m,
+        aspect_ratio,
+    })
+}
+
+/// Why a live `igSmartFrame2d` record is not a frame the decoder takes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SmartFrameRefusal {
+    /// The payload is shorter than the 156 bytes that reach the ratio a
+    /// frame states.
+    ShortPayload {
+        /// The payload's length in bytes.
+        payload_len: usize,
+    },
+    /// The width or the height the record states is not a length: not
+    /// finite, zero or below, or a denormal.
+    NotLengths {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+    },
+    /// The height over the width is no number a ratio can be held to: the
+    /// quotient overflows, or is rounded away to nothing.
+    NoQuotient {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+    },
+    /// The ratio the record states is not its height over its width, to a
+    /// millionth of that quotient.
+    RatioNotTheExtents {
+        /// The width at payload `+76`.
+        width_m: f64,
+        /// The height at payload `+84`.
+        height_m: f64,
+        /// The ratio at payload `+148`.
+        aspect_ratio: f64,
+    },
+}
+
+impl SmartFrameRefusal {
+    /// The reason as the clause of a sentence about the record: `it states
+    /// a width of 0 m and a height of 0.42 m, and a frame's sides are
+    /// lengths above zero`.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match *self {
+            Self::ShortPayload { payload_len } => format!(
+                "its payload is {payload_len} byte(s), fewer than the \
+                 {IGSMARTFRAME_MIN_PAYLOAD} that reach the ratio a frame states"
+            ),
+            Self::NotLengths { width_m, height_m } => format!(
+                "it states a width of {} m and a height of {} m, and a frame's sides are \
+                 lengths above zero",
+                written_short(width_m),
+                written_short(height_m)
+            ),
+            Self::NoQuotient { width_m, height_m } => format!(
+                "its height over its width, {} m over {} m, is no number a ratio can be held \
+                 to",
+                written_short(height_m),
+                written_short(width_m)
+            ),
+            Self::RatioNotTheExtents {
+                width_m,
+                height_m,
+                aspect_ratio,
+            } => format!(
+                "it states a ratio of {aspect_ratio:.9} where its height over its width, \
+                 {height_m:.6} m over {width_m:.6} m, is {:.9}",
+                height_m / width_m
+            ),
+        }
+    }
+}
+
+/// A double as a sentence writes it: the shortest decimal that reads back
+/// the same, with an exponent where the plain digits would run to dozens —
+/// what lies in a refused frame is as often 3.8e-313 as 0.42.
+fn written_short(value: f64) -> String {
+    if value == 0.0 || (1e-4..1e6).contains(&value.abs()) {
+        format!("{value}")
+    } else {
+        format!("{value:e}")
+    }
+}
+
+/// A live `igSmartFrame2d` record that [`decode_smartframes`] does not take
+/// for a frame, and why.
+///
+/// The rule that refuses it is what tells a frame from the bytes a walk
+/// reads off a broken chain, and a real frame can fail it: a ratio written
+/// wrong, a side of zero. A drawing whose own border frame is one of these
+/// is laid out as a sheet with no frame, which a caller that lays out a
+/// page says ([`refused_smartframes`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetSmartFrameRefused {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Object identifier, when the payload reaches one.
+    pub oid: Option<u32>,
+    /// The state the record's two flag words put it in, when the payload
+    /// reaches them: an embedded or a linked frame is one whose extent
+    /// would have been a page.
+    pub state: Option<SheetSmartFrame2dState>,
+    /// Which part of the frame rule the record fails.
+    pub why: SmartFrameRefusal,
+}
+
+/// Every live `igSmartFrame2d` record of a chain stream that the frame
+/// decoder refuses, with why: the records [`decode_smartframes`] leaves
+/// out. Empty on every chain stream of the corpora, whose 91 live frames
+/// all decode (`tests/sheet_chain_faults.rs`).
+#[must_use]
+pub fn refused_smartframes(data: &[u8]) -> Vec<SheetSmartFrameRefused> {
+    SheetChain::walk(data)
+        .starts
+        .iter()
+        .filter_map(|&at| smartframe_refusal_at(data, at))
+        .collect()
+}
+
+/// Why the live `igSmartFrame2d` record at `offset` is not a frame.
+///
+/// `None` where the record is one — [`decode_smartframe_at`] takes it — and
+/// where no live record of that type starts whose payload the stream
+/// holds. Panic-free on arbitrary input.
+#[must_use]
+pub fn smartframe_refusal_at(data: &[u8], offset: usize) -> Option<SheetSmartFrameRefused> {
+    read_smartframe_at(data, offset)?.err()
+}
+
+/// The state the native reader's rules put a frame with these two flag
+/// words in.
+fn smart_frame_state(content_flags: u32, link_flags: u32) -> SheetSmartFrame2dState {
+    if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
+        SheetSmartFrame2dState::Empty
+    } else if link_flags & IGSMARTFRAME_LINKED == 0 && link_flags & IGSMARTFRAME_LOCALLY_LINKED == 0
+    {
+        SheetSmartFrame2dState::Embedded
+    } else if link_flags & IGSMARTFRAME_LOCALLY_LINKED != 0 {
+        SheetSmartFrame2dState::LocallyLinked
+    } else {
+        SheetSmartFrame2dState::Linked
+    }
+}
+
 /// Which of the native reader's three states a frame is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SheetSmartFrame2dState {
@@ -5888,111 +6379,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSmartFrame2dDecoded> {
-        let header = parse_live_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
-            return None;
-        }
-        let payload_len = usize::try_from(header.bytes_to_follow).ok()?;
-        if payload_len < IGSMARTFRAME_MIN_PAYLOAD {
-            return None;
-        }
-        let payload_end = header.body_start.checked_add(payload_len)?;
-        let payload = data.get(header.body_start..payload_end)?;
-
-        let u32_at = |at: usize| -> Option<u32> {
-            payload
-                .get(at..at + 4)
-                .and_then(|s| <[u8; 4]>::try_from(s).ok())
-                .map(u32::from_le_bytes)
-        };
-        let f64_at = |at: usize| -> Option<f64> {
-            payload
-                .get(at..at + 8)
-                .and_then(|s| <[u8; 8]>::try_from(s).ok())
-                .map(f64::from_le_bytes)
-        };
-
-        let content_flags = u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)?;
-        let link_flags = u32_at(IGSMARTFRAME_LINK_FLAGS_AT)?;
-        let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
-        let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
-        let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
-        let range_origin_m = [
-            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT)?,
-            f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT + 8)?,
-        ];
-        let range_origin_m = range_origin_m
-            .iter()
-            .all(|v| v.is_finite())
-            .then_some(range_origin_m);
-        // A frame with a non-finite or negative extent is not a frame this
-        // reader understands, whatever the flags say.
-        if ![extent_width_m, extent_height_m, aspect_ratio]
-            .iter()
-            .all(|v| v.is_finite())
-            || extent_width_m < 0.0
-            || extent_height_m < 0.0
-        {
-            return None;
-        }
-        // The record states its extent twice over, and a frame's two
-        // statements agree. The three doubles of a run of bytes that is not
-        // a frame do not: this is what tells the ten "frames" a walk read
-        // off the corpora's chains after a wrong length from the 178 the
-        // chains hold. A frame of no width states nothing to hold it to.
-        if extent_width_m > 0.0 {
-            let stated_by_extent = extent_height_m / extent_width_m;
-            if (aspect_ratio - stated_by_extent).abs()
-                > IGSMARTFRAME_ASPECT_TOLERANCE * stated_by_extent.abs()
-            {
-                return None;
-            }
-        }
-
-        let content_transform = (|| {
-            let at = IGSMARTFRAME_CONTENT_TRANSFORM_AT;
-            let values: Vec<f64> = (0..7)
-                .map(|index| f64_at(at + 8 * index))
-                .collect::<Option<_>>()?;
-            values
-                .iter()
-                .all(|v| v.is_finite())
-                .then(|| SmartFrameContentTransform {
-                    linear: [values[0], values[1], values[2], values[3]],
-                    translation_m: [values[4], values[5]],
-                    scale: values[6],
-                })
-        })();
-
-        let state = if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
-            SheetSmartFrame2dState::Empty
-        } else if link_flags & IGSMARTFRAME_LINKED == 0
-            && link_flags & IGSMARTFRAME_LOCALLY_LINKED == 0
-        {
-            SheetSmartFrame2dState::Embedded
-        } else if link_flags & IGSMARTFRAME_LOCALLY_LINKED != 0 {
-            SheetSmartFrame2dState::LocallyLinked
-        } else {
-            SheetSmartFrame2dState::Linked
-        };
-
-        Some(SheetIgSmartFrame2dDecoded {
-            byte_range: offset..payload_end,
-            type_code: header.type_code,
-            type_flags: header.type_flags,
-            bytes_to_follow: header.bytes_to_follow,
-            oid: u32_at(0)?,
-            parent_ref: u32_at(4)?,
-            sheet_layer_ref: u32_at(8)?,
-            content_flags,
-            link_flags,
-            state,
-            range_origin_m,
-            extent_width_m,
-            extent_height_m,
-            aspect_ratio,
-            content_transform,
-        })
+        read_smartframe_at(data, offset)?.ok()
     }
 
     fn advance_of(&self, record: &SheetIgSmartFrame2dDecoded) -> usize {
@@ -6001,6 +6388,105 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             .end
             .saturating_sub(record.byte_range.start)
     }
+}
+
+/// The live `igSmartFrame2d` record at `offset`, read once for both
+/// answers: the frame, or why the record is not one. `None` where no live
+/// record of the type starts whose payload the stream holds.
+fn read_smartframe_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<Result<SheetIgSmartFrame2dDecoded, SheetSmartFrameRefused>> {
+    let header = parse_live_psm_header(data, offset)?;
+    if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
+        return None;
+    }
+    let payload_len = usize::try_from(header.bytes_to_follow).ok()?;
+    let payload_end = header.body_start.checked_add(payload_len)?;
+    let payload = data.get(header.body_start..payload_end)?;
+
+    let u32_at = |at: usize| -> Option<u32> {
+        payload
+            .get(at..at + 4)
+            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+            .map(u32::from_le_bytes)
+    };
+    let f64_at = |at: usize| -> Option<f64> {
+        payload
+            .get(at..at + 8)
+            .and_then(|s| <[u8; 8]>::try_from(s).ok())
+            .map(f64::from_le_bytes)
+    };
+    let refused = |why: SmartFrameRefusal| SheetSmartFrameRefused {
+        byte_range: offset..payload_end,
+        oid: u32_at(0),
+        state: u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)
+            .zip(u32_at(IGSMARTFRAME_LINK_FLAGS_AT))
+            .map(|(content, link)| smart_frame_state(content, link)),
+        why,
+    };
+    if payload_len < IGSMARTFRAME_MIN_PAYLOAD {
+        return Some(Err(refused(SmartFrameRefusal::ShortPayload {
+            payload_len,
+        })));
+    }
+
+    let content_flags = u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)?;
+    let link_flags = u32_at(IGSMARTFRAME_LINK_FLAGS_AT)?;
+    let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
+    let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
+    let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
+    let range_origin_m = [
+        f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT)?,
+        f64_at(IGSMARTFRAME_RANGE_ORIGIN_AT + 8)?,
+    ];
+    let range_origin_m = range_origin_m
+        .iter()
+        .all(|v| v.is_finite())
+        .then_some(range_origin_m);
+    // The record states its extent twice over, and a frame's two
+    // statements agree. The three doubles of a run of bytes that is not
+    // a frame do not: this is what tells the 102 "frames" a walk read
+    // off the corpora's chains after a wrong length from the 178 the
+    // chains hold.
+    if let Some(why) = smart_frame_extent_refusal(extent_width_m, extent_height_m, aspect_ratio) {
+        return Some(Err(refused(why)));
+    }
+
+    let content_transform = (|| {
+        let at = IGSMARTFRAME_CONTENT_TRANSFORM_AT;
+        let values: Vec<f64> = (0..7)
+            .map(|index| f64_at(at + 8 * index))
+            .collect::<Option<_>>()?;
+        values
+            .iter()
+            .all(|v| v.is_finite())
+            .then(|| SmartFrameContentTransform {
+                linear: [values[0], values[1], values[2], values[3]],
+                translation_m: [values[4], values[5]],
+                scale: values[6],
+            })
+    })();
+
+    let state = smart_frame_state(content_flags, link_flags);
+
+    Some(Ok(SheetIgSmartFrame2dDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid: u32_at(0)?,
+        parent_ref: u32_at(4)?,
+        sheet_layer_ref: u32_at(8)?,
+        content_flags,
+        link_flags,
+        state,
+        range_origin_m,
+        extent_width_m,
+        extent_height_m,
+        aspect_ratio,
+        content_transform,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -7496,8 +7982,11 @@ pub struct SheetIgEllipticalArc2dDecoded {
 /// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
 /// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
 /// major semi-axis; a finite `ratio > 0` (not capped at `1` -- see the
-/// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]). As for
-/// `igArc2d`, the angles only have to be finite: they are not normalised.
+/// `2026-11-09` note above [`PSM_TYPE_CODE_IGELLIPSE2D`]); and every vertex
+/// of the polyline the arc is drawn as a point of the coordinate domain,
+/// which seven in-domain doubles do not make it -- a semi-axis of two
+/// metres under a ratio of 1e9 has its apex 2e9 out. As for `igArc2d`, the
+/// angles only have to be finite: they are not normalised.
 pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
     SheetChain::walk(data)
         .starts
@@ -7541,6 +8030,23 @@ pub(crate) fn elliptical_arc_geometry(payload: &[u8]) -> Option<EllipticalArcGeo
     if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 {
         return None;
     }
+    // The seven doubles are each in the domain, and the arc they state need
+    // not be: its second semi-axis is the first times the ratio, and its
+    // vertices are the centre plus both. The record is drawn as a polyline,
+    // on a sheet, in a cached body and in a `.sym` alike, and a record
+    // whose polyline leaves the domain is refused here, where all three
+    // read it, as a boundary's member that re-lists such an arc is
+    // (`igboundary_template_members`).
+    let clockwise = *payload.get(IGELLIPTICALARC2D_PAYLOAD_LEN - 1)? == 0;
+    if !elliptical_arc_stroke_keeps_to_the_domain(
+        (center_x, center_y),
+        (major_x, major_y),
+        ratio,
+        (sweep_start, sweep_end),
+        clockwise,
+    ) {
+        return None;
+    }
     Some((
         (center_x, center_y),
         (major_x, major_y),
@@ -7548,6 +8054,30 @@ pub(crate) fn elliptical_arc_geometry(payload: &[u8]) -> Option<EllipticalArcGeo
         sweep_start,
         sweep_end,
     ))
+}
+
+/// Whether every vertex of the polyline an arc of an ellipse is drawn as —
+/// [`crate::bspline::sample`] over the exact rational B-spline of
+/// [`crate::bspline::elliptical_arc_directed`],
+/// [`crate::bspline::SEGMENTS_PER_SPAN`] segments a span — is a finite
+/// point of the coordinate domain. It is the arc that is asked, not its
+/// ellipse: one whose apex is far out may be stated a tenth of a radian
+/// either side of its major axis and stay inside. An arc that sweeps
+/// nothing has no curve and is drawn as nothing, so it keeps to the domain.
+fn elliptical_arc_stroke_keeps_to_the_domain(
+    center: (f64, f64),
+    major: (f64, f64),
+    ratio: f64,
+    sweep: (f64, f64),
+    clockwise: bool,
+) -> bool {
+    let Some((poles, weights, knots)) =
+        crate::bspline::elliptical_arc_directed(center, major, ratio, sweep.0, sweep.1, clockwise)
+    else {
+        return true;
+    };
+    crate::bspline::try_sample(&poles, &weights, &knots, crate::bspline::SEGMENTS_PER_SPAN)
+        .is_some_and(|vertices| vertices.into_iter().all(point_in_coordinate_domain))
 }
 
 /// [`PsmRecordDecoder`] adapter for `0x007E` `igEllipticalArc2d`.
@@ -7821,8 +8351,11 @@ const IGRECTANGLE2D_MAX_EDGES: usize = 64;
 /// four flag bytes.
 pub const IGBSPCURVE2D_MIN_PAYLOAD_LEN: usize = CURVE_GEOMETRY_AT + 4 + 32 + 4 + 4 + 32 + 8 + 4;
 
-/// Most poles a B-spline may carry. Five on the corpus; same purpose as the
-/// polyline reader's vertex cap.
+/// Most poles a B-spline may carry: 75 at the most on the corpora's 112
+/// records. Same purpose as the polyline reader's vertex cap — it keeps a
+/// corrupt count from being read as a length — and with the degree held to
+/// `crate::bspline::MAX_DEGREE` the work a record asks for is in proportion
+/// to its bytes: the largest it lets through is 99 KB and 32 513 points.
 const IGBSPCURVE2D_MAX_POLES: usize = 4096;
 
 /// One decoded `0x0020` `igRectangle2d` record.
@@ -7941,9 +8474,12 @@ pub fn decode_igrectangle_at(data: &[u8], offset: usize) -> Option<SheetIgRectan
 ///
 /// Chain-gated like [`decode_iglines`]; then: type code
 /// [`PSM_TYPE_CODE_IGBSPCURVE2D`]; `2..=4096` finite in-domain poles; when
-/// rational, one finite positive weight per pole; at least `N + 2` finite
-/// non-decreasing knots; and every counted field accounting for the payload
-/// exactly, trailing double and four flag bytes included.
+/// rational, one finite positive weight per pole; from `N + 2` to
+/// `N + 1 +` [`crate::bspline::MAX_DEGREE`] finite non-decreasing knots —
+/// a degree from one to the highest the curve is evaluated at, the degree
+/// being stated by nothing but the two counts; and every counted field
+/// accounting for the payload exactly, trailing double and four flag bytes
+/// included.
 pub fn decode_igbspcurves(data: &[u8]) -> Vec<SheetIgBspCurve2dDecoded> {
     SheetChain::walk(data)
         .starts
@@ -8039,8 +8575,17 @@ pub struct BspCurveGeometry {
 /// fields do not account for the payload exactly. Validation rules are
 /// documented on [`decode_igbspcurves`].
 pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
+    let (curve, end) = bspcurve_geometry_from(payload, CURVE_GEOMETRY_AT)?;
+    (end == payload.len()).then_some(curve)
+}
+
+/// The curve whose fields start at `payload[at]` — where an `igBspCurve2d`
+/// record's 18-byte sub-header ends, and where a boundary's `0x7F` member
+/// keeps the same fields behind its tag — and the offset after its last
+/// byte. The rules are [`bspcurve_geometry`]'s, less the one that the
+/// fields end where the payload does, which is the caller's to hold.
+fn bspcurve_geometry_from(payload: &[u8], mut at: usize) -> Option<(BspCurveGeometry, usize)> {
     let in_domain = |value: f64| value.is_finite() && value.abs() <= COORDINATE_DOMAIN_LIMIT;
-    let mut at = CURVE_GEOMETRY_AT;
     let pole_count = u32_le(payload, at)? as usize;
     if !(2..=IGBSPCURVE2D_MAX_POLES).contains(&pole_count) {
         return None;
@@ -8070,9 +8615,14 @@ pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
         }
     }
     let knot_count = u32_le(payload, at)? as usize;
-    // Degree at least one, and no more knots than a cap the corpus is
-    // nowhere near; the exact-length rule below is the real guard.
-    if knot_count < pole_count + 2 || knot_count > pole_count + IGBSPCURVE2D_MAX_POLES {
+    // The knot count is all that states the degree: `knots - poles - 1`. At
+    // least one, and no higher than the curve is evaluated at — three on
+    // every record of the corpora. The exact-length rule below holds the
+    // count to the payload, but it does not hold the degree: until
+    // 2026-11-12 this allowed 4 096 knots more than poles, and a record of
+    // 106 KB could state a degree of 1 024 whose points took minutes to
+    // sample.
+    if knot_count < pole_count + 2 || knot_count > pole_count + 1 + crate::bspline::MAX_DEGREE {
         return None;
     }
     at += 4;
@@ -8092,16 +8642,16 @@ pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
     at += 8;
     let flags: [u8; 4] = payload.get(at..at + 4)?.try_into().ok()?;
     at += 4;
-    if at != payload.len() {
-        return None;
-    }
-    Some(BspCurveGeometry {
-        poles,
-        weights,
-        knots,
-        trailing,
-        flags,
-    })
+    Some((
+        BspCurveGeometry {
+            poles,
+            weights,
+            knots,
+            trailing,
+            flags,
+        },
+        at,
+    ))
 }
 
 /// [`PsmRecordDecoder`] adapter for `0x005D` `igBspCurve2d`.
@@ -8166,7 +8716,9 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 //   boxes and one 14-byte entry per member: the member's oid, its range
 //   box, and a word that is `0x8000` on the `0x0019 KeyPoint Constraint`
 //   records that pin one curve's end to the next one's start and `0x0000` /
-//   `0x0005` on the curves. Every curve member of the eight sheet records
+//   `0x0005` on the curves. After the entries the record closes, in one of
+//   two ways: `00 02 00 00` on a sheet, `00 03 00 00` and one `u32` a
+//   member in a symbol cache. Every curve member of the eight sheet records
 //   the corpora hold is a live `igLine2d` or `igArc2d` of the same stream
 //   whose owner is the string's oid and whose layer and style id are the
 //   string's — so the members, which decode and emit on their own, already
@@ -8190,6 +8742,21 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
 // 529 mm
 // (`docs/analysis/2026-11-10-what-the-sixty-unreferenced-pages-leave-undrawn.md`
 // §16).
+//
+// What sets it is how far the members reach: the scale is `1.0` while the
+// far corner of the box that holds them is less than a metre from the
+// origin, and `2.0` from one metre to two — the same for a sheet's own
+// child list (`sheet_display_order::SheetChildTable`), and nothing to do
+// with the sheet, the layer or the size of what is listed. `A1-W.igr` keeps
+// its border group at `2.0` and its logo group at `1.0` on one sheet. Held
+// on 1 293 records of the corpora with none against it, read off the files
+// and not off the vendor's code. That the reach is the straight-line
+// distance, and the line a metre, is a pair the readings give only
+// together: other measures of the far corner part the two scales as well
+// (its p-norms from p = 1.63 up), and it is the line at a round metre that
+// leaves the distance
+// (`docs/analysis/2026-11-12-a-range-scale-is-set-by-how-far-the-children-reach.md`
+// §2.4).
 //
 // Both decode so that they stop being graphic records nothing reads, and
 // both emit nothing: emitting either would draw its members twice.
@@ -8219,6 +8786,50 @@ const IGGROUP_MEMBERS_AT: usize = 28;
 /// The word a `ComplexString` member entry carries when the member is a
 /// constraint between two of its curves rather than a curve.
 pub const IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER: u16 = 0x8000;
+
+/// How a `ComplexString` closes on a sheet: these four bytes after its last
+/// member entry, and nothing after them.
+const IGCOMPLEXSTRING2D_CLOSE_ON_A_SHEET: [u8; 4] = [0x00, 0x02, 0x00, 0x00];
+/// How a `ComplexString` closes in a symbol cache: these four bytes after
+/// its last member entry, and then one `u32` a member.
+const IGCOMPLEXSTRING2D_CLOSE_IN_A_CACHE: [u8; 4] = [0x00, 0x03, 0x00, 0x00];
+
+/// Whether `trailing` — what a `ComplexString`'s payload holds after its
+/// `count` member entries — is one of the two ways a string closes.
+///
+/// This is what tells a string from a run of bytes read as one. A record's
+/// length and its member count are stated apart, and a string was held only
+/// to a count the payload has room for: any payload long enough passed,
+/// with whatever was left over for a trailer. A walk that a wrong length
+/// has sent off the record boundaries reads such payloads — on one sheet of
+/// the plant backup, 28 bytes into each of two `DependencyObject` records,
+/// a type word `0x0021`, a length of 65 536 and a count of 256, with 61 919
+/// bytes after the entries — and four of the 1 371 448 records such walks
+/// read off the corpora's chains decoded so.
+///
+/// Every `ComplexString` on a chain of the corpora closes in one of these
+/// two ways, 34 records of 885 documents: the eight on sheets in the first
+/// (strings of 3, 5, 8 and 11 members), the 26 in the `PSMcluster0` of a
+/// symbol cache in the second (3, 4 and 8 members, and so 16, 20 and 36
+/// bytes; every one of those `u32` is zero, which is not held). No style
+/// table holds a string. What the two forms state is not decoded; that the
+/// length of the second follows the count is what the three sizes show.
+///
+/// A Group's closing is not held the same way. Its records on sheets all
+/// close `00 02 00 00`, but 259 more live in style tables, read by
+/// `style_link`, and two of those close `00 00 00 00`.
+fn igcomplexstring_closes(trailing: &[u8], count: usize) -> bool {
+    let Some((close, after)) = trailing.split_first_chunk::<4>() else {
+        return false;
+    };
+    if *close == IGCOMPLEXSTRING2D_CLOSE_ON_A_SHEET {
+        after.is_empty()
+    } else if *close == IGCOMPLEXSTRING2D_CLOSE_IN_A_CACHE {
+        count.checked_mul(4) == Some(after.len())
+    } else {
+        false
+    }
+}
 
 /// One member entry of a [`SheetIgComplexString2dDecoded`] or a
 /// [`SheetIgGroupDecoded`].
@@ -8291,8 +8902,11 @@ pub struct SheetIgComplexString2dDecoded {
     /// The members, in on-disk order: the curves first, then the constraints
     /// that join them.
     pub members: Vec<SheetAssociationMember>,
-    /// The bytes after the last member entry, verbatim: `00 02 00 00` on a
-    /// sheet.
+    /// The bytes after the last member entry, verbatim: how the record
+    /// closes, which is one of two ways and is what a record is held to.
+    /// `00 02 00 00` on a sheet; `00 03 00 00` and then one `u32` a member
+    /// in a symbol cache, where every such `u32` of the corpora is zero.
+    /// What either states is not decoded.
     pub trailing: Vec<u8>,
 }
 
@@ -8378,9 +8992,15 @@ fn association_members(
 ///
 /// At each record the chain starts: type code
 /// [`PSM_TYPE_CODE_IGCOMPLEXSTRING2D`]; a member count of at least one whose
-/// entries the payload has room for; a finite range scale before them. The
-/// count is bounded by the payload, not by a constant: a string is as long
-/// as the record that holds it.
+/// entries the payload has room for; a finite range scale before them; and
+/// after them the record's closing, which is four bytes on a sheet and four
+/// bytes with a `u32` a member in a symbol cache
+/// ([`SheetIgComplexString2dDecoded::trailing`]). The count is bounded by
+/// the payload, not by a constant: a string is as long as the record that
+/// holds it — and no longer, which is what the closing holds it to. A
+/// payload with room for its count and anything at all after the entries
+/// was a string until 2026-11-12, and four runs of bytes a walk reads off
+/// a chain of the plant backup decoded as one.
 pub fn decode_igcomplexstrings(data: &[u8]) -> Vec<SheetIgComplexString2dDecoded> {
     IgComplexString2dDecoder.scan(data)
 }
@@ -8441,9 +9061,12 @@ impl PsmRecordDecoder for IgComplexString2dDecoder {
             return None;
         }
         let members = association_members(payload, IGCOMPLEXSTRING2D_MEMBERS_AT, count)?;
-        let trailing = payload
-            .get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?
-            .to_vec();
+        let trailing =
+            payload.get(IGCOMPLEXSTRING2D_MEMBERS_AT + count * ASSOCIATION_MEMBER_LEN..)?;
+        if !igcomplexstring_closes(trailing, count) {
+            return None;
+        }
+        let trailing = trailing.to_vec();
         Some(SheetIgComplexString2dDecoded {
             byte_range: offset..end,
             type_flags: header.type_flags,
@@ -8534,6 +9157,20 @@ mod association_family_tests {
         0x00, 0x00, 0x45, 0x00, 0x00, 0x00, 0xb3, 0x31, 0xed, 0xff, 0xd9, 0x31, 0x60, 0x0e, 0x00,
         0x00, 0x46, 0x00, 0x00, 0x00, 0xc6, 0x31, 0x4c, 0x0e, 0xc7, 0x31, 0x4d, 0x0e, 0x00, 0x80,
         0x00, 0x02, 0x00, 0x00,
+    ];
+
+    /// `CPE-SQ-A0.igr`'s `/JSite16/PSMcluster0 +1789`, oid 33, payload
+    /// verbatim: a string kept in a symbol cache — two curves and the
+    /// constraint that joins them — which closes the way the strings of a
+    /// cache do, `00 03 00 00` and a `u32` a member.
+    const STRING_IN_A_CACHE: [u8; 91] = [
+        0x21, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xf0, 0x3f, 0x22, 0x00, 0x00, 0x00, 0xb4, 0xff, 0xf2, 0xff, 0x00, 0x00, 0x0e, 0x00,
+        0x05, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf1, 0xff, 0x4c, 0x00, 0x0e, 0x00, 0x05,
+        0x00, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x80,
+        0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
     ];
 
     /// `A01.pid`'s `/JSite204/Sheet6 +2872`, oid 311, payload verbatim: the
@@ -8770,6 +9407,140 @@ mod association_family_tests {
         assert!(decode_iggroup_at(&framed(PSM_TYPE_CODE_IGGROUP, &payload), 0).is_none());
     }
 
+    /// A string closes in one of two ways after its last member entry —
+    /// four bytes on a sheet, four bytes and a `u32` a member in a symbol
+    /// cache — and a record that closes in neither is no string.
+    #[test]
+    fn a_string_closes_as_a_sheets_or_as_a_caches() {
+        let decode = |payload: &[u8]| {
+            decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, payload), 0)
+        };
+        let on_a_sheet = decode(&STRING_OF_TWO).expect("a sheet's string decodes");
+        assert_eq!(on_a_sheet.trailing, [0x00, 0x02, 0x00, 0x00]);
+
+        let in_a_cache = decode(&STRING_IN_A_CACHE).expect("a cache's string decodes");
+        assert_eq!(
+            (
+                in_a_cache.oid,
+                in_a_cache.parent_ref,
+                in_a_cache.sheet_layer_ref
+            ),
+            (33, 29, 32)
+        );
+        assert_eq!((in_a_cache.index, in_a_cache.range_scale), (10, 1.0));
+        assert_eq!(
+            in_a_cache
+                .members
+                .iter()
+                .map(|member| (member.oid, member.range_box, member.word))
+                .collect::<Vec<_>>(),
+            [
+                (34, [-76, -14, 0, 14], 0x0005),
+                (35, [0, -15, 76, 14], 0x0005),
+                (36, [0, 0, 0, 1], IGCOMPLEXSTRING2D_CONSTRAINT_MEMBER),
+            ]
+        );
+        let mut closing = vec![0x00, 0x03, 0x00, 0x00];
+        closing.extend_from_slice(&[0; 12]);
+        assert_eq!(in_a_cache.trailing, closing);
+
+        // The three members of the sheet's string, under each closing in
+        // turn.
+        let entries = &STRING_OF_TWO[..IGCOMPLEXSTRING2D_MEMBERS_AT + 3 * ASSOCIATION_MEMBER_LEN];
+        let closed_with = |closing: &[u8]| {
+            let mut payload = entries.to_vec();
+            payload.extend_from_slice(closing);
+            decode(&payload)
+        };
+        assert!(closed_with(&[0, 2, 0, 0]).is_some());
+        // What the `u32` a member states is not decoded, and not held to
+        // the zero the corpora's are.
+        assert!(closed_with(&[0, 3, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]).is_some());
+        for (closing, what) in [
+            (&[][..], "no closing"),
+            (&[0, 2, 0][..], "a closing cut short"),
+            (&[0, 2, 0, 0, 0][..], "a byte after a sheet's closing"),
+            (
+                &[0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a sheet's closing with a word a member",
+            ),
+            (&[0, 3, 0, 0][..], "a cache's closing with no word"),
+            (
+                &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a cache's closing a word short",
+            ),
+            (
+                &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+                "a cache's closing a word long",
+            ),
+            (&[0, 4, 0, 0][..], "another second byte"),
+            (&[1, 2, 0, 0][..], "another first byte"),
+            (&[0, 2, 0, 1][..], "another last byte"),
+            (&[0, 0, 0, 0][..], "four bytes of zero"),
+        ] {
+            assert!(
+                closed_with(closing).is_none(),
+                "{what} is taken for a string"
+            );
+        }
+    }
+
+    /// A count below the record's own leaves entries of the record behind
+    /// it, and they close nothing: the string of three read as one of two
+    /// has its third entry and its closing, 18 bytes, where a closing
+    /// stands.
+    #[test]
+    fn a_count_that_leaves_entries_behind_is_refused() {
+        for count in [1, 2] {
+            let mut payload = STRING_OF_TWO.to_vec();
+            payload[IGCOMPLEXSTRING2D_COUNT_AT] = count;
+            assert!(
+                decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload), 0)
+                    .is_none(),
+                "a count of {count} on a record of three"
+            );
+        }
+    }
+
+    /// What four length changes led a walk to on one sheet of the plant
+    /// backup (`G井场进站生产收球筒`'s `/Sheet6`): 28 bytes into a
+    /// `DependencyObject`, a type word `0x0021` and a length of 65 536, with
+    /// a `u32` of 256 where a string keeps its count and zero, or a
+    /// denormal, where it keeps its scale. The payload has room for 256
+    /// entries and the scale is finite, which is all a string was held to
+    /// until 2026-11-12. What follows the entries is 61 919 bytes of the
+    /// stream, and a string closes in four, or in four and a word a member.
+    #[test]
+    fn a_run_of_bytes_with_room_for_its_count_is_no_string() {
+        for scale in [0.0_f64, 5.4e-312] {
+            let mut payload: Vec<u8> = (0..65_536_u32)
+                .map(|i| (i.wrapping_mul(31) >> 3) as u8)
+                .collect();
+            payload[12..14].copy_from_slice(&3_u16.to_le_bytes());
+            payload[IGCOMPLEXSTRING2D_COUNT_AT..IGCOMPLEXSTRING2D_COUNT_AT + 4]
+                .copy_from_slice(&256_u32.to_le_bytes());
+            payload[IGCOMPLEXSTRING2D_COUNT_AT + 4..IGCOMPLEXSTRING2D_COUNT_AT + 12]
+                .copy_from_slice(&scale.to_le_bytes());
+            let record = framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &payload);
+            assert!(
+                decode_igcomplexstring_at(&record, 0).is_none(),
+                "scale {scale:e}: 61 919 bytes after the entries"
+            );
+            assert!(decode_igcomplexstrings(&chain_stream(&record)).is_empty());
+
+            // The closing is the whole of what refuses it: the same bytes,
+            // cut off after their 256 entries and closed as a sheet's
+            // string closes, are a string by every rule the decoder has.
+            let mut closed =
+                payload[..IGCOMPLEXSTRING2D_MEMBERS_AT + 256 * ASSOCIATION_MEMBER_LEN].to_vec();
+            closed.extend_from_slice(&[0x00, 0x02, 0x00, 0x00]);
+            let string =
+                decode_igcomplexstring_at(&framed(PSM_TYPE_CODE_IGCOMPLEXSTRING2D, &closed), 0)
+                    .expect("closed as a string closes");
+            assert_eq!(string.members.len(), 256);
+        }
+    }
+
     #[test]
     fn a_non_finite_range_scale_is_refused() {
         let mut payload = STRING_OF_TWO.to_vec();
@@ -8975,6 +9746,60 @@ mod rectangle_and_bspline_tests {
         let n_at = PSM_ENVELOPE_LEN + CURVE_GEOMETRY_AT;
         overrun[n_at..n_at + 4].copy_from_slice(&50u32.to_le_bytes());
         assert!(decode_igbspcurves(&chain(&[overrun])).is_empty());
+    }
+
+    /// A record of `poles` poles on a zigzag under the clamped knot vector
+    /// of `degree`: `poles + degree + 1` knots, which is all that states the
+    /// degree.
+    fn bspline_record_of_degree(poles: usize, degree: usize) -> Vec<u8> {
+        let zigzag: Vec<(f64, f64)> = (0..poles)
+            .map(|index| (index as f64 * 0.001, (index % 2) as f64 * 0.001))
+            .collect();
+        let spans = poles - degree;
+        let mut knots = vec![0.0; degree + 1];
+        knots.extend((1..spans).map(|span| span as f64));
+        knots.extend(std::iter::repeat_n(spans as f64, degree + 1));
+        assert_eq!(knots.len(), poles + degree + 1);
+        bspline_record(&zigzag, &[], &knots)
+    }
+
+    /// The degree is no field of the record: it is the knot count less the
+    /// pole count less one, and until 2026-11-12 the two counts could state
+    /// any degree up to 4 095. A curve is drawn by de Boor's recursion, which
+    /// costs the square of the degree for every point, so a record states a
+    /// degree `crate::bspline::sample` evaluates or it is refused — three on
+    /// every record of the corpora.
+    #[test]
+    fn a_bspline_past_the_highest_degree_is_refused() {
+        let highest = crate::bspline::MAX_DEGREE;
+        let decoded = decode_igbspcurves(&chain(&[bspline_record_of_degree(40, highest)]));
+        assert_eq!(decoded.len(), 1, "degree {highest}");
+        assert_eq!(decoded[0].degree(), highest);
+        assert_eq!((decoded[0].poles.len(), decoded[0].knots.len()), (40, 73));
+
+        assert!(
+            decode_igbspcurves(&chain(&[bspline_record_of_degree(40, highest + 1)])).is_empty(),
+            "degree {}",
+            highest + 1
+        );
+        // The record an independent review timed: 358 seconds to emit.
+        assert!(
+            decode_igbspcurves(&chain(&[bspline_record_of_degree(4096, 1024)])).is_empty(),
+            "4 096 poles at degree 1 024"
+        );
+        // As many poles as a record may state are still read at a degree
+        // that is evaluated.
+        let widest = decode_igbspcurves(&chain(&[bspline_record_of_degree(4096, highest)]));
+        assert_eq!(widest.len(), 1, "4 096 poles at degree {highest}");
+        assert_eq!(widest[0].degree(), highest);
+
+        // The symbol reader and the cache reader take the curve through the
+        // same function, so one rule holds a `.sym` body and a drawing's
+        // cached copy of it as well.
+        let record = bspline_record_of_degree(40, highest + 1);
+        assert!(bspcurve_geometry(&record[PSM_ENVELOPE_LEN..]).is_none());
+        let record = bspline_record_of_degree(40, highest);
+        assert!(bspcurve_geometry(&record[PSM_ENVELOPE_LEN..]).is_some());
     }
 
     #[test]
@@ -9251,6 +10076,73 @@ mod nested_curve_family_tests {
             decode_igellipticalarcs(&chain(&[elliptical_record(&doubles)])).len(),
             1
         );
+    }
+
+    /// An arc of an ellipse is drawn as a polyline — the vertices
+    /// `bspline::sample` makes of its exact rational B-spline — and every
+    /// vertex of that polyline is a point of the coordinate domain, or the
+    /// record is refused. Its seven doubles are each held to the domain,
+    /// and that does not hold what they multiply or add up to: a major
+    /// semi-axis of two metres under a ratio of 1e9 puts the apex of the
+    /// other semi-axis 2e9 out, and a circle of radius 9e8 about
+    /// (9e8, 9e8) reaches 1.8e9. Until 2026-11-13 such a record decoded and
+    /// was drawn there.
+    ///
+    /// It is the arc that is held, not its ellipse: a tenth of a radian
+    /// either side of the major semi-axis the first ellipse stays inside,
+    /// and that arc is read; the rest of its turn is not.
+    #[test]
+    fn an_elliptical_arc_whose_stroke_leaves_the_coordinate_domain_is_refused() {
+        use std::f64::consts::PI;
+        let read = |doubles: [f64; 7], flag: u8| {
+            let stream = chain(&[curve_record(
+                PSM_TYPE_CODE_IGELLIPTICALARC2D,
+                533,
+                &doubles,
+                flag,
+            )]);
+            assert!(
+                !sheet_record_starts(&stream).is_empty(),
+                "the chain itself must still walk"
+            );
+            let decoded = decode_igellipticalarcs(&stream);
+            assert_eq!(
+                decode_igellipticalarc_at(&stream, SHEET_STREAM_HEADER_LEN).is_some(),
+                !decoded.is_empty()
+            );
+            decoded.len()
+        };
+        // The two parameters, the centre, the major semi-axis, the ratio.
+        // Half the ellipse, from one end of its major axis to the other:
+        // whichever way round, through an apex.
+        let half = |ratio: f64| [PI, 0.0, 0.0, 0.0, 2.0, 0.0, ratio];
+        for flag in [0u8, 1] {
+            assert_eq!(
+                read(half(4e8), flag),
+                1,
+                "an apex 8e8 out, direction {flag}"
+            );
+            assert_eq!(
+                read(half(1e9), flag),
+                0,
+                "an apex 2e9 out, direction {flag}"
+            );
+        }
+        // The same ellipse a tenth of a radian either side of its major
+        // axis, where it is 2e8 off that axis at the most; and the rest of
+        // the turn, which the other direction byte states.
+        let about_the_axis = [-0.1, 0.1, 0.0, 0.0, 2.0, 0.0, 1e9];
+        assert_eq!(read(about_the_axis, 1), 1, "the arc that stays inside");
+        assert_eq!(read(about_the_axis, 0), 0, "the rest of the turn");
+        // A centre and a semi-axis that are each a point of the domain and
+        // add up past it: the quarter of the circle nearest the origin, and
+        // the other three.
+        let off_centre = [PI, 1.5 * PI, 9e8, 9e8, 9e8, 0.0, 1.0];
+        assert_eq!(read(off_centre, 1), 1, "the quarter nearest the origin");
+        assert_eq!(read(off_centre, 0), 0, "three quarters, out to 1.8e9");
+        // An arc that sweeps nothing has no stroke to hold: it decodes, as
+        // it always has, and is drawn as nothing.
+        assert_eq!(read([1.0, 1.0, 0.0, 0.0, 2.0, 0.0, 1e9], 1), 1);
     }
 
     /// `Air Cooler Type 1.sym`'s left fan oval (`Sheet6` oid 726): centre,
@@ -10140,6 +11032,49 @@ mod tests {
         }
     }
 
+    /// How near the height over the width the stated ratio has to lie: a
+    /// millionth of that quotient, either way. The frames of the corpora's
+    /// chains agree to 5e-16, so the tolerance is not what lets a real
+    /// frame through; it is the line a copy made to be refused has to
+    /// cross — `pid-plot`'s refused-frame cases write a ratio three parts
+    /// in a million off — and until 2026-11-12 nothing in this crate held
+    /// it: ten times as wide, every test here passed. Held on both sides
+    /// of the line, above the quotient and below it, so that neither a
+    /// wider nor a narrower tolerance goes unnoticed.
+    #[test]
+    fn a_frames_ratio_is_held_to_a_millionth_of_its_extents_quotient() {
+        let ratio_at = PSM_ENVELOPE_LEN + IGSMARTFRAME_ASPECT_AT;
+        let quotient = 0.594_f64 / 0.841;
+        let off_by = |parts: f64| {
+            let mut record = smart_frame_record(22);
+            record[ratio_at..ratio_at + 8]
+                .copy_from_slice(&(quotient * (1.0 + parts)).to_le_bytes());
+            record
+        };
+        for parts in [0.0, 5e-7, -5e-7, 9e-7, -9e-7] {
+            let record = off_by(parts);
+            assert!(
+                decode_smartframe_at(&record, 0).is_some(),
+                "a ratio {parts:e} off the quotient is a frame's"
+            );
+            assert_eq!(smartframe_refusal_at(&record, 0), None, "{parts:e}");
+        }
+        for parts in [1.1e-6, -1.1e-6, 2e-6, -2e-6, 3e-6, -3e-6, 1e-5, -1e-5] {
+            let record = off_by(parts);
+            assert!(
+                decode_smartframe_at(&record, 0).is_none(),
+                "a ratio {parts:e} off the quotient is not a frame's"
+            );
+            let refused = smartframe_refusal_at(&record, 0)
+                .unwrap_or_else(|| panic!("{parts:e}: a live frame record is one or the other"));
+            assert!(
+                matches!(refused.why, SmartFrameRefusal::RatioNotTheExtents { .. }),
+                "{parts:e}: {:?}",
+                refused.why
+            );
+        }
+    }
+
     /// What a walk that has left the record boundaries took for a frame.
     /// A length 32 bytes too long sends the walk into the text of a label
     /// (`A井场`'s `/Sheet6`, the record at `+12725` stating 88 bytes for
@@ -10187,6 +11122,315 @@ mod tests {
                 "{width:e} by {height:e} stating {ratio:e}"
             );
         }
+    }
+
+    /// One whole `igSmartFrame2d` record of `payload_len` bytes that states
+    /// `width` by `height` and `ratio`, and nothing else.
+    fn smart_frame_stating(payload_len: usize, width: f64, height: f64, ratio: f64) -> Vec<u8> {
+        let mut payload = vec![0u8; payload_len];
+        for (at, value) in [
+            (IGSMARTFRAME_WIDTH_AT, width),
+            (IGSMARTFRAME_HEIGHT_AT, height),
+            (IGSMARTFRAME_ASPECT_AT, ratio),
+        ] {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_IGSMARTFRAME.to_le_bytes());
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+        record
+    }
+
+    /// The six "frames" the ratio rule of 2026-11-11 still took. That rule
+    /// held the ratio to the height over the width only where the width was
+    /// above zero, and wrote the comparison so that a quotient of infinity
+    /// passed it: nothing lies further from infinity than a millionth of
+    /// infinity. With a record's length changed by every amount from −64
+    /// to +64, walks read 1 371 448 records off the corpora's chains; these
+    /// are the extents of the six that decoded, at five places
+    /// (`examples/probe_what_passes_for_a_page_frame_off_the_chain.rs`).
+    /// The first is `I井场`'s `/Sheet6` at `+10702`, which two changes
+    /// reach: a width that is a count read as a double, under a height of
+    /// 3.7e62 m. The other four, on two sheets of the plant backup, are
+    /// zeros where a width and a height would be.
+    #[test]
+    fn what_a_walk_off_the_chain_took_for_a_frame_of_no_width_is_not_one() {
+        let taken: Vec<String> = [
+            (
+                131_072_usize,
+                3.819_594_119_6e-313_f64,
+                3.728_096_263_309_427_4e62_f64,
+                2.263_743_152_185_486_6e164_f64,
+            ),
+            (65_536, 0.0, 0.0, 2.122_513_856_3e-314),
+            (65_536, 0.0, 0.0, 2.434_904_188_060_913_6e144),
+            (65_536, 0.0, 0.0, 1.636_760_400_304_213_6e-251),
+            (65_536, 0.0, 0.0, 2.151_964_644_286_228_7e-281),
+        ]
+        .into_iter()
+        .filter(|&(payload_len, width, height, ratio)| {
+            decode_smartframe_at(&smart_frame_stating(payload_len, width, height, ratio), 0)
+                .is_some()
+        })
+        .map(|(_, width, height, ratio)| format!("{width:e} by {height:e} stating {ratio:e}"))
+        .collect();
+        assert!(taken.is_empty(), "taken for a frame: {taken:#?}");
+    }
+
+    /// The ratio can be held to the extent only where the extent has one:
+    /// a width and a height that are lengths — above zero, and not the
+    /// denormals a count or a flag word reads as — whose quotient is a
+    /// number of its own. Each case here is an extent that states no ratio
+    /// to compare, and each passed until 2026-11-12: by skipping the
+    /// comparison (no width), or by passing it for want of anything to
+    /// differ from (a quotient of zero against a stated zero, of infinity
+    /// against anything, of two counts against one).
+    #[test]
+    fn a_frame_states_an_extent_its_ratio_can_be_held_to() {
+        // The smallest frame of the corpora: the micrometre square a nested
+        // site's placeholder states. Its sides are lengths, and it decodes.
+        let (width, height) = (1.000_000_000_000_000_2e-6_f64, 9.999_999_999_999_997e-7_f64);
+        assert!(
+            decode_smartframe_at(
+                &smart_frame_stating(IGSMARTFRAME_MIN_PAYLOAD, width, height, height / width),
+                0
+            )
+            .is_some(),
+            "a micrometre square"
+        );
+
+        let denormal = f64::from_bits(18 << 32);
+        assert!(denormal > 0.0 && !denormal.is_normal());
+        let taken: Vec<String> = [
+            (0.0, 0.594, 0.706_302, "no width"),
+            (0.0, 0.0, 0.0, "no width and no height"),
+            (-0.0, 0.594, 0.706_302, "a width of minus zero"),
+            (0.841, 0.0, 0.0, "no height, stating a ratio of zero"),
+            (
+                denormal,
+                0.594,
+                1e300,
+                "a count for a width: the quotient is infinite",
+            ),
+            (
+                1.0,
+                denormal,
+                denormal,
+                "a count for a height, and the same count for a ratio",
+            ),
+            (
+                denormal,
+                denormal,
+                1.0,
+                "the same count for a width and a height",
+            ),
+            (
+                1e200,
+                1e-200,
+                0.0,
+                "a quotient too small to be a number, stating zero",
+            ),
+            (
+                1e-200,
+                1e200,
+                f64::MAX,
+                "a quotient too large to be a number",
+            ),
+        ]
+        .into_iter()
+        .filter(|&(width, height, ratio, _)| {
+            decode_smartframe_at(
+                &smart_frame_stating(IGSMARTFRAME_MIN_PAYLOAD, width, height, ratio),
+                0,
+            )
+            .is_some()
+        })
+        .map(|(width, height, ratio, what)| {
+            format!("{what}: {width:e} by {height:e} stating {ratio:e}")
+        })
+        .collect();
+        assert!(taken.is_empty(), "taken for a frame: {taken:#?}");
+    }
+
+    /// A live frame record the decoder refuses says which part of the rule
+    /// it fails, with the record's own numbers, and what state its flag
+    /// words put it in: what a page laid out without its frame is told.
+    /// The same read gives the decoder its frame, so the two answers are
+    /// one or the other of every live frame record and never both.
+    #[test]
+    fn a_refused_frame_says_which_part_of_the_rule_it_fails() {
+        // The record as built is a frame: nothing to say.
+        let frame = smart_frame_record(22);
+        assert!(decode_smartframe_at(&frame, 0).is_some());
+        assert_eq!(smartframe_refusal_at(&frame, 0), None);
+
+        let with = |width: f64, height: f64, ratio: f64| {
+            let mut record = smart_frame_record(22);
+            for (at, value) in [
+                (IGSMARTFRAME_WIDTH_AT, width),
+                (IGSMARTFRAME_HEIGHT_AT, height),
+                (IGSMARTFRAME_ASPECT_AT, ratio),
+            ] {
+                let at = PSM_ENVELOPE_LEN + at;
+                record[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            record
+        };
+        for (record, why, said) in [
+            (
+                with(0.0, 0.594, 0.706_302),
+                SmartFrameRefusal::NotLengths {
+                    width_m: 0.0,
+                    height_m: 0.594,
+                },
+                "it states a width of 0 m and a height of 0.594 m, and a frame's sides are \
+                 lengths above zero",
+            ),
+            (
+                with(1e-200, 1e200, 1.0),
+                SmartFrameRefusal::NoQuotient {
+                    width_m: 1e-200,
+                    height_m: 1e200,
+                },
+                "its height over its width, 1e200 m over 1e-200 m, is no number a ratio can be \
+                 held to",
+            ),
+            (
+                with(0.841, 0.594, 0.5),
+                SmartFrameRefusal::RatioNotTheExtents {
+                    width_m: 0.841,
+                    height_m: 0.594,
+                    aspect_ratio: 0.5,
+                },
+                "it states a ratio of 0.500000000 where its height over its width, 0.594000 m \
+                 over 0.841000 m, is 0.706302021",
+            ),
+        ] {
+            assert!(decode_smartframe_at(&record, 0).is_none(), "{said}");
+            let refused = smartframe_refusal_at(&record, 0).expect(said);
+            assert_eq!(refused.why, why);
+            assert_eq!(refused.why.describe(), said);
+            assert_eq!(
+                (refused.byte_range.clone(), refused.oid, refused.state),
+                (
+                    0..record.len(),
+                    Some(22),
+                    Some(SheetSmartFrame2dState::Linked)
+                ),
+                "{said}"
+            );
+        }
+
+        // A record cut short of the ratio: refused for its length, its oid
+        // and its flag words still read.
+        let short = IGSMARTFRAME_MIN_PAYLOAD - 1;
+        let mut cut = frame[..PSM_ENVELOPE_LEN + short].to_vec();
+        cut[2..6].copy_from_slice(&(short as u32).to_le_bytes());
+        let refused = smartframe_refusal_at(&cut, 0).expect("a short record");
+        assert_eq!(
+            refused.why,
+            SmartFrameRefusal::ShortPayload { payload_len: short }
+        );
+        assert_eq!(
+            refused.why.describe(),
+            "its payload is 155 byte(s), fewer than the 156 that reach the ratio a frame states"
+        );
+        assert_eq!(
+            (refused.oid, refused.state),
+            (Some(22), Some(SheetSmartFrame2dState::Linked))
+        );
+
+        // What is no live frame record at all gets neither answer: another
+        // type code, a superseded copy, a payload the stream does not hold.
+        let mut other = frame.clone();
+        other[0] = 0x18;
+        let mut superseded = frame.clone();
+        superseded[1] |= 0x80;
+        for (record, what) in [
+            (other, "another type code"),
+            (superseded, "a superseded copy"),
+            (frame[..frame.len() - 1].to_vec(), "a record cut off"),
+        ] {
+            assert!(decode_smartframe_at(&record, 0).is_none(), "{what}");
+            assert_eq!(smartframe_refusal_at(&record, 0), None, "{what}");
+        }
+
+        // On a chain: the refused record of a stream of two frames, and
+        // nothing for the one that decodes.
+        let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&2u32.to_le_bytes());
+        stream.extend_from_slice(&frame);
+        let second = stream.len();
+        stream.extend_from_slice(&with(0.0, 0.594, 0.706_302));
+        assert_eq!(decode_smartframes(&stream).len(), 1);
+        let refused = refused_smartframes(&stream);
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].byte_range, second..stream.len());
+    }
+
+    /// A chain is short when records are left unread: the walk stopped, or
+    /// it ended with fewer live records than the header states. A wrong
+    /// magic and a header that counts too few are faults that lose nothing.
+    #[test]
+    fn a_chain_is_short_when_records_are_left_unread() {
+        let frame = smart_frame_record(22);
+        let stream = |stated: u32, records: usize| {
+            let mut stream = vec![0u8; SHEET_STREAM_HEADER_LEN];
+            stream[..4].copy_from_slice(&SHEET_STREAM_MAGIC.to_le_bytes());
+            stream[4..8].copy_from_slice(&stated.to_le_bytes());
+            for _ in 0..records {
+                stream.extend_from_slice(&frame);
+            }
+            stream
+        };
+        let sound = stream(2, 2);
+        let chain = SheetChain::walk(&sound);
+        assert!(chain.is_sound() && !chain.is_short());
+
+        // Stopped: a length of zero, stray bytes after the last record, a
+        // stream shorter than its header.
+        let mut zero = sound.clone();
+        let second = SHEET_STREAM_HEADER_LEN + frame.len();
+        zero[second + 2..second + 6].copy_from_slice(&0u32.to_le_bytes());
+        let mut stray = sound.clone();
+        stray.extend_from_slice(&[0xEE; 4]);
+        for (stopped, what) in [
+            (zero.as_slice(), "a length of zero"),
+            (stray.as_slice(), "stray bytes"),
+            (&sound[..5], "five bytes"),
+        ] {
+            let chain = SheetChain::walk(stopped);
+            assert!(chain.stop.is_some() && chain.is_short(), "{what}");
+        }
+
+        // Not stopped, and short all the same: cut off at a record
+        // boundary; a header that counts one more than the chain holds.
+        for (short, what) in [
+            (sound[..second].to_vec(), "cut off before the second record"),
+            (stream(3, 2), "a count one too many"),
+        ] {
+            let chain = SheetChain::walk(&short);
+            assert!(
+                chain.stop.is_none() && !chain.is_sound() && chain.is_short(),
+                "{what}"
+            );
+        }
+
+        // Faults that leave no record unread.
+        let mut magic = sound.clone();
+        magic[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        for (whole, what) in [
+            (magic, "a wrong magic"),
+            (stream(1, 2), "a count one too few"),
+        ] {
+            let chain = SheetChain::walk(&whole);
+            assert!(!chain.is_sound() && !chain.is_short(), "{what}");
+        }
+
+        // An empty stream has nothing to be short of.
+        assert!(!SheetChain::walk(&[]).is_short());
     }
 
     /// A family decodes the records its stream's chain starts, and nothing
@@ -13098,6 +14342,44 @@ mod tests {
         );
     }
 
+    /// The chords of a `0x73` circle member are held as every other member's
+    /// are: a centre and a radius that are each in the coordinate domain and
+    /// reach past it together refuse the record. Until 2026-11-13 the dot
+    /// below decoded with vertices 1.8e9 out.
+    #[test]
+    fn igboundary2d_circle_member_past_the_coordinate_domain_is_refused() {
+        // The record of `EF井场`'s dot with another centre — the member's,
+        // and the anchor, which is that centre — and another radius.
+        let with = |centre: (f64, f64), radius: f64| {
+            let mut record = ef_circle_boundary_record();
+            for (at, value) in [
+                (29, centre.0),
+                (37, centre.1),
+                (45, radius),
+                (70, centre.0),
+                (78, centre.1),
+            ] {
+                let at = PSM_ENVELOPE_LEN + at;
+                record[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            record
+        };
+        let inside = decode_igboundary_at(&with((0.0, 0.0), 9e8), 0)
+            .expect("a circle of radius 9e8 about the origin");
+        assert_eq!(inside.segments.len(), 26, "a whole turn in 0.25 rad chords");
+        assert!(inside.segments.iter().all(|segment| {
+            [segment.start, segment.end]
+                .into_iter()
+                .all(|(x, y)| x.abs() <= 9e8 + 1.0 && y.abs() <= 9e8 + 1.0)
+        }));
+        for centre in [(9e8, 9e8), (-9e8, 0.0), (0.0, 2e8)] {
+            assert!(
+                decode_igboundary_at(&with(centre, 9e8), 0).is_none(),
+                "a circle of radius 9e8 about {centre:?} leaves the domain"
+            );
+        }
+    }
+
     #[test]
     fn igboundary2d_open_chain_reports_not_closed() {
         let record = build_synthetic_igboundary2d_record(
@@ -13464,5 +14746,951 @@ mod tests {
         assert_eq!(super::igboundary_arc_sweep(0.0, TAU, 1), TAU);
         assert_eq!(super::igboundary_arc_sweep(0.0, TAU, 0), -TAU);
         assert_eq!(super::igboundary_arc_sweep(1.0, 1.0, 1), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // 2026-11-12: a loop of curves that names its members
+    // -----------------------------------------------------------------
+
+    /// A `0x67` line member's bytes.
+    fn boundary_line_member(from: (f64, f64), to: (f64, f64)) -> Vec<u8> {
+        let mut out = vec![0x67];
+        for value in [from.0, from.1, to.0, to.1] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out
+    }
+
+    /// A `0x74` member's bytes: the two parameters, the centre, the major
+    /// semi-axis vector, the ratio and the direction byte — what an
+    /// `igEllipticalArc2d` record carries after its sub-header.
+    fn boundary_arc_member(
+        sweep: (f64, f64),
+        centre: (f64, f64),
+        major: (f64, f64),
+        ratio: f64,
+        direction: u8,
+    ) -> Vec<u8> {
+        let mut out = vec![0x74];
+        for value in [
+            sweep.0, sweep.1, centre.0, centre.1, major.0, major.1, ratio,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.push(direction);
+        out
+    }
+
+    /// A `0x7F` member's bytes: what an `igBspCurve2d` record carries after
+    /// its sub-header — `u32 N`, the poles, the weight flag and weights,
+    /// `u32 M`, the knots, the double `-1.0` and the bytes `04 01 01 00`.
+    fn boundary_spline_member(poles: &[(f64, f64)], weights: &[f64], knots: &[f64]) -> Vec<u8> {
+        let mut out = vec![0x7F];
+        out.extend_from_slice(&(poles.len() as u32).to_le_bytes());
+        for (x, y) in poles {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+        out.extend_from_slice(&u32::from(!weights.is_empty()).to_le_bytes());
+        for weight in weights {
+            out.extend_from_slice(&weight.to_le_bytes());
+        }
+        out.extend_from_slice(&(knots.len() as u32).to_le_bytes());
+        for knot in knots {
+            out.extend_from_slice(&knot.to_le_bytes());
+        }
+        out.extend_from_slice(&(-1.0f64).to_le_bytes());
+        out.extend_from_slice(&[4, 1, 1, 0]);
+        out
+    }
+
+    /// The payload of a boundary of one loop under sub-type `0x0000` that
+    /// names its members, the layout of the `-W` templates' logo fills: the
+    /// 18-byte prefix, one loop, the member count, `[2, 1]`, the members,
+    /// then the anchor, the flag byte, the reference count and the
+    /// references.
+    fn one_loop_boundary_payload(
+        members: &[Vec<u8>],
+        anchor: (f64, f64),
+        references: &[(u32, u16, u16)],
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&341u32.to_le_bytes());
+        payload.extend_from_slice(&369u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.extend_from_slice(&15u32.to_le_bytes());
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&[2, 1]);
+        for member in members {
+            payload.extend_from_slice(member);
+        }
+        payload.extend_from_slice(&anchor.0.to_le_bytes());
+        payload.extend_from_slice(&anchor.1.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&(references.len() as u32).to_le_bytes());
+        for (oid, class_word, sub_word) in references {
+            payload.extend_from_slice(&oid.to_le_bytes());
+            payload.extend_from_slice(&class_word.to_le_bytes());
+            payload.extend_from_slice(&sub_word.to_le_bytes());
+        }
+        payload
+    }
+
+    /// Half an ellipse closed by its chord: the line `(0, 0) -> (0, 2)`,
+    /// then the arc from the parameter `π` back to `0` of the ellipse about
+    /// `(0, 1)` whose major semi-axis is `(0, -1)` and whose ratio is one
+    /// half — `P(t) = (sin t / 2, 1 - cos t)`. The direction byte says which
+    /// half: `0` runs the parameter down through `π/2`, the half to the
+    /// right of the chord; `1` runs it up through `3π/2`, the half to the
+    /// left.
+    fn half_ellipse_members(direction: u8) -> Vec<Vec<u8>> {
+        vec![
+            boundary_line_member((0.0, 0.0), (0.0, 2.0)),
+            boundary_arc_member(
+                (std::f64::consts::PI, 0.0),
+                (0.0, 1.0),
+                (0.0, -1.0),
+                0.5,
+                direction,
+            ),
+        ]
+    }
+
+    const HALF_ELLIPSE_REFERENCES: [(u32, u16, u16); 2] = [(335, 0x00CB, 5), (354, 0x00D3, 0)];
+
+    #[test]
+    fn igboundary2d_decodes_a_loop_of_a_line_and_an_elliptical_arc() {
+        let payload = one_loop_boundary_payload(
+            &half_ellipse_members(0),
+            (0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        let record = boundary_record(&payload);
+        let decoded = decode_igboundaries(&chain_stream(&record));
+        assert_eq!(decoded.len(), 1, "the loop of a line and an elliptical arc");
+        let b = &decoded[0];
+        assert_eq!((b.oid, b.parent_ref, b.sheet_layer_ref), (341, 369, 8));
+        assert_eq!((b.sub_type_word, b.index), (0x0000, 15));
+        assert_eq!(b.segment_count, 2, "two members");
+        assert_eq!(b.sub_header_tail, [2, 1]);
+        assert!(b.loop_segment_counts.is_empty(), "one loop states no tally");
+        assert_eq!(b.anchor, (0.2, 1.0));
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs
+                .iter()
+                .map(|reference| (
+                    reference.member_oid,
+                    reference.class_word,
+                    reference.sub_word
+                ))
+                .collect::<Vec<_>>(),
+            HALF_ELLIPSE_REFERENCES
+        );
+        // The line is one segment; the arc turns π of parameter and is
+        // flattened as an `igEllipticalArc2d` of these fields is drawn: four
+        // 45° spans of eight segments.
+        assert_eq!(b.segments.len(), 1 + 32);
+        assert_eq!(b.segments[0].tag_offset, 28);
+        assert_eq!(
+            (b.segments[0].start, b.segments[0].end),
+            ((0.0, 0.0), (0.0, 2.0))
+        );
+        let arc = &b.segments[1..];
+        assert!(arc.iter().all(|segment| segment.tag_offset == 28 + 33));
+        for segment in arc {
+            for (x, y) in [segment.start, segment.end] {
+                // On the ellipse: (x / 0.5)² + (y - 1)² = 1.
+                assert!(
+                    ((x / 0.5).powi(2) + (y - 1.0).powi(2) - 1.0).abs() < 1e-12,
+                    "({x}, {y}) is off the ellipse"
+                );
+                assert!(x > -1e-12, "({x}, {y}) is on the far side of the chord");
+            }
+        }
+        // From the chord's end round to its start, through the right-hand
+        // vertex of the ellipse.
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
+        assert!(near(arc[0].start, (0.0, 2.0)), "{:?}", arc[0].start);
+        assert!(near(arc[31].end, (0.0, 0.0)), "{:?}", arc[31].end);
+        let reach = arc.iter().map(|s| s.end.0).fold(f64::MIN, f64::max);
+        assert!((reach - 0.5).abs() < 1e-12, "the arc reaches x = {reach}");
+        assert!(b.is_closed_loop(1e-12));
+        assert_eq!(
+            b.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + record.len()
+        );
+    }
+
+    #[test]
+    fn igboundary2d_elliptical_member_runs_the_way_its_direction_byte_says() {
+        let payload = one_loop_boundary_payload(
+            &half_ellipse_members(1),
+            (-0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        let arc = &decoded.segments[1..];
+        assert_eq!(arc.len(), 32);
+        // The same two ends, the other half of the ellipse.
+        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-12;
+        assert!(near(arc[0].start, (0.0, 2.0)) && near(arc[31].end, (0.0, 0.0)));
+        assert!(arc.iter().all(|segment| segment.end.0 < 1e-12));
+        let reach = arc.iter().map(|s| s.end.0).fold(f64::MAX, f64::min);
+        assert!((reach + 0.5).abs() < 1e-12, "the arc reaches x = {reach}");
+    }
+
+    /// An arc member is flattened after the way its own record is drawn.
+    ///
+    /// An arc of an ellipse proper re-lists an `igEllipticalArc2d`, which a
+    /// sheet strokes as the polyline `bspline::sample` makes of
+    /// `bspline::elliptical_arc_directed`: the member's vertices are those
+    /// very points, so the fill's edge is the line the record draws. The arc
+    /// of a circle — major semi-axis `(radius, 0)`, ratio one — re-lists an
+    /// `igArc2d`, which is stroked as a true arc: it is cut into chords of a
+    /// quarter radian, as before. An arc that sweeps nothing is one chord of
+    /// no length either way.
+    #[test]
+    fn igboundary2d_arc_member_is_flattened_as_its_own_record_is_drawn() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // The arc alone about `centre`, closed by two lines back to where
+        // it started.
+        let decoded_about = |centre: (f64, f64),
+                             sweep: (f64, f64),
+                             major: (f64, f64),
+                             ratio: f64,
+                             direction: u8| {
+            let on = |t: f64| {
+                let minor = (-major.1 * ratio, major.0 * ratio);
+                (
+                    centre.0 + t.cos() * major.0 + t.sin() * minor.0,
+                    centre.1 + t.cos() * major.1 + t.sin() * minor.1,
+                )
+            };
+            let payload = one_loop_boundary_payload(
+                &[
+                    boundary_arc_member(sweep, centre, major, ratio, direction),
+                    boundary_line_member(on(sweep.1), (5.0, 5.0)),
+                    boundary_line_member((5.0, 5.0), on(sweep.0)),
+                ],
+                centre,
+                &[(354, 0x00D3, 5), (335, 0x00CB, 4), (336, 0x00CB, 4)],
+            );
+            let record = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+            let arc: Vec<(f64, f64)> = record
+                .segments
+                .iter()
+                .filter(|segment| segment.tag_offset == 28)
+                .flat_map(|segment| [segment.start, segment.end])
+                .collect();
+            // Each segment's start and end, in order: the vertices, every
+            // inner one twice.
+            let mut vertices = vec![arc[0]];
+            vertices.extend(arc.chunks(2).map(|pair| pair[1]));
+            (centre, vertices)
+        };
+        let decoded = |sweep: (f64, f64), major: (f64, f64), ratio: f64, direction: u8| {
+            decoded_about((0.3, 0.1), sweep, major, ratio, direction)
+        };
+        let stroke = |centre, sweep: (f64, f64), major, ratio, direction: u8| {
+            let (poles, weights, knots) = crate::bspline::elliptical_arc_directed(
+                centre,
+                major,
+                ratio,
+                sweep.0,
+                sweep.1,
+                direction == 0,
+            )
+            .expect("an arc");
+            crate::bspline::sample(&poles, &weights, &knots, crate::bspline::SEGMENTS_PER_SPAN)
+        };
+
+        // A circle's arc, as an `igArc2d` is re-listed: chords of a quarter
+        // radian — seven for a quarter turn — each ending on the circle at
+        // an equal step of the angle, `centre + radius · (cos, sin)` to the
+        // bit, which is what this member has always decoded to.
+        let sweep = (0.0, FRAC_PI_2);
+        let (centre, circle) = decoded(sweep, (0.002, 0.0), 1.0, 1);
+        assert_eq!(circle.len(), 7 + 1, "a quarter turn of a circle");
+        for (step, vertex) in circle.iter().enumerate() {
+            let angle = sweep.0 + (sweep.1 - sweep.0) * (step as f64 / 7.0);
+            assert_eq!(
+                *vertex,
+                (
+                    centre.0 + 0.002 * angle.cos(),
+                    centre.1 + 0.002 * angle.sin()
+                ),
+                "chord {step} ends on the circle at {angle}"
+            );
+        }
+        // The other way round the same quarter: the angle runs down.
+        let (_, back) = decoded((FRAC_PI_2, 0.0), (0.002, 0.0), 1.0, 0);
+        assert_eq!(back.len(), 7 + 1);
+        for (step, vertex) in back.iter().enumerate() {
+            let angle = FRAC_PI_2 - FRAC_PI_2 * (step as f64 / 7.0);
+            assert_eq!(
+                *vertex,
+                (
+                    centre.0 + 0.002 * angle.cos(),
+                    centre.1 + 0.002 * angle.sin()
+                ),
+                "chord {step} of the clockwise arc ends on the circle at {angle}"
+            );
+        }
+        // The widest arc the corpora's boundaries re-list, the outer edge
+        // of the `-W` logo's crescent — 201.9° of a 6.7228 mm circle, in
+        // fifteen chords — and an arc of 23: the angle of each end is the
+        // start plus that many fifteenths, or twenty-thirds, of the sweep.
+        // About the origin, where the last bit of an angle is the last bit
+        // of the vertex; on the second arc five of the angles come out
+        // another double if the product is taken as `sweep · step / chords`.
+        for (sweep, radius, chords) in [
+            ((1.380_115, 4.903_101), 6.7228e-3, 15usize),
+            ((0.2, 5.9), 0.004, 23),
+        ] {
+            let (_, wide) = decoded_about((0.0, 0.0), sweep, (radius, 0.0), 1.0, 1);
+            assert_eq!(wide.len(), chords + 1, "an arc of {chords} chords");
+            let turned = (sweep.1 - sweep.0).rem_euclid(std::f64::consts::TAU);
+            for (step, vertex) in wide.iter().enumerate() {
+                let angle = sweep.0 + turned * (step as f64 / chords as f64);
+                assert_eq!(
+                    *vertex,
+                    (radius * angle.cos(), radius * angle.sin()),
+                    "chord {step} of {chords} ends on the circle at {angle}"
+                );
+            }
+        }
+
+        // The same quarter of the same circle, written with its major
+        // semi-axis along +Y, is no `igArc2d`'s: it is flattened as the
+        // `igEllipticalArc2d` it would re-list is drawn, two 45° spans of
+        // eight segments, to the bit.
+        let sweep = (-FRAC_PI_2, 0.0);
+        let (centre, turned) = decoded(sweep, (0.0, 0.002), 1.0, 1);
+        assert_eq!(turned, stroke(centre, sweep, (0.0, 0.002), 1.0, 1));
+        assert_eq!(turned.len(), 2 * 8 + 1);
+        for (a, b) in [(turned[0], circle[0]), (turned[16], circle[7])] {
+            assert!(
+                (a.0 - b.0).hypot(a.1 - b.1) < 1e-15,
+                "the two writings of one arc end {a:?} and {b:?}"
+            );
+        }
+
+        // The other half of what makes an arc a circle's. A major semi-axis
+        // along +X is every `igArc2d`'s, and it is an ellipse's too whenever
+        // the ellipse lies level on the sheet: with another ratio than one
+        // the member is no `igArc2d`'s and takes its record's stroke — two
+        // 45° spans of eight segments for the quarter turn the circle above
+        // takes in seven chords — to the bit, either way round and on either
+        // side of one.
+        for (ratio, direction, sweep) in [
+            (0.5, 1u8, (0.0, FRAC_PI_2)),
+            (0.5, 0, (FRAC_PI_2, 0.0)),
+            (2.0, 1, (0.0, FRAC_PI_2)),
+        ] {
+            let major = (0.002, 0.0);
+            let (centre, level) = decoded(sweep, major, ratio, direction);
+            assert_eq!(
+                level,
+                stroke(centre, sweep, major, ratio, direction),
+                "an arc of a level ellipse of ratio {ratio}, direction {direction}"
+            );
+            assert_eq!(level.len(), 2 * 8 + 1);
+            // One end is on the major semi-axis, a radius out; the other on
+            // the minor, `ratio` radii up, where no circle of that radius is.
+            let (on_major, on_minor) = if direction == 1 {
+                (level[0], level[16])
+            } else {
+                (level[16], level[0])
+            };
+            let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1) < 1e-15;
+            assert!(near(on_major, (centre.0 + 0.002, centre.1)), "{on_major:?}");
+            assert!(
+                near(on_minor, (centre.0, centre.1 + 0.002 * ratio)),
+                "{on_minor:?}"
+            );
+        }
+
+        // An ellipse's arc, either direction: its record's stroke, to the
+        // bit. 106° is three spans, 14° is one.
+        for (sweep, direction, spans) in [
+            ((5.355_890, 0.927_295), 1u8, 3usize),
+            ((0.927_295, 5.355_890), 0, 3),
+            ((4.341_440, 4.587_061), 1, 1),
+            ((PI, 0.0), 0, 4),
+        ] {
+            let major = (6.574_852e-19, -5.488e-3);
+            let (centre, arc) = decoded(sweep, major, 0.725, direction);
+            assert_eq!(
+                arc,
+                stroke(centre, sweep, major, 0.725, direction),
+                "an arc of the ellipse from {} to {}, direction {direction}",
+                sweep.0,
+                sweep.1
+            );
+            assert_eq!(arc.len(), spans * 8 + 1);
+        }
+
+        // An arc whose two parameters are the same one sweeps nothing: one
+        // chord of no length, where the stroke has no curve at all.
+        for (major, ratio) in [((0.002, 0.0), 1.0), ((0.0, -0.002), 0.725)] {
+            let (centre, still) = decoded((1.0, 1.0), major, ratio, 1);
+            assert_eq!(still.len(), 2, "one chord");
+            assert_eq!(still[0], still[1], "of no length");
+            let minor = (-major.1 * ratio, major.0 * ratio);
+            let at = (
+                centre.0 + 1f64.cos() * major.0 + 1f64.sin() * minor.0,
+                centre.1 + 1f64.cos() * major.1 + 1f64.sin() * minor.1,
+            );
+            assert!(
+                (still[0].0 - at.0).hypot(still[0].1 - at.1) < 1e-15,
+                "at the point of that parameter"
+            );
+        }
+    }
+
+    /// A cubic of four poles and the chord back to its start, and the same
+    /// with weights: the member is the curve `bspline::sample` draws a
+    /// sheet's own `igBspCurve2d` as, vertex for vertex.
+    #[test]
+    fn igboundary2d_decodes_a_loop_over_a_bspline_member() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        for weights in [&[][..], &[1.0, 2.0, 2.0, 1.0][..]] {
+            let payload = one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&poles, weights, &knots),
+                    boundary_line_member((2.0, 0.0), (0.0, 0.0)),
+                ],
+                (1.0, 0.3),
+                &[(353, 0x00D4, 5), (342, 0x00CB, 4)],
+            );
+            let decoded = decode_igboundary_at(&boundary_record(&payload), 0)
+                .unwrap_or_else(|| panic!("a B-spline member with {} weights", weights.len()));
+            assert_eq!(decoded.segment_count, 2);
+            assert_eq!(decoded.member_refs.len(), 2);
+            let curve =
+                crate::bspline::sample(&poles, weights, &knots, crate::bspline::SEGMENTS_PER_SPAN);
+            assert_eq!(curve.len(), 9, "one span of eight segments");
+            let spline: Vec<&SheetIgBoundary2dSegment> = decoded
+                .segments
+                .iter()
+                .filter(|segment| segment.tag_offset == 28)
+                .collect();
+            assert_eq!(spline.len(), 8);
+            for (segment, pair) in spline.iter().zip(curve.windows(2)) {
+                assert_eq!((segment.start, segment.end), (pair[0], pair[1]));
+            }
+            let line = decoded.segments.last().expect("the chord");
+            assert_eq!((line.start, line.end), ((2.0, 0.0), (0.0, 0.0)));
+            assert!(decoded.is_closed_loop(1e-12));
+        }
+    }
+
+    /// A loop that names no member — the linked-template trailer — reads a
+    /// B-spline member as well: one vocabulary, whichever way the record
+    /// ends.
+    #[test]
+    fn igboundary2d_template_loop_may_hold_a_bspline() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let payload = one_loop_boundary_payload(
+            &[
+                boundary_spline_member(&poles, &[], &knots),
+                boundary_line_member((2.0, 0.0), (0.0, 0.0)),
+            ],
+            (1e30, 1e30),
+            &[],
+        );
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert!(decoded.member_refs.is_empty());
+        assert_eq!(decoded.segments.len(), 8 + 1);
+        assert_eq!(decoded.anchor, (0.0, 0.0), "the ring's first vertex");
+    }
+
+    /// The arc of a circle is the `0x74` member whose major semi-axis is
+    /// `(radius, 0)` and whose ratio is one, and it flattens to the vertices
+    /// it always has, bit for bit: `centre + radius · (cos, sin)` at the
+    /// start angle and each further fraction of the sweep.
+    #[test]
+    fn igboundary2d_circular_arc_member_flattens_as_it_always_has() {
+        for (start, end, centre, radius, direction) in [
+            (0.172_04, 5.996_42, (0.394_572, 0.103_313), 0.003_651, 0u8),
+            (4.425_17, 0.601_38, (0.403_232, 0.100_857), 0.000_096, 1),
+            (
+                4.712_389,
+                1.577_149,
+                (0.710_033_387, 0.095_408_05),
+                6.517e-4,
+                1,
+            ),
+            (1.380_115, 4.903_101, (0.704_962, 0.094_07), 6.7228e-3, 1),
+        ] {
+            let record =
+                build_template_boundary_arc_and_chord(start, end, centre, radius, direction);
+            let decoded = decode_igboundary_at(&record, 0).expect("decodes");
+            let arc = &decoded.segments[..decoded.segments.len() - 1];
+            let sweep = super::igboundary_arc_sweep(start, end, direction);
+            let chords = ((sweep.abs() / 0.25).ceil() as usize).max(1);
+            assert_eq!(arc.len(), chords);
+            let at = |angle: f64| {
+                (
+                    centre.0 + radius * angle.cos(),
+                    centre.1 + radius * angle.sin(),
+                )
+            };
+            let bits = |point: (f64, f64)| (point.0.to_bits(), point.1.to_bits());
+            assert_eq!(bits(arc[0].start), bits(at(start)));
+            for (index, segment) in arc.iter().enumerate() {
+                let angle = start + sweep * ((index + 1) as f64 / chords as f64);
+                assert_eq!(
+                    bits(segment.end),
+                    bits(at(angle)),
+                    "chord {index} of the arc {start} -> {end}"
+                );
+            }
+        }
+    }
+
+    /// A one-loop record may name one line more than it has members, as the
+    /// two-loop record of `XA-A1.igr` does: the references close the payload
+    /// and that is all they are held to.
+    #[test]
+    fn igboundary2d_of_one_curved_loop_need_not_name_one_line_a_member() {
+        let mut references = HALF_ELLIPSE_REFERENCES.to_vec();
+        references.push((4836, 0x00CB, 0));
+        let payload = one_loop_boundary_payload(&half_ellipse_members(0), (0.2, 1.0), &references);
+        let decoded = decode_igboundary_at(&boundary_record(&payload), 0).expect("decodes");
+        assert_eq!((decoded.segment_count, decoded.member_refs.len()), (2, 3));
+    }
+
+    #[test]
+    fn igboundary2d_curve_members_must_be_curves_and_close_the_payload() {
+        let whole = one_loop_boundary_payload(
+            &half_ellipse_members(0),
+            (0.2, 1.0),
+            &HALF_ELLIPSE_REFERENCES,
+        );
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+        // Where the arc member's doubles stand: tag at +61, then the two
+        // parameters, the centre, the major semi-axis vector, the ratio.
+        let arc_at = 28 + 33;
+        let double_at = |slot: usize| arc_at + 1 + slot * 8;
+        let with = |slot: usize, value: f64| {
+            let mut payload = whole.clone();
+            payload[double_at(slot)..double_at(slot) + 8].copy_from_slice(&value.to_le_bytes());
+            payload
+        };
+
+        // An ellipse with no major semi-axis, or no second one.
+        refused("a zero major semi-axis", with(5, 0.0));
+        refused("a ratio of zero", with(6, 0.0));
+        refused("a negative ratio", with(6, -0.5));
+        for (slot, what) in [
+            (0, "start parameter"),
+            (1, "end parameter"),
+            (2, "centre x"),
+            (3, "centre y"),
+            (4, "major x"),
+            (5, "major y"),
+            (6, "ratio"),
+        ] {
+            refused(&format!("a NaN {what}"), with(slot, f64::NAN));
+            refused(&format!("an infinite {what}"), with(slot, f64::INFINITY));
+            refused(&format!("a {what} of 1e10"), with(slot, 1e10));
+        }
+
+        // The references close the payload, to the byte.
+        let count_at = whole.len() - 2 * 8 - 4;
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        refused("one reference too few is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&3u32.to_le_bytes());
+        refused("one reference too many is stated", payload);
+        let mut payload = whole.clone();
+        payload[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a reference count that overflows", payload);
+        let mut payload = whole.clone();
+        payload.push(0);
+        refused("a byte past the references", payload);
+
+        // An anchor that is not a point of the sheet.
+        let anchor_at = count_at - 1 - 16;
+        let mut payload = whole.clone();
+        payload[anchor_at..anchor_at + 8].copy_from_slice(&1e30f64.to_le_bytes());
+        refused(
+            "the placeholder for an anchor, with references behind it",
+            payload,
+        );
+
+        // Members the loop does not hold, a tag no member has, no loop.
+        let mut payload = whole.clone();
+        payload[22..26].copy_from_slice(&3u32.to_le_bytes());
+        refused("a third member is stated", payload);
+        let mut payload = whole.clone();
+        payload[22..26].copy_from_slice(&0u32.to_le_bytes());
+        refused("no member is stated", payload);
+        let mut payload = whole.clone();
+        payload[arc_at] = 0x66;
+        refused("an unknown member tag", payload);
+        let mut payload = whole.clone();
+        payload[18..22].copy_from_slice(&0u32.to_le_bytes());
+        refused("no loop at all", payload);
+
+        // The drawing-side sub-type reads lines and a circle, as it did.
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0010u16.to_le_bytes());
+        refused("an elliptical arc under sub-type 0x0010", payload);
+        let mut payload = whole.clone();
+        payload[12..14].copy_from_slice(&0x0011u16.to_le_bytes());
+        refused("sub-type 0x0011", payload);
+
+        // Every truncation.
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+    }
+
+    /// Every chord a member is flattened to runs between two points of the
+    /// coordinate domain, or the record is refused: one rule, where the
+    /// chords of every kind of member are appended. A member's own doubles
+    /// are each held to the domain where they are read, and that does not
+    /// hold what they multiply or add up to. Until 2026-11-13 an arc of an
+    /// ellipse whose major semi-axis is two metres and whose ratio is 1e9
+    /// decoded with its apex at 2e9, and three quarters of a circle of
+    /// radius 9e8 about (9e8, 9e8) with vertices 1.8e9 out.
+    #[test]
+    fn igboundary2d_member_vertex_past_the_coordinate_domain_refuses_the_record() {
+        use std::f64::consts::PI;
+        let references = [(354, 0x00D3, 5), (335, 0x00CB, 4)];
+        let decode = |members: &[Vec<u8>], anchor: (f64, f64)| {
+            decode_igboundary_at(
+                &boundary_record(&one_loop_boundary_payload(members, anchor, &references)),
+                0,
+            )
+        };
+        let farthest = |record: &SheetIgBoundary2dDecoded| {
+            record
+                .segments
+                .iter()
+                .flat_map(|segment| [segment.start, segment.end])
+                .map(|(x, y)| x.abs().max(y.abs()))
+                .fold(0.0, f64::max)
+        };
+
+        // An arc of an ellipse proper, which takes the vertices its record
+        // is stroked with: half the ellipse about the origin whose major
+        // semi-axis is (2, 0), closed by the chord along that axis. The
+        // ratio times two metres is how far the apex stands off the chord.
+        let half_ellipse = |ratio: f64, direction: u8| {
+            decode(
+                &[
+                    boundary_arc_member((PI, 0.0), (0.0, 0.0), (2.0, 0.0), ratio, direction),
+                    boundary_line_member((2.0, 0.0), (-2.0, 0.0)),
+                ],
+                (0.0, 1.0),
+            )
+        };
+        for direction in [0u8, 1] {
+            let inside = half_ellipse(4e8, direction)
+                .unwrap_or_else(|| panic!("an apex 8e8 out, direction {direction}"));
+            assert_eq!(inside.segments.len(), 4 * 8 + 1);
+            assert!(
+                (farthest(&inside) - 8e8).abs() < 1.0,
+                "{}",
+                farthest(&inside)
+            );
+            assert!(
+                half_ellipse(1e9, direction).is_none(),
+                "an apex 2e9 out, direction {direction}"
+            );
+        }
+
+        // The arc of a circle, which is cut into chords of a quarter radian:
+        // radius 9e8 about (9e8, 9e8), between the two points where the
+        // circle touches the axes. Counter-clockwise that is the quarter
+        // nearest the origin; clockwise it is the other three, out to 1.8e9.
+        let on = |t: f64| (9e8 + 9e8 * t.cos(), 9e8 + 9e8 * t.sin());
+        let arc_of_the_circle = |direction: u8| {
+            decode(
+                &[
+                    boundary_arc_member((PI, 1.5 * PI), (9e8, 9e8), (9e8, 0.0), 1.0, direction),
+                    boundary_line_member(on(1.5 * PI), on(PI)),
+                ],
+                (4e8, 4e8),
+            )
+        };
+        let quarter = arc_of_the_circle(1).expect("the quarter nearest the origin");
+        assert_eq!(quarter.segments.len(), 7 + 1);
+        assert!(farthest(&quarter) <= 9e8 + 1.0, "{}", farthest(&quarter));
+        assert!(
+            arc_of_the_circle(0).is_none(),
+            "three quarters of the circle, out to 1.8e9"
+        );
+    }
+
+    #[test]
+    fn igboundary2d_bspline_member_must_be_a_curve() {
+        let poles = [(0.0, 0.0), (0.5, 1.0), (1.5, 1.0), (2.0, 0.0)];
+        let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let closing = boundary_line_member((2.0, 0.0), (0.0, 0.0));
+        let references = [(353, 0x00D4, 5), (342, 0x00CB, 4)];
+        let build = |spline: Vec<u8>| {
+            one_loop_boundary_payload(&[spline, closing.clone()], (1.0, 0.3), &references)
+        };
+        let whole = build(boundary_spline_member(&poles, &[], &knots));
+        assert!(decode_igboundary_at(&boundary_record(&whole), 0).is_some());
+        let refused = |what: &str, payload: Vec<u8>| {
+            assert!(
+                decode_igboundary_at(&boundary_record(&payload), 0).is_none(),
+                "{what}"
+            );
+        };
+
+        refused(
+            "one pole",
+            build(boundary_spline_member(&poles[..1], &[], &knots)),
+        );
+        refused(
+            "fewer knots than a degree-one curve has",
+            build(boundary_spline_member(&poles, &[], &knots[..5])),
+        );
+        refused(
+            "a knot vector that steps back",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.5, 0.25, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "a NaN knot",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, f64::NAN, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "a NaN pole",
+            build(boundary_spline_member(
+                &[(0.0, 0.0), (f64::NAN, 1.0), (1.5, 1.0), (2.0, 0.0)],
+                &[],
+                &knots,
+            )),
+        );
+        refused(
+            "a pole past the coordinate domain",
+            build(boundary_spline_member(
+                &[(0.0, 0.0), (0.5, 1e10), (1.5, 1.0), (2.0, 0.0)],
+                &[],
+                &knots,
+            )),
+        );
+        refused(
+            "a weight of zero",
+            build(boundary_spline_member(
+                &poles,
+                &[1.0, 0.0, 1.0, 1.0],
+                &knots,
+            )),
+        );
+        // Counts the payload does not hold.
+        let pole_count_at = 28 + 1;
+        let mut payload = whole.clone();
+        payload[pole_count_at..pole_count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a pole count of four thousand million", payload);
+        let mut payload = whole.clone();
+        payload[pole_count_at..pole_count_at + 4].copy_from_slice(&5u32.to_le_bytes());
+        refused("a fifth pole is stated", payload);
+        let knot_count_at = pole_count_at + 4 + 4 * 16 + 4;
+        let mut payload = whole.clone();
+        payload[knot_count_at..knot_count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        refused("a knot count of four thousand million", payload);
+
+        // A degree the decode would have to flatten at a cost out of all
+        // proportion to the member's bytes: thirty-two is read, thirty-three
+        // is not. (Three on the corpora.)
+        let of_degree = |degree: usize| {
+            let poles: Vec<(f64, f64)> = (0..=degree).map(|i| (i as f64, 0.5)).collect();
+            let mut knots = vec![0.0; degree + 1];
+            knots.extend(std::iter::repeat_n(1.0, degree + 1));
+            let last = poles[degree];
+            one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&poles, &[], &knots),
+                    boundary_line_member(last, (0.0, 0.5)),
+                ],
+                (1.0, 0.3),
+                &references,
+            )
+        };
+        assert!(
+            decode_igboundary_at(&boundary_record(&of_degree(32)), 0).is_some(),
+            "degree 32"
+        );
+        refused("degree 33", of_degree(33));
+
+        // Fields that read as a B-spline's and draw no curve: a knot vector
+        // whose parameter domain — from knot `degree` to knot `poles` — is
+        // empty. `bspline::sample` hands back the control polygon for such
+        // a record, three segments here, and a member is a curve or the
+        // record is refused.
+        refused(
+            "four poles under nine knots: degree four, which wants a fifth pole",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            )),
+        );
+        refused(
+            "eight knots that are all alike",
+            build(boundary_spline_member(&poles, &[], &[0.5; 8])),
+        );
+        refused(
+            "knots whose one step lies past the domain",
+            build(boundary_spline_member(
+                &poles,
+                &[],
+                &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            )),
+        );
+
+        // The weights of a rational curve are a ratio: the same curve under
+        // weights of any one size. Until they were brought to one scale
+        // before use (`bspline::sample`), de Boor's recursion ran on each
+        // pole times its weight as stored: poles this far out under weights
+        // of 1e308 overflowed there, and such a member was refused for
+        // vertices that were not numbers; under weights of 5e-324 the curve
+        // fell onto the origin and the member decoded as that. Both are the
+        // unweighted curve now, as under weights of one, of 0.7 or of three.
+        //
+        // The poles stand half way out to the edge of the coordinate domain
+        // and not on it. A pole on the edge is a vertex on the edge, give or
+        // take the last bit of the division by its weight — `1e9` under
+        // weights of 0.7 comes out as 1 000 000 000.000 000 1 — and whether
+        // such a member decodes would turn on that bit.
+        let corners = [(-5e8, -5e8), (5e8, -5e8), (5e8, 5e8), (-5e8, 5e8)];
+        let cornered = |weights: &[f64]| {
+            one_loop_boundary_payload(
+                &[
+                    boundary_spline_member(&corners, weights, &knots),
+                    boundary_line_member((-5e8, 5e8), (-5e8, -5e8)),
+                ],
+                (0.0, 0.0),
+                &references,
+            )
+        };
+        let unweighted = decode_igboundary_at(&boundary_record(&cornered(&[])), 0)
+            .expect("the corners, unweighted")
+            .segments;
+        assert_eq!(unweighted.len(), 8 + 1);
+        for weights in [
+            &[1.0; 4][..],
+            &[0.7; 4][..],
+            &[3.0; 4][..],
+            &[1e308; 4][..],
+            &[f64::MAX; 4][..],
+            &[1e-300; 4][..],
+            &[5e-324; 4][..],
+        ] {
+            let decoded = decode_igboundary_at(&boundary_record(&cornered(weights)), 0)
+                .unwrap_or_else(|| panic!("the corners under weights of {:e}", weights[0]));
+            assert_eq!(decoded.segments.len(), 8 + 1, "weights of {:e}", weights[0]);
+            for (segment, plain) in decoded.segments.iter().zip(&unweighted) {
+                for (weighted, plain) in [(segment.start, plain.start), (segment.end, plain.end)] {
+                    // A vertex is some 1e8 from the origin, where one bit of
+                    // a double is 1.5e-8.
+                    assert!(
+                        (weighted.0 - plain.0).abs() <= 1e-6
+                            && (weighted.1 - plain.1).abs() <= 1e-6,
+                        "weights of {:e}: {weighted:?} for {plain:?}",
+                        weights[0]
+                    );
+                    assert!(weighted.0.abs() <= 5e8 + 1e-6 && weighted.1.abs() <= 5e8 + 1e-6);
+                }
+            }
+        }
+
+        // What no scale makes a ratio of: a weight so much lighter than the
+        // heaviest that nothing is left of it beside that one. The curve has
+        // no point where only such a weight bears — its start, here —
+        // `bspline::sample` hands back the poles, and a control polygon is
+        // not the curve: three segments for the eight. A member is a curve
+        // or the record is refused. (Every weight here is finite and above
+        // zero, which is all a member's own fields are held to.)
+        for weights in [
+            [5e-324, 1e308, 1e308, 1e308],
+            [1e-320, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1e-320],
+        ] {
+            refused(
+                &format!("weights {weights:?}, which leave an end of the curve no point"),
+                build(boundary_spline_member(&poles, &weights, &knots)),
+            );
+        }
+
+        for cut in 0..whole.len() {
+            assert!(
+                decode_igboundary_at(&boundary_record(&whole[..cut]), 0).is_none(),
+                "cut at {cut}"
+            );
+        }
+    }
+
+    /// Every byte of a loop of all three curved members, set in turn to each
+    /// of a handful of values, and every truncation: the decoder returns,
+    /// with a record or without one.
+    ///
+    /// A truncation is of the payload, under an envelope that states the
+    /// length left: cut the record and leave its length, and the envelope
+    /// is what refuses it — no member is read short.
+    #[test]
+    fn igboundary2d_curve_member_decoder_is_panic_safe_under_mutation() {
+        let mut members = half_ellipse_members(0);
+        members.push(boundary_spline_member(
+            &[(0.0, 0.0), (-0.5, 0.2), (-0.5, 0.8), (0.0, 0.0)],
+            &[1.0, 2.0, 2.0, 1.0],
+            &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        ));
+        let whole = one_loop_boundary_payload(
+            &members,
+            (0.2, 1.0),
+            &[(335, 0x00CB, 5), (354, 0x00D3, 0), (353, 0x00D4, 4)],
+        );
+        let record = boundary_record(&whole);
+        assert!(decode_igboundary_at(&record, 0).is_some());
+        for at in 0..record.len() {
+            for value in [0x00u8, 0x01, 0x7F, 0x80, 0xFF] {
+                let mut mutated = record.clone();
+                mutated[at] = value;
+                let _ = decode_igboundary_at(&mutated, 0);
+                let _ = decode_igboundaries(&chain_stream(&mutated));
+            }
+            // The record cut under its envelope: refused there.
+            assert!(decode_igboundary_at(&record[..at], 0).is_none());
+            assert!(decode_igboundaries(&chain_stream(&record[..at])).is_empty());
+        }
+        for cut in 0..whole.len() {
+            let short = boundary_record(&whole[..cut]);
+            assert!(
+                decode_igboundary_at(&short, 0).is_none(),
+                "a payload cut at {cut} decodes"
+            );
+            assert!(decode_igboundaries(&chain_stream(&short)).is_empty());
+        }
     }
 }

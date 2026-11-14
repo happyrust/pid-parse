@@ -8,6 +8,8 @@ use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
 use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
 
+#[path = "support/exported_page.rs"]
+mod exported_page;
 #[path = "../src/scratch.rs"]
 mod scratch;
 
@@ -46,21 +48,38 @@ fn five_drawings_round_trip_through_pdf() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         models.push((name, model));
     }
-    let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
-    let prepared = prepare_fonts(&refs, &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
     let plot_dir = corpus.join("plot");
     std::fs::create_dir_all(&plot_dir).unwrap_or_else(|error| panic!("mkdir plot: {error}"));
 
-    for (name, model) in &models {
+    let exports = scratch::ScratchDir::new("five-drawings-pid-plot");
+    for (index, (name, model)) in models.iter().enumerate() {
+        // The page is kept under `plot`, so its faces are prepared for this
+        // sheet by itself, as `pid_plot` prepares them: prepared for the five
+        // together it would be other bytes than that program writes. That
+        // the page kept is the program's is held below, before it is kept.
+        let prepared =
+            prepare_fonts(&[model], &dirs).unwrap_or_else(|error| panic!("{name}: fonts: {error}"));
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let exported = exported_page::pid_plot_page(
+            &corpus.join(format!("{name}.pid")),
+            &corpus,
+            &dirs,
+            &exports.join(format!("{index}.pdf")),
+        );
+        exported_page::assert_is_the_page_pid_plot_writes(
+            name,
+            "keeps under plot",
+            &pdf,
+            &exported,
+        );
         let out = plot_dir.join(format!("{name}.pdf"));
         std::fs::write(&out, &pdf)
             .unwrap_or_else(|error| panic!("write {}: {error}", out.display()));
@@ -186,7 +205,36 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
     None
 }
 
-/// What the writer draws for each placed run, in page order.
+/// The primitives a page is written from, by index, in the order they are
+/// put on it — stated here, not taken from the writer: the `decoded` layer
+/// and then the `inferred` one, and within a layer the order the sheet
+/// draws its objects in when the page model states one
+/// ([`PaperModel::paint_sequence`]), strokes first and labels after, each in
+/// the model's own order, when it states none. `probe_only` primitives are
+/// not written.
+fn painted_order(model: &PaperModel) -> Vec<usize> {
+    let sequence = model.paint_sequence();
+    let mut order = Vec::new();
+    for confidence in ["decoded", "inferred"] {
+        let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+        match &sequence {
+            Some(sequence) => order.extend(sequence.iter().copied().filter(of_layer)),
+            None => {
+                let label = |index: &usize| {
+                    matches!(model.primitives[*index].shape, PaperShape::Text { .. })
+                };
+                let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+                order.extend(layer.iter().copied().filter(|index| !label(index)));
+                order.extend(layer.iter().copied().filter(label));
+            }
+        }
+    }
+    order
+}
+
+/// What the writer draws for each placed run, in the order a page is painted
+/// in ([`painted_order`], this test's own statement of it): where the sheet
+/// lists each label among its objects, not where the model holds it.
 ///
 /// A drawing pads its label fields with spaces (`H=11.8MPa `,
 /// ` 1001102A`). The reference plots letter a leading pad as a glyph and
@@ -195,32 +243,27 @@ fn split_run(read: &[&str], expected: &str) -> Option<usize> {
 /// means no run at all.
 fn text_runs(model: &PaperModel) -> Vec<&str> {
     let mut runs = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for primitive in &model.primitives {
-            if primitive.confidence != confidence {
+    for index in painted_order(model) {
+        if let PaperShape::Text {
+            value,
+            height_mm,
+            rotation,
+            origin_mm,
+            ..
+        } = &model.primitives[index].shape
+        {
+            let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
+            let inked = value.trim_end();
+            if inked.is_empty()
+                || !rotation.is_finite()
+                || !origin_mm[0].is_finite()
+                || !origin_mm[1].is_finite()
+                || !height.is_finite()
+                || height <= 0.0
+            {
                 continue;
             }
-            if let PaperShape::Text {
-                value,
-                height_mm,
-                rotation,
-                origin_mm,
-                ..
-            } = &primitive.shape
-            {
-                let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
-                let inked = value.trim_end();
-                if inked.is_empty()
-                    || !rotation.is_finite()
-                    || !origin_mm[0].is_finite()
-                    || !origin_mm[1].is_finite()
-                    || !height.is_finite()
-                    || height <= 0.0
-                {
-                    continue;
-                }
-                runs.push(inked);
-            }
+            runs.push(inked);
         }
     }
     runs

@@ -1236,7 +1236,12 @@ fn join_centerlines_within(segments: &[InkSegment], lateral_mm: f64) -> Vec<Line
             }
         }
     }
-    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    // Keyed by the group's root and read in that order, so the merged lines
+    // come out in one order whenever the same segments go in. A hash map's
+    // iteration order differs from one map to the next, and everything that
+    // sums over these lines — the fit, first of all — then differs in its
+    // last bits from one call to the next.
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for index in 0..lines.len() {
         groups.entry(union.find(index)).or_default().push(index);
     }
@@ -2328,7 +2333,7 @@ fn group_lengths(
         &stroke_index,
         &strokes,
     );
-    let mut uncovered = HashMap::<String, f64>::new();
+    let mut uncovered = BTreeMap::<String, f64>::new();
     for line in &reference_strokes {
         let length = line.length();
         if length < 1e-6 {
@@ -2381,7 +2386,9 @@ fn split_extra(
     strokes: &[(Line, String)],
 ) -> (f64, f64, Vec<LengthGroup>) {
     let mut inside = 0.0;
-    let mut outside = HashMap::<String, f64>::new();
+    // By label, in label order: the total below is a sum over the groups,
+    // and a sum of floats is only the same sum in the same order.
+    let mut outside = BTreeMap::<String, f64>::new();
     for line in our_strokes {
         let length = line.length();
         if length < 1e-6 {
@@ -2423,7 +2430,9 @@ fn split_extra(
     (inside, outside_mm, top_groups(outside))
 }
 
-fn top_groups(groups: HashMap<String, f64>) -> Vec<LengthGroup> {
+/// The eight longest groups, longest first; two of one length stay in label
+/// order, which is the order the map hands them over in.
+fn top_groups(groups: BTreeMap<String, f64>) -> Vec<LengthGroup> {
     let mut groups: Vec<LengthGroup> = groups
         .into_iter()
         .filter(|(_, length)| *length >= 1.0)
@@ -3118,6 +3127,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive([10.0, 90.0], [190.0, 90.0], true),
@@ -3166,6 +3176,133 @@ mod tests {
             "{:?}",
             report.pen
         );
+    }
+
+    /// The same two pages compare to the same report, bit for bit, however
+    /// often they are compared.
+    ///
+    /// Two hash maps used to be read in their own iteration order, which
+    /// differs from one map to the next in the same process: the merged
+    /// centre lines came out of one, so the fit summed its long-line pairs in
+    /// a different order on every call and moved in its last bits (the A2
+    /// acceptance sheet's scale read `0.999987214907646`, `…6409` and
+    /// `…6533` in three calls), and the extra ink outside the missing-symbol
+    /// boxes was summed over the values of another. A gate whose readings are
+    /// equalities cannot stand on that: a stroke exactly on a limit was on
+    /// one side of it in one run and on the other in the next.
+    #[test]
+    fn the_same_two_pages_compare_to_the_same_report_every_time() {
+        use crate::model::{PaperModel, PaperPrimitive, PaperShape};
+        // Sixty long lines, none in line with another, at coordinates whose
+        // sums round differently in a different order; ours is the same page
+        // a little larger and a little moved, so the fit has work to do.
+        let carried = |point: [f64; 2]| [point[0] * 1.000_12 + 0.31, point[1] * 1.000_12 - 0.17];
+        let mut reference = Vec::new();
+        let mut ours = Vec::new();
+        for index in 0..40 {
+            let f = f64::from(index);
+            let y = 4.0 + f * 2.3 + (f * 0.37).sin() * 0.4;
+            let x0 = 12.0 + (f * 1.3).cos() * 3.0;
+            let x1 = x0 + 40.0 + f * 0.9;
+            reference.push(line([x0, y], [x1, y]));
+            ours.push(line(carried([x0, y]), carried([x1, y])));
+        }
+        for index in 0..20 {
+            let f = f64::from(index);
+            let x = 150.0 + f * 2.1 + (f * 0.9).cos() * 0.3;
+            let y0 = 3.0 + (f * 0.7).sin();
+            reference.push(line([x, y0], [x, y0 + 55.0 + f]));
+            ours.push(line(carried([x, y0]), carried([x, y0 + 55.0 + f])));
+        }
+        // Forty strokes of ours the reference has nothing for, each the
+        // stroke of another symbol and of another length, so the extra ink
+        // falls in forty groups whose sum depends on the order it is taken
+        // in.
+        let mut primitives = Vec::new();
+        for index in 0..40 {
+            let f = f64::from(index);
+            let start = [100.0 + (f * 0.618_034).fract() * 4.0, 5.0 + f * 2.2];
+            let end = [
+                start[0] + 1.3 + (f * f * 0.137).fract() * 30.0 + f * 0.013,
+                start[1],
+            ];
+            ours.push(line(start, end));
+            primitives.push(PaperPrimitive {
+                confidence: "decoded",
+                stream_path: None,
+                byte_range: None,
+                symbol: Some(format!("symbol-{index}.sym")),
+                stroke: None,
+                shape: PaperShape::Line {
+                    start_mm: start,
+                    end_mm: end,
+                },
+                furniture: false,
+            });
+        }
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            frame_mm: None,
+            skipped_endpoint_pairs: 0,
+            primitives,
+            missing_symbols: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
+        };
+        let reference = ink(reference, vec![]);
+        let ours = ink(ours, vec![]);
+        let compare = || super::compare_plots_with_model(&reference, &ours, &[], &[], &model);
+        let first = compare();
+        // The page is what the test says it is: a fit that is not the
+        // identity, and extra ink in more groups than one.
+        assert_eq!(first.fit.pairs, 60, "{:?}", first.fit);
+        assert!((first.fit.scale - 1.000_12).abs() < 1e-6, "{:?}", first.fit);
+        assert_eq!(
+            first.extra_outside_by_symbol.len(),
+            8,
+            "the eight longest of forty groups: {:?}",
+            first.extra_outside_by_symbol
+        );
+        assert!(
+            first.extra_outside_missing_mm > 400.0,
+            "{}",
+            first.extra_outside_missing_mm
+        );
+        let first_json = serde_json::to_string(&first).expect("a report serializes");
+        for round in 1..32 {
+            let again = compare();
+            assert_eq!(
+                (
+                    again.fit.scale.to_bits(),
+                    again.fit.translation_mm[0].to_bits(),
+                    again.fit.translation_mm[1].to_bits()
+                ),
+                (
+                    first.fit.scale.to_bits(),
+                    first.fit.translation_mm[0].to_bits(),
+                    first.fit.translation_mm[1].to_bits()
+                ),
+                "round {round}: the fit moved: {:?} against {:?}",
+                again.fit,
+                first.fit
+            );
+            assert_eq!(
+                again.extra_outside_missing_mm.to_bits(),
+                first.extra_outside_missing_mm.to_bits(),
+                "round {round}: the extra ink was summed in another order"
+            );
+            assert_eq!(
+                serde_json::to_string(&again).expect("a report serializes"),
+                first_json,
+                "round {round}: the report differs"
+            );
+        }
     }
 
     #[test]

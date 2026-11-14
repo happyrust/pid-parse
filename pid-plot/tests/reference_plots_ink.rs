@@ -22,7 +22,21 @@
 //!   allowance beyond what the reference states its own size to;
 //! * the **line ends**: how much of our ink is stroked with another cap or
 //!   another join than the reference's stroke at the same place
-//!   ([`ends_apart`]).
+//!   ([`ends_apart`]);
+//! * the **order**: wherever the reference paints a stroke in the paper's
+//!   colour on ink — a label's origin mark on a box edge or on a character —
+//!   whether our page paints the two in the same order, which is what
+//!   decides whether the mark takes a piece out of the ink ([`wipe_order`]).
+//!
+//! What decides that order is the sheet's own list, and a second test holds
+//! it: `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
+//! reads every label whose symbol carries an origin mark — 96 on the eleven
+//! sheets — for where the sheet lists the symbol and the text and which the
+//! plot paints first ([`MARKED_LABELS`]). 95 are painted as listed. The one
+//! that is not is pinned with the sheet that holds the same label at the
+//! same places and is plotted the other way ([`AGAINST_ITS_LIST`],
+//! [`ITS_TWIN`]), which is why that place is a known defect line and not a
+//! rule our page could take up.
 //!
 //! # How a page is pinned
 //!
@@ -56,10 +70,17 @@ use std::path::PathBuf;
 
 use pid_plot::compare::{CompareReport, MaskRect, compare_plots_with_model, template_masks};
 use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours};
+use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours, wipe_order};
 use pid_plot::model::{PaperModel, lay_out_drawing};
-use pid_plot::read::SheetEdge;
+use pid_plot::read::{SheetEdge, read_plot_sequence};
 use pid_plot::write::{PlotFont, write_plot};
+
+#[path = "support/exported_page.rs"]
+mod exported_page;
+#[path = "support/marked_labels.rs"]
+mod marked_labels;
+#[path = "../src/scratch.rs"]
+mod scratch;
 
 /// One number a page is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +141,13 @@ enum Field {
     /// Our ink on a reference stroke that ends or turns its corners another
     /// way than ours, millimetres.
     EndsOther,
+    /// Places where the reference paints a stroke in the paper's colour on
+    /// ink.
+    Wipes,
+    /// Of those, the ones our page paints in the reference's order.
+    WipesSame,
+    /// Of those, the ones our page paints in the other order.
+    WipesOther,
 }
 
 /// Which way a reading gets better.
@@ -136,7 +164,7 @@ enum Better {
 }
 
 impl Field {
-    const ALL: [Self; 26] = [
+    const ALL: [Self; 29] = [
         Self::PageWidthApart,
         Self::PageHeightApart,
         Self::MaskedCoverage,
@@ -163,6 +191,9 @@ impl Field {
         Self::SheetEdges,
         Self::SheetEdgesApart,
         Self::EndsOther,
+        Self::Wipes,
+        Self::WipesSame,
+        Self::WipesOther,
     ];
 
     fn name(self) -> &'static str {
@@ -193,6 +224,9 @@ impl Field {
             Self::SheetEdges => "reference sheet edges",
             Self::SheetEdgesApart => "sheet edges apart",
             Self::EndsOther => "our ink under other ends than the reference's (mm)",
+            Self::Wipes => "places the reference strokes in the paper's colour on ink",
+            Self::WipesSame => "such places painted in the reference's order",
+            Self::WipesOther => "such places painted in the other order",
         }
     }
 
@@ -206,7 +240,8 @@ impl Field {
             | Self::PenAgreed
             | Self::StrokesSameColour
             | Self::LabelsSameColour
-            | Self::GlyphsSameColour => Better::Up,
+            | Self::GlyphsSameColour
+            | Self::WipesSame => Better::Up,
             Self::MaskedUncovered
             | Self::MaskedExtra
             | Self::MaskedLabelsAlone
@@ -219,8 +254,11 @@ impl Field {
             | Self::LabelsOtherColour
             | Self::InkColoursApart
             | Self::SheetEdgesApart
-            | Self::EndsOther => Better::Down,
-            Self::MaskedLabels | Self::WholeLabels | Self::SheetEdges => Better::Neither,
+            | Self::EndsOther
+            | Self::WipesOther => Better::Down,
+            Self::MaskedLabels | Self::WholeLabels | Self::SheetEdges | Self::Wipes => {
+                Better::Neither
+            }
         }
     }
 
@@ -262,6 +300,10 @@ impl Field {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cause {
     /// A defect of ours whose fix is known and not landed.
+    ///
+    /// No line of the table is of this cause since the A2 sheet's page
+    /// became its paper (2026-11-11); the cause stays for the next one.
+    #[allow(dead_code)]
     NotFixed,
     /// The difference is in the source data: the reference was plotted from
     /// a state of the drawing we do not hold, and the page can only read as
@@ -305,6 +347,9 @@ struct Sheet {
     same_colour: [usize; 3],
     /// Inked strokes along the sheet on the reference.
     sheet_edges: usize,
+    /// Places where the reference paints a stroke in the paper's colour on
+    /// ink.
+    wipes: usize,
     defects: &'static [Defect],
 }
 
@@ -320,6 +365,7 @@ impl Sheet {
             Field::LabelsSameColour => self.same_colour[1] as f64,
             Field::GlyphsSameColour => self.same_colour[2] as f64,
             Field::SheetEdges => self.sheet_edges as f64,
+            Field::Wipes | Field::WipesSame => self.wipes as f64,
             Field::PageWidthApart
             | Field::PageHeightApart
             | Field::MaskedUncovered
@@ -334,7 +380,8 @@ impl Sheet {
             | Field::LabelsOtherColour
             | Field::InkColoursApart
             | Field::SheetEdgesApart
-            | Field::EndsOther => 0.0,
+            | Field::EndsOther
+            | Field::WipesOther => 0.0,
         }
     }
 
@@ -349,36 +396,49 @@ impl Sheet {
     }
 }
 
-/// The one-unit rules of `I井场`'s border template.
-const VALVE_FIRST: &str = "the border template's one-unit rules, butt-ended on our page and \
-                           round-ended on the reference: the reference draws one valve of the \
-                           drawing (`Ball Valve Type 4`, oid 38159) before its template, so \
-                           `1 j 1 J` is already stated when the template is stroked. Neither the \
-                           record's place in the stream, its oid nor its layer puts that valve \
-                           first";
-
-/// The one-unit rules the A2 template strokes before its frame on our page.
-const TEMPLATE_ORDER: &str = "one-unit rules of the `CPECCHB-SQ-A2` template that our page strokes \
-                              before the template's 1.4141 mm frame and the reference after it: \
-                              the reference strokes the frame second, straight after the sheet \
-                              outline, and the order it draws a template's records in is not \
-                              decoded";
-
 /// The border two reference plots do not print.
+///
+/// These are also the two plots that do not paint in the order the sheet on
+/// hand lists its objects in: 459 of 1 603 painted elements and 499 of 2 135
+/// are in that order, where the other nine plots read 98.3 to 99.3 %
+/// (`docs/analysis/2026-11-11-a-sheet-draws-its-children-in-the-order-it-lists-them.md`).
 const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing links and the \
-                           reference plot carries none; nothing on hand says whether the \
-                           drawing lost its frame after the copy we hold or the plot left the \
-                           template out";
+                           reference plot carries none. The plot also paints its objects in an \
+                           order the sheet we hold does not list them in, as no other of the \
+                           eleven does: it was made from another state of the drawing or in \
+                           another way than the rest, and nothing on hand says which, nor \
+                           whether the drawing had its frame then";
+
+/// The one mark `一级闪蒸分离器A`'s plot paints on the other side of its ink.
+///
+/// Whether a mark comes before the ink it lies on is not a rule of its own:
+/// of the 90 places on the eleven sheets where both sides are ours, the
+/// reference paints the ink first at 60 and the mark first at 30, and the
+/// sheet's list puts 89 in the reference's order
+/// (`probe_which_of_a_mark_and_its_ink_a_plot_paints_first`). This place is
+/// the ninetieth, and
+/// `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
+/// holds what is said of it here.
+const OTHER_ORDER: &str = "the origin mark of the label `P70` at (339.85, 384.39) mm: the \
+                           reference letters the `P` after the mark and our page before it. Our \
+                           page follows the sheet, which lists the text ahead of its symbol \
+                           (places 99 and 104). Of the 96 labels with an origin mark on the \
+                           eleven sheets the plots paint 95 in the order their sheet lists them, \
+                           49 symbol first and 46 text first; this is the other one. No rule over \
+                           the records gives both: `一级闪蒸分离器B` holds the same label, at the \
+                           same point and the same two places, and its plot letters the `P` \
+                           first, as listed. So this plot was not painted from the list the file \
+                           holds — it is one of the two that do not paint in the order the sheet \
+                           on hand lists its objects in (see the border they do not print). The \
+                           file was saved on 2026-07-06 and the plot made on 2026-10-12; whether \
+                           the drawing changed in between or the plot was made another way, \
+                           nothing on hand says";
 
 /// The A2 sheet's instrument loop and its two pipeline strings.
 const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
                               reference was plotted from a later state of the drawing than \
                               either copy of the `.pid`, the published XML and the backup's \
                               database, which all agree with what we draw";
-
-/// The A2 sheet's page.
-const A2_PAGE: &str = "the sheet states 594.33 × 420.57 mm and is written at that size; the \
-                       reference prints it on 594 × 420 mm paper";
 
 const SHEETS: [Sheet; 11] = [
     Sheet {
@@ -387,12 +447,8 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 9334,
         same_colour: [9370, 583, 3520],
         sheet_edges: 8,
-        defects: &[Defect {
-            field: Field::EndsOther,
-            reads: 11350.393,
-            cause: Cause::Undetermined,
-            what: VALVE_FIRST,
-        }],
+        wipes: 20,
+        defects: &[],
     },
     Sheet {
         name: "J K井场 注采阀组工艺及自控流程图",
@@ -400,6 +456,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 14661,
         same_colour: [14709, 813, 4922],
         sheet_edges: 8,
+        wipes: 20,
         defects: &[],
     },
     Sheet {
@@ -408,6 +465,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 17812,
         same_colour: [17866, 959, 5846],
         sheet_edges: 8,
+        wipes: 20,
         defects: &[],
     },
     Sheet {
@@ -416,10 +474,16 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1272,
         same_colour: [1278, 155, 1279],
         sheet_edges: 0,
+        wipes: 3,
         defects: &[
+            // 3478.925 until the page was painted in the sheet's own order
+            // (2026-11-11). The ink is the same; the comparison fits the two
+            // pages on the strokes in the order it reads them, the fit moved
+            // by 1.0e-5 in scale and 0.009 mm, and 0.036 mm of the border
+            // came to lie on reference ink.
             Defect {
                 field: Field::WholeExtra,
-                reads: 3478.925,
+                reads: 3478.889,
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
@@ -441,6 +505,18 @@ const SHEETS: [Sheet; 11] = [
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
+            Defect {
+                field: Field::WipesSame,
+                reads: 2.0,
+                cause: Cause::Undetermined,
+                what: OTHER_ORDER,
+            },
+            Defect {
+                field: Field::WipesOther,
+                reads: 1.0,
+                cause: Cause::Undetermined,
+                what: OTHER_ORDER,
+            },
         ],
     },
     Sheet {
@@ -449,6 +525,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1419,
         same_colour: [1425, 161, 1136],
         sheet_edges: 8,
+        wipes: 3,
         defects: &[],
     },
     Sheet {
@@ -457,6 +534,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 1691,
         same_colour: [1695, 171, 1189],
         sheet_edges: 0,
+        wipes: 2,
         defects: &[
             Defect {
                 field: Field::WholeExtra,
@@ -490,6 +568,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3192,
         same_colour: [3196, 253, 1672],
         sheet_edges: 0,
+        wipes: 2,
         defects: &[],
     },
     Sheet {
@@ -498,6 +577,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3394,
         same_colour: [3404, 326, 2144],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -506,6 +586,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3401,
         same_colour: [3411, 328, 2172],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -514,6 +595,7 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 3268,
         same_colour: [3278, 321, 2127],
         sheet_edges: 8,
+        wipes: 6,
         defects: &[],
     },
     Sheet {
@@ -522,19 +604,14 @@ const SHEETS: [Sheet; 11] = [
         pen_agreed: 2802,
         same_colour: [2806, 250, 1321],
         sheet_edges: 6,
+        wipes: 3,
+        // Three lines left this table when the page became the paper the
+        // sheet states (2026-11-11): the page was 0.329 mm wider and
+        // 0.566 mm taller than the reference's, and it stroked three sheet
+        // edges the reference does not — the top edge of the template's
+        // outline and its right edge twice, all of them off the 594 ×
+        // 420 mm paper.
         defects: &[
-            Defect {
-                field: Field::PageWidthApart,
-                reads: 0.329,
-                cause: Cause::NotFixed,
-                what: A2_PAGE,
-            },
-            Defect {
-                field: Field::PageHeightApart,
-                reads: 0.566,
-                cause: Cause::NotFixed,
-                what: A2_PAGE,
-            },
             Defect {
                 field: Field::MaskedCoverage,
                 reads: 0.983088,
@@ -604,17 +681,12 @@ const SHEETS: [Sheet; 11] = [
                 what: LATER_REVISION,
             },
             Defect {
-                field: Field::SheetEdgesApart,
-                reads: 3.0,
-                cause: Cause::NotFixed,
-                what: "the top sheet edge and the right one, which we stroke twice, lie off the \
-                       reference's 594 × 420 mm paper",
-            },
-            Defect {
-                field: Field::EndsOther,
-                reads: 2156.858,
-                cause: Cause::Undetermined,
-                what: TEMPLATE_ORDER,
+                field: Field::WipesSame,
+                reads: 2.0,
+                cause: Cause::SiteData,
+                what: "the origin mark of the `SP=` label in the instrument cluster the later \
+                       revision moved: the reference paints it at (506.14, 237.91) mm, and the \
+                       drawing on hand holds that label, mark and all, at (508.24, 254.72)",
             },
         ],
     },
@@ -679,6 +751,11 @@ fn read_page(
     let labels = label_colours(&reference, &ours, &whole);
     let edges = sheet_edges(&reference.pens, &ours.pens, &whole.fit);
     let ends = ends_apart(&reference.pens, &ours.pens, &whole.fit);
+    let wipes = wipe_order(
+        &read_plot_sequence(reference_pdf).unwrap_or_else(|e| panic!("{name}: {e}")),
+        &read_plot_sequence(our_pdf).unwrap_or_else(|e| panic!("{name}: ours: {e}")),
+        &whole.fit,
+    );
     let colours_apart = reference
         .pens
         .inks
@@ -770,6 +847,36 @@ fn read_page(
         ends.alone_mm
     ));
     notes.push(format!(
+        "order: the reference strokes in the paper's colour on ink at {} place(s), the ink \
+         painted first at {}; ours paints {} in that order, {} in the other, and lacks the \
+         stroke or the ink at {}",
+        wipes.sites, wipes.ink_first, wipes.same, wipes.other, wipes.absent
+    ));
+    for place in &wipes.apart {
+        let ink = place.glyph.as_ref().map_or_else(
+            || {
+                format!(
+                    "a stroke at ({:.2}, {:.2})",
+                    place.ink_mm[0], place.ink_mm[1]
+                )
+            },
+            |glyph| {
+                format!(
+                    "the character {glyph:?} at ({:.2}, {:.2})",
+                    place.ink_mm[0], place.ink_mm[1]
+                )
+            },
+        );
+        notes.push(format!(
+            "order apart: the stroke in the paper's colour at ({:.2}, {:.2}) lies on {ink}, which \
+             the reference paints {} it; ours: {:?}",
+            place.mark_mm[0],
+            place.mark_mm[1],
+            if place.ink_first { "before" } else { "after" },
+            place.ours
+        ));
+    }
+    notes.push(format!(
         "sheet edges: reference {}, ours {}, {} the same",
         edges.reference, edges.ours, edges.same
     ));
@@ -824,6 +931,9 @@ fn read_page(
             Field::SheetEdges => edges.reference as f64,
             Field::SheetEdgesApart => edges.apart() as f64,
             Field::EndsOther => ends.other_mm,
+            Field::Wipes => wipes.sites as f64,
+            Field::WipesSame => wipes.same as f64,
+            Field::WipesOther => wipes.other as f64,
         })
         .collect();
     PageReading { values, notes }
@@ -945,14 +1055,24 @@ fn table(sheet: &Sheet, reading: &PageReading) -> String {
     );
     let _ = writeln!(
         out,
-        "   pins: labels: [{}, {}], pen_agreed: {}, same_colour: [{}, {}, {}], sheet_edges: {}",
+        "   order: {} place(s) where the reference strokes in the paper's colour on ink, {} \
+         painted in its order and {} in the other",
+        get(Field::Wipes),
+        get(Field::WipesSame),
+        get(Field::WipesOther)
+    );
+    let _ = writeln!(
+        out,
+        "   pins: labels: [{}, {}], pen_agreed: {}, same_colour: [{}, {}, {}], sheet_edges: {}, \
+         wipes: {}",
         get(Field::MaskedLabels),
         get(Field::WholeLabels),
         get(Field::PenAgreed),
         get(Field::StrokesSameColour),
         get(Field::LabelsSameColour),
         get(Field::GlyphsSameColour),
-        get(Field::SheetEdges)
+        get(Field::SheetEdges),
+        get(Field::Wipes)
     );
     for note in &reading.notes {
         let _ = writeln!(out, "   {note}");
@@ -1032,6 +1152,86 @@ fn every_known_defect_is_one_reading_with_a_cause() {
     );
 }
 
+/// The four labels of the A2 sheet whose record states a box taller than
+/// the line it holds: two `低压放空总管` and two `仪表风管线`, boxes 4.034 mm
+/// tall where every other lettered boxed record of the eleven sheets states
+/// 3.689 mm. The reference letters each of them one device unit higher than
+/// our page does.
+///
+/// One rule letters all 127 lettered boxed records of the eleven sheets
+/// where their references do: the line hangs from the top of its box,
+/// `baseline = insertion + box height / 2 − ascent`. On a 3.689 mm box that
+/// is the middle line the page always lettered it from; on a 4.034 mm box
+/// it is 0.173 mm higher, and until the layout read the box's height these
+/// four sat 0.122 and 0.198 mm under their reference.
+///
+/// The rule is applied to the class these 127 are — anchor code `0x48`, one
+/// line, FangSong, a box no taller than 4.034 mm — and to no other: what it
+/// would do to the taller boxes and the other codes of the plant backup no
+/// reference shows
+/// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
+#[test]
+fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them() {
+    let corpus = corpus_dir();
+    let name = "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图";
+    let reference_path = corpus.join(format!("{name}.pdf"));
+    if !reference_path.is_file() {
+        eprintln!(
+            "skipping the boxed labels; {} is absent",
+            reference_path.display()
+        );
+        return;
+    }
+    let drawing = corpus.join(format!("{name}.pid"));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{name}: layout: {error}"));
+    let dirs = font_search_dirs(&corpus);
+    let prepared = prepare_fonts(&[&model], &dirs).expect("fonts");
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+            subset: face.subset,
+        })
+        .collect();
+    let reference = PageInk::read(&std::fs::read(&reference_path).expect("the reference"))
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+    let our_pdf = write_plot(&model, &fonts).expect("write");
+    // The page read here is the page `pid_plot` writes for the drawing.
+    let exports = scratch::ScratchDir::new("ink-boxed-labels-pid-plot");
+    let exported = exported_page::pid_plot_page(&drawing, &corpus, &dirs, &exports.join("a2.pdf"));
+    exported_page::assert_is_the_page_pid_plot_writes(name, "reads", &our_pdf, &exported);
+    let ours = PageInk::read(&our_pdf).unwrap_or_else(|error| panic!("{name}: ours: {error}"));
+    let whole = compare_plots_with_model(&reference.ink, &ours.ink, &[], &[], &model);
+    // How far below the reference's each of the four is lettered.
+    let down: Vec<(&str, f64)> = whole
+        .text_pairs
+        .iter()
+        .filter_map(|pair| {
+            let text = pair.source.as_ref()?.text.trim();
+            ["低压放空总管", "仪表风管线"]
+                .into_iter()
+                .find(|label| *label == text)
+                .map(|label| (label, pair.down_mm))
+        })
+        .collect();
+    assert_eq!(down.len(), 4, "the four boxed labels: {down:?}");
+    eprintln!("the four boxed labels, millimetres below the reference: {down:?}");
+    let half_a_unit = 25.4 / 150.0 / 2.0;
+    let low: Vec<String> = down
+        .iter()
+        .filter(|(_, down)| down.abs() >= half_a_unit)
+        .map(|(label, down)| format!("{label} {down:+.4} mm"))
+        .collect();
+    assert!(
+        low.is_empty(),
+        "lettered more than half a device unit ({half_a_unit:.4} mm) below the reference: {}; \
+         all four read {down:?}",
+        low.join(", ")
+    );
+}
+
 #[test]
 fn eleven_reference_plots_print_the_ink_their_pins_say() {
     let corpus = corpus_dir();
@@ -1052,23 +1252,38 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         })
         .collect();
     let dirs = font_search_dirs(&corpus);
-    let prepared = prepare_fonts(&models.iter().collect::<Vec<_>>(), &dirs).expect("fonts");
-    let fonts: Vec<PlotFont<'_>> = prepared
-        .iter()
-        .map(|face| PlotFont {
-            key: &face.key,
-            bytes: &face.bytes,
-            subset: face.subset,
-        })
-        .collect();
 
     let mut printed = String::new();
     let mut failures: Vec<String> = Vec::new();
-    for (sheet, model) in SHEETS.iter().zip(&models) {
+    let exports = scratch::ScratchDir::new("ink-pid-plot");
+    for (index, (sheet, model)) in SHEETS.iter().zip(&models).enumerate() {
         let reference_pdf = std::fs::read(corpus.join(format!("{}.pdf", sheet.name)))
             .unwrap_or_else(|error| panic!("{}: reference: {error}", sheet.name));
+        // The faces are prepared for this sheet by itself, as `pid_plot` and
+        // the acceptance gate prepare them, so the page read here is the
+        // page that gate delivers — which is held just below, not taken on
+        // trust: prepared for the eleven together the page reads the same
+        // ink and is other bytes.
+        let prepared = prepare_fonts(&[model], &dirs).expect("fonts");
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+                subset: face.subset,
+            })
+            .collect();
         let our_pdf = write_plot(model, &fonts)
             .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name));
+        // What is read below is the page `pid_plot` writes for this drawing,
+        // byte for byte: the page the acceptance gate verifies and delivers.
+        let exported = exported_page::pid_plot_page(
+            &corpus.join(format!("{}.pid", sheet.name)),
+            &corpus,
+            &dirs,
+            &exports.join(format!("{index}.pdf")),
+        );
+        exported_page::assert_is_the_page_pid_plot_writes(sheet.name, "reads", &our_pdf, &exported);
         let reading = read_page(sheet, model, &reference_pdf, &our_pdf);
         let page = table(sheet, &reading);
         eprint!("{page}");
@@ -1095,5 +1310,390 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         "{} reading(s) are not what they are pinned at:\n{}",
         failures.len(),
         failures.join("\n")
+    );
+}
+
+/// What each plot does with the labels whose symbol carries an origin mark,
+/// in the order of [`SHEETS`]: how many the sheet has; how many it lists
+/// text first, the text's owner ahead of the symbol (for every other one
+/// the owner stands at the place right after the symbol's); how many the
+/// plot letters ahead of the mark; and how many it paints in the order the
+/// sheet lists them.
+///
+/// 96 labels: 49 listed symbol first and 47 text first, so neither comes
+/// first as a rule, and 95 painted as listed. A label's symbol and its text
+/// are two records the sheet lists apart — the text is an `igTextBox` whose
+/// owner, a `DependencyObject`, names the symbol
+/// (`tests/support/marked_labels.rs`) — and the plots draw them where the
+/// list puts them, as they do everything else.
+const MARKED_LABELS: [[usize; 4]; 11] = [
+    [18, 10, 10, 18],
+    [24, 13, 13, 24],
+    [27, 14, 14, 27],
+    [3, 1, 0, 2],
+    [3, 1, 1, 3],
+    [2, 0, 0, 2],
+    [2, 1, 1, 2],
+    [5, 2, 2, 5],
+    [5, 2, 2, 5],
+    [5, 2, 2, 5],
+    [2, 1, 1, 2],
+];
+
+/// The one label a plot paints against its sheet's list: the sheet, the
+/// text, the symbol, and where the sheet lists the symbol and the text.
+///
+/// This is the label of [`OTHER_ORDER`]. The sheet lists the text first —
+/// its owner at place 99, the symbol at place 104 — and the plot strokes the
+/// mark and letters the `P` at the very next step, the way it paints a label
+/// whose owner is listed right after its symbol.
+const AGAINST_ITS_LIST: (&str, &str, &str, [(u32, u32); 2]) = (
+    "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+    "P70",
+    "Remarks.sym",
+    [(104, 0), (99, 1)],
+);
+
+/// The sheet that holds the same label: the same text and symbol at the
+/// same point of the page, listed at the same two places. Its plot letters
+/// the `P` ahead of the mark, as listed.
+///
+/// So the records do not decide what the plot of [`AGAINST_ITS_LIST`] did:
+/// two plots, the same records at the same places, the two orders. (The
+/// same but for numbers of each drawing's own: the label's three records
+/// differ between the two sheets in their oids, in style ids and in the
+/// references of the symbol's cached body, and in nothing else —
+/// `tools/display_order/label_records_apart.py`.) No rule our page could
+/// follow gives both.
+const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
+
+/// The owners that name a symbol with a mark and gave [`MARKED_LABELS`] no
+/// label, in the order of [`SHEETS`]: how many hold no text box, and how
+/// many hold a text whose mark the plot does not stroke.
+///
+/// An owner is a `DependencyObject` the sheet lists that names the symbol
+/// at payload `+16`. 120 of them name a symbol with a mark. 96 hold the
+/// text of a label. 23 hold a point (`igPoint2d`) and no text, each of
+/// them on the symbol of one of the 96: a second object hanging on a
+/// label's symbol, not a label. One holds a text the plot does not have
+/// where the drawing puts it ([`NOT_WHERE_ITS_PLOT_HAS_IT`]). None is left
+/// out for any other reason — unranked by its sheet's list, or lettered on
+/// one page and not the other — so the 96 are every label with a mark that
+/// the drawing on hand and its plot both show.
+const NO_LABEL: [[usize; 2]; 11] = [
+    [6, 0],
+    [6, 0],
+    [6, 0],
+    [0, 0],
+    [0, 0],
+    [0, 0],
+    [1, 0],
+    [1, 0],
+    [1, 0],
+    [1, 0],
+    [1, 1],
+];
+
+/// The one label with a mark that is not among the 96: the sheet, the
+/// text, and a point of its mark on our page, millimetres.
+///
+/// The plot of the A2 sheet is of a later state of the drawing, in which
+/// one instrument cluster stands elsewhere ([`LATER_REVISION`]). It
+/// letters this `SP=-8℃` 16.9 mm from where the drawing on hand puts it
+/// and strokes nothing in the paper's colour at the mark, so there is no
+/// order to read off the plot for it.
+const NOT_WHERE_ITS_PLOT_HAS_IT: (&str, &str, [f64; 2]) = (
+    "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+    "SP=-8℃",
+    [508.24, 254.72],
+);
+
+/// A label and its origin mark are painted in the order the sheet lists
+/// them: on every label of the eleven sheets but one, and that one has a
+/// twin painted the other way.
+///
+/// This is what the two `WipesSame` / `WipesOther` lines of
+/// `一级闪蒸分离器A` rest on. It reads the plots and the drawings and writes
+/// no page, so it needs no typeface; like the gate beside it, it passes
+/// with a word when the corpus is absent.
+#[test]
+fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
+    use marked_labels::{
+        LeftOut, MarkedLabel, NotALabel, apart, marked_label_census, the_same_mark,
+    };
+
+    let corpus = corpus_dir();
+    let first_reference = corpus.join(format!("{}.pdf", SHEETS[0].name));
+    if !first_reference.is_file() {
+        eprintln!(
+            "skipping the labels and their marks; {} is absent",
+            first_reference.display()
+        );
+        return;
+    }
+    let mut read: Vec<(&str, Vec<MarkedLabel>)> = Vec::new();
+    let mut no_label: Vec<(&str, Vec<LeftOut>)> = Vec::new();
+    for sheet in &SHEETS {
+        let name = sheet.name;
+        let path = corpus.join(format!("{name}.pid"));
+        let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = pid_parse::PidParser::new()
+            .parse_file(&path)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let plot = std::fs::read(corpus.join(format!("{name}.pdf")))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let plot = read_plot_sequence(&plot).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let census = marked_label_census(&path, &model, &doc, &plot)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        read.push((name, census.labels));
+        no_label.push((name, census.left_out));
+    }
+
+    let mut against: Vec<(&str, &MarkedLabel)> = Vec::new();
+    for ((name, labels), pinned) in read.iter().zip(&MARKED_LABELS) {
+        let count = |test: fn(&MarkedLabel) -> bool| labels.iter().filter(|l| test(l)).count();
+        assert_eq!(
+            [
+                labels.len(),
+                count(MarkedLabel::listed_text_first),
+                count(MarkedLabel::painted_text_first),
+                count(MarkedLabel::as_listed),
+            ],
+            *pinned,
+            "{name}: labels with a mark, listed text first, lettered ahead of the mark, painted \
+             as listed"
+        );
+        for label in labels {
+            // The text's owner stands right after the symbol or ahead of it.
+            assert_ne!(
+                label.listed_next(),
+                label.listed_text_first(),
+                "{name}: {label:?}"
+            );
+            if label.as_listed() {
+                // And a plot that follows the list letters the text at the
+                // step after the mark exactly when the owner is listed next.
+                assert_eq!(
+                    label.painted_next(),
+                    label.listed_next(),
+                    "{name}: {label:?}"
+                );
+            } else {
+                against.push((*name, label));
+            }
+        }
+    }
+    let total: usize = read.iter().map(|(_, labels)| labels.len()).sum();
+    eprintln!(
+        "labels with an origin mark: {total} on {} sheet(s), {} painted as their sheet lists \
+         them",
+        read.len(),
+        total - against.len()
+    );
+
+    // The owners of a marked symbol that gave no label: each sheet's two
+    // counts, and none left out for any other reason.
+    for (((name, owners), (_, labels)), pinned) in no_label.iter().zip(&read).zip(&NO_LABEL) {
+        let because = |why: NotALabel| owners.iter().filter(|owner| owner.why == why).count();
+        assert_eq!(
+            [
+                because(NotALabel::NoText),
+                because(NotALabel::NoMarkOnThePlot)
+            ],
+            *pinned,
+            "{name}: owners of a marked symbol that hold no text box, and that hold a text \
+             whose mark the plot does not stroke"
+        );
+        assert_eq!(
+            owners.len(),
+            pinned[0] + pinned[1],
+            "{name}: an owner gave no label for another reason: {owners:#?}"
+        );
+        for owner in owners.iter().filter(|owner| owner.why == NotALabel::NoText) {
+            // A second object hanging on a label's symbol: it holds a
+            // point, and a label read on this sheet names the same symbol.
+            assert_eq!(owner.holds, [0x005E], "{name}: {owner:?}");
+            assert!(
+                labels
+                    .iter()
+                    .any(|label| the_same_mark(label.mark_mm, owner.mark_mm)),
+                "{name}: no label read here names the symbol of {owner:?}"
+            );
+        }
+    }
+    let gave_none: usize = no_label.iter().map(|(_, owners)| owners.len()).sum();
+    eprintln!(
+        "owners of a symbol with an origin mark: {} — {total} hold the text of a label read \
+         here, {} hold a point and no text, {} holds a text the plot does not have where the \
+         drawing puts it",
+        total + gave_none,
+        NO_LABEL.iter().map(|sheet| sheet[0]).sum::<usize>(),
+        NO_LABEL.iter().map(|sheet| sheet[1]).sum::<usize>(),
+    );
+    // The one label the plot does not have where the drawing puts it.
+    let (sheet, value, mark_mm) = NOT_WHERE_ITS_PLOT_HAS_IT;
+    let elsewhere: Vec<(&str, &LeftOut)> = no_label
+        .iter()
+        .flat_map(|(name, owners)| owners.iter().map(move |owner| (*name, owner)))
+        .filter(|(_, owner)| owner.why == NotALabel::NoMarkOnThePlot)
+        .collect();
+    assert_eq!(elsewhere.len(), 1, "{elsewhere:#?}");
+    let (found_on, owner) = elsewhere[0];
+    assert_eq!(
+        (found_on, owner.value.as_deref(), owner.symbol.as_str()),
+        (sheet, Some(value), "Remarks.sym")
+    );
+    assert!(
+        apart(owner.mark_mm, mark_mm) <= 0.01,
+        "its mark is at {:?}, not {mark_mm:?}",
+        owner.mark_mm
+    );
+    assert!(
+        !read
+            .iter()
+            .filter(|(name, _)| *name == sheet)
+            .flat_map(|(_, labels)| labels)
+            .any(|label| the_same_mark(label.mark_mm, owner.mark_mm)),
+        "a label read on {sheet} names the symbol of {owner:?}"
+    );
+
+    // The one against its list, and what it is.
+    let (sheet, value, symbol, [symbol_rank, text_rank]) = AGAINST_ITS_LIST;
+    assert_eq!(
+        against.len(),
+        1,
+        "labels painted against their sheet's list: {against:#?}"
+    );
+    let (found_on, label) = against[0];
+    assert_eq!(
+        (
+            found_on,
+            label.value.as_str(),
+            label.symbol.as_str(),
+            label.symbol_rank,
+            label.text_rank
+        ),
+        (sheet, value, symbol, symbol_rank, text_rank)
+    );
+    assert!(label.listed_text_first() && !label.painted_text_first());
+    assert!(
+        label.painted_next(),
+        "the plot letters the text at the step after the mark: {label:?}"
+    );
+
+    // Its twin: the same label at the same point and the same places, on a
+    // sheet whose plot paints it as listed.
+    let twins: Vec<&MarkedLabel> = read
+        .iter()
+        .filter(|(name, _)| *name == ITS_TWIN)
+        .flat_map(|(_, labels)| labels)
+        .filter(|twin| {
+            twin.value == label.value
+                && twin.symbol == label.symbol
+                && twin.symbol_rank == label.symbol_rank
+                && twin.text_rank == label.text_rank
+                && apart(twin.mark_mm, label.mark_mm) <= 0.01
+        })
+        .collect();
+    assert_eq!(twins.len(), 1, "{ITS_TWIN}: {twins:#?}");
+    assert!(
+        twins[0].as_listed() && twins[0].painted_text_first() && !twins[0].painted_next(),
+        "{ITS_TWIN}: {:?}",
+        twins[0]
+    );
+}
+
+/// Where each of the eleven pages draws its symbol placements from, the
+/// drawing's own and then its border template's: the body the document
+/// caches of the symbol, the `.sym` of the symbol library, nothing.
+///
+/// A drawing keeps the body of every symbol it places, and a placement is
+/// drawn from that copy; the library's file is read only for a placement
+/// the document holds no body of. So a page that draws from a library body
+/// is drawn in part from a file outside its drawing, whose damage the page
+/// has to say (`symbol_file_chain_fault`), and whose revision need not be
+/// the one the drawing was saved with. None of the eleven does: all 2 395
+/// placements of the drawings' own and all 12 of their templates' are
+/// drawn from a cached body, and none is missing one. (The 53 backup pages
+/// and the 7 fixtures are held to the same by their ledger baselines,
+/// which pin each page's placements by source: 9 225 and 170 of the
+/// drawings' own, 64 and 10 of the templates', all cached.)
+const PLACEMENTS: [[u64; 6]; 11] = [
+    [343, 0, 0, 1, 0, 0],
+    [505, 0, 0, 1, 0, 0],
+    [592, 0, 0, 1, 0, 0],
+    [75, 0, 0, 1, 0, 0],
+    [65, 0, 0, 1, 0, 0],
+    [85, 0, 0, 1, 0, 0],
+    [156, 0, 0, 0, 0, 0],
+    [144, 0, 0, 1, 0, 0],
+    [145, 0, 0, 1, 0, 0],
+    [143, 0, 0, 1, 0, 0],
+    [142, 0, 0, 3, 0, 0],
+];
+
+/// Every placement of the eleven pages is drawn from a body its document
+/// caches: [`PLACEMENTS`], page by page. Soft-skips with a word when the
+/// corpus is absent.
+#[test]
+fn the_eleven_pages_draw_every_placement_from_a_cached_body() {
+    use pid_plot::ledger::{ExportLedger, PlacementSource};
+    use pid_plot::write::write_ledger;
+
+    let corpus = corpus_dir();
+    let first = corpus.join(format!("{}.pid", SHEETS[0].name));
+    if !first.is_file() {
+        eprintln!(
+            "skipping the placements' sources; {} is absent",
+            first.display()
+        );
+        return;
+    }
+    let mut measured = Vec::new();
+    for sheet in &SHEETS {
+        let name = sheet.name;
+        let path = corpus.join(format!("{name}.pid"));
+        let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let write = write_ledger(&model).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let account = ExportLedger::assemble(&model, &write);
+        let of = |placements: &std::collections::BTreeMap<PlacementSource, u64>| {
+            [
+                PlacementSource::Cached,
+                PlacementSource::Library,
+                PlacementSource::Missing,
+            ]
+            .map(|source| placements.get(&source).copied().unwrap_or(0))
+        };
+        let [drawing, furniture] =
+            [&account.drawing, &account.furniture].map(|domain| of(&domain.bodies.placements));
+        measured.push([
+            drawing[0],
+            drawing[1],
+            drawing[2],
+            furniture[0],
+            furniture[1],
+            furniture[2],
+        ]);
+        assert!(
+            model.ledger.symbol_chain_fault_warnings().is_empty(),
+            "{name}: {:?}",
+            model.ledger.symbol_chain_fault_warnings()
+        );
+    }
+    let total = measured.iter().fold([0u64; 6], |mut sum, page| {
+        for (sum, count) in sum.iter_mut().zip(page) {
+            *sum += count;
+        }
+        sum
+    });
+    eprintln!(
+        "placements of the eleven pages: the drawings' own {} cached, {} from the library, {} \
+         missing; the templates' {} cached, {} from the library, {} missing",
+        total[0], total[1], total[2], total[3], total[4], total[5]
+    );
+    assert_eq!(
+        measured, PLACEMENTS,
+        "placements by source, page by page: the drawing's cached / library / missing, then \
+         the template's"
     );
 }

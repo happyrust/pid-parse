@@ -49,6 +49,7 @@
 
 mod borrowed;
 mod escapement;
+mod letter_spacing;
 mod script_runs;
 mod text_matrix;
 mod verdict;
@@ -89,13 +90,18 @@ pub const DEFAULT_TEXT_MM: f64 = 2.5;
 /// colours, and the comparison is against the plot.
 const PLOT_INK: [u8; 3] = [0, 0, 0];
 
-/// What a pen declaring `rgb` inks on paper.
+/// What a pen the page model gives `rgb` paints on paper.
 ///
-/// Black for every colour except white: a white pen is the plot's wipe — the
-/// reference pages carry two to sixteen of them, thin and a millimetre long,
-/// where something has to un-ink a filled region (a valve's seal dot, a
-/// dimension's gap). Painting those black would put ink on the page where the
-/// reference has none, so the wipe survives the monochrome table.
+/// Black for every colour but one. `[255, 255, 255]` reaches the writer
+/// meaning the paper's own colour and nothing else: the page model turns a
+/// stroke its style *states* white into ink and keeps white for a stroke the
+/// sheet draws in the page's colour (`model::sheet_colour`). Those are the
+/// origin marks of the label symbols, two to twenty-five on a reference
+/// page, thin and about a millimetre long, and the reference plots paint
+/// every one of them in white where it stands among the sheet's objects — so
+/// that it takes a piece out of what was painted before it and none out of
+/// what is painted after. Painting them black would put a `+` or a tick
+/// beside each label where the reference shows nothing.
 fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     if rgb == [255, 255, 255] {
         [255, 255, 255]
@@ -104,15 +110,21 @@ fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
     }
 }
 
-/// The pens the reference plotter used, in paper millimetres.
+/// One device unit of the reference plotter, in paper millimetres: 1/150
+/// inch, `0.48 w`.
+const DEVICE_UNIT_MM: f64 = 25.4 / 150.0;
+
+/// The pens the reference plots print, in paper millimetres: one, two, four,
+/// six and eight device units, `0.48 / 0.96 / 1.92 / 2.88 / 3.84 w`.
 ///
-/// Half, one, two and three times the mid pen: `0.169 / 0.339 / 0.678 /
-/// 1.017` — and a fifth at four times it, [`PEN_HEAVY_MM`].
+/// They are written as this crate has always written them — the unit to the
+/// micrometre and its multiples by the mid pen, within a micrometre of the
+/// plotter's own — so that a page's bytes do not move with the statement of
+/// the rule ([`pen_width_mm`]).
 /// Three pens were all the five-drawing corpus ever showed. The A2
 /// reference plot added on 2026-11-02 prints a fourth: its
 /// `CPECCHB-SQ-A2.igr` title block declares 1.0606 / 1.1313 / 1.4141 mm
-/// rules, and the plot prints every one of them at `1.02` — the wide pen,
-/// not the thick one the table used to fold them onto.
+/// rules, and the plot prints the first two at `1.02` — the wide pen.
 const PEN_THIN_MM: f64 = 0.169;
 const PEN_MID_MM: f64 = 0.339;
 const PEN_THICK_MM: f64 = 0.678;
@@ -136,48 +148,64 @@ const PEN_HEAVY_MM: f64 = 1.355;
 /// ([`pen_width_mm`]); a stroke with no style at all lands on the same one.
 const STROKE_MM: f64 = PEN_MID_MM;
 
-/// Snap a declared stroke width onto the plot's four pens.
+/// The pen a declared stroke width prints on: the width in device units,
+/// cut to a whole unit and never under one.
 ///
-/// A `.pid` declares its widths on the ISO 128 ladder — 0.13 / 0.18 / 0.35 /
-/// 0.70 mm on the I drawing — and plotting those literally gives more widths
-/// than the plotter carries. The boundaries are measured, and they
-/// are intervals rather than values: the title block's 0.25 mm rules print thin
-/// while 0.35 mm symbol strokes print mid, so the thin/mid boundary lies inside
-/// `(0.25, 0.35)`; 0.70 mm process mains print thick, so the mid/thick boundary
-/// lies inside `(0.35, 0.70)`. No reference page prints ink that declares a
-/// width between 0.35 and 0.70 — the 0.50 mm strokes this table used to cite as
-/// a mid-pen anchor were the drawing's `As Drawn` placeholder, which prints
-/// *thin* (see `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`) — so the
-/// 0.55 mm threshold below is a choice inside that interval, not a measurement.
+/// A `.pid` declares its widths in millimetres — 0.13 / 0.18 / 0.35 /
+/// 0.70 mm on the I drawing — and the vendor's plots stroke each on a whole
+/// number of device units ([`DEVICE_UNIT_MM`]). Which number is one rule on
+/// every width the eleven reference plots show
+/// (`probe_which_pen_a_declared_width_prints_on`: 19 393 straight pieces,
+/// each read against the reference stroke at its place):
 ///
-/// The thick/wide boundary sits inside `(0.70, 1.06)`: the CCHB A2 title block
-/// declares 1.0606 mm and up, and the plot prints those wide, while every
-/// 0.70 mm stroke on the same sheet prints thick. 0.85 mm is a choice inside
-/// that interval.
+/// | declared mm | in units | prints on | pieces |
+/// |---|---|---|---|
+/// | 0.01 | 0.06 | 1 | 104 |
+/// | 0.13 | 0.77 | 1 | 1 935 |
+/// | 0.18 | 1.06 | 1 | 4 182 |
+/// | 0.25 | 1.48 | 1 | 833 |
+/// | 0.35 | 2.07 | 2 | 10 521 |
+/// | 0.70 | 4.13 | 4 | 1 797 |
+/// | 1.0606 | 6.26 | 6 | 3 |
+/// | 1.1313 | 6.68 | 6 | 14 |
+/// | 1.4141 | 8.35 | 8 | 4 |
 ///
-/// The wide/heavy boundary sits inside `(1.1313, 1.4141)`: the same title
-/// block's 1.0606 and 1.1313 mm rules print wide (`2.88 w`) and its 1.4141 mm
-/// frame prints heavy (`3.84 w`, [`PEN_HEAVY_MM`]). 1.27 mm is a choice
-/// inside that interval, and those four frame lines are all the evidence
-/// there is for the fifth pen.
+/// The width is cut, not rounded — 1.1313 mm is 6.68 units and prints on
+/// six, 0.25 mm is 1.48 and prints on one — and a width under one unit
+/// prints on one, as a pen of no width does in GDI. That the driver cuts is
+/// read off these nine and not off the vendor's program; it replaces a
+/// table of five bands (2026-11-11) whose boundaries were choices inside
+/// the gaps between them, and it prints every width a drawing on hand
+/// declares — these nine, `0.7071`, and the plant backup's `0.30`, `0.50`,
+/// `0.75` and `0.7999`, which no plot shows — on the pen the table did. The
+/// two part only where no drawing on hand declares a width: just under two
+/// units (0.30 to 0.339 mm, one unit and no longer two), and on three, five
+/// and seven units (0.508 to 0.677, 0.847 to 1.016 and 1.185 to 1.355 mm),
+/// which the table had no pen for and folded onto its neighbours.
 ///
-/// A width that is not finite or not positive falls back to the mid pen, which
-/// is what an unresolved style draws with.
+/// One, two, four, six and eight units are written as the five pens this
+/// crate has always written; another count is that many units exactly.
+///
+/// A width that is not finite or not positive falls back to the mid pen,
+/// which is what an unresolved style draws with. One wider than
+/// [`WIDEST_PEN_MM`] is no pen ([`carries_a_pen`]) and keeps the heaviest.
 #[must_use]
 pub fn pen_width_mm(declared_mm: f64) -> f64 {
     if !declared_mm.is_finite() || declared_mm <= 0.0 {
         return PEN_MID_MM;
     }
-    if declared_mm <= 0.30 {
-        PEN_THIN_MM
-    } else if declared_mm <= 0.55 {
-        PEN_MID_MM
-    } else if declared_mm <= 0.85 {
-        PEN_THICK_MM
-    } else if declared_mm <= 1.27 {
-        PEN_WIDE_MM
-    } else {
-        PEN_HEAVY_MM
+    if declared_mm > WIDEST_PEN_MM {
+        return PEN_HEAVY_MM;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let units = (declared_mm / DEVICE_UNIT_MM).trunc().max(1.0) as u32;
+    match units {
+        1 => PEN_THIN_MM,
+        2 => PEN_MID_MM,
+        4 => PEN_THICK_MM,
+        6 => PEN_WIDE_MM,
+        8 => PEN_HEAVY_MM,
+        units => f64::from(units) * DEVICE_UNIT_MM,
     }
 }
 
@@ -186,7 +214,7 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
 /// The ISO 128 ladder these drawings are authored on tops out at 0.70 mm, which
 /// [`pen_width_mm`] snaps onto the thick pen. A sheet template is authored on a
 /// different scale and can declare more: the CCHB A2 title block states
-/// 1.4141 mm for its heavy rails, and the plot prints it on the wide pen.
+/// 1.4141 mm for its frame, and the plot prints it on the heaviest pen.
 /// Past that a width stops being a pen: `SmartPlant` writes its *validation
 /// marks* into the same style table, and those carry the mark's own on-screen
 /// size instead — `BandAid`, which flags an object an engineer has to look at,
@@ -802,31 +830,42 @@ struct WriteSink<'a> {
 /// Whether a stroke of `primitive` is where its page starts stroking
 /// round-ended and round-joined.
 ///
-/// The reference plots state no cap for the page. They state `1 j 1 J` with
-/// the first pen wider than one device unit and never take it back, so a
-/// path stroked before that pen is under PDF's defaults — butt ends, mitred
-/// corners — and every path after it is round, a one-unit one included. What
-/// comes before it is the border template wherever the reference draws one
-/// first: the two `CPE-SQ` templates are one-unit rules throughout (28 paths,
-/// butt-ended on six of the eleven sheets), and the `CPECCHB-SQ-A2` template
-/// strokes its sheet outline and then its 1.4141 mm frame, `3.84 w`, with the
-/// statement in front of it. The drawing itself starts on a wide pen on every
-/// one of the eleven, so it is round from its first stroke.
+/// The reference plots state no cap for the page. They state `1 j 1 J`
+/// directly behind the first width that is not `0.48 w`, one device unit,
+/// and never take it back: a one-unit pen is GDI's cosmetic pen, which has
+/// no ends to state, and the first geometric pen brings round caps and round
+/// joins that every later path is stroked under, a one-unit one included. So
+/// a path stroked before that pen is under PDF's defaults — butt ends,
+/// mitred corners — and every path after it is round.
 ///
-/// So: a template's stroke on a pen wider than the thin one, or any stroke of
-/// the drawing. `I井场` is the one sheet this does not reproduce — its
-/// reference draws one valve of the drawing before the template, which makes
-/// the template round as well, and nothing decoded so far says what puts that
-/// valve first.
+/// Which paths come before it is the sheet's display order
+/// ([`PaperModel::paint_sequence`]), and the eleven reference plots show
+/// three cases. Six draw their `CPE-SQ` border first, one-unit rules
+/// throughout (28 paths, butt-ended), and the first wide pen is the
+/// drawing's. The A2 sheet's `CPECCHB-SQ-A2` border strokes its sheet outline
+/// and then its 1.4141 mm frame, `3.84 w`, with the statement in front of
+/// it. And `I井场` lists one valve of the drawing ahead of its border frame:
+/// the valve is stroked first, on a two-unit pen, and the whole border after
+/// it is round.
+///
+/// So the rule reads the pen and nothing else: the first stroke on a pen
+/// wider than the thin one.
+///
+/// Those three are what the plots do. Our page states the caps at the same
+/// places because it paints in the same order, which for the A2 border took
+/// the members of a `ComplexString` standing where their string is listed
+/// (`sheet_display_ranks`): the frame's four lines are painted second, as on
+/// the plot, where before that they were painted at the end of the template
+/// and the statement stood ahead of a title-block rule instead. One case no
+/// plot shows: a drawing's own thin stroke listed ahead of its first wide
+/// one is butt-ended by this rule (one sheet of the plant backup has 47
+/// such paths; `export_plant_backup` pins them).
 fn starts_round_ends(primitive: &crate::model::PaperPrimitive) -> bool {
     if matches!(
         primitive.shape,
         PaperShape::Fill { .. } | PaperShape::Text { .. }
     ) {
         return false;
-    }
-    if !primitive.furniture {
-        return true;
     }
     let declared_mm = primitive
         .stroke
@@ -846,15 +885,10 @@ fn push_layer(
     sink: &mut WriteSink<'_>,
     round_ends: &mut bool,
 ) -> Result<(), PlotWriteError> {
-    // The index is kept because the ledger's `fates` is indexed by the model's
-    // own primitive order, not by this layer's filtered view.
-    let primitives: Vec<(usize, &crate::model::PaperPrimitive)> = model
-        .primitives
-        .iter()
-        .enumerate()
-        .filter(|(_, primitive)| primitive.confidence == confidence)
-        .collect();
-    if primitives.is_empty() {
+    // Indices, because the ledger's `fates` is indexed by the model's own
+    // primitive order, not by this layer's view of it.
+    let order = layer_order(model, confidence);
+    if order.is_empty() {
         return Ok(());
     }
     ops.push(Op::new(
@@ -877,69 +911,18 @@ fn push_layer(
     ops.push(Op::new("J", vec![Object::Int(ends)]));
     ops.push(Op::new("j", vec![Object::Int(ends)]));
 
-    for (index, primitive) in &primitives {
-        let before = ops.len();
-        let painted = paint_primitive(ops, primitive, page);
-        if painted.wrote_path && !*round_ends && starts_round_ends(primitive) {
-            // Stated in the layer's own state, ahead of the stroke's `q`, so
-            // it holds for this stroke and for every one after it.
-            ops.insert(before, Op::new("j", vec![Object::Int(1)]));
-            ops.insert(before, Op::new("J", vec![Object::Int(1)]));
-            *round_ends = true;
-        }
-        // A label is observed by its run, not by a path: `paint_primitive`
-        // deliberately writes nothing for one, so recording it here would file
-        // a correct page as a mismatch.
-        if !matches!(primitive.shape, PaperShape::Text { .. }) {
-            sink.ledger.observe_path(*index, painted.wrote_path);
-        }
-    }
-    for (index, primitive) in &primitives {
-        if let PaperShape::Text {
-            origin_mm,
-            height_mm,
-            rotation,
-            value,
-            font,
-            anchor,
-            line,
-            height_basis,
-            width_permille,
-            paragraph,
-            spans,
-        } = &primitive.shape
-        {
-            let shown = show_text(
-                ops,
-                fonts,
-                ShownText {
-                    typeface: typeface_key(font.as_deref(), value),
-                    origin_mm: *origin_mm,
-                    height_mm: *height_mm,
-                    rotation: *rotation,
-                    value,
-                    anchor: *anchor,
-                    line: *line,
-                    height_basis: *height_basis,
-                    width_permille: *width_permille,
-                    paragraph: *paragraph,
-                    spans,
-                    furniture: primitive.furniture,
-                },
-                page,
-                sink.audit,
-            )?;
-            sink.ledger.observe_run(*index, shown.wrote_run);
-            // The two condensation marks are partial-on-page facts, and they
-            // only exist when a face actually lettered the run.
-            if let Some(fate) = sink.ledger.fates.get_mut(*index)
-                && shown.wrote_run
-            {
-                fate.text = Some(TextMarks {
-                    condensed: shown.condensed,
-                    clipped_at_floor: shown.clipped_at_floor,
-                });
-            }
+    // A label is set against the sheet its border frame states, as it was
+    // before the page became the paper: whether a run is put on the
+    // plotter's grid, and how much room it has, were measured against that
+    // rectangle, and the grid of a sheet whose frame is not its paper is not
+    // known. The page box cuts what lettering lies past the paper.
+    let lettered_on = model.frame_mm.unwrap_or(page);
+    for index in order {
+        let primitive = &model.primitives[index];
+        if matches!(primitive.shape, PaperShape::Text { .. }) {
+            letter_primitive(ops, fonts, primitive, index, lettered_on, sink)?;
+        } else {
+            stroke_primitive(ops, primitive, index, page, sink, round_ends);
         }
     }
     ops.push(Op::new("Q", Vec::new()));
@@ -947,6 +930,124 @@ fn push_layer(
     Ok(())
 }
 
+/// The primitives of one layer, by index, in the order the page paints them.
+///
+/// A sheet that says what it draws over what ([`PaperModel::paint_sequence`])
+/// is painted in that order, a label where its record stands among the
+/// strokes: a stroke in the paper's colour — a label's origin mark — then
+/// covers what the sheet drew before it and is covered by what it drew after,
+/// as on the vendor's plot. A model that states no order is painted as a page
+/// has always been written: its strokes in the model's order, then its labels
+/// in the model's order.
+fn layer_order(model: &PaperModel, confidence: &str) -> Vec<usize> {
+    let of_layer = |index: &usize| model.primitives[*index].confidence == confidence;
+    match model.paint_sequence() {
+        Some(order) => order.into_iter().filter(of_layer).collect(),
+        None => {
+            let lettered =
+                |index: &usize| matches!(model.primitives[*index].shape, PaperShape::Text { .. });
+            let layer: Vec<usize> = (0..model.primitives.len()).filter(of_layer).collect();
+            let strokes = layer.iter().copied().filter(|index| !lettered(index));
+            let labels = layer.iter().copied().filter(lettered);
+            strokes.chain(labels).collect()
+        }
+    }
+}
+
+/// The primitives [`write_plot`] visits, by index, in the order it puts them
+/// on the page: the `decoded` layer and then the `inferred` one, each in the
+/// sheet's display order when the model states one. `probe_only` primitives
+/// are not written and are not listed.
+///
+/// A page read back holds its ink and its lettering in this order, which is
+/// what lets a gate compare the two without repeating the rule.
+#[must_use]
+pub fn written_order(model: &PaperModel) -> Vec<usize> {
+    ["decoded", "inferred"]
+        .into_iter()
+        .flat_map(|confidence| layer_order(model, confidence))
+        .collect()
+}
+
+/// Paint one primitive that is not a label, and note what was written.
+fn stroke_primitive(
+    ops: &mut Vec<Op>,
+    primitive: &crate::model::PaperPrimitive,
+    index: usize,
+    page: [f64; 2],
+    sink: &mut WriteSink<'_>,
+    round_ends: &mut bool,
+) {
+    let before = ops.len();
+    let painted = paint_primitive(ops, primitive, page);
+    if painted.wrote_path && !*round_ends && starts_round_ends(primitive) {
+        // Stated in the layer's own state, ahead of the stroke's `q`, so it
+        // holds for this stroke and for every one after it.
+        ops.insert(before, Op::new("j", vec![Object::Int(1)]));
+        ops.insert(before, Op::new("J", vec![Object::Int(1)]));
+        *round_ends = true;
+    }
+    sink.ledger.observe_path(index, painted.wrote_path);
+}
+
+/// Letter one primitive if it is a label, and note what was written.
+fn letter_primitive(
+    ops: &mut Vec<Op>,
+    fonts: &[ReadyFace<'_>],
+    primitive: &crate::model::PaperPrimitive,
+    index: usize,
+    page: [f64; 2],
+    sink: &mut WriteSink<'_>,
+) -> Result<(), PlotWriteError> {
+    let PaperShape::Text {
+        origin_mm,
+        height_mm,
+        rotation,
+        value,
+        font,
+        anchor,
+        line,
+        height_basis,
+        width_permille,
+        paragraph,
+        spans,
+    } = &primitive.shape
+    else {
+        return Ok(());
+    };
+    let shown = show_text(
+        ops,
+        fonts,
+        ShownText {
+            typeface: typeface_key(font.as_deref(), value),
+            origin_mm: *origin_mm,
+            height_mm: *height_mm,
+            rotation: *rotation,
+            value,
+            anchor: *anchor,
+            line: *line,
+            height_basis: *height_basis,
+            width_permille: *width_permille,
+            paragraph: *paragraph,
+            spans,
+            furniture: primitive.furniture,
+        },
+        page,
+        sink.audit,
+    )?;
+    sink.ledger.observe_run(index, shown.wrote_run);
+    // The two condensation marks are partial-on-page facts, and they only
+    // exist when a face actually lettered the run.
+    if let Some(fate) = sink.ledger.fates.get_mut(index)
+        && shown.wrote_run
+    {
+        fate.text = Some(TextMarks {
+            condensed: shown.condensed,
+            clipped_at_floor: shown.clipped_at_floor,
+        });
+    }
+    Ok(())
+}
 /// What one primitive's paint pass actually wrote.
 ///
 /// `wrote_path` is the one fact the ledger checks: a pen state is written even
@@ -1029,15 +1130,22 @@ fn paint_primitive(
         "w",
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
+    // What the page's edge decides about a piece: whether a stroke along it
+    // is the template's, and how far the pen reaches back onto the paper.
+    let edge = PageEdge {
+        page,
+        keep_sheet_edge: primitive.furniture,
+        half_pen_mm: pen_width_mm(pen.width_mm) / 2.0,
+    };
     if let Some(fit) = fitted_dash(&pen, &primitive.shape) {
-        let wrote_path = paint_fitted_pieces(ops, fit, &primitive.shape, page, primitive.furniture);
+        let wrote_path = paint_fitted_pieces(ops, fit, &primitive.shape, edge);
         ops.push(Op::new("Q", Vec::new()));
         return Painted { wrote_path };
     }
     if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
-    let wrote_path = paint_shape(ops, &primitive.shape, page, primitive.furniture);
+    let wrote_path = paint_shape(ops, &primitive.shape, edge);
     if wrote_path {
         ops.push(Op::new("S", Vec::new()));
     }
@@ -1082,11 +1190,10 @@ fn paint_fitted_pieces(
     ops: &mut Vec<Op>,
     fit: &DashFit,
     shape: &PaperShape,
-    page: [f64; 2],
-    keep_sheet_edge: bool,
+    edge: PageEdge,
 ) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
+    for run in stroke_runs(&shape_chain(shape), edge) {
         for pair in run.windows(2) {
             let steps: Vec<Object> = fit
                 .pattern_mm(hypot(pair[0], pair[1]))
@@ -1103,14 +1210,9 @@ fn paint_fitted_pieces(
     any
 }
 
-fn paint_shape(
-    ops: &mut Vec<Op>,
-    shape: &PaperShape,
-    page: [f64; 2],
-    keep_sheet_edge: bool,
-) -> bool {
+fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, edge: PageEdge) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
+    for run in stroke_runs(&shape_chain(shape), edge) {
         ops.push(Op::new("m", vec![pt(run[0][0]), pt(run[0][1])]));
         for point in &run[1..] {
             ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
@@ -1149,19 +1251,57 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
     }
 }
 
+/// What a stroke's pieces are held to at the page's edge
+/// ([`verdict::segment_fate`]).
+#[derive(Clone, Copy)]
+struct PageEdge {
+    /// The page, millimetres.
+    page: [f64; 2],
+    /// Whether a piece that runs along the sheet is content: it is in a
+    /// border template, whose outline is such a line.
+    keep_sheet_edge: bool,
+    /// Half the width the pieces are stroked at: how far a piece past the
+    /// paper's edge still reaches back onto the paper.
+    half_pen_mm: f64,
+}
+
+impl PageEdge {
+    /// The edge as the read-back sees `primitive`'s strokes: on its own
+    /// pen, with every stroke along the sheet left out as the reader
+    /// leaves it out.
+    fn read_back(primitive: &crate::model::PaperPrimitive, page: [f64; 2]) -> Self {
+        let declared_mm = primitive
+            .stroke
+            .as_ref()
+            .map_or(STROKE_MM, |pen| pen.width_mm);
+        Self {
+            page,
+            keep_sheet_edge: false,
+            half_pen_mm: pen_width_mm(declared_mm) / 2.0,
+        }
+    }
+}
+
 /// The parts of `points` that print, split where a dropped piece breaks the
 /// chain.
 ///
 /// One run becomes one subpath, so a dash pattern flows along a whole polyline
 /// instead of restarting at every vertex.
-fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Vec<Vec<[f64; 2]>> {
+fn stroke_runs(points: &[[f64; 2]], edge: PageEdge) -> Vec<Vec<[f64; 2]>> {
     let mut runs = Vec::new();
     let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
         let (start, end) = (pair[0], pair[1]);
         // One copy of the rule, in `write::verdict`, so the page and the
         // ledger cannot disagree about whether this segment prints.
-        let prints = segment_fate(start, end, page, keep_sheet_edge).is_none();
+        let prints = segment_fate(
+            start,
+            end,
+            edge.page,
+            edge.keep_sheet_edge,
+            edge.half_pen_mm,
+        )
+        .is_none();
         if !prints {
             if run.len() >= 2 {
                 runs.push(std::mem::take(&mut run));
@@ -1968,20 +2108,24 @@ fn show_text(
         } else {
             Vec::new()
         };
-        // The driver states a letter-spacing against the entry it keeps in
-        // 256ths; `run_advance` and [`script_runs`] figure it against `plate`.
-        let respaced = font.respaced();
+        // A string, and each script run of one, is a text object under the
+        // letter-spacing the driver states for it ([`letter_spacing`]): what
+        // the plotter's steps leave over the glyphs' own advances, against
+        // the entry of the text matrix the driver keeps in 256ths. A run
+        // with no steps of its own to state — one glyph, a turned run, a run
+        // the reference font has no cell for — is under none.
+        let along = font.matrix.spacing;
         if script.len() < 2 {
-            emitted.extend(last_glyph_apart(LetteredPiece {
+            emitted.push(LetteredPiece {
                 size_pt,
                 face,
                 bytes,
-                tc_pt: advance.tc_pt * respaced,
+                tc_pt: letter_spacing::of(&advance.glyphs, along),
                 steps_px: advance.steps_px,
                 start,
                 begins_string: true,
                 matrix: font.matrix,
-            }));
+            });
             continue;
         }
         let lens: Vec<usize> = face
@@ -1994,11 +2138,11 @@ fn show_text(
             let from: usize = lens[..glyphs.start].iter().sum();
             let until = from + lens[glyphs.clone()].iter().sum::<usize>();
             let first = order == 0;
-            emitted.extend(last_glyph_apart(LetteredPiece {
+            emitted.push(LetteredPiece {
                 size_pt,
                 face,
                 bytes: bytes[from..until].to_vec(),
-                tc_pt: script_runs::spacing_pt(&advance.glyphs[glyphs.clone()], plate) * respaced,
+                tc_pt: letter_spacing::of(&advance.glyphs[glyphs.clone()], along),
                 steps_px: Vec::new(),
                 start: if first {
                     start
@@ -2007,7 +2151,7 @@ fn show_text(
                 },
                 begins_string: first,
                 matrix: font.matrix,
-            }));
+            });
         }
     }
     // `laid_out_mm` is what the plotter's own steps make of the run. The
@@ -2109,6 +2253,11 @@ fn show_text(
         .map(|sheet| origin_mm[0] * sheet / (25.4 / PLOT_DPI));
     let origin_mm =
         device_scale(page).map_or(origin_mm, |scale| on_the_device_grid(origin_mm, scale));
+    // A string is shown whole under its letter-spacing, as the reference
+    // writes it, except where another piece carries on from its end. A
+    // later run of the record does so wherever it has no pixel of its own
+    // to start on.
+    let emitted = last_glyphs_apart(emitted, unrounded_px.is_some());
     ops.push(Op::new("BT", Vec::new()));
     // `Tj` advances the text position itself, so consecutive runs in one
     // font continue along the same baseline — across a change of face, and
@@ -2354,7 +2503,8 @@ fn reader_sheet_edge(start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
     sheet_edge_mm(start, end, page)
 }
 
-/// Straight segments `write_plot` strokes, Decoded then Inferred. ProbeOnly is omitted.
+/// Straight segments `write_plot` strokes, in the order it strokes them
+/// ([`written_order`]): Decoded then Inferred. ProbeOnly is omitted.
 ///
 /// Arc and circle chords use the same 0.05 mm tolerance as the reader, and a
 /// dashed pen contributes only the pieces its pattern inks — the same walk the
@@ -2365,45 +2515,43 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for confidence in ["decoded", "inferred"] {
-        for primitive in &model.primitives {
-            if primitive.confidence != confidence {
-                continue;
+    for index in written_order(model) {
+        let primitive = &model.primitives[index];
+        // A fill reads back as its outline, the closing edge included —
+        // the reader's `ClosePath` segment.
+        if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
+            push_chain(&mut out, chain_mm, page);
+            if chain_mm.len() >= 2 {
+                push_segment(&mut out, chain_mm[chain_mm.len() - 1], chain_mm[0], page);
             }
-            // A fill reads back as its outline, the closing edge included —
-            // the reader's `ClosePath` segment.
-            if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
-                push_chain(&mut out, chain_mm, page);
-                if chain_mm.len() >= 2 {
-                    push_segment(&mut out, chain_mm[chain_mm.len() - 1], chain_mm[0], page);
-                }
-                continue;
-            }
-            if let Some(fit) = primitive
-                .stroke
-                .as_ref()
-                .and_then(|pen| fitted_dash(pen, &primitive.shape))
-            {
-                for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
-                    for pair in run.windows(2) {
-                        let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
-                        out.extend(walk.split(pair[0], pair[1]));
-                    }
-                }
-                continue;
-            }
-            let dash: Vec<f64> = primitive
-                .stroke
-                .as_ref()
-                .map(|pen| pen.dash_mm.clone())
-                .unwrap_or_default();
-            let mut walk = DashWalk::new(&dash, 0.0);
-            for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
-                walk.restart();
+            continue;
+        }
+        if let Some(fit) = primitive
+            .stroke
+            .as_ref()
+            .and_then(|pen| fitted_dash(pen, &primitive.shape))
+        {
+            let edge = PageEdge::read_back(primitive, page);
+            for run in stroke_runs(&shape_chain(&primitive.shape), edge) {
                 for pair in run.windows(2) {
-                    for (start, end) in walk.split(pair[0], pair[1]) {
-                        out.push((start, end));
-                    }
+                    let mut walk = DashWalk::new(&fit.pattern_mm(hypot(pair[0], pair[1])), 0.0);
+                    out.extend(walk.split(pair[0], pair[1]));
+                }
+            }
+            continue;
+        }
+        let dash: Vec<f64> = primitive
+            .stroke
+            .as_ref()
+            .map(|pen| pen.dash_mm.clone())
+            .unwrap_or_default();
+        let mut walk = DashWalk::new(&dash, 0.0);
+        let edge = PageEdge::read_back(primitive, page);
+        for run in stroke_runs(&shape_chain(&primitive.shape), edge) {
+            walk.restart();
+            for pair in run.windows(2) {
+                for (start, end) in walk.split(pair[0], pair[1]) {
+                    out.push((start, end));
                 }
             }
         }
@@ -2585,7 +2733,7 @@ const ARIAL_NARROW_72PX: [u16; 95] = [
 
 /// The GDI reference pixel the plotter measures `basis` against for `key`,
 /// where [`REFERENCE_CAP_PX`] carries one.
-fn reference_cap_px(key: &str, basis: TextHeightBasis) -> Option<f64> {
+pub(crate) fn reference_cap_px(key: &str, basis: TextHeightBasis) -> Option<f64> {
     REFERENCE_CAP_PX
         .iter()
         .find(|(face, ..)| *face == key)
@@ -2738,41 +2886,33 @@ fn reference_extent_mm(
 /// it into glyphs, each under its own `Tm` at its cumulative step, so they
 /// land on whole pixels however the 1/2400 in grid rounds the `Tf`
 /// ([`plotted_size_pt`]); such a run comes back with `steps_px` and no
-/// `tc_pt`, for [`glyph_by_glyph`]. An upright run keeps the one `Tj` and
-/// `Tc` the reference writes for it, that grid's drift included.
+/// `glyphs`, for [`glyph_by_glyph`]. An upright run comes back with its
+/// `glyphs`, from which the caller states the one `Tc` the reference writes
+/// for the string ([`letter_spacing`]), that grid's drift included.
 ///
-/// Both `width_mm` and `tc_pt` are figured at `sx = 1` —
-/// the one `Tm` horizontal scale the caller's whole label carries
-/// ([`permille_scale`]) is what turns either into
+/// `width_mm` is figured at `sx = 1` — the one `Tm` horizontal scale the
+/// caller's whole label carries ([`permille_scale`]) is what turns it into
 /// what actually lands on the page, the same way it turns every glyph's
 /// own outline narrower together with its advance (the reason `render.dll`
 /// drew a condensed run with a condensed device font rather than a kerning
-/// table). `sx` is only this function's divisor for `tc_pt`, so a `Tm` of
-/// `1` reproduces it exactly; the caller restates `tc_pt` once, for the
-/// scale the PDF driver writes into `Tm` in place of `sx`
-/// ([`text_matrix`]). See
-/// `docs/findings/2026-11-07-text-geometry-writer.md` §2.
+/// table). See `docs/findings/2026-11-07-text-geometry-writer.md` §2.
 struct RunAdvance {
-    /// This run's letter-spacing, in points, at `Tm`'s horizontal scale `1`
-    /// (`0` for a single glyph); the caller's own `Tm` carries `sx` from
-    /// here on.
-    tc_pt: f64,
     /// This run's total advance to the end of its last glyph, in
     /// millimetres, at `Tm`'s horizontal scale `1`; the caller's own `Tm`
-    /// carries `sx`. The leading `n - 1` glyphs advance by `tc_pt`-corrected
-    /// `lpDx`; the last glyph (drawn under its own `Tc = 0`, see
-    /// [`last_glyph_byte_offset`]) advances by its own embedded-font natural
-    /// width — not the reference font's `lpDx` reading of it, which this
-    /// field never folds in.
+    /// carries `sx`. The leading `n - 1` glyphs advance by their `lpDx`;
+    /// the last glyph advances by its own embedded-font natural width — not
+    /// the reference font's `lpDx` reading of it, which this field never
+    /// folds in.
     width_mm: f64,
     /// The whole-pixel step each glyph but the last takes, in 150 dpi
     /// pixels at `Tm`'s horizontal scale `sx`, for a run the reference
     /// letters glyph by glyph: a rotated one ([`glyph_by_glyph`]). Empty for
-    /// a run lettered as one string under `tc_pt`.
+    /// a run lettered as one string under a letter-spacing.
     steps_px: Vec<i64>,
     /// Every glyph of an upright run as the plotter steps it — its whole
-    /// pixels and its own width in the device font at `sx` — which is what a
-    /// string cut into script runs places and spaces each of them from
+    /// pixels and its own width in the device font at `sx` — which is what
+    /// the string's letter-spacing is stated from ([`letter_spacing`]) and
+    /// what a string cut into script runs places each of them from
     /// ([`script_runs`]). Empty for a run of one glyph, a rotated run and a
     /// run the reference font has no cell for.
     glyphs: Vec<script_runs::Stepped>,
@@ -2796,7 +2936,6 @@ fn run_advance(
     let codes = metrics.codes(bytes);
     let n = codes.len();
     let natural = || RunAdvance {
-        tc_pt: 0.0,
         width_mm: run_width_mm(metrics, size_pt, bytes),
         steps_px: Vec::new(),
         glyphs: Vec::new(),
@@ -2816,7 +2955,6 @@ fn run_advance(
         #[allow(clippy::cast_precision_loss)]
         let width_mm = step as f64 * 25.4 / PLOT_DPI / sx + widths_em[1] * size_pt / PT_PER_MM;
         return RunAdvance {
-            tc_pt: 0.0,
             width_mm,
             steps_px: vec![step],
             glyphs: Vec::new(),
@@ -2894,18 +3032,13 @@ fn stepped_advance(
     let leading: i64 = lp_dx[..n - 1].iter().sum();
     #[allow(clippy::cast_precision_loss)]
     let leading_px = leading as f64;
-    let embedded_px: f64 = widths_em[..n - 1].iter().sum::<f64>() * em_px * sx;
-    #[allow(clippy::cast_precision_loss)]
-    let tc_pt = (leading_px - embedded_px) / (n - 1) as f64 * (72.0 / PLOT_DPI) / sx;
-    // The page renders the first `n - 1` glyphs at `leading_px` (that is
-    // what `tc_pt` was solved to make them do, and where [`glyph_by_glyph`]
-    // sets a rotated run's) and the last glyph at its
-    // own embedded-font natural width, under `Tc = 0`
-    // ([`last_glyph_byte_offset`]'s split) — not at the reference font's
-    // own `lp_dx` reading of it, which `widths_em[n - 1]` never enters.
-    // Summing all `n` entries of `lp_dx` instead double-counts the
-    // reference font's own rounding on the glyph that is never drawn
-    // under its correction.
+    // The plotter puts the first `n - 1` glyphs `leading_px` along (which
+    // is what the string's letter-spacing states, and where
+    // [`glyph_by_glyph`] sets a rotated run's) and the last glyph takes its
+    // own embedded-font natural width — not the reference font's own
+    // `lp_dx` reading of it, which `widths_em[n - 1]` never enters. Summing
+    // all `n` entries of `lp_dx` instead double-counts the reference font's
+    // own rounding on the glyph that no step follows.
     let width_mm = leading_px * 25.4 / PLOT_DPI / sx + widths_em[n - 1] * size_pt / PT_PER_MM;
     if upright {
         let glyphs = lp_dx
@@ -2917,7 +3050,6 @@ fn stepped_advance(
             })
             .collect();
         return RunAdvance {
-            tc_pt,
             width_mm,
             steps_px: Vec::new(),
             glyphs,
@@ -2925,7 +3057,6 @@ fn stepped_advance(
     }
     lp_dx.truncate(n - 1);
     RunAdvance {
-        tc_pt: 0.0,
         width_mm,
         steps_px: lp_dx,
         glyphs: Vec::new(),
@@ -2935,12 +3066,13 @@ fn stepped_advance(
 /// The byte offset where `bytes`' last glyph starts, or `None` for a run of
 /// one glyph (there is no "head" to split off) or an empty run.
 ///
-/// [`run_advance`]'s `Tc` corrects only the gaps *between* glyphs — `n - 1`
-/// of them for `n` glyphs — but a PDF's `Tc` graphics-state parameter adds
-/// to every glyph's own displacement once set, the trailing one included.
-/// Splitting the run here, so the trailing glyph can go out under its own
-/// `Tj` with `Tc` reset to `0`, is what keeps that one extra correction off
-/// the page.
+/// A string's `Tc` states the gaps *between* its glyphs — `n - 1` of them
+/// for `n` glyphs — but a PDF's `Tc` graphics-state parameter adds to every
+/// glyph's own displacement once set, the trailing one included. Splitting
+/// the run here, so the trailing glyph can go out under its own `Tj` with
+/// `Tc` reset to `0`, is what keeps that one extra spacing out of the text
+/// position where another piece is to carry on from it
+/// ([`last_glyphs_apart`]).
 fn last_glyph_byte_offset(metrics: &Metrics, bytes: &[u8]) -> Option<usize> {
     let codes = metrics.codes(bytes);
     if codes.len() < 2 {
@@ -2992,16 +3124,6 @@ impl SetFont {
             matrix: text_matrix::written(px_per_unit, plate, upright),
         }
     }
-
-    /// What a letter-spacing figured against `plate` is multiplied by to be
-    /// stated against the entry the driver keeps in 256ths.
-    fn respaced(&self) -> f64 {
-        if self.plate.is_finite() && self.matrix.spacing > 0.0 {
-            self.plate / self.matrix.spacing
-        } else {
-            1.0
-        }
-    }
 }
 
 /// One piece of a label as the page letters it.
@@ -3023,15 +3145,59 @@ struct LetteredPiece<'f, 'a> {
     matrix: text_matrix::TextMatrix,
 }
 
-/// A piece as the page shows it: one string under its `Tc`, or, where it has
-/// a `Tc` and more than one glyph, every glyph but the last under that `Tc`
-/// and the last one on its own under none.
+/// The pieces of a label as the page shows them: each string whole under
+/// its `Tc`, except one that the next piece carries on from, which is shown
+/// with its last glyph apart ([`last_glyph_apart`]).
 ///
-/// `Tc` is a graphics-state parameter: once set it adds to *every* glyph's
-/// own displacement, including the last one's. The reference's `Tc` is only
-/// the correction for the `n - 1` gaps *between* glyphs ([`run_advance`]), so
-/// a piece that needs one is split here rather than let the PDF apply a
-/// correction meant for `n - 1` transitions to `n` of them.
+/// The reference writes a string as one text object, all of its glyphs
+/// under the one `Tc` ([`letter_spacing`]). `Tc` is a graphics-state
+/// parameter: it follows *every* glyph it is in force for, the last one
+/// too, so a string shown whole leaves the text position one spacing past
+/// the end of its last glyph. That moves nothing where the next piece has a
+/// start of its own — a later script run, a later run of the record — or
+/// where there is no next piece, and the reference starts every text object
+/// under a text matrix of its own. A piece that [`PieceStart::Continues`]
+/// starts where the text position was left, so the string before it leaves
+/// it at the end of its last glyph, as it did before strings were shown
+/// whole: no reference plot shows a label of two such pieces, and it keeps
+/// the places it had. So does a later run of the record on a page where it
+/// has no whole pixel to start on (`record_runs_placed` is false: the sheet's
+/// device grid is not known, or the page had to condense the label), since
+/// it then starts where the text position was left as well.
+fn last_glyphs_apart<'f, 'a>(
+    pieces: Vec<LetteredPiece<'f, 'a>>,
+    record_runs_placed: bool,
+) -> Vec<LetteredPiece<'f, 'a>> {
+    let carried_on: Vec<bool> = pieces
+        .iter()
+        .skip(1)
+        .map(|next| match next.start {
+            PieceStart::Continues => true,
+            PieceStart::RecordRun(_) => !record_runs_placed,
+            PieceStart::ScriptRun(_) => false,
+        })
+        .chain([false])
+        .collect();
+    pieces
+        .into_iter()
+        .zip(carried_on)
+        .flat_map(|(piece, carried_on)| {
+            if carried_on {
+                last_glyph_apart(piece)
+            } else {
+                vec![piece]
+            }
+        })
+        .collect()
+}
+
+/// A string with its last glyph apart: where it has a `Tc` and more than one
+/// glyph, every glyph but the last under that `Tc` and the last one on its
+/// own under none; any other piece as it is.
+///
+/// The `Tc` states the `n - 1` gaps *between* the glyphs
+/// ([`letter_spacing`]), so shown this way the text position is left at the
+/// end of the last glyph rather than one spacing past it.
 fn last_glyph_apart<'f, 'a>(piece: LetteredPiece<'f, 'a>) -> Vec<LetteredPiece<'f, 'a>> {
     let split = (piece.tc_pt != 0.0)
         .then(|| last_glyph_byte_offset(&piece.face.metrics, &piece.bytes))
@@ -3393,20 +3559,7 @@ mod tests {
         );
         assert_eq!(whole.glyphs.len(), 14, "one step for each glyph");
         let (latin, han) = whole.glyphs.split_at(8);
-        let spaced = |glyphs: &[super::script_runs::Stepped]| {
-            let (_, leading) = glyphs.split_last().expect("glyphs");
-            let short_px: f64 = leading
-                .iter()
-                .map(|glyph| {
-                    #[allow(clippy::cast_precision_loss)]
-                    let step = glyph.step_px as f64;
-                    step - glyph.natural_px
-                })
-                .sum();
-            #[allow(clippy::cast_precision_loss)]
-            let gaps = leading.len() as f64;
-            short_px / gaps * 72.0 / super::PLOT_DPI
-        };
+        let spaced = |glyphs: &[super::script_runs::Stepped]| drivers_spacing(glyphs, 256);
         let (latin_bytes, han_bytes) = (
             metrics.encode("DWG-0100").expect("encodes"),
             metrics.encode("集05-37").expect("encodes"),
@@ -3441,20 +3594,26 @@ mod tests {
             (td[0] - start_pt).abs() < 1e-12 && td[1] == 0.0,
             "moved {td:?}, the Latin run's {start_px} pixels are {start_pt} pt"
         );
-        // Each run is spaced by its own glyphs, and its last glyph by none.
+        // Each run is one text object, spaced by its own glyphs.
         let spacings: Vec<f64> = numbers(&ops, "Tc").into_iter().map(|tc| tc[0]).collect();
         assert!(
             spaced(latin) != 0.0 && spaced(han) != 0.0,
             "both runs must need spacing for this label to show the cut"
         );
-        let expected = [spaced(latin), 0.0, spaced(han), 0.0];
+        let expected = [spaced(latin), spaced(han)];
         assert_eq!(spacings.len(), expected.len(), "{spacings:?}");
         for (got, want) in spacings.iter().zip(expected) {
-            assert!(
-                (got - want).abs() < 1e-12,
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
                 "Tc {spacings:?}, not {expected:?}"
             );
         }
+        assert_eq!(
+            strings_shown(&ops),
+            vec![latin_bytes, han_bytes],
+            "each script run whole in one `Tj`"
+        );
         assert!(
             (spaced(latin) - spaced(han)).abs() > 1e-6,
             "the two runs must need different spacing for this label to tell them apart"
@@ -3500,7 +3659,6 @@ mod tests {
             true,
             device,
         );
-        assert_ne!(stepped.tc_pt, 0.0, "the run is letter-spaced");
         let face = super::ReadyFace {
             key: "SimSun",
             resource: "F1".to_string(),
@@ -3516,12 +3674,214 @@ mod tests {
             "the reference writes `0.797 0 0 1` for this font"
         );
         let spacing = numbers(&ops, "Tc");
-        let on_device = stepped.tc_pt * plate;
-        assert!(
-            (spacing[0][0] - on_device / (204.0 / 256.0)).abs() < 1e-12,
-            "Tc {} is not the device spacing {on_device} over 204/256",
+        let expected = drivers_spacing(&stepped.glyphs, 204);
+        assert!(expected != 0.0, "the run is letter-spaced");
+        assert_eq!(spacing.len(), 1, "one letter-spacing: {spacing:?}");
+        assert_eq!(
+            spacing[0][0].to_bits(),
+            expected.to_bits(),
+            "Tc {} is not the driver's {expected}: the device spacing over 204/256, cut to \
+             three decimals",
             spacing[0][0]
         );
+        assert_eq!(
+            strings_shown(&ops),
+            vec![bytes],
+            "the whole string in one text object"
+        );
+    }
+
+    /// The letter-spacing the reference plots' driver states for `glyphs`
+    /// under a text matrix that keeps `along_256ths` 256ths along the
+    /// baseline, written out on its own: what the whole steps of every glyph
+    /// but the last leave over those glyphs' own advances, each advance taken
+    /// to the nearest 256th of a device unit, in points of text space and cut
+    /// to three decimals. A device unit is 0.48 pt.
+    fn drivers_spacing(glyphs: &[super::script_runs::Stepped], along_256ths: i64) -> f64 {
+        let (_, leading) = glyphs.split_last().expect("glyphs");
+        let short_256ths: i64 = leading
+            .iter()
+            .map(|glyph| {
+                #[allow(clippy::cast_possible_truncation)]
+                let advance = (glyph.natural_px * 256.0).round() as i64;
+                glyph.step_px * 256 - advance
+            })
+            .sum();
+        let gaps = i64::try_from(leading.len()).expect("a few glyphs");
+        // Thousandths of a point; the division of whole numbers cuts toward
+        // nought.
+        let thousandths = short_256ths * 480 / (gaps * along_256ths);
+        #[allow(clippy::cast_precision_loss)]
+        let spacing = thousandths as f64 / 1000.0;
+        spacing
+    }
+
+    /// A string is one text object under the letter-spacing the reference
+    /// plots' driver states for it: all of its glyphs in one `Tj`, the last
+    /// one too, and a `Tc` of three decimals — the plotter's whole steps
+    /// less the glyphs' advances to a 256th of a device unit, cut. The
+    /// reference writes `0.086` where the steps over the glyphs' own widths
+    /// come to `0.08685…`.
+    #[test]
+    fn a_string_is_one_text_object_under_the_drivers_letter_spacing() {
+        let value = "AC-01031A";
+        let face = inter_unnamed(value);
+        let bytes = face
+            .metrics
+            .encode(value)
+            .expect("the face encodes the label");
+        let basis = crate::model::TextHeightBasis::Cap;
+        let (height_mm, page) = (2.5, [841.0, 594.0]);
+        let size_pt = super::plotted_size_pt(face.heights, basis, height_mm);
+        let device = super::device_scale(page).expect("A1 is a standard sheet");
+        let stepped = super::run_advance(
+            "",
+            &face.metrics,
+            &bytes,
+            value,
+            face.heights,
+            basis,
+            height_mm,
+            size_pt,
+            None,
+            1.0,
+            true,
+            device,
+        );
+        assert_eq!(stepped.glyphs.len(), 9, "one step for each glyph");
+        let expected = drivers_spacing(&stepped.glyphs, 256);
+        // What the steps leave over the glyphs' own widths, neither taken to
+        // 256ths nor cut: the label has to tell the two apart.
+        let (_, leading) = stepped.glyphs.split_last().expect("glyphs");
+        #[allow(clippy::cast_precision_loss)]
+        let uncut = leading
+            .iter()
+            .map(|glyph| glyph.step_px as f64 - glyph.natural_px)
+            .sum::<f64>()
+            / leading.len() as f64
+            * 72.0
+            / super::PLOT_DPI;
+        assert!(
+            expected != 0.0 && (uncut - expected).abs() > 1e-6,
+            "the label must need a spacing the cut changes: {uncut} against {expected}"
+        );
+        let ops = label_ops(&face, value, height_mm, 0.0, None);
+        let spacing = numbers(&ops, "Tc");
+        assert_eq!(
+            spacing[0][0].to_bits(),
+            expected.to_bits(),
+            "Tc {} is not the driver's {expected}",
+            spacing[0][0]
+        );
+        assert_eq!(spacing.len(), 1, "one letter-spacing: {spacing:?}");
+        assert_eq!(
+            strings_shown(&ops),
+            vec![bytes],
+            "the whole string in one text object"
+        );
+    }
+
+    /// A string that another piece of its label carries on from keeps its
+    /// last glyph apart, under no letter-spacing. `Tc` follows every glyph it
+    /// is in force for, the last one too, so a string shown whole leaves the
+    /// text position one spacing past its last glyph; the reference writes a
+    /// text matrix for every text object and never carries on from one. No
+    /// reference plot shows a label of two stretches that is not written
+    /// glyph by glyph, so such a label keeps the place it had.
+    #[test]
+    fn a_string_another_piece_carries_on_from_has_its_last_glyph_apart() {
+        let value = "ABCDEFGH";
+        let face = inter_unnamed(value);
+        let spans = [run_of(0, 4, None), run_of(4, 4, Some(3.5))];
+        let ops = record_ops(&face, value, 2.5, 0.0, None, &spans);
+        let shown = strings_as_set(&ops);
+        let glyphs: Vec<usize> = shown
+            .iter()
+            .map(|(_, _, bytes)| face.metrics.codes(bytes).len())
+            .collect();
+        assert_eq!(
+            glyphs,
+            [3, 1, 4],
+            "`ABC` and `D` of the first stretch, then `EFGH` whole"
+        );
+        assert!(
+            shown[0].1 != 0.0 && shown[2].1 != 0.0,
+            "both stretches must need spacing: {shown:?}"
+        );
+        assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
+        assert_eq!(numbers(&ops, "Td").len(), 0, "nothing is moved: {ops:?}");
+        assert_eq!(numbers(&ops, "Tm").len(), 1, "one text matrix");
+    }
+
+    /// A later run of a record in one style starts on a whole pixel of its
+    /// own only on a sheet whose device grid is known. On any other page —
+    /// a sheet laid out on its frame's rectangle, 594.328 × 420.566 mm — it
+    /// carries on from the run before it like any other piece, so that run
+    /// keeps its last glyph apart and the later run starts where that glyph
+    /// ends, not one letter-spacing past it.
+    #[test]
+    fn a_record_run_with_no_start_of_its_own_carries_on_from_the_glyph_before_it() {
+        let value = "ABCDEF";
+        let face = inter_unnamed(value);
+        let spans = [run_of(0, 3, None), run_of(3, 3, None)];
+        let on_page = |page: [f64; 2]| {
+            let text = ShownText {
+                typeface: face.key,
+                origin_mm: [200.0, 100.0],
+                height_mm: Some(2.5),
+                rotation: 0.0,
+                value,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: &spans,
+                furniture: false,
+            };
+            let mut ops = Vec::new();
+            let mut audit = super::PlotAudit::default();
+            super::show_text(
+                &mut ops,
+                std::slice::from_ref(&face),
+                text,
+                page,
+                &mut audit,
+            )
+            .expect("the label letters");
+            ops
+        };
+        let glyphs = |ops: &[super::Op]| -> Vec<usize> {
+            strings_as_set(ops)
+                .iter()
+                .map(|(_, _, bytes)| face.metrics.codes(bytes).len())
+                .collect()
+        };
+        // On a standard sheet each run is a string of its own, the second
+        // moved to its whole pixel.
+        let standard = on_page([841.0, 594.0]);
+        assert_eq!(glyphs(&standard), [3, 3], "{standard:?}");
+        assert_eq!(numbers(&standard, "Td").len(), 1, "the second run is moved");
+        // On a page with no device grid nothing is moved, and the first run
+        // ends on its last glyph.
+        assert!(super::device_scale([594.328, 420.566]).is_none());
+        let framed = on_page([594.328, 420.566]);
+        assert_eq!(
+            numbers(&framed, "Td").len(),
+            0,
+            "nothing is moved: {framed:?}"
+        );
+        let shown = strings_as_set(&framed);
+        assert_eq!(
+            glyphs(&framed),
+            [2, 1, 3],
+            "`AB` and `C` of the first run, then `DEF` whole"
+        );
+        assert!(
+            shown[0].1 != 0.0,
+            "the first run must need spacing: {shown:?}"
+        );
+        assert_eq!(shown[1].1, 0.0, "the glyph set apart is under no spacing");
     }
 
     /// A turned label is set under the driver's matrix too, stretched or not:
@@ -3755,29 +4115,35 @@ mod tests {
                 .collect()
         };
         let (in_the_record, by_itself) = (at_the_runs_size(&record), at_the_runs_size(&alone));
-        assert_eq!(
-            by_itself.len(),
-            2,
-            "`CD` under its spacing and `E` under none: {by_itself:?}"
-        );
+        // By itself the run is one string under its spacing. In the record
+        // another run carries on from it, so it is `CD` under that spacing
+        // and `E` under none.
+        assert_eq!(by_itself.len(), 1, "`CDE` under its spacing: {by_itself:?}");
         assert!(
             by_itself[0].0 != 0.0,
             "the run must need spacing for this label to show what it is measured at"
         );
         assert_eq!(
             in_the_record.len(),
-            by_itself.len(),
+            2,
             "the run of the record: {in_the_record:?}"
         );
-        for (got, want) in in_the_record.iter().zip(&by_itself) {
-            assert_eq!(got.1, want.1, "the same glyphs");
-            assert!(
-                (got.0 - want.0).abs() < 1e-12,
-                "Tc {} in the record, {} as a label of its own",
-                got.0,
-                want.0
-            );
-        }
+        assert_eq!(
+            [in_the_record[0].1.clone(), in_the_record[1].1.clone()].concat(),
+            by_itself[0].1,
+            "the same glyphs"
+        );
+        assert_eq!(
+            in_the_record[0].0.to_bits(),
+            by_itself[0].0.to_bits(),
+            "Tc {} in the record, {} as a label of its own",
+            in_the_record[0].0,
+            by_itself[0].0
+        );
+        assert_eq!(
+            in_the_record[1].0, 0.0,
+            "the glyph set apart: {in_the_record:?}"
+        );
     }
 
     /// The rule that starts each run of a record on a whole pixel of its own
@@ -4112,7 +4478,8 @@ mod tests {
             "the first glyph advances a whole 150 dpi pixel: {leading_px}"
         );
         assert_ne!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "a fractional natural advance is corrected onto that pixel"
         );
     }
@@ -4131,7 +4498,8 @@ mod tests {
             "", &metrics, &bytes, "AB", inter, cap, 4.0, size_pt, None, 1.0, false, 1.0,
         );
         assert_eq!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "a rotated pair states no letter-spacing"
         );
         let codes = metrics.codes(&bytes);
@@ -4171,7 +4539,11 @@ mod tests {
             )
         };
         let (rotated, upright) = (advance(false), advance(true));
-        assert_eq!(rotated.tc_pt, 0.0, "a rotated run states no letter-spacing");
+        assert_eq!(
+            super::letter_spacing::of(&rotated.glyphs, 1.0),
+            0.0,
+            "a rotated run states no letter-spacing"
+        );
         assert!(
             upright.steps_px.is_empty(),
             "an upright run stays one string"
@@ -4236,7 +4608,8 @@ mod tests {
             1.0,
         );
         assert_ne!(
-            advance.tc_pt, 0.0,
+            super::letter_spacing::of(&advance.glyphs, 1.0),
+            0.0,
             "three glyphs letter-space once the reference font's own rounding moves a gap"
         );
         let natural_mm = super::run_width_mm(&metrics, size_pt, &bytes);
@@ -4244,11 +4617,10 @@ mod tests {
             advance.width_mm, natural_mm,
             "the lpDx-rounded width is not the glyphs' own natural advance"
         );
-        // The page draws the leading `n - 1` glyphs under `Tc` and the
-        // trailing one alone under `Tc = 0` ([`super::last_glyph_byte_offset`]),
-        // so only the leading portion sits on the diffused `lpDx` grid —
-        // the trailing glyph keeps its own embedded-font natural width,
-        // which is not generally a whole 150 dpi pixel.
+        // The plotter steps the leading `n - 1` glyphs and no step follows
+        // the trailing one, so only the leading portion sits on the diffused
+        // `lpDx` grid — the trailing glyph keeps its own embedded-font
+        // natural width, which is not generally a whole 150 dpi pixel.
         let codes = metrics.codes(&bytes);
         let last_code = codes.last().expect("three codes").0;
         let last_natural_mm = metrics.width(last_code) * size_pt / super::PT_PER_MM;
@@ -4406,30 +4778,83 @@ mod tests {
             );
         }
     }
+    /// A declared width prints on its whole device units: the width in
+    /// units of 1/150 inch, cut to a whole unit and never under one.
+    ///
+    /// The nine widths the eleven reference plots show a pen for, with the
+    /// pieces `probe_which_pen_a_declared_width_prints_on` reads each on:
+    /// 19 393 straight pieces, every one on the pen the cut gives.
     #[test]
-    fn declared_widths_snap_onto_the_five_plot_pens() {
+    fn a_declared_width_prints_on_its_whole_device_units() {
         use super::{
-            PEN_HEAVY_MM, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM, pen_width_mm,
+            DEVICE_UNIT_MM, PEN_HEAVY_MM, PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, PEN_WIDE_MM,
+            WIDEST_PEN_MM, pen_width_mm,
         };
-        // The I drawing's own ladder: 0.13 / 0.18 / 0.35 / 0.70 mm.
-        for thin in [0.13, 0.18, 0.25, 0.30] {
-            assert_eq!(pen_width_mm(thin), PEN_THIN_MM, "{thin} mm");
+        let units = |declared: f64| (pen_width_mm(declared) / DEVICE_UNIT_MM).round();
+        // declared mm, the units the reference plots print it on, pieces
+        let witnessed = [
+            (0.01, 1.0, 104),
+            (0.13, 1.0, 1935),
+            (0.18, 1.0, 4182),
+            (0.25, 1.0, 833),
+            (0.35, 2.0, 10_521),
+            (0.70, 4.0, 1797),
+            (1.0606, 6.0, 3),
+            (1.1313, 6.0, 14),
+            (1.4141, 8.0, 4),
+        ];
+        for (declared, printed, pieces) in witnessed {
+            assert_eq!(
+                units(declared),
+                printed,
+                "{declared} mm, which {pieces} pieces of the reference plots print on {printed}"
+            );
         }
-        for mid in [0.35, 0.50, 0.55] {
-            assert_eq!(pen_width_mm(mid), PEN_MID_MM, "{mid} mm");
+        // The five pens those are, as this crate has always written them.
+        assert_eq!(pen_width_mm(0.18), PEN_THIN_MM);
+        assert_eq!(pen_width_mm(0.35), PEN_MID_MM);
+        assert_eq!(pen_width_mm(0.70), PEN_THICK_MM);
+        // 0.7071 mm, which the A2 sheet declares: a millimetre over the root of two.
+        assert_eq!(pen_width_mm(std::f64::consts::FRAC_1_SQRT_2), PEN_THICK_MM);
+        assert_eq!(pen_width_mm(1.1313), PEN_WIDE_MM);
+        assert_eq!(pen_width_mm(1.4141), PEN_HEAVY_MM);
+        // The four widths the plant backup declares and no reference plot
+        // shows: the same pens the five-band table gave them.
+        for (declared, pen) in [
+            (0.30, PEN_THIN_MM),
+            (0.50, PEN_MID_MM),
+            (0.75, PEN_THICK_MM),
+            (0.7999, PEN_THICK_MM),
+        ] {
+            assert_eq!(pen_width_mm(declared), pen, "{declared} mm");
         }
-        for thick in [0.70, 0.85] {
-            assert_eq!(pen_width_mm(thick), PEN_THICK_MM, "{thick} mm");
+        // Where the cut and the table part, on widths no drawing on hand
+        // declares: a width just under two units is still one, and three,
+        // five and seven units are pens of their own.
+        for (declared, printed) in [
+            (0.33, 1.0),
+            (0.34, 2.0),
+            (0.507, 2.0),
+            (0.508, 3.0),
+            (0.55, 3.0),
+            (0.60, 3.0),
+            (0.677, 3.0),
+            (0.678, 4.0),
+            (0.85, 5.0),
+            (1.0, 5.0),
+            (1.016, 6.0),
+            (1.27, 7.0),
+            (1.30, 7.0),
+            (1.355, 8.0),
+            (WIDEST_PEN_MM, 8.0),
+        ] {
+            assert_eq!(units(declared), printed, "{declared} mm");
         }
-        // The CCHB A2 title block's 1.0606 and 1.1313 mm rules print on the
-        // wide pen …
-        for wide in [1.0, 1.0606, 1.1313, 1.27] {
-            assert_eq!(pen_width_mm(wide), PEN_WIDE_MM, "{wide} mm");
-        }
-        // … and its 1.4141 mm frame, and anything above it, on the heavy one:
-        // the A2 reference strokes the frame's four lines `3.84 w`.
-        for heavy in [1.28, 1.4141, 2.0] {
-            assert_eq!(pen_width_mm(heavy), PEN_HEAVY_MM, "{heavy} mm");
+        assert!((pen_width_mm(0.60) - 3.0 * DEVICE_UNIT_MM).abs() < 1e-12);
+        // Past the widest pen a width is a mark's size, not a pen
+        // (`carries_a_pen`); it keeps the heaviest.
+        for mark in [1.46, 2.0, 10.0] {
+            assert_eq!(pen_width_mm(mark), PEN_HEAVY_MM, "{mark} mm");
         }
         // A width that is not a width draws the fallback pen.
         for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
@@ -4437,13 +4862,23 @@ mod tests {
         }
         // 0.169 / 0.339 / 0.678 / 1.017 / 1.355 mm are 0.48 / 0.96 / 1.92 /
         // 2.88 / 3.84 pt — one, two, four, six and eight device units — the
-        // only five widths the reference pages carry.
+        // only five widths the reference pages carry, and each is the pen
+        // of its own width.
         let points = |mm: f64| mm * 72.0 / 25.4;
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
         assert!((points(PEN_WIDE_MM) - 2.88).abs() < 0.005);
         assert!((points(PEN_HEAVY_MM) - 3.84).abs() < 0.005);
+        for pen in [
+            PEN_THIN_MM,
+            PEN_MID_MM,
+            PEN_THICK_MM,
+            PEN_WIDE_MM,
+            PEN_HEAVY_MM,
+        ] {
+            assert_eq!(pen_width_mm(pen), pen, "{pen} mm");
+        }
     }
 
     /// `SP:` states two runs in one style, `SP` and `:`. The reference writes
@@ -4623,15 +5058,12 @@ mod tests {
     }
 
     /// The reference plots do not state a cap for the page. They state
-    /// `1 j 1 J` with the first pen wider than one device unit and never take
-    /// it back, so what a one-unit stroke ends with depends on where it is
-    /// drawn: the `CPE-SQ` templates are all one-unit rules and are drawn
-    /// first, butt-ended and mitred (28 paths on six of the eleven sheets);
-    /// the A2 template's 1.4141 mm frame is its second path, and everything
-    /// after it is round. The drawing itself starts on a wide pen on every
-    /// one of the eleven, and is round throughout.
+    /// `1 j 1 J` behind the first pen wider than one device unit and never
+    /// take it back, so what a one-unit stroke ends with depends on where it
+    /// is painted: before that pen it is butt-ended and mitred, after it
+    /// round. Whose stroke it is does not come into it.
     #[test]
-    fn a_page_strokes_round_from_the_templates_first_wide_pen_and_through_the_drawing() {
+    fn a_page_strokes_round_from_its_first_wide_pen() {
         use crate::read::{LineCap, LineJoin, read_plot_pens};
         let ends =
             |strokes: &[(bool, f64, [f64; 2], [f64; 2])]| -> Vec<(LineCap, LineJoin, usize)> {
@@ -4647,16 +5079,17 @@ mod tests {
         let round = |paths| (LineCap::Round, LineJoin::Round, paths);
         let (template, drawing) = (true, false);
 
-        // A template of one-unit rules, then the drawing — its first stroke
-        // a thin one here, which is round all the same.
+        // A template of one-unit rules, then the drawing: a thin stroke of
+        // the drawing ahead of its first wide one is under no cap either.
         assert_eq!(
             ends(&[
                 (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
                 (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
                 (drawing, 0.18, [10.0, 30.0], [60.0, 30.0]),
                 (drawing, 0.70, [10.0, 40.0], [60.0, 40.0]),
+                (drawing, 0.18, [10.0, 50.0], [60.0, 50.0]),
             ]),
-            vec![butt(2), round(2)]
+            vec![butt(3), round(2)]
         );
         // A template whose second rule is a heavy one: the rule after it is
         // round though it is thin.
@@ -4669,24 +5102,121 @@ mod tests {
             ]),
             vec![butt(1), round(3)]
         );
-        // No template: round from the first stroke.
+        // A wide stroke of the drawing ahead of the template, as `I井场`
+        // lists one valve ahead of its border frame: all round.
         assert_eq!(
             ends(&[
-                (drawing, 0.18, [10.0, 10.0], [60.0, 10.0]),
-                (drawing, 0.35, [10.0, 20.0], [60.0, 20.0]),
+                (drawing, 0.35, [10.0, 10.0], [60.0, 10.0]),
+                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+                (template, 0.25, [10.0, 30.0], [60.0, 30.0]),
             ]),
-            vec![round(2)]
+            vec![round(3)]
         );
-        // A template of thin rules alone never states a cap.
+        // Thin strokes alone never state a cap.
         assert_eq!(
             ends(&[
                 (template, 0.25, [10.0, 10.0], [60.0, 10.0]),
-                (template, 0.25, [10.0, 20.0], [60.0, 20.0]),
+                (drawing, 0.18, [10.0, 20.0], [60.0, 20.0]),
             ]),
             vec![butt(2)]
         );
     }
 
+    /// A page whose sheet states what it draws over what is painted in that
+    /// order, a label where it stands among the strokes; a page that states
+    /// none is painted strokes first and labels after, as it always was.
+    #[test]
+    fn a_page_that_states_its_order_is_painted_in_it() {
+        use crate::read::read_plot_sequence;
+        let label = primitive(
+            "decoded",
+            PaperShape::Text {
+                origin_mm: [20.0, 40.0],
+                height_mm: Some(3.0),
+                rotation: 0.0,
+                value: "AB".to_string(),
+                font: None,
+                anchor: TextAnchor::Left,
+                line: TextLine::Bottom,
+                height_basis: crate::model::TextHeightBasis::Cap,
+                width_permille: None,
+                paragraph: None,
+                spans: Vec::new(),
+            },
+        );
+        // In the model's order: a rule, the label, a white mark, a second
+        // rule.
+        let mut model = stroked_page(&[
+            (false, 0.35, [10.0, 10.0], [60.0, 10.0]),
+            (false, 0.25, [19.0, 40.0], [21.0, 40.0]),
+            (false, 0.35, [10.0, 70.0], [60.0, 70.0]),
+        ]);
+        model.primitives[1].stroke.as_mut().expect("a pen").rgb = [255, 255, 255];
+        model.primitives.insert(1, label);
+        let font = [PlotFont {
+            key: "",
+            bytes: pdfcraft_fonts::INTER_REGULAR,
+            subset: false,
+        }];
+        // What is painted, in order: `rule` at its height, `mark`, or a
+        // glyph.
+        let painted = |model: &PaperModel| -> Vec<String> {
+            let page = read_plot_sequence(&write_plot(model, &font).expect("write")).expect("read");
+            let mut steps: Vec<(u32, String)> = page
+                .strokes
+                .iter()
+                .map(|stroke| {
+                    let name = if stroke.paper {
+                        "mark".to_string()
+                    } else {
+                        format!("rule {:.0}", stroke.segment.start_mm[1])
+                    };
+                    (stroke.step, name)
+                })
+                .chain(
+                    page.glyphs
+                        .iter()
+                        .map(|glyph| (glyph.step, glyph.text.clone())),
+                )
+                .collect();
+            steps.sort();
+            steps.into_iter().map(|(_, name)| name).collect()
+        };
+        // The same rules as the list of segments the page strokes.
+        let stroked = |model: &PaperModel| -> Vec<f64> {
+            super::stroked_segments(model)
+                .iter()
+                .map(|(start, _)| start[1])
+                .collect()
+        };
+        // No order stated: the three strokes, then the label.
+        assert_eq!(model.paint_sequence(), None);
+        assert_eq!(super::written_order(&model), [0, 2, 3, 1]);
+        assert_eq!(painted(&model), ["rule 10", "mark", "rule 70", "A", "B"]);
+        assert_eq!(stroked(&model), [10.0, 40.0, 70.0]);
+        // The sheet's order: the second rule, the label, the mark over the
+        // label, the first rule.
+        model.ledger.paint_order = vec![3, 1, 2, 0];
+        assert_eq!(model.paint_sequence(), Some(vec![3, 1, 2, 0]));
+        assert_eq!(super::written_order(&model), [3, 1, 2, 0]);
+        assert_eq!(painted(&model), ["rule 70", "A", "B", "mark", "rule 10"]);
+        assert_eq!(stroked(&model), [70.0, 40.0, 10.0]);
+        // The layers are still written one after the other, each in the
+        // sheet's order, and a primitive of neither is not written.
+        model.primitives[3].confidence = "inferred";
+        model.primitives[2].confidence = "probe_only";
+        assert_eq!(super::written_order(&model), [1, 0, 3]);
+        assert_eq!(painted(&model), ["A", "B", "rule 10", "rule 70"]);
+        model.primitives[3].confidence = "decoded";
+        model.primitives[2].confidence = "decoded";
+        // An order that is not the page's — too short, or naming a primitive
+        // twice — is no order.
+        model.ledger.paint_order = vec![3, 1, 2];
+        assert_eq!(model.paint_sequence(), None);
+        model.ledger.paint_order = vec![3, 1, 1, 0];
+        assert_eq!(model.paint_sequence(), None);
+        assert_eq!(painted(&model), ["rule 10", "mark", "rule 70", "A", "B"]);
+    }
     #[test]
     fn a_validation_marks_width_is_not_a_pen() {
         use super::{WIDEST_PEN_MM, carries_a_pen, pen_width_mm};
@@ -4714,16 +5244,17 @@ mod tests {
     }
 
     #[test]
-    fn a_white_pen_is_the_plots_wipe_and_survives_the_monochrome_table() {
+    fn a_stroke_in_the_pages_colour_stays_paper_under_the_monochrome_table() {
         use super::plot_ink;
-        // The reference pages carry two to sixteen thin white strokes, each
-        // about a millimetre long: the plot's wipe. A white pen has to reach
-        // the page white even though every other colour is black.
+        // White is how the page model says "the page's own colour": a label
+        // symbol's origin mark, which the reference plots paint white. It
+        // has to reach the page white even though every other colour is
+        // black.
         assert_eq!(plot_ink([255, 255, 255]), [255, 255, 255]);
         for colour in [[128, 128, 0], [0, 128, 0], [128, 0, 0], [0, 0, 255]] {
             assert_eq!(plot_ink(colour), [0, 0, 0], "{colour:?}");
         }
-        // Nearly white is not white: the wipe is the one exact value.
+        // Nearly white is not the page's colour: that is the one exact value.
         assert_eq!(plot_ink([254, 255, 255]), [0, 0, 0]);
     }
 
@@ -4762,6 +5293,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![thin, thick],
             missing_symbols: Vec::new(),
@@ -4816,6 +5348,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![line],
             missing_symbols: Vec::new(),
@@ -4870,6 +5403,7 @@ mod tests {
                 template: None,
                 page_mm: Some([200.0, 100.0]),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 primitives: vec![line],
                 missing_symbols: Vec::new(),
@@ -4900,6 +5434,7 @@ mod tests {
             template: None,
             page_mm: Some([594.33, 420.57]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: Vec::new(),
             missing_symbols: Vec::new(),
@@ -4925,6 +5460,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -4959,6 +5495,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive(
@@ -5397,6 +5934,7 @@ mod tests {
             template: None,
             page_mm: Some(page),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5477,6 +6015,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape("AB", 40.0, 0.0, None)),
@@ -5564,6 +6103,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: [
                 shape("AB", 20.0, center, None),
@@ -5650,6 +6190,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape(40.0, None)),
@@ -5731,6 +6272,7 @@ mod tests {
             template: None,
             page_mm: Some([841.0, 594.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive("decoded", shape(40.0, None)),
@@ -5803,6 +6345,7 @@ mod tests {
                 template: None,
                 page_mm: Some(page_mm),
                 off_sheet_primitives: 0,
+                frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 primitives: vec![primitive(
                     "decoded",
@@ -5865,6 +6408,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -5991,6 +6535,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -6050,6 +6595,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -6101,6 +6647,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -6179,6 +6726,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 140.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
@@ -6302,6 +6850,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 label("动火点", "SimSun", 20.0),
@@ -6395,6 +6944,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![
                 label("动火点", "SimSun", 40.0, 20.0, TextAnchor::Left),
@@ -6522,6 +7072,7 @@ mod tests {
             template: None,
             page_mm: Some([200.0, 200.0]),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives,
             missing_symbols: Vec::new(),
@@ -7184,10 +7735,14 @@ mod tests {
     /// step to.
     #[test]
     fn a_borrowed_run_the_reference_shows_is_set_at_twenty_units() {
-        use crate::fonts::test_faces::{ascii_only, drawing, scratch_dir};
+        use crate::fonts::test_faces::{ascii_only, drawing_as, scratch_dir};
 
         let latin = ascii_only();
-        let han = drawing("动火点℃");
+        // The borrowed glyphs are a whole em wide, as NSimSun's are: the em
+        // dash of the stand-in is 2048 of its 2048 units, 20 device units at
+        // `Tf 9.6`. On the glyph of `A`, 1413 units, one is 3532.5 256ths of
+        // a unit wide — halfway between two — and no step is nine units.
+        let han = drawing_as("动火点℃", '\u{2014}');
         let dirs = scratch_dir(
             "write-as-the-reference",
             &[("ARIALN.TTF", &latin), ("nsimsun.ttf", &han)],
@@ -7235,23 +7790,37 @@ mod tests {
             9.0,
             "the stand-in's `?` is {question_px:.3} units at this height, not the reference's 9"
         );
-        let (stepped, last) = whole.split_at(whole.len() - 1);
-        for run in stepped {
-            #[allow(clippy::cast_precision_loss)]
-            let step_pt = run.natural_pt / run.glyphs as f64 + run.tc_pt;
-            assert!(
-                (step_pt - 9.0 * 72.0 / super::PLOT_DPI).abs() < 1e-9,
-                "each glyph of {:?} steps {:.4} units, not the 9 of the named face's `?`",
-                run.text,
-                step_pt * super::PLOT_DPI / 72.0
-            );
-            assert!(
-                step_pt < run.natural_pt / 2.0,
-                "the glyphs of a label borrowed whole overlap: {run:?}"
-            );
-        }
-        assert_eq!(last[0].glyphs, 1, "{last:?}");
-        assert!(last[0].tc_pt.abs() < 1e-12, "{last:?}");
+        // One text object of three glyphs of one width, under the driver's
+        // letter-spacing: the 9 units less a glyph's width to its nearest
+        // 256th of a unit, cut to three decimals. A glyph here is a whole
+        // em, 20 units, as NSimSun's are, so the spacing is the 9 less the
+        // 20 — `Tc -5.28`, the number the reference writes, to the digit —
+        // and a step is 9 units exactly.
+        assert_eq!(whole.len(), 1, "the label is one text object: {whole:?}");
+        let run = &whole[0];
+        assert_eq!(run.glyphs, 3, "{run:?}");
+        #[allow(clippy::cast_precision_loss)]
+        let glyph_pt = run.natural_pt / run.glyphs as f64;
+        assert!(
+            (glyph_pt - 9.6).abs() < 1e-9,
+            "a borrowed glyph is a whole em of `Tf 9.6`, 20 units: {run:?}"
+        );
+        assert_eq!(
+            run.tc_pt.to_bits(),
+            (-5.28f64).to_bits(),
+            "the letter-spacing is the reference's -5.28: {run:?}"
+        );
+        let step_pt = glyph_pt + run.tc_pt;
+        assert!(
+            (step_pt - 9.0 * 72.0 / super::PLOT_DPI).abs() < 1e-9,
+            "each glyph of {:?} steps {:.6} units, not the 9 of the named face's `?`",
+            run.text,
+            step_pt * super::PLOT_DPI / 72.0
+        );
+        assert!(
+            step_pt < glyph_pt,
+            "the glyphs of a label borrowed whole overlap: {run:?}"
+        );
 
         // The label whose last character alone is borrowed.
         let (_, _, tail) = &shown[1];
@@ -7681,6 +8250,7 @@ mod tests {
             template: None,
             page_mm: Some(page_mm),
             off_sheet_primitives: 0,
+            frame_mm: None,
             skipped_endpoint_pairs: 0,
             primitives: vec![primitive],
             missing_symbols: Vec::new(),

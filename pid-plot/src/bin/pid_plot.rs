@@ -97,6 +97,35 @@ fn main() -> ExitCode {
     for fault in model.ledger.chain_fault_warnings() {
         eprintln!("warning: {pid}: {fault}");
     }
+    // The same of a symbol file: a placement drawn from a library body
+    // whose file has a chain that does not hold is drawn from whatever was
+    // read of the file. Each such file and stream is named, with the
+    // reader's sentence of it; a file no placement is drawn from is not —
+    // a drawing caches the body of every symbol it places, and reads the
+    // library only for one it holds no body of.
+    for fault in model.ledger.symbol_chain_fault_warnings() {
+        eprintln!("warning: {pid}: {fault}");
+    }
+    // A record that draws and takes no place in the order its sheet draws
+    // in is on the page, painted after the rest; what covers what there is
+    // not the drawing's word. Each stream of them is named, and the account
+    // counts it as a suspect item. Records a stopped chain alone leaves
+    // without a place — the chain read none of the sheet's own to hold the
+    // sheet's list to — are the chain's warning above and get no line here;
+    // the account still counts both.
+    for unplaced in model.ledger.display_order_warnings() {
+        eprintln!("warning: {pid}: {unplaced}");
+    }
+    // A paper that is not the border frame's is not taken for the page: the
+    // page is the frame's rectangle and the drawing is whole, but it is not
+    // on the paper its sheet states. One line, with both rectangles; the
+    // account counts it as a suspect item. Where no frame was read there
+    // is only the size the template's name states, which refuses no paper:
+    // the page is the paper, and a paper that is not the name's size is one
+    // line all the same, with both sizes, and a suspect item of its own.
+    for page in model.ledger.page_warnings() {
+        eprintln!("warning: {pid}: {page}");
+    }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {

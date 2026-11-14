@@ -291,17 +291,19 @@
         },
         "entities": {
           "total": 153,
-          "on_page": 77,
-          "partial": 0,
+          "on_page": 76,
+          "partial": 1,
           "dropped": {
             "point_no_marker": 64,
-            "kind_unknown": 12
+            "kind_unknown": 12,
+            "segment_beyond_the_paper": 1
           },
           "fill_duplicate_first_taken_by_furniture": 0,
           "cross": {
             "line": {
               "decoded": {
-                "on_page": 42
+                "on_page": 41,
+                "segment_beyond_the_paper": 1
               }
             },
             "polyline": {
@@ -350,13 +352,23 @@
         "primitives": {
           "laid_out": 116,
           "off_sheet": 0,
-          "on_page": 116,
-          "partial": 0,
+          "on_page": 115,
+          "dropped": {
+            "segment_beyond_the_paper": 1
+          },
+          "partial": 1,
+          "marks": {
+            "past_the_edge": 1,
+            "segments_dropped": 1
+          },
           "unattributed": 0
         },
         "segments": {
           "total": 76,
-          "written": 76,
+          "written": 73,
+          "dropped": {
+            "segment_beyond_the_paper": 3
+          },
           "unattributed": 0
         }
       }
@@ -593,9 +605,10 @@
         },
         "segments": {
           "total": 135,
-          "written": 133,
+          "written": 131,
           "dropped": {
-            "segment_too_short": 2
+            "segment_too_short": 2,
+            "segment_beyond_the_paper_no_plot_of_template": 2
           },
           "unattributed": 0
         }

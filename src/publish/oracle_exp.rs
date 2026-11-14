@@ -3563,7 +3563,7 @@ mod tests {
     fn exp_tables_reads_the_backup_dump_once() {
         let dump_path = std::path::PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
         if !dump_path.is_file() {
-            eprintln!("skip: oracle exp corpus is missing");
+            eprintln!("skipping: oracle exp corpus is missing");
             return;
         }
         let dump = std::fs::read(&dump_path).unwrap();
@@ -3719,7 +3719,7 @@ mod tests {
         let pid = corpus.join(format!("{stem}.pid"));
         let reference_path = corpus.join(format!("{stem}_Data.xml"));
         if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
-            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            eprintln!("skipping: oracle exp corpus or I井场 .pid is missing");
             return;
         }
         let dump = std::fs::read(&dump_path).unwrap();
@@ -3769,7 +3769,7 @@ mod tests {
         let pid = corpus.join(format!("{stem}.pid"));
         let reference_path = corpus.join(format!("{stem}_Data.xml"));
         if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
-            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            eprintln!("skipping: oracle exp corpus or I井场 .pid is missing");
             return;
         }
         let dump = std::fs::read(&dump_path).unwrap();
@@ -3836,7 +3836,7 @@ mod tests {
         let pid = corpus.join(format!("{stem}.pid"));
         let reference_path = corpus.join(format!("{stem}_Data.xml"));
         if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
-            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            eprintln!("skipping: oracle exp corpus or I井场 .pid is missing");
             return;
         }
         let dump = std::fs::read(&dump_path).unwrap();
@@ -3899,7 +3899,7 @@ mod tests {
         let pid = corpus.join(format!("{stem}.pid"));
         let reference_path = corpus.join(format!("{stem}_Data.xml"));
         if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
-            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            eprintln!("skipping: oracle exp corpus or I井场 .pid is missing");
             return;
         }
         let dump = std::fs::read(&dump_path).unwrap();
@@ -4208,7 +4208,7 @@ mod tests {
             r"D:\work\cad\PID自研软件验证\publish\I井场 注采阀组工艺及自控流程图_Data.xml",
         );
         if !path.is_file() || !publish.is_file() {
-            eprintln!("skip: oracle exp dump or I井场 publish xml is missing");
+            eprintln!("skipping: oracle exp dump or I井场 publish xml is missing");
             return;
         }
         let dump = std::fs::read(path).expect("dump");
