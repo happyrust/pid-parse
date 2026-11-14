@@ -60,22 +60,26 @@
 //!
 //! ## Outstanding
 //!
-//! * The DWG-flavor plant MDF (`test-file/backup-test/<plant>_p/
-//!   extracted/Export.mdf` for the `DWG-0202GP06-01` fixture)
-//!   is the hard prerequisite for: loader canonical-field
-//!   enrichment (DWG-only `EqType*` / `ProcessEqCompType*` /
-//!   `ConnectionFlowDirection` / insulation+slope fields) and
-//!   closing the A24 / A27b tolerated-divergence whitelists.
-//!   Until the MDF lands, the DWG-side integration tests
-//!   soft-skip through `common::DWG_MDF_MISSING_HINT`.
+//! The `DWG-0202GP06-01` fixture publishes through its Oracle `exp` dump
+//! (`--oracle-exp`, and its whole package); what the `.pid` + exp line
+//! still leaves out is in `docs/plans/2026-11-10-publish-export-completion.md`:
 //!
-//! * Stage-4 writer arms for `PIDBranchPoint` (8 interfaces)
-//!   and `PIDPipingBranchPoint` (6 interfaces) are implemented
-//!   and unit-tested, but the loader-side `item_type_name`
-//!   mapping (`"BranchPoint"` / `"PipingBranchPoint"`) and
-//!   subtable chain are provisional — they will be confirmed
-//!   once the DWG MDF lands and the end-to-end count gates
-//!   in `tests/publish_dwg_mirror.rs` fire.
+//! * the interfaces each class carries: a fixed, ordered interface table
+//!   per class in `catalog` (S5);
+//! * the attributes the plant database states, by `SPPIDDataMap.xml`:
+//!   values as stored (S7), enumerations, whose hierarchical levels follow
+//!   a schema-side hierarchy the map does not hold (S8), and values with
+//!   units (S9);
+//! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
+//!   off-page connectors in a drawing's stockpile (S12), and objects other
+//!   than piping components the database draws on a sheet its `.pid` does
+//!   not (S17).
+//!
+//! The database line has been checked on A01 alone. No DWG `Export.mdf`
+//! is in the repository, so its DWG-side tests soft-skip through
+//! `common::DWG_MDF_MISSING_HINT`, and that line's `item_type_name`
+//! mapping for `PIDBranchPoint` / `PIDPipingBranchPoint` stays
+//! provisional.
 
 pub mod backup_package;
 // wayfinder M4: A1 (`60f1b25`) seeded the table, A2–A4 moved the database
