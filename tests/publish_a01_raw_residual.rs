@@ -722,7 +722,6 @@ fn load_row_map(conn: &Connection, table_name: &str, uid: &str) -> BTreeMap<Stri
     let mut stmt = conn.prepare(&sql).expect("prepare row-map query");
     let col_names: Vec<String> = stmt
         .column_names()
-        .iter()
         .map(std::string::ToString::to_string)
         .collect();
     let mut rows = stmt.query([uid]).expect("query row-map");

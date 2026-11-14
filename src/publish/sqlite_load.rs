@@ -438,9 +438,11 @@ fn attach_business_columns(
         return Ok(());
     };
 
+    // rusqlite 0.41 hands back `column_names()` as an iterator over `&str`
+    // rather than a `Vec<&str>`; the names are still collected before the
+    // statement is queried, because `query` borrows it mutably.
     let col_names: Vec<String> = stmt
         .column_names()
-        .iter()
         .map(std::string::ToString::to_string)
         .collect();
     let mut rows = stmt.query(params![obj.uid])?;

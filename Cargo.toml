@@ -59,7 +59,21 @@ quick-xml = { version = "0.42", features = ["serialize"] }
 # Both ride the `backup` feature (on by default): they are the plant
 # database side of the crate, not the `.pid` reader, and a wasm32
 # consumer cannot build the vendored sqlite3.
-rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+# 0.41 pulls `libsqlite3-sys` 0.39, the first line that clears
+# RUSTSEC-2026-0459 (CVE-2026-119375); 0.39 pulled 0.37. `bundled` must stay
+# named explicitly: 0.41's default feature set is `cache` +
+# `ffi-sqlite-wasm-rs`, which no longer implies a vendored sqlite3, so leaving
+# it off would link against whatever sqlite3 the host happens to carry.
+# `cache` is named because 0.39's whole default set was exactly `["cache"]`
+# and the statement cache is the behaviour this crate was built with.
+# `default-features = false` exists only to drop the other half of 0.41's
+# default, `ffi-sqlite-wasm-rs` — a wasm32 FFI shim this crate never links.
+rusqlite = {
+    version = "0.41",
+    default-features = false,
+    features = ["bundled", "cache"],
+    optional = true,
+}
 oxidized-mdf = { path = "vendor/oxidized-mdf", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
