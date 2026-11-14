@@ -1351,6 +1351,10 @@ pub struct PidExportDiff {
     /// Interface elements an emitted object carries that the reference
     /// object does not.
     pub interfaces_not_in_reference: usize,
+    /// Interface elements the reference object carries that the emitted
+    /// object lacks although its class writes them on every object: the
+    /// `Always` elements of the `.pid` line's interface table.
+    pub interfaces_not_in_generated: usize,
     /// Generated `<Container>` attributes the reference states otherwise or
     /// not at all.
     pub container_attributes_different: usize,
@@ -1372,6 +1376,7 @@ impl PidExportDiff {
             + self.rels_not_in_generated
             + self.duplicate_uids_in_generated
             + self.interfaces_not_in_reference
+            + self.interfaces_not_in_generated
             + self.container_attributes_different
             == 0
             && !self.fluid_system_allowance_exceeded()
@@ -1435,15 +1440,17 @@ impl fmt::Display for PidExportDiff {
         }
         if self.duplicate_uids_in_generated
             + self.interfaces_not_in_reference
+            + self.interfaces_not_in_generated
             + self.container_attributes_different
             > 0
         {
             writeln!(
                 f,
-                "structure: duplicate uids {}, interfaces not in reference {}, container \
-                 attributes different {}",
+                "structure: duplicate uids {}, interfaces not in reference {}, interfaces not in \
+                 generated {}, container attributes different {}",
                 self.duplicate_uids_in_generated,
                 self.interfaces_not_in_reference,
+                self.interfaces_not_in_generated,
                 self.container_attributes_different,
             )?;
         }
@@ -1747,7 +1754,8 @@ fn compare_container(
 }
 
 /// Each interface element an emitted object carries must be one the
-/// reference object carries; the reference may carry more.
+/// reference object carries. The reference may carry more, except an
+/// element the class's row of the interface table writes on every object.
 fn compare_interfaces(
     diff: &mut PidExportDiff,
     (class, uid): (&str, &str),
@@ -1761,6 +1769,23 @@ fn compare_interfaces(
         diff.interfaces_not_in_reference += 1;
         diff.findings.push(format!(
             "interface {class} {uid} {interface} not in reference"
+        ));
+    }
+    let Some(reference) = reference else {
+        return;
+    };
+    for slot in super::catalog::class_interfaces(class).unwrap_or_default() {
+        if slot.rule != super::catalog::InterfaceRule::Always
+            || slot.interface == "IObject"
+            || !reference.contains(slot.interface)
+            || generated.is_some_and(|generated| generated.contains(slot.interface))
+        {
+            continue;
+        }
+        diff.interfaces_not_in_generated += 1;
+        diff.findings.push(format!(
+            "interface {class} {uid} {} not in generated",
+            slot.interface
         ));
     }
 }
