@@ -929,6 +929,40 @@ fn ledger_count(outcome: &Outcome, word: &str) -> u64 {
         .unwrap_or_else(|| panic!("the ledger summary's {word} is not a count: {ledger}"))
 }
 
+/// Committed symbol sources for `DWG-0201GP06-01.pid` broken-chain runs
+/// where the gitignored `test-file/symbols-full` directory may be absent:
+/// `Break::FirstLengthPlusEight` extends record 0 (`igSymbol2d`,
+/// `Flanged Nozzle.sym`) by 8 bytes so its cached-definition tail reads
+/// garbage and falls back to the `.sym` archive. Including the committed
+/// `DWG-0202GP06-01_p/RefData~4~681.zip` keeps CI and local checkouts alike.
+fn dwg_0201_symbol_archive() -> PathBuf {
+    fixtures()
+        .join("backup-test")
+        .join("DWG-0202GP06-01_p")
+        .join("RefData~4~681.zip")
+}
+
+/// Lay out `drawing` against `corpus`, supplying the committed symbol archive
+/// via [`lay_out_with_symbol_roots`] unless `PID_SYMBOL_LIBRARY` already
+/// overrides the symbol search.
+fn lay_out_with_committed_symbols(drawing: &Path, corpus: &Path) -> PaperModel {
+    if std::env::var_os("PID_SYMBOL_LIBRARY").is_some() {
+        return lay_out_drawing(drawing, corpus)
+            .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    }
+    let archive = dwg_0201_symbol_archive();
+    let label = vec![archive.display().to_string()];
+    lay_out_with_symbol_roots(drawing, corpus, Vec::new(), vec![archive], &label)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()))
+}
+
+/// `PID_SYMBOL_LIBRARY` value to hand to a `pid_plot` child for `DWG-0201`
+/// fixture runs that need `Flanged Nozzle.sym` on checkouts lacking the
+/// gitignored `test-file/symbols-full`.
+fn dwg_0201_symbol_library_env() -> OsString {
+    std::env::var_os("PID_SYMBOL_LIBRARY").unwrap_or_else(|| dwg_0201_symbol_archive().into())
+}
+
 /// Export `how`'s copy of `DWG-0201GP06-01.pid` against the repository's
 /// fixtures, as far as this machine lets any export go, and hold what the
 /// program said and what the library laid out to the break.
@@ -962,22 +996,30 @@ fn export_a_broken_chain(case: &str, how: Break) {
         command.env("PID_PLOT_FONTS", fonts);
     }
     // The child's layout is held against ones made here; see the D06 export.
-    if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
-        command.env("PID_SYMBOL_LIBRARY", library);
-    }
+    // On `Break::FirstLengthPlusEight`, record 0's cached-definition tail is
+    // shifted so it falls back to `Flanged Nozzle.sym` from the committed
+    // `RefData~4~681.zip` even when gitignored `test-file/symbols-full` is absent.
+    let (model, intact, sound) = if matches!(how, Break::FirstLengthPlusEight) {
+        command.env("PID_SYMBOL_LIBRARY", dwg_0201_symbol_library_env());
+        (
+            lay_out_with_committed_symbols(&broken.path, &corpus),
+            lay_out_with_committed_symbols(&dwg_0201(), &corpus),
+            lay_out_with_committed_symbols(&broken.sound_prefix, &corpus),
+        )
+    } else {
+        if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+            command.env("PID_SYMBOL_LIBRARY", library);
+        }
+        (
+            lay_out_drawing(&broken.path, &corpus)
+                .unwrap_or_else(|error| panic!("{}: {error}", broken.path.display())),
+            lay_out_drawing(&dwg_0201(), &corpus)
+                .unwrap_or_else(|error| panic!("{}: {error}", dwg_0201().display())),
+            lay_out_drawing(&broken.sound_prefix, &corpus)
+                .unwrap_or_else(|error| panic!("{}: {error}", broken.sound_prefix.display())),
+        )
+    };
     let outcome = run(command.arg(&broken.path).arg(&out).arg(&corpus));
-
-    // What the library lays out: the copy, and the drawing as committed.
-    let model = lay_out_drawing(&broken.path, &corpus)
-        .unwrap_or_else(|error| panic!("{}: {error}", broken.path.display()));
-    let intact = lay_out_drawing(&dwg_0201(), &corpus)
-        .unwrap_or_else(|error| panic!("{}: {error}", dwg_0201().display()));
-
-    // The page is the page of the records before the stop: the same
-    // drawing with a sound stream that ends there lays out to the same
-    // primitives on the same sheet, so nothing past the stop is drawn.
-    let sound = lay_out_drawing(&broken.sound_prefix, &corpus)
-        .unwrap_or_else(|error| panic!("{}: {error}", broken.sound_prefix.display()));
     assert_eq!(
         model.resolved_page_mm(),
         sound.resolved_page_mm(),
@@ -2031,8 +2073,7 @@ fn a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place() {
     let case = "order-no-own-record";
     let corpus = fixtures();
     let drawing = broken_copy(case, Break::FirstLengthPlusEight).sound_prefix;
-    let model = lay_out_drawing(&drawing, &corpus)
-        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    let model = lay_out_with_committed_symbols(&drawing, &corpus);
 
     // The chain holds, and the list is there.
     assert!(
@@ -2079,7 +2120,13 @@ fn a_sound_stream_with_no_record_of_the_sheets_own_says_what_takes_no_place() {
     );
     assert_eq!(account.summary().suspect, 1, "{}", account.summary());
 
-    let said = export_against_the_fixtures(case, &drawing, "no-own-record.pdf");
+    let said = export_with(
+        case,
+        &drawing,
+        &corpus,
+        Path::new(&dwg_0201_symbol_library_env()),
+        "no-own-record.pdf",
+    );
     let warned = warnings(&said.stderr);
     assert_eq!(
         warned.len(),
