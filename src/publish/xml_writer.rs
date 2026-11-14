@@ -22,7 +22,7 @@
 //! * UTF-8 output, indented for human inspection (two-space
 //!   indent, trailing newline). `SmartPlant` accepts compact and
 //!   indented forms alike.
-//! * Strings go through [`escape_attr`]: names / paths with `&`, `<`,
+//! * Strings go through `escape_attr`: names / paths with `&`, `<`,
 //!   quotes, CR / LF / TAB round-trip, and a character XML 1.0 cannot
 //!   carry becomes `U+FFFD` instead of making the document ill-formed.
 //! * Unknown optional fields render as empty attribute values
