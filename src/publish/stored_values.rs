@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::oracle_exp::{backup_uid_key, ExpTables, StoredCell};
+use super::oracle_exp::{backup_uid_key, nominal_spelling, ExpTables, StoredCell};
 use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidValueSource};
 use super::placement::{place_property, DumpColumn, Unplaced};
 use crate::backup::DataMap;
@@ -54,6 +54,10 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "INamedPipingConnector",
         property: "PipingConnectorSeqNo",
     },
+    StoredProperty {
+        interface: "IPipeCrossSectionItem",
+        property: "NominalDiameter",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
@@ -73,7 +77,9 @@ pub struct StoredValues {
 }
 
 /// Spell one stored cell as the reference writes the property, under the
-/// conversion the map names (`None` and empty: the value as stored).
+/// conversion the map names: none (`None` or empty) is the value as
+/// stored, and `EFAdapter.NominalDiameterConv` spells a code the way a
+/// port's diameter is spelled ([`nominal_spelling`]: `80 mm`, `1 in`).
 ///
 /// `None` when the conversion is not one this stage runs, or the cell is
 /// not a value it converts.
@@ -85,6 +91,10 @@ pub fn spell(criteria: Option<&str>, cell: &StoredCell) -> Option<String> {
             StoredCell::Integer(value) => value.to_string(),
             StoredCell::Number(number) => number.to_string(),
         }),
+        "EFAdapter.NominalDiameterConv" => match cell {
+            StoredCell::Integer(code) => nominal_spelling(*code),
+            StoredCell::Text(_) | StoredCell::Number(_) => None,
+        },
         _ => None,
     }
 }
@@ -275,8 +285,8 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 3,
-                confirmed_labels: 10,
+                written: 5,
+                confirmed_labels: 17,
                 disagreeing_labels: 2,
                 ..StoredValues::default()
             }
@@ -310,6 +320,31 @@ mod tests {
         assert_eq!(sequence("C7C3E09265174C91AC008F3CE02E9653"), "0301");
     }
 
+    /// The diameters the sheet does not label: a nozzle's from `T_Nozzle`,
+    /// a piping component's from `T_InlineComp`, the table its type
+    /// inherits the attribute from.
+    #[test]
+    fn a_nominal_diameter_is_spelled_from_the_code_in_the_items_row() {
+        let (drawing, _) = dwg_with_stored_values();
+        let nozzle = stated(
+            &drawing,
+            "06F9755FE3FE408D8A1D6A5F3B38F2DF",
+            "NominalDiameter",
+        )
+        .expect("the nozzle states it");
+        assert_eq!(nozzle.interface, "IPipeCrossSectionItem");
+        assert_eq!(nozzle.value, "80 mm");
+        assert_eq!(nozzle.source, placed("T_Nozzle", "NominalDiameter"));
+        let component = stated(
+            &drawing,
+            "C5A2865821394E019D7DAA0CAFE0490D",
+            "NominalDiameter",
+        )
+        .expect("the component states it");
+        assert_eq!(component.value, "100 mm");
+        assert_eq!(component.source, placed("T_InlineComp", "NominalDiameter"));
+    }
+
     #[test]
     fn a_label_the_dump_disagrees_with_is_kept_and_a_class_less_item_gets_nothing() {
         let (mut drawing, tables, map) = dwg();
@@ -331,7 +366,7 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 2);
+        assert_eq!(report.written, 3);
         assert_eq!(report.disagreeing_labels, 3);
         let run = stated(
             &drawing,
@@ -386,6 +421,21 @@ mod tests {
             spell(None, &StoredCell::Integer(532)).as_deref(),
             Some("532")
         );
+    }
+
+    #[test]
+    fn a_nominal_diameter_code_is_spelled_as_a_ports_is() {
+        let criteria = Some("EFAdapter.NominalDiameterConv");
+        assert_eq!(
+            spell(criteria, &StoredCell::Integer(80)).as_deref(),
+            Some("80 mm")
+        );
+        assert_eq!(
+            spell(criteria, &StoredCell::Integer(5032)).as_deref(),
+            Some("1 in")
+        );
+        assert_eq!(spell(criteria, &StoredCell::Integer(5001)), None);
+        assert_eq!(spell(criteria, &StoredCell::Text("80".to_string())), None);
     }
 
     #[test]
