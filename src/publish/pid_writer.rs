@@ -72,14 +72,17 @@ fn write_document(
 ) -> std::fmt::Result {
     writeln!(buf, r#"<?xml version ="1.0" encoding="UTF-8"?>"#)?;
     write_data_container_open(buf, plant_name, &drawing.drawing_uid, &drawing.drawing_name)?;
-    write_object(
-        buf,
-        "PIDDrawing",
-        &[
-            Stated::new("IObject", "UID", &drawing.drawing_uid),
-            Stated::new("IObject", "Name", &drawing.drawing_name),
-        ],
-    )?;
+    let mut stated = vec![
+        Stated::new("IObject", "UID", &drawing.drawing_uid),
+        Stated::new("IObject", "Name", &drawing.drawing_name),
+    ];
+    stated.extend(
+        drawing
+            .drawing_attributes
+            .iter()
+            .map(|attribute| Stated::new(attribute.interface, attribute.name, &attribute.value)),
+    );
+    write_object(buf, "PIDDrawing", &stated)?;
 
     for item in &drawing.items {
         if let Some(class) = item.class {
@@ -817,6 +820,7 @@ mod tests {
         PidPublishDrawing {
             drawing_uid: "D1".to_string(),
             drawing_name: "A & B".to_string(),
+            drawing_attributes: Vec::new(),
             items: vec![
                 PidPublishItem {
                     uid: "I1".to_string(),

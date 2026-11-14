@@ -717,6 +717,13 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             datamap.as_ref(),
         )
         .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
+        let codelist_values = pid_parse::publish::codelist_values::attach_codelist_values(
+            &mut drawing,
+            &exp_tables,
+            datamap.as_ref(),
+        )
+        .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
+        eprintln!("oracle-exp codelists: {codelist_values} enumerated values");
         eprintln!(
             "oracle-exp pipelines: {} PIDPipeline, {} PipingConnectors, {} FluidSystem, \
              {} fluid codes missing, {} fluid systems unmapped",

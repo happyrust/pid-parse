@@ -1158,25 +1158,46 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "plant breakdown structure",
         reason: "PBS item columns the plant breakdown structure supplies: the .pid file \
-                 states the item's tag and geometry, never its breakdown-structure status.",
+                 states the item's tag and geometry, never its breakdown-structure status \
+                 (an --oracle-exp run states it from the dump's codelist cell).",
         members: &[("IPBSItem", &["ConstructionStatus", "ConstructionStatus2"])],
+    },
+    ExcludedAttributeClass {
+        class: "codelist levels above the leaf",
+        reason: "the schema levels above an enumerated value's leaf: the dump stores the \
+                 leaf's codelist index and SPPIDDataMap.xml publishes the leaf's own enum, but \
+                 neither holds the levels the schema hangs above it, so only a reference \
+                 document could supply them.",
+        members: &[
+            (
+                "IEquipment",
+                &[
+                    "EqType0", "EqType1", "EqType2", "EqType3", "EqType4", "EqType5",
+                ],
+            ),
+            ("IEquipmentComponent", &["ProcessEqCompType1"]),
+            ("IInstrument", &["InstrumentType"]),
+            (
+                "IPipingComponent",
+                &[
+                    "PipingComponentType1",
+                    "PipingComponentType2",
+                    "PipingComponentType3",
+                ],
+            ),
+        ],
     },
     ExcludedAttributeClass {
         class: "piping specification",
         reason: "piping specification columns the piping spec database supplies: a .pid file \
-                 states the run and the component's tag, not the resolved spec row.",
+                 states the run and the component's tag, not the resolved spec row (an \
+                 --oracle-exp run states the codelist-valued ones from the dump).",
         members: &[
             ("IInsulatedItem", &["InsulSpec"]),
             ("IPipeCrossSectionItem", &["NominalDiameter"]),
             (
                 "IPipingComponent",
-                &[
-                    "CommoditySpecialtyType",
-                    "PipModelCode",
-                    "PipingComponentType1",
-                    "PipingComponentType2",
-                    "PipingComponentType3",
-                ],
+                &["CommoditySpecialtyType", "PipModelCode"],
             ),
             ("IPipingConnector", &["PipingConnectorType"]),
             ("IPipingSpecifiedItem", &["PipingMaterialsClass"]),
@@ -1186,12 +1207,10 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "instrument index",
         reason: "instrument index columns the instrumentation database supplies: a .pid file \
-                 states the symbol and its loop, not the index row.",
+                 states the symbol and its loop, not the index row (an --oracle-exp run states \
+                 the codelist-valued ones from the dump).",
         members: &[
-            (
-                "IInstrument",
-                &["InstrumentType", "InstrumentType3", "ProcFunc"],
-            ),
+            ("IInstrument", &["InstrumentType3", "ProcFunc"]),
             ("IInstrumentOcc", &["InstrumentLocation"]),
             (
                 "INamedInstrument",
@@ -1202,28 +1221,13 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "equipment register",
         reason: "equipment register columns the equipment database supplies: a .pid file \
-                 states the symbol, not the register row.",
+                 states the symbol, not the register row (an --oracle-exp run states the \
+                 codelist-valued ones from the dump).",
         members: &[
-            (
-                "IEquipment",
-                &[
-                    "EqType0",
-                    "EqType1",
-                    "EqType2",
-                    "EqType3",
-                    "EqType4",
-                    "EqType5",
-                    "EqTypeDescription",
-                    "EquipmentTrimSpec",
-                ],
-            ),
+            ("IEquipment", &["EqTypeDescription", "EquipmentTrimSpec"]),
             (
                 "IEquipmentComponent",
-                &[
-                    "ProcEqpCompTypeDescription",
-                    "ProcessEqCompType1",
-                    "ProcessEqCompType2",
-                ],
+                &["ProcEqpCompTypeDescription", "ProcessEqCompType2"],
             ),
             ("INamedEquipment", &["EquipPrefix"]),
         ],
@@ -1231,7 +1235,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "connector and port model",
         reason: "connector and port model columns the plant database supplies: a .pid file \
-                 states the run's ends, not the resolved connector row.",
+                 states the run's ends, not the resolved connector row (an --oracle-exp run \
+                 states a run's flow direction from the dump).",
         members: &[
             (
                 "IConnector",
@@ -1245,7 +1250,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "document metadata",
         reason: "document metadata columns the document register supplies: this line states \
-                 the drawing's name and uid, not the register's category/subtype/title.",
+                 the drawing's name and uid, not the register's category/subtype/title (an \
+                 --oracle-exp run states the category and type every P&ID carries).",
         members: &[("IDocument", &["DocCategory", "DocTitle", "DocType"])],
     },
     ExcludedAttributeClass {
@@ -1279,6 +1285,27 @@ pub(crate) const LABELLED_ATTRIBUTES: [(&str, &str); 7] = [
     ("INamedInstrument", "MeasuredVariable"),
     ("INamedEquipment", "EquipPrefix"),
     ("INamedPipingConnector", "PipingConnectorSeqNo"),
+];
+
+/// Excluded attributes an `--oracle-exp` run states from the dump's
+/// codelist cells (`codelist_values`): a run that states one on some object
+/// had the dump, so a reference value it leaves out on another object is a
+/// finding; a run that states it nowhere is excused as before.
+pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 14] = [
+    ("IConnector", "FlowDirection"),
+    ("IDocument", "DocCategory"),
+    ("IDocument", "DocType"),
+    ("IEquipment", "EqTypeDescription"),
+    ("IEquipmentComponent", "ProcEqpCompTypeDescription"),
+    ("IEquipmentComponent", "ProcessEqCompType2"),
+    ("IInstrument", "InstrumentType3"),
+    ("IInstrument", "ProcFunc"),
+    ("IInstrumentOcc", "InstrumentLocation"),
+    ("IPBSItem", "ConstructionStatus"),
+    ("IPBSItem", "ConstructionStatus2"),
+    ("IPipingComponent", "CommoditySpecialtyType"),
+    ("IPipingComponent", "PipModelCode"),
+    ("IPipingConnector", "PipingConnectorType"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

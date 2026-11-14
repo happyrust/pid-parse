@@ -40,6 +40,8 @@
 //!   compositions and item notes.
 //! * [`pipeline`] — synthesized `PIDPipeline` rows and their
 //!   `PipingConnectors` from `T_PIPERUN` + `SPPIDDataMap.xml`.
+//! * [`codelist_values`] — enumerated values from the dump's codelist
+//!   cells, spelled by `SPPIDDataMap.xml`.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
 //!   provenance record (`PidValueSource`).
 //! * [`pid_writer`] — that DTO → `_Data.xml` / `_Meta.xml` / `_Coverage.json`.
@@ -90,6 +92,7 @@ pub mod backup_package;
 // classes an item through the row's `pid_class`.
 mod catalog;
 pub mod catalog_index;
+pub mod codelist_values;
 pub mod completeness;
 pub mod diff;
 #[cfg(feature = "backup-mdf")]

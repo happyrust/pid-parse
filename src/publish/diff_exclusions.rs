@@ -11,7 +11,9 @@
 //! 2. the `(interface, attribute)` pairs of
 //!    `catalog::EXCLUDED_ATTRIBUTE_CLASSES` the plant database supplies — a
 //!    pair the sheet's labels fill (`catalog::LABELLED_ATTRIBUTES`) only
-//!    while the run states it on some object;
+//!    while the run states it on some object, and a pair the dump's
+//!    codelist cells fill (`catalog::DUMP_CODELIST_ATTRIBUTES`) only while
+//!    the run states it on no object;
 //! 3. relations this run states nowhere — the same wiring under another
 //!    `<Rel>` UID, an end the generated document does not publish (a
 //!    `PIDPipeline` that pairs by name counts as published), or no generated
@@ -269,6 +271,15 @@ pub(super) fn account_reference_side(
                 missing_values.push(format!(
                     "missing value {class} {uid} {key}: {value:?} not in generated, and the \
                      run states {key} on no object"
+                ));
+                continue;
+            }
+            let from_codelist = catalog::DUMP_CODELIST_ATTRIBUTES.contains(&(interface, attribute));
+            if from_codelist && stated_keys.contains(key.as_str()) {
+                diff.values_not_in_generated += 1;
+                missing_values.push(format!(
+                    "missing value {class} {uid} {key}: {value:?} not in generated, and the \
+                     run states {key} from the dump on other objects"
                 ));
                 continue;
             }

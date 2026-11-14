@@ -579,14 +579,23 @@ fn publish_one(
         notes.push(note);
     }
     if let Some(loaded) = loaded.filter(|_| dump_in_run) {
-        let attached = attach_exp(&mut drawing, loaded).and_then(|()| {
-            super::pipeline::attach_pipelines(
-                &mut drawing,
-                &loaded.tables,
-                plant_name,
-                loaded.datamap.as_ref(),
-            )
-        });
+        let attached = attach_exp(&mut drawing, loaded)
+            .and_then(|()| {
+                super::pipeline::attach_pipelines(
+                    &mut drawing,
+                    &loaded.tables,
+                    plant_name,
+                    loaded.datamap.as_ref(),
+                )
+            })
+            .and_then(|()| {
+                super::codelist_values::attach_codelist_values(
+                    &mut drawing,
+                    &loaded.tables,
+                    loaded.datamap.as_ref(),
+                )
+                .map(|_| ())
+            });
         if let Err(error) = attached {
             let detail = error.to_string();
             tally
@@ -877,6 +886,7 @@ fn shell_drawing(uid: String, name: String) -> PidPublishDrawing {
     PidPublishDrawing {
         drawing_uid: uid,
         drawing_name: name,
+        drawing_attributes: Vec::new(),
         items: Vec::new(),
         process_points: Vec::new(),
         branch_points: Vec::new(),
