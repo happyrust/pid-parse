@@ -7764,6 +7764,88 @@ pub fn decode_igarc_at(data: &[u8], offset: usize) -> Option<SheetIgArc2dDecoded
     IgArc2dDecoder.decode_at(data, offset)
 }
 
+/// Whether a circle `(center, radius)` keeps its entire bounding box inside
+/// `[-limit, limit]` on both axes.
+pub(crate) fn circle_keeps_to_the_domain(center: (f64, f64), radius: f64, limit: f64) -> bool {
+    let x_extent = center.0.abs() + radius;
+    let y_extent = center.1.abs() + radius;
+    x_extent.is_finite() && x_extent <= limit && y_extent.is_finite() && y_extent <= limit
+}
+
+/// Whether a circular arc's endpoints and every cardinal extremum (`0`, `π/2`,
+/// `π`, `3π/2`) traversed by its directed sweep stay finite and inside
+/// `[-limit, limit]` on both axes.
+pub(crate) fn arc_keeps_to_the_domain(
+    center: (f64, f64),
+    radius: f64,
+    start_angle: f64,
+    end_angle: f64,
+    clockwise: bool,
+    limit: f64,
+) -> bool {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+
+    let in_domain =
+        |(x, y): (f64, f64)| x.is_finite() && x.abs() <= limit && y.is_finite() && y.abs() <= limit;
+    let point_at = |angle: f64| {
+        let (sin, cos) = angle.sin_cos();
+        (center.0 + radius * cos, center.1 + radius * sin)
+    };
+    if !in_domain(point_at(start_angle)) || !in_domain(point_at(end_angle)) {
+        return false;
+    }
+    if start_angle == end_angle {
+        return true;
+    }
+    let mut sweep = if clockwise {
+        (start_angle - end_angle).rem_euclid(TAU)
+    } else {
+        (end_angle - start_angle).rem_euclid(TAU)
+    };
+    if !sweep.is_finite() {
+        return false;
+    }
+    if sweep == 0.0 {
+        sweep = TAU;
+    }
+    for quarter in 0..4 {
+        let angle = f64::from(quarter) * FRAC_PI_2;
+        let travelled = if clockwise {
+            (start_angle - angle).rem_euclid(TAU)
+        } else {
+            (angle - start_angle).rem_euclid(TAU)
+        };
+        if !travelled.is_finite() {
+            return false;
+        }
+        if travelled <= sweep {
+            let extremum = match quarter {
+                0 => (center.0 + radius, center.1),
+                1 => (center.0, center.1 + radius),
+                2 => (center.0 - radius, center.1),
+                _ => (center.0, center.1 - radius),
+            };
+            if !in_domain(extremum) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether a closed ellipse `P(t) = center + cos t · major + sin t · ratio ·
+/// rot90(major)` keeps its entire axis-aligned extent inside `[-limit, limit]`.
+fn ellipse_keeps_to_the_domain(
+    center: (f64, f64),
+    major: (f64, f64),
+    ratio: f64,
+    limit: f64,
+) -> bool {
+    let x_extent = center.0.abs() + major.0.hypot(ratio * major.1);
+    let y_extent = center.1.abs() + major.1.hypot(ratio * major.0);
+    x_extent.is_finite() && x_extent <= limit && y_extent.is_finite() && y_extent <= limit
+}
+
 /// [`PsmRecordDecoder`] adapter for `0x0059` `igCircle2d`.
 pub struct IgCircle2dDecoder;
 
@@ -7789,7 +7871,9 @@ impl PsmRecordDecoder for IgCircle2dDecoder {
         let payload = data.get(header.body_start..end)?;
         let sub = curve_sub_header(payload)?;
         let [center_x, center_y, radius] = curve_doubles::<3>(payload)?;
-        if radius <= 0.0 {
+        if radius <= 0.0
+            || !circle_keeps_to_the_domain((center_x, center_y), radius, COORDINATE_DOMAIN_LIMIT)
+        {
             return None;
         }
         Some(SheetIgCircle2dDecoded {
@@ -7839,7 +7923,17 @@ impl PsmRecordDecoder for IgArc2dDecoder {
         let payload = data.get(header.body_start..end)?;
         let sub = curve_sub_header(payload)?;
         let [center_x, center_y, radius, start_angle, end_angle] = curve_doubles::<5>(payload)?;
-        if radius <= 0.0 {
+        let flag = *payload.get(IGARC2D_PAYLOAD_LEN - 1)?;
+        if radius <= 0.0
+            || !arc_keeps_to_the_domain(
+                (center_x, center_y),
+                radius,
+                start_angle,
+                end_angle,
+                flag == 0,
+                COORDINATE_DOMAIN_LIMIT,
+            )
+        {
             return None;
         }
         Some(SheetIgArc2dDecoded {
@@ -7854,7 +7948,7 @@ impl PsmRecordDecoder for IgArc2dDecoder {
             radius,
             start_angle,
             end_angle,
-            flag: *payload.get(IGARC2D_PAYLOAD_LEN - 1)?,
+            flag,
         })
     }
 
@@ -8253,7 +8347,15 @@ pub(crate) fn ellipse_geometry(payload: &[u8]) -> Option<EllipseGeometry> {
     // curve this traces is an exact ellipse for any finite positive
     // ratio, so only non-positive and non-finite values are refused
     // (`curve_doubles` already guarantees `ratio` is finite here).
-    if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 {
+    if major_x.hypot(major_y) <= 0.0
+        || ratio <= 0.0
+        || !ellipse_keeps_to_the_domain(
+            (center_x, center_y),
+            (major_x, major_y),
+            ratio,
+            COORDINATE_DOMAIN_LIMIT,
+        )
+    {
         return None;
     }
     Some(((center_x, center_y), (major_x, major_y), ratio))
@@ -10254,6 +10356,67 @@ mod nested_curve_family_tests {
                 "cut {cut}"
             );
         }
+    }
+
+    #[test]
+    fn circle_arc_and_ellipse_reaching_past_the_coordinate_domain_are_refused() {
+        use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+        // Circle: |center| + radius > 1e9 refused, == 1e9 accepted.
+        let circle = |cx: f64, cy: f64, r: f64| {
+            chain(&[curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[cx, cy, r], 1)])
+        };
+        assert!(decode_igcircles(&circle(5e8, -5e8, 5e8)).len() == 1);
+        assert!(decode_igcircles(&circle(9e8, 9e8, 9e8)).is_empty());
+        assert!(decode_igcircles(&circle(-9e8, 0.0, 2e8)).is_empty());
+        assert!(decode_igcircles(&circle(0.0, 8e8, 3e8)).is_empty());
+
+        // Arc: endpoints + traversed cardinal extrema <= 1e9.
+        let arc = |cx: f64, cy: f64, r: f64, start: f64, end: f64, flag: u8| {
+            chain(&[curve_record(
+                PSM_TYPE_CODE_IGARC2D,
+                8,
+                &[cx, cy, r, start, end],
+                flag,
+            )])
+        };
+        // Centered at (9e8, 0) radius 2e8: +X extremum (1.1e9, 0) is out of
+        // domain, while -X (7e8, 0) and ±Y (9e8, ±2e8) stay inside.
+        // Sweep across -X (2.9 -> 3.38) CCW stays inside; CW goes through 0 (+X) -> refused.
+        assert_eq!(decode_igarcs(&arc(9e8, 0.0, 2e8, 2.9, 3.38, 1)).len(), 1);
+        assert!(decode_igarcs(&arc(9e8, 0.0, 2e8, 2.9, 3.38, 0)).is_empty());
+        // Endpoints at (-0.1) and (0.1) already sit past 1e9 in both directions.
+        assert!(decode_igarcs(&arc(9e8, 0.0, 2e8, -0.1, 0.1, 1)).is_empty());
+        assert!(decode_igarcs(&arc(9e8, 0.0, 2e8, -0.1, 0.1, 0)).is_empty());
+        // Arc centered at (0, 9e8) radius 2e8: +Y extremum (0, 1.1e9) out, -Y (0, 7e8) in.
+        // From pi to 2*pi CCW traverses 3*pi/2 (-Y) -> accepted; CW traverses pi/2 (+Y) -> refused.
+        assert_eq!(decode_igarcs(&arc(0.0, 9e8, 2e8, PI, TAU, 1)).len(), 1);
+        assert!(decode_igarcs(&arc(0.0, 9e8, 2e8, PI, TAU, 0)).is_empty());
+        // Whole turn when remainder == 0 (0 -> TAU or TAU -> 0, non-equal angles): traverses all 4 extrema.
+        assert!(decode_igarcs(&arc(0.0, 9e8, 2e8, 0.0, TAU, 1)).is_empty());
+        assert!(decode_igarcs(&arc(0.0, 9e8, 2e8, TAU, 0.0, 0)).is_empty());
+        // Start == end: only endpoint matters; at (0, 9e8) + r=2e8 at angle 3*pi/2 -> (0, 7e8) is inside.
+        assert_eq!(
+            decode_igarcs(&arc(0.0, 9e8, 2e8, 3.0 * FRAC_PI_2, 3.0 * FRAC_PI_2, 0)).len(),
+            1
+        );
+
+        // Ellipse: |cx| + hypot(mx, ratio * my) and |cy| + hypot(my, ratio * mx) <= 1e9.
+        let ellipse = |cx: f64, cy: f64, mx: f64, my: f64, ratio: f64| {
+            chain(&[curve_record(
+                PSM_TYPE_CODE_IGELLIPSE2D,
+                5,
+                &[cx, cy, mx, my, ratio],
+                0,
+            )])
+        };
+        assert_eq!(
+            decode_igellipses(&ellipse(0.0, 0.0, 2.0, 0.0, 4e8)).len(),
+            1
+        );
+        assert!(decode_igellipses(&ellipse(0.0, 0.0, 2.0, 0.0, 1e9)).is_empty());
+        // Diagonal major axis whose combined extent exceeds 1e9 even though individual fields are <= 1e9.
+        assert!(decode_igellipses(&ellipse(5e8, 5e8, 4e8, 4e8, 1.0)).is_empty());
     }
 
     #[test]

@@ -10,7 +10,10 @@ use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
     EmbeddedStream, JSite, JSiteNestedGeometry, JSiteSymbolInformation, PidDocument,
+    SheetRefusedRecord,
 };
+use crate::parsers::sheet_records::PsmHeader;
+use crate::parsers::undecoded_census::{is_native_graphic_type_code, rad_class_name};
 use crate::style_link::DocumentStyleTable;
 use crate::symbol_library::PrimitiveStyle;
 use std::collections::{BTreeMap, BTreeSet};
@@ -64,54 +67,142 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
     }
 }
 
+/// Dimension kind of a `0x0115` `JDim` record (`payload[14..16]`), when
+/// present inside the record's own payload span.
+fn dimension_kind(data: &[u8], header: &PsmHeader) -> Option<u16> {
+    let end = header
+        .body_start
+        .checked_add(header.bytes_to_follow as usize)?;
+    let payload = data.get(header.body_start..end)?;
+    let bytes = payload.get(14..16)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
 /// Read the symbol bodies out of one definition-cache storage's cluster
 /// bytes: every drawable record, chain-gated, plus the `JSheet` oids that
-/// the placements name. See [`JSiteNestedGeometry`].
+/// the placements name, and any drawable family records refused by their
+/// decoder. See [`JSiteNestedGeometry`].
 ///
 /// Every family is admitted the same way -- the record has to start where
 /// the stream's own chain says a record starts -- so a byte pattern inside
-/// one record's payload cannot be read as another record, and the nine
-/// families cannot disagree about which bytes are whose. Connect points are
-/// not read: they draw nothing.
-fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
+/// one record's payload cannot be read as another record, and the families
+/// cannot disagree about which bytes are whose. Connect points (`0x005E`),
+/// associations (`0x0021`/`0x007B`), `0x8000` native skips, and non-linear
+/// dimensions (`0x0115` with `kind != 1`) are excluded from refusal tracking.
+/// Template-grammar `0x0013` boundaries (`igBoundary2d` carrying `0x68`/`0x74`
+/// members in caches such as `/JSite7559/PSMcluster0` and
+/// `/JSite19/PSMcluster0`) will surface here until `#66` (`fix-66`) teaches
+/// the cache boundary decoder that grammar; once `fix-parse` and `fix-66`
+/// merge, both drop to zero.
+fn decode_nested_geometry(data: &[u8]) -> (JSiteNestedGeometry, Vec<SheetRefusedRecord>) {
     use crate::parsers::sheet_records::{
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
         decode_igellipse_at, decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at,
-        decode_igrectangle_at, decode_igsym_boundary_at, decode_igtextbox_at, jsheet_oids,
-        SheetChain,
+        decode_igrectangle_at, decode_igsym_boundary_at, decode_igsymbol_at, decode_igtextbox_at,
+        jsheet_oids, parse_psm_header, SheetChain, IGDIMENSION_KIND_LINEAR, PSM_TYPE_CODE_IGARC2D,
+        PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGBSPCURVE2D, PSM_TYPE_CODE_IGCIRCLE2D,
+        PSM_TYPE_CODE_IGDIMENSION, PSM_TYPE_CODE_IGELLIPSE2D, PSM_TYPE_CODE_IGELLIPTICALARC2D,
+        PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGRECTANGLE2D,
+        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
         ..JSiteNestedGeometry::default()
     };
+    let mut refused_counts: BTreeMap<u16, usize> = BTreeMap::new();
     // What the chain reads before it stops, if it stops: the caller names
     // a cache whose chain does not hold (`PidDocument::chain_faults`).
     for at in SheetChain::walk(data).starts {
-        if let Some(circle) = decode_igcircle_at(data, at) {
-            out.circles.push(circle.into());
-        } else if let Some(arc) = decode_igarc_at(data, at) {
-            out.arcs.push(arc.into());
-        } else if let Some(arc) = decode_igellipticalarc_at(data, at) {
-            out.elliptical_arcs.push(arc.into());
-        } else if let Some(ellipse) = decode_igellipse_at(data, at) {
-            out.ellipses.push(ellipse.into());
-        } else if let Some(line) = decode_igline_at(data, at) {
-            out.lines.push(line.into());
-        } else if let Some(polyline) = decode_iglinestring_at(data, at) {
-            out.polylines.push(polyline.into());
-        } else if let Some(text) = decode_igtextbox_at(data, at) {
-            out.texts.push(text.into());
-        } else if let Some(rectangle) = decode_igrectangle_at(data, at) {
-            out.rectangles.push(rectangle.into());
-        } else if let Some(curve) = decode_igbspcurve_at(data, at) {
-            out.bsplines.push(curve.into());
-        } else if let Some(dimension) = decode_igdimension_at(data, at) {
-            out.dimensions.push(dimension.into());
-        } else if let Some(boundary) = decode_igsym_boundary_at(data, at) {
-            out.boundaries.push(boundary.into());
+        let Some(header) = parse_psm_header(data, at) else {
+            continue;
+        };
+        if header.native_reader_skips() {
+            continue;
+        }
+        match header.type_code {
+            PSM_TYPE_CODE_IGCIRCLE2D => match decode_igcircle_at(data, at) {
+                Some(circle) => out.circles.push(circle.into()),
+                None => *refused_counts.entry(PSM_TYPE_CODE_IGCIRCLE2D).or_default() += 1,
+            },
+            PSM_TYPE_CODE_IGARC2D => match decode_igarc_at(data, at) {
+                Some(arc) => out.arcs.push(arc.into()),
+                None => *refused_counts.entry(PSM_TYPE_CODE_IGARC2D).or_default() += 1,
+            },
+            PSM_TYPE_CODE_IGELLIPTICALARC2D => match decode_igellipticalarc_at(data, at) {
+                Some(arc) => out.elliptical_arcs.push(arc.into()),
+                None => {
+                    *refused_counts
+                        .entry(PSM_TYPE_CODE_IGELLIPTICALARC2D)
+                        .or_default() += 1;
+                }
+            },
+            PSM_TYPE_CODE_IGELLIPSE2D => match decode_igellipse_at(data, at) {
+                Some(ellipse) => out.ellipses.push(ellipse.into()),
+                None => *refused_counts.entry(PSM_TYPE_CODE_IGELLIPSE2D).or_default() += 1,
+            },
+            PSM_TYPE_CODE_IGLINE2D => match decode_igline_at(data, at) {
+                Some(line) => out.lines.push(line.into()),
+                None => *refused_counts.entry(PSM_TYPE_CODE_IGLINE2D).or_default() += 1,
+            },
+            PSM_TYPE_CODE_IGLINESTRING2D => match decode_iglinestring_at(data, at) {
+                Some(polyline) => out.polylines.push(polyline.into()),
+                None => {
+                    *refused_counts
+                        .entry(PSM_TYPE_CODE_IGLINESTRING2D)
+                        .or_default() += 1;
+                }
+            },
+            PSM_TYPE_CODE_IGTEXTBOX => match decode_igtextbox_at(data, at) {
+                Some(text) => out.texts.push(text.into()),
+                None => *refused_counts.entry(PSM_TYPE_CODE_IGTEXTBOX).or_default() += 1,
+            },
+            PSM_TYPE_CODE_IGRECTANGLE2D => match decode_igrectangle_at(data, at) {
+                Some(rectangle) => out.rectangles.push(rectangle.into()),
+                None => {
+                    *refused_counts
+                        .entry(PSM_TYPE_CODE_IGRECTANGLE2D)
+                        .or_default() += 1;
+                }
+            },
+            PSM_TYPE_CODE_IGBSPCURVE2D => match decode_igbspcurve_at(data, at) {
+                Some(curve) => out.bsplines.push(curve.into()),
+                None => {
+                    *refused_counts
+                        .entry(PSM_TYPE_CODE_IGBSPCURVE2D)
+                        .or_default() += 1;
+                }
+            },
+            PSM_TYPE_CODE_IGDIMENSION => {
+                if let Some(dimension) = decode_igdimension_at(data, at) {
+                    out.dimensions.push(dimension.into());
+                } else if dimension_kind(data, &header) == Some(IGDIMENSION_KIND_LINEAR) {
+                    *refused_counts.entry(PSM_TYPE_CODE_IGDIMENSION).or_default() += 1;
+                }
+            }
+            PSM_TYPE_CODE_IGBOUNDARY2D => match decode_igsym_boundary_at(data, at) {
+                Some(boundary) => out.boundaries.push(boundary.into()),
+                None => {
+                    *refused_counts
+                        .entry(PSM_TYPE_CODE_IGBOUNDARY2D)
+                        .or_default() += 1;
+                }
+            },
+            PSM_TYPE_CODE_IGSYMBOL2D if decode_igsymbol_at(data, at).is_none() => {
+                *refused_counts.entry(PSM_TYPE_CODE_IGSYMBOL2D).or_default() += 1;
+            }
+            _ => {}
         }
     }
-    out
+    let refused = refused_counts
+        .into_iter()
+        .map(|(type_code, count)| SheetRefusedRecord {
+            type_code,
+            count,
+            is_graphic: is_native_graphic_type_code(type_code),
+            rad_class_name: rad_class_name(type_code).map(str::to_string),
+        })
+        .collect();
+    (out, refused)
 }
 
 /// Resolve the style id of every drawable stroke in `nested` against the
@@ -207,10 +298,11 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             if !decoded.is_empty() {
                 site.symbol_information = Some(decoded);
             }
-            let curves = decode_nested_geometry(&data);
+            let (curves, refused) = decode_nested_geometry(&data);
             if !curves.is_empty() {
                 site.nested_geometry = Some(curves);
             }
+            site.refused_records = refused;
             if let Some(fault) = crate::model::StreamChainFault::of_stream(&cluster_path, &data) {
                 doc.chain_faults.push(fault);
             }

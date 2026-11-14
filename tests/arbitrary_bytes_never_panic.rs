@@ -1323,3 +1323,239 @@ fn a_planted_elliptical_arc_whose_stroke_leaves_the_domain_is_refused_and_named(
         }
     }
 }
+
+/// Circle (`0x0059`) and circular arc (`0x0061`) records whose individual
+/// fields lie inside `1e9` but whose extent leaves the coordinate domain are
+/// refused on the sheet and named in `refused_graphic_records`, leaving every
+/// other entity untouched.
+#[test]
+fn planted_circle_and_arc_leaving_the_domain_are_refused_and_named() {
+    use std::f64::consts::TAU;
+
+    let _serial = lock(&SERIAL);
+    let original = corpus()
+        .iter()
+        .find(|original| original.name == PLANT_IN)
+        .unwrap_or_else(|| panic!("{PLANT_IN} is committed under test-file"));
+    let intact = geometry_of(&original.bytes);
+    let make_record = |type_code: u16, layer: u32, doubles: &[f64], flag: u8| {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&PLANTED_OID.to_le_bytes());
+        payload.extend_from_slice(&PLANT_SHEET_OID.to_le_bytes());
+        payload.extend_from_slice(&layer.to_le_bytes());
+        payload.extend_from_slice(&0x0010u16.to_le_bytes());
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        for value in doubles {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(flag);
+        let mut record = type_code.to_le_bytes().to_vec();
+        record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        record.extend_from_slice(&payload);
+        record
+    };
+    let refusals_for = |geometry: &NormalizedPidGeometry, code: u16| -> Vec<(String, usize)> {
+        geometry
+            .refused_graphic_records
+            .iter()
+            .filter(|refused| refused.type_code == code)
+            .map(|refused| (refused.stream_path.clone(), refused.count))
+            .collect()
+    };
+
+    let cases: [(&str, u16, Vec<f64>, u8, bool); 5] = [
+        (
+            "circle whose centre + radius exceeds 1e9",
+            0x0059,
+            vec![9e8, 9e8, 9e8],
+            1,
+            false,
+        ),
+        (
+            "circle staying inside 1e9",
+            0x0059,
+            vec![5e8, -5e8, 5e8],
+            1,
+            true,
+        ),
+        (
+            "arc avoiding +X extremum (CCW)",
+            0x0061,
+            vec![9e8, 0.0, 2e8, 2.9, 3.38],
+            1,
+            true,
+        ),
+        (
+            "arc traversing +X extremum at 1.1e9 (CW)",
+            0x0061,
+            vec![9e8, 0.0, 2e8, 2.9, 3.38],
+            0,
+            false,
+        ),
+        (
+            "full-turn arc traversing all extrema",
+            0x0061,
+            vec![0.0, 9e8, 2e8, 0.0, TAU],
+            1,
+            false,
+        ),
+    ];
+
+    for (label, code, doubles, flag, accepted) in cases {
+        let bytes = planted_record(original, |layer| make_record(code, layer, &doubles, flag));
+        let geometry = geometry_of(&bytes);
+        let others: Vec<&pid_parse::PidGraphicEntity> = geometry
+            .entities
+            .iter()
+            .filter(|entity| entity.graphic_oid != Some(PLANTED_OID))
+            .collect();
+        assert!(
+            others.iter().copied().eq(intact.entities.iter()),
+            "{label}: the rest of the drawing is untouched"
+        );
+        let drawn: Vec<_> = geometry
+            .entities
+            .iter()
+            .filter(|entity| entity.graphic_oid == Some(PLANTED_OID))
+            .collect();
+        if accepted {
+            assert!(refusals_for(&geometry, code).is_empty(), "{label}");
+            assert_eq!(drawn.len(), 1, "{label}");
+        } else {
+            assert_eq!(
+                refusals_for(&geometry, code),
+                [(PLANT_STREAM.to_string(), 1)],
+                "{label}"
+            );
+            assert!(drawn.is_empty(), "{label}");
+            let hex = format!("0x{code:04X}");
+            assert!(
+                geometry
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(&hex) && warning.contains("refuses")),
+                "{label}: {:?}",
+                geometry.warnings
+            );
+        }
+    }
+}
+
+/// Replacing the cached `0x005D` `igBspCurve2d` in `DWG-0202GP06-01.pid`'s
+/// `/JSite793/PSMcluster0` with a degree-33 curve, an out-of-domain `0x007E`,
+/// or an out-of-domain `0x0063` ellipse surfaces in `PidDocument::jsites` and
+/// `NormalizedPidGeometry::refused_graphic_records` and produces a named
+/// warning rather than silently dropping the curve.
+#[test]
+fn refused_record_in_jsite_cache_is_surfaced_and_named() {
+    use pid_parse::parsers::sheet_records::{parse_psm_header, SheetChain};
+    use std::f64::consts::PI;
+
+    let _serial = lock(&SERIAL);
+    let original = corpus()
+        .iter()
+        .find(|original| original.name == "DWG-0202GP06-01.pid")
+        .unwrap_or_else(|| panic!("DWG-0202GP06-01.pid is committed under test-file"));
+    const CACHE_STREAM: &str = "/JSite793/PSMcluster0";
+    let package = PidParser::new()
+        .parse_package_from_reader(Cursor::new(original.bytes.clone()))
+        .expect("DWG-0202GP06-01.pid parses");
+    let cluster = package
+        .get_stream(CACHE_STREAM)
+        .expect("DWG-0202 has /JSite793/PSMcluster0")
+        .data
+        .clone();
+    let starts = SheetChain::walk(&cluster).starts;
+    let bsp_at = starts
+        .iter()
+        .copied()
+        .find(|&at| parse_psm_header(&cluster, at).is_some_and(|h| h.type_code == 0x005D))
+        .expect("/JSite793/PSMcluster0 has a 0x005D B-spline");
+    let bsp_header = parse_psm_header(&cluster, bsp_at).expect("header");
+    let bsp_end = bsp_header.body_start + bsp_header.bytes_to_follow as usize;
+    let sub_header = cluster[bsp_header.body_start..bsp_header.body_start + 18].to_vec();
+
+    // Case 1: degree-33 igBspCurve2d (40 poles, 74 knots, same 18-byte sub-header).
+    let mut bsp_payload = sub_header.clone();
+    bsp_payload.extend_from_slice(&40u32.to_le_bytes());
+    for i in 0..40usize {
+        bsp_payload.extend_from_slice(&(i as f64 * 0.001).to_le_bytes());
+        bsp_payload.extend_from_slice(&((i % 2) as f64 * 0.001).to_le_bytes());
+    }
+    bsp_payload.extend_from_slice(&0u32.to_le_bytes());
+    bsp_payload.extend_from_slice(&74u32.to_le_bytes());
+    for knot in std::iter::repeat_n(0.0, 34)
+        .chain((1..7).map(|k| k as f64))
+        .chain(std::iter::repeat_n(7.0, 34))
+    {
+        bsp_payload.extend_from_slice(&knot.to_le_bytes());
+    }
+    bsp_payload.extend_from_slice(&(-1.0f64).to_le_bytes());
+    bsp_payload.extend_from_slice(&[0x04, 0x01, 0x01, 0x00]);
+    let mut bsp_rec = 0x005Du16.to_le_bytes().to_vec();
+    bsp_rec.extend_from_slice(&(bsp_payload.len() as u32).to_le_bytes());
+    bsp_rec.extend_from_slice(&bsp_payload);
+
+    // Case 2: out-of-domain 0x007E igEllipticalArc2d in the same cache.
+    let mut e_payload = sub_header.clone();
+    for value in [PI, 0.0, 0.0, 0.0, 2.0, 0.0, 1e9] {
+        e_payload.extend_from_slice(&value.to_le_bytes());
+    }
+    e_payload.push(0);
+    let mut e_rec = 0x007Eu16.to_le_bytes().to_vec();
+    e_rec.extend_from_slice(&(e_payload.len() as u32).to_le_bytes());
+    e_rec.extend_from_slice(&e_payload);
+
+    // Case 3: out-of-domain 0x0063 igEllipse2d (2e9 apex) in the same cache.
+    let mut ellipse_payload = sub_header;
+    for value in [0.05_f64, 0.05, 2.0, 0.0, 1e9] {
+        ellipse_payload.extend_from_slice(&value.to_le_bytes());
+    }
+    ellipse_payload.push(0);
+    let mut ellipse_rec = 0x0063u16.to_le_bytes().to_vec();
+    ellipse_rec.extend_from_slice(&(ellipse_payload.len() as u32).to_le_bytes());
+    ellipse_rec.extend_from_slice(&ellipse_payload);
+
+    for (label, code, replacement) in [
+        ("degree-33 igBspCurve2d in cache", 0x005Du16, bsp_rec),
+        ("out-of-domain igEllipticalArc2d in cache", 0x007Eu16, e_rec),
+        ("out-of-domain igEllipse2d in cache", 0x0063u16, ellipse_rec),
+    ] {
+        let mut modified = cluster[..bsp_at].to_vec();
+        modified.extend_from_slice(&replacement);
+        modified.extend_from_slice(&cluster[bsp_end..]);
+        let bytes = PidWriter::write_to_bytes(
+            &package,
+            &WritePlan {
+                stream_replacements: vec![StreamReplacement {
+                    path: CACHE_STREAM.to_string(),
+                    new_data: modified,
+                }],
+                ..WritePlan::default()
+            },
+        )
+        .expect("write modified DWG-0202");
+        let geometry = geometry_of(&bytes);
+        let found: Vec<_> = geometry
+            .refused_graphic_records
+            .iter()
+            .filter(|r| r.stream_path == CACHE_STREAM && r.type_code == code)
+            .map(|r| r.count)
+            .collect();
+        assert_eq!(
+            found,
+            [1],
+            "{label}: {:?}",
+            geometry.refused_graphic_records
+        );
+        let hex = format!("0x{code:04X}");
+        assert!(
+            geometry
+                .warnings
+                .iter()
+                .any(|w| w.contains(&hex) && w.contains(CACHE_STREAM) && w.contains("refuses")),
+            "{label}: {:?}",
+            geometry.warnings
+        );
+    }
+}

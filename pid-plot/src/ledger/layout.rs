@@ -441,6 +441,11 @@ pub struct SymbolChainFault {
     /// The symbol file, as the placement names it below the library's
     /// `Symbols` directory.
     pub symbol: String,
+    /// The library-relative path (using `/` separators) that actually supplied
+    /// the symbol body when resolved, when [`pid_parse::symbol_library::SymbolLibrary::resolved_relative`]
+    /// reports one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
     /// How many placements of the page take their body from the file:
     /// drawn from it, or — with [`Self::not_drawn`] — left undrawn for it.
     pub placements: u64,
@@ -460,12 +465,34 @@ pub struct SymbolFileFaults {
     /// The symbol file, as the placements name it below the library's
     /// `Symbols` directory.
     pub symbol: String,
+    /// The library-relative path that supplied the symbol body when
+    /// resolved, if known.
+    pub resolved: Option<String>,
     /// How many placements of the page take their body from the file.
     pub placements: u64,
     /// Why they are not drawn, when they are not.
     pub not_drawn: Option<pid_parse::symbol_library::SymbolNotDrawn>,
     /// The faults the file's body lists, one a stream.
     pub faults: Vec<pid_parse::StreamChainFault>,
+}
+
+/// Format the symbol name for a chain-fault warning, appending
+/// `(resolved to ...)` when the library-relative path differs from both
+/// the slash-normalized placement path and (for an author-machine path)
+/// its bare file name.
+fn format_symbol_label(symbol: &str, resolved: Option<&str>) -> String {
+    let Some(resolved) = resolved else {
+        return symbol.to_string();
+    };
+    let normalized = symbol.replace('\\', "/");
+    if resolved == normalized {
+        return symbol.to_string();
+    }
+    let basename = symbol.rsplit(['\\', '/']).next().unwrap_or(symbol);
+    if pid_parse::symbol_library::library_relative_path(symbol).is_none() && resolved == basename {
+        return symbol.to_string();
+    }
+    format!("{symbol} (resolved to {resolved})")
 }
 
 impl LayoutLedger {
@@ -494,6 +521,7 @@ impl LayoutLedger {
                 self.symbol_chain_faults.push(SymbolChainFault {
                     domain,
                     symbol: file.symbol.clone(),
+                    resolved: file.resolved.clone(),
                     placements: file.placements,
                     not_drawn: file.not_drawn,
                     fault,
@@ -521,19 +549,18 @@ impl LayoutLedger {
                     LedgerDomain::Drawing => "",
                     LedgerDomain::Furniture => "in the border template, ",
                 };
+                let label = format_symbol_label(&found.symbol, found.resolved.as_deref());
                 match found.not_drawn {
                     None => format!(
-                        "{whose}the symbol file {}, which {} placement(s) on the page are \
+                        "{whose}the symbol file {label}, which {} placement(s) on the page are \
                          drawn from, is damaged: {}",
-                        found.symbol,
                         found.placements,
                         found.fault.describe()
                     ),
                     Some(why) => format!(
-                        "{whose}the symbol file {} is damaged and the {} placement(s) on the \
+                        "{whose}the symbol file {label} is damaged and the {} placement(s) on the \
                          page that name it are not drawn, each counted as a missing symbol: \
                          {}; {}",
-                        found.symbol,
                         found.placements,
                         why.describe(),
                         found.fault.describe_framing()
@@ -878,6 +905,45 @@ impl LayoutLedger {
              the display order{page}",
             item.records, item.primitives
         ))
+    }
+
+    /// One sentence per cached symbol-body stream (`/JSite*/PSMcluster0`) and
+    /// PSM type code whose graphic records were refused by their family's
+    /// decoder. Sheet-stream refusals are left to the sheet-level diagnostics
+    /// (`page_warnings` for `0x003D`, `chain_fault_warnings` for damaged
+    /// chains) so those keep their single-warning contract.
+    #[must_use]
+    pub fn refused_record_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for domain in LedgerDomain::all() {
+            let whose = match domain {
+                LedgerDomain::Drawing => "",
+                LedgerDomain::Furniture => "in the border template, ",
+            };
+            for item in &self.parse.get(*domain).items {
+                if item.reason != DropReason::RecordRefused {
+                    continue;
+                }
+                if !item.stream.ends_with("/PSMcluster0") {
+                    continue;
+                }
+                let Some(code) = item.type_code else {
+                    continue;
+                };
+                if code == pid_parse::parsers::sheet_records::PSM_TYPE_CODE_IGSMARTFRAME {
+                    continue;
+                }
+                let class_name = pid_parse::parsers::undecoded_census::rad_class_name(code)
+                    .map(|name| format!(" ({name})"))
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "{whose}{} record(s) of 0x{code:04X}{class_name} in {} are a shape this \
+                     crate's decoder for that type refuses, and are dropped from the drawing",
+                    item.count, item.stream
+                ));
+            }
+        }
+        warnings
     }
 }
 
@@ -2821,6 +2887,7 @@ mod tests {
             LedgerDomain::Furniture,
             [SymbolFileFaults {
                 symbol: "Gauge.sym".to_string(),
+                resolved: None,
                 placements: 2,
                 not_drawn: Some(SymbolNotDrawn::ClusterShort),
                 faults: vec![cluster.clone(), sheet.clone()],
@@ -2893,6 +2960,7 @@ mod tests {
         let mut ledger = LayoutLedger::default();
         let file = |symbol: &str, placements, faults| SymbolFileFaults {
             symbol: symbol.to_string(),
+            resolved: None,
             placements,
             not_drawn: None,
             faults,
@@ -2978,6 +3046,7 @@ mod tests {
             LedgerDomain::Drawing,
             [SymbolFileFaults {
                 symbol: "Gauge.sym".to_string(),
+                resolved: None,
                 placements: 2,
                 not_drawn: None,
                 faults: vec![sheet.clone(), pens.clone()],
@@ -3014,6 +3083,7 @@ mod tests {
                 SymbolChainFault {
                     domain: LedgerDomain::Drawing,
                     symbol: "Gauge.sym".to_string(),
+                    resolved: None,
                     placements: 2,
                     not_drawn: None,
                     fault: sheet.clone(),
@@ -3021,6 +3091,7 @@ mod tests {
                 SymbolChainFault {
                     domain: LedgerDomain::Drawing,
                     symbol: "Gauge.sym".to_string(),
+                    resolved: None,
                     placements: 2,
                     not_drawn: None,
                     fault: pens.clone(),
@@ -3275,5 +3346,108 @@ mod tests {
                 Ok(())
             })
             .expect("the property holds over the generated tables");
+    }
+
+    #[test]
+    fn symbol_chain_fault_warnings_mention_resolved_when_it_adds_detail() {
+        let fault = a_fault("/Sheet6", 2_000, 600);
+        let make = |symbol: &str, resolved: Option<&str>| {
+            let mut ledger = LayoutLedger::default();
+            ledger.note_symbol_chain_faults(
+                LedgerDomain::Furniture,
+                [SymbolFileFaults {
+                    symbol: symbol.to_string(),
+                    resolved: resolved.map(str::to_string),
+                    placements: 2,
+                    not_drawn: None,
+                    faults: vec![fault.clone()],
+                }],
+            );
+            ledger.symbol_chain_fault_warnings()
+        };
+
+        // Author path resolved to a subdirectory: appends `(resolved to ...)`.
+        assert_eq!(
+            make(
+                r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\hqz.sym",
+                Some("Design/Subdir/hqz.sym")
+            ),
+            [format!(
+                "in the border template, the symbol file C:\\Users\\ADMINI~1.WIN\\AppData\\Local\\Temp\\hqz.sym \
+                 (resolved to Design/Subdir/hqz.sym), which 2 placement(s) on the page are drawn from, is damaged: {}",
+                fault.describe()
+            )]
+        );
+        // Author path resolved at root (`hqz.sym` == basename): does not repeat it.
+        assert_eq!(
+            make(
+                r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\hqz.sym",
+                Some("hqz.sym")
+            ),
+            [format!(
+                "in the border template, the symbol file C:\\Users\\ADMINI~1.WIN\\AppData\\Local\\Temp\\hqz.sym, \
+                 which 2 placement(s) on the page are drawn from, is damaged: {}",
+                fault.describe()
+            )]
+        );
+        // Share path matching slash-normalized resolved path: does not repeat it.
+        assert_eq!(
+            make(
+                r"Piping\Valves\Gate Valve.sym",
+                Some("Piping/Valves/Gate Valve.sym")
+            ),
+            [format!(
+                "in the border template, the symbol file Piping\\Valves\\Gate Valve.sym, \
+                 which 2 placement(s) on the page are drawn from, is damaged: {}",
+                fault.describe()
+            )]
+        );
+        // Share path trimmed of leading space: mentions trimmed resolved path.
+        assert_eq!(
+            make(
+                r"Piping\Piping OPC's\ Off-Unit SQ.sym",
+                Some("Piping/Piping OPC's/Off-Unit SQ.sym")
+            ),
+            [format!(
+                "in the border template, the symbol file Piping\\Piping OPC's\\ Off-Unit SQ.sym \
+                 (resolved to Piping/Piping OPC's/Off-Unit SQ.sym), which 2 placement(s) on the page are drawn from, is damaged: {}",
+                fault.describe()
+            )]
+        );
+    }
+
+    #[test]
+    fn refused_record_warnings_skip_sheet_streams_and_name_cache_refusals() {
+        let mut geometry = NormalizedPidGeometry::default();
+        geometry.refused_graphic_records = vec![
+            PidRefusedGraphicRecords {
+                stream_path: "/Sheet6".to_string(),
+                type_code: pid_parse::parsers::sheet_records::PSM_TYPE_CODE_IGSMARTFRAME,
+                rad_class_name: Some("SmartFrame2d Object".to_string()),
+                count: 1,
+            },
+            PidRefusedGraphicRecords {
+                stream_path: "/Sheet6".to_string(),
+                type_code: 0x004D,
+                rad_class_name: Some("Text Object".to_string()),
+                count: 1,
+            },
+            PidRefusedGraphicRecords {
+                stream_path: "/JSite793/PSMcluster0".to_string(),
+                type_code: 0x005D,
+                rad_class_name: Some("BspCurve Object".to_string()),
+                count: 1,
+            },
+        ];
+        let mut recorder = LedgerRecorder::new();
+        recorder.parse(LedgerDomain::Drawing, &[], &[], &geometry);
+        let ledger = recorder.into_ledger();
+        assert_eq!(
+            ledger.refused_record_warnings(),
+            [
+                "1 record(s) of 0x005D (BspCurve Object) in /JSite793/PSMcluster0 are a shape this \
+                 crate's decoder for that type refuses, and are dropped from the drawing"
+            ]
+        );
     }
 }

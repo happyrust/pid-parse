@@ -95,8 +95,7 @@ const ARCHIVE: &str = "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~681.zip
 
 /// The committed pressure gauge: one displayed circle on `/Sheet6`, its
 /// normal view, and the lettering `PG` on `/Sheet68`.
-const GAUGE: &str =
-    "test-file/symbols/Instrumentation/Off-Line/Without Implied Components/Pressure/PG-Pressure Gauge.sym";
+const GAUGE: &str = "test-file/symbols/Instrumentation/Off-Line/Without Implied Components/Pressure/PG-Pressure Gauge.sym";
 /// A body kept on a sheet with no view set, beside a normal view that is a
 /// header and nothing else: the body is the sheet that keeps the most
 /// strokes.
@@ -794,40 +793,28 @@ fn a_damaged_symbol_file_of_an_archive_draws_less_or_nothing() {
 #[rustfmt::skip]
 const ON_DISK: &[(Role, &str, Outcome, usize)] = &[
     (Role::Sheet, "a header count one too few", Outcome::Whole, 10),
-    (Role::Sheet, "a header count one too many", Outcome::Whole, 8),
-    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::NothingToShow), 2),
-    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "a length of zero", Outcome::Whole, 52),
+    (Role::Sheet, "a header count one too many", Outcome::Whole, 12),
+    (Role::Sheet, "a length of zero", Outcome::Whole, 69),
     (Role::Sheet, "a length of zero", Outcome::Less, 38),
     (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
-    (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 17),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::Whole, 14),
+    (Role::Sheet, "a type word flagged 0x4000", Outcome::Whole, 18),
     (Role::Sheet, "a type word flagged 0x4000", Outcome::Less, 5),
     (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 4),
-    (Role::Sheet, "a type word past the class table", Outcome::Whole, 14),
+    (Role::Sheet, "a type word past the class table", Outcome::Whole, 18),
     (Role::Sheet, "a type word past the class table", Outcome::Less, 5),
     (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
-    (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 4),
     (Role::Sheet, "a wrong magic", Outcome::Whole, 12),
-    (Role::Sheet, "cut off after the header", Outcome::Whole, 4),
+    (Role::Sheet, "cut off after the header", Outcome::Whole, 6),
     (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
-    (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "cut off before the last record", Outcome::Whole, 6),
+    (Role::Sheet, "cut off before the last record", Outcome::Whole, 8),
     (Role::Sheet, "cut off before the last record", Outcome::Less, 2),
-    (Role::Sheet, "cut off before the last record", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "cut off inside the header", Outcome::Whole, 4),
-    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 6),
-    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "emptied of every byte", Outcome::Whole, 4),
-    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 6),
-    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "stray bytes at the end", Outcome::Whole, 8),
-    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::NothingToShow), 2),
-    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
-    (Role::Sheet, "the last record one byte too long", Outcome::Whole, 6),
+    (Role::Sheet, "cut off inside the header", Outcome::Whole, 8),
+    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
+    (Role::Sheet, "emptied of every byte", Outcome::Whole, 8),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 4),
+    (Role::Sheet, "stray bytes at the end", Outcome::Whole, 12),
+    (Role::Sheet, "the last record one byte too long", Outcome::Whole, 8),
     (Role::Sheet, "the last record one byte too long", Outcome::Less, 2),
-    (Role::Sheet, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 2),
     (Role::Cluster, "a header count one too few", Outcome::Whole, 6),
     (Role::Cluster, "a header count one too many", Outcome::NotDrawn(NotDrawn::ClusterShort), 6),
     (Role::Cluster, "a length of zero", Outcome::NotDrawn(NotDrawn::ClusterShort), 186),
@@ -860,47 +847,47 @@ const ON_DISK: &[(Role, &str, Outcome, usize)] = &[
 #[rustfmt::skip]
 const ARCHIVED: &[(Role, &str, Outcome, usize)] = &[
     (Role::Sheet, "a header count one too few", Outcome::Whole, 1131),
-    (Role::Sheet, "a header count one too many", Outcome::Whole, 642),
+    (Role::Sheet, "a header count one too many", Outcome::Whole, 690),
     (Role::Sheet, "a header count one too many", Outcome::Less, 6),
-    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::NothingToShow), 107),
-    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
-    (Role::Sheet, "a length of zero", Outcome::Whole, 4817),
-    (Role::Sheet, "a length of zero", Outcome::Less, 3381),
-    (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::NothingToShow), 960),
-    (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 8587),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::Whole, 1125),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::Less, 263),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::NothingToShow), 477),
-    (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 1272),
-    (Role::Sheet, "a type word past the class table", Outcome::Whole, 1125),
-    (Role::Sheet, "a type word past the class table", Outcome::Less, 263),
-    (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::NothingToShow), 477),
-    (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 1272),
+    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::NothingToShow), 83),
+    (Role::Sheet, "a header count one too many", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 456),
+    (Role::Sheet, "a length of zero", Outcome::Whole, 5029),
+    (Role::Sheet, "a length of zero", Outcome::Less, 3390),
+    (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::NothingToShow), 956),
+    (Role::Sheet, "a length of zero", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 8370),
+    (Role::Sheet, "a type word flagged 0x4000", Outcome::Whole, 1186),
+    (Role::Sheet, "a type word flagged 0x4000", Outcome::Less, 271),
+    (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::NothingToShow), 467),
+    (Role::Sheet, "a type word flagged 0x4000", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 1213),
+    (Role::Sheet, "a type word past the class table", Outcome::Whole, 1186),
+    (Role::Sheet, "a type word past the class table", Outcome::Less, 271),
+    (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::NothingToShow), 467),
+    (Role::Sheet, "a type word past the class table", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 1213),
     (Role::Sheet, "a wrong magic", Outcome::Whole, 1235),
-    (Role::Sheet, "cut off after the header", Outcome::Whole, 274),
-    (Role::Sheet, "cut off after the header", Outcome::Less, 7),
-    (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 398),
-    (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 452),
-    (Role::Sheet, "cut off before the last record", Outcome::Whole, 527),
-    (Role::Sheet, "cut off before the last record", Outcome::Less, 75),
+    (Role::Sheet, "cut off after the header", Outcome::Whole, 296),
+    (Role::Sheet, "cut off after the header", Outcome::Less, 12),
+    (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 392),
+    (Role::Sheet, "cut off after the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 431),
+    (Role::Sheet, "cut off before the last record", Outcome::Whole, 547),
+    (Role::Sheet, "cut off before the last record", Outcome::Less, 76),
     (Role::Sheet, "cut off before the last record", Outcome::NotDrawn(NotDrawn::NothingToShow), 74),
-    (Role::Sheet, "cut off before the last record", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 449),
-    (Role::Sheet, "cut off inside the header", Outcome::Whole, 315),
-    (Role::Sheet, "cut off inside the header", Outcome::Less, 7),
-    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 433),
-    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
-    (Role::Sheet, "emptied of every byte", Outcome::Whole, 315),
-    (Role::Sheet, "emptied of every byte", Outcome::Less, 7),
-    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 433),
-    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
-    (Role::Sheet, "stray bytes at the end", Outcome::Whole, 642),
+    (Role::Sheet, "cut off before the last record", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 428),
+    (Role::Sheet, "cut off inside the header", Outcome::Whole, 363),
+    (Role::Sheet, "cut off inside the header", Outcome::Less, 12),
+    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::NothingToShow), 404),
+    (Role::Sheet, "cut off inside the header", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 456),
+    (Role::Sheet, "emptied of every byte", Outcome::Whole, 363),
+    (Role::Sheet, "emptied of every byte", Outcome::Less, 12),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::NothingToShow), 404),
+    (Role::Sheet, "emptied of every byte", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 456),
+    (Role::Sheet, "stray bytes at the end", Outcome::Whole, 690),
     (Role::Sheet, "stray bytes at the end", Outcome::Less, 6),
-    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::NothingToShow), 107),
-    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 480),
-    (Role::Sheet, "the last record one byte too long", Outcome::Whole, 529),
-    (Role::Sheet, "the last record one byte too long", Outcome::Less, 75),
-    (Role::Sheet, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::NothingToShow), 75),
-    (Role::Sheet, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 452),
+    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::NothingToShow), 83),
+    (Role::Sheet, "stray bytes at the end", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 456),
+    (Role::Sheet, "the last record one byte too long", Outcome::Whole, 550),
+    (Role::Sheet, "the last record one byte too long", Outcome::Less, 76),
+    (Role::Sheet, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::NothingToShow), 74),
+    (Role::Sheet, "the last record one byte too long", Outcome::NotDrawn(NotDrawn::PickAmongShortSheets), 431),
     (Role::Cluster, "a header count one too few", Outcome::Whole, 658),
     (Role::Cluster, "a header count one too many", Outcome::NotDrawn(NotDrawn::ClusterShort), 658),
     (Role::Cluster, "a length of zero", Outcome::NotDrawn(NotDrawn::ClusterShort), 21879),
@@ -937,12 +924,21 @@ const ARCHIVED: &[(Role, &str, Outcome, usize)] = &[
 /// the way a library reads it.
 fn read_with(source: &str, stream: &str, damage: Damage) -> Option<(SymbolGeometry, Vec<u8>)> {
     let bytes = std::fs::read(source).unwrap_or_else(|error| panic!("{source}: {error}"));
-    let package =
-        PidPackage::from_bytes(&bytes).unwrap_or_else(|error| panic!("{source}: {error}"));
+    read_bytes_with(&bytes, source, stream, damage)
+}
+
+/// [`read_with`] over in-memory bytes of a symbol file.
+fn read_bytes_with(
+    bytes: &[u8],
+    label: &str,
+    stream: &str,
+    damage: Damage,
+) -> Option<(SymbolGeometry, Vec<u8>)> {
+    let package = PidPackage::from_bytes(bytes).unwrap_or_else(|error| panic!("{label}: {error}"));
     let original = &package
         .streams
         .get(stream)
-        .unwrap_or_else(|| panic!("{source} has no {stream}"))
+        .unwrap_or_else(|| panic!("{label} has no {stream}"))
         .data;
     let damaged = damage.apply(original, &SheetChain::walk(original).starts)?;
     let plan = WritePlan {
@@ -953,10 +949,46 @@ fn read_with(source: &str, stream: &str, damage: Damage) -> Option<(SymbolGeomet
         ..WritePlan::default()
     };
     let copy = PidWriter::write_to_bytes(&package, &plan)
-        .unwrap_or_else(|error| panic!("{source} {stream} {damage:?}: {error}"));
+        .unwrap_or_else(|error| panic!("{label} {stream} {damage:?}: {error}"));
     let body = read_symbol_geometry_from_bytes(&copy)
-        .unwrap_or_else(|error| panic!("{source} {stream} {damage:?}: {error}"));
+        .unwrap_or_else(|error| panic!("{label} {stream} {damage:?}: {error}"));
     Some((body, damaged))
+}
+
+/// `Circle.sym` with its root `/PSMcluster0` shape record (oid 267 on Sheet 6)
+/// removed so the symbol holds its circle on `/Sheet12` alone — the shape of
+/// a body picked by its strokes rather than by a normal view.
+fn circle_without_root_shape(bytes: &[u8]) -> Vec<u8> {
+    use pid_parse::parsers::sheet_records::parse_psm_header;
+    use pid_parse::symbol_library::CHAIN_START;
+
+    let package = PidPackage::from_bytes(bytes).expect("Circle.sym parses");
+    let cluster = &package.streams[ROOT_CLUSTER].data;
+    let mut stripped = cluster[..CHAIN_START].to_vec();
+    let mut live = 0u32;
+    for at in SheetChain::walk(cluster).starts {
+        let header = parse_psm_header(cluster, at).expect("chain start");
+        let end = header.body_start + header.bytes_to_follow as usize;
+        if header.type_code == 0x0059 {
+            continue;
+        }
+        if !header.native_reader_skips() {
+            live += 1;
+        }
+        stripped.extend_from_slice(&cluster[at..end]);
+    }
+    stripped[4..8].copy_from_slice(&live.to_le_bytes());
+    PidWriter::write_to_bytes(
+        &package,
+        &WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: ROOT_CLUSTER.to_string(),
+                new_data: stripped,
+            }],
+            ..WritePlan::default()
+        },
+    )
+    .expect("Circle.sym without root shape is written")
 }
 
 /// What a body draws, each primitive by the kind of shape it is and what it
@@ -1128,25 +1160,47 @@ fn an_emptied_stream_and_a_missing_one_are_said_in_the_readers_own_words() {
     );
 }
 
-/// A body that is the sheet keeping the most strokes: `Circle.sym` keeps
-/// its one circle on `/Sheet12`, which no view set governs, beside a normal
-/// view `/Sheet6` that is a header and nothing else. Either sheet read
-/// short and the pick cannot be made as on the sound file — `/Sheet12`'s
-/// count is not known, and `/Sheet6` may have held the stroke that makes it
-/// the body — so the symbol is not drawn. It is never drawn from a sheet
-/// the sound file would not have picked.
+/// `Circle.sym` itself now holds oid 267 (radius 7.62 mm) on Sheet 6 in its
+/// root `/PSMcluster0`, so damaging `/Sheet12` falls back to Sheet 6 and still
+/// draws that circle. When the root shape is absent, the symbol genuinely
+/// keeps its one circle on `/Sheet12` (no view set) beside a normal view
+/// `/Sheet6` that is a header and nothing else: either sheet read short then
+/// refuses the pick (`PickAmongShortSheets` / `NothingToShow`) rather than
+/// drawing from a sheet the sound file would not have picked.
 #[test]
 fn a_body_picked_by_its_strokes_is_not_drawn_from_a_short_sheet() {
-    let sound = read_symbol_geometry_from_bytes(&std::fs::read(CIRCLE).expect("the circle"))
-        .expect("the circle reads");
+    // Real `Circle.sym`: Sheet 6 carries oid 267 in `/PSMcluster0`, so
+    // damaging `/Sheet12` still draws Sheet 6 rather than `PickAmongShortSheets`.
+    let sound_bytes = std::fs::read(CIRCLE).expect("the circle");
+    let sound = read_symbol_geometry_from_bytes(&sound_bytes).expect("the circle reads");
     assert_eq!(drawn(&sound), Ok(vec!["circle".to_string()]));
+    for (stream, records) in [("/Sheet12", 1), ("/Sheet6", 0)] {
+        for damage in damages(records) {
+            let Some((body, _)) = read_with(CIRCLE, stream, damage) else {
+                continue;
+            };
+            assert_eq!(
+                drawn(&body),
+                Ok(vec!["circle".to_string()]),
+                "real Circle.sym {stream}, {damage:?}: Sheet 6 keeps oid 267 in /PSMcluster0"
+            );
+        }
+    }
+
+    // Without that root-cluster shape, `/Sheet12` is picked only by its
+    // stroke count, so a short `/Sheet12` or `/Sheet6` cannot be picked.
+    let no_root = circle_without_root_shape(&sound_bytes);
+    let no_root_sound =
+        read_symbol_geometry_from_bytes(&no_root).expect("the stripped circle reads");
+    assert_eq!(drawn(&no_root_sound), Ok(vec!["circle".to_string()]));
     for (stream, records, why) in [
         ("/Sheet12", 1, SymbolNotDrawn::PickAmongShortSheets),
         ("/Sheet6", 0, SymbolNotDrawn::NothingToShow),
     ] {
         let mut read = 0;
         for damage in damages(records) {
-            let Some((body, _)) = read_with(CIRCLE, stream, damage) else {
+            let Some((body, _)) = read_bytes_with(&no_root, "circle-no-root", stream, damage)
+            else {
                 continue;
             };
             read += 1;
@@ -1187,12 +1241,12 @@ impl Drop for Scratch {
 /// library answers with the first root's copy, and moves on to the next
 /// root only from a copy that holds nothing to draw — a text-only body,
 /// say, beside the drawn version in another root. A copy of which nothing
-/// was *read* is not that: `Circle.sym` with the one record of `/Sheet12`
-/// behind a stop holds no primitive, and until 2026-11-12 the library
-/// passed it over and drew the second root's copy, with no fault to say so.
-/// It is the library's answer now, with its fault, and is not drawn — the
-/// file standing in for the damaged one is no better than the sheet
-/// standing in for the damaged one.
+/// was *read* is not that: `Circle.sym` (without its root-cluster shape)
+/// with the one record of `/Sheet12` behind a stop holds no primitive, and
+/// until 2026-11-12 the library passed it over and drew the second root's
+/// copy, with no fault to say so. It is the library's answer now, with its
+/// fault, and is not drawn — the file standing in for the damaged one is no
+/// better than the sheet standing in for the damaged one.
 ///
 /// The same copy with `/Sheet12` emptied to no bytes was passed over until
 /// 2026-11-13, when the reader came to take an empty stream of a symbol
@@ -1203,9 +1257,10 @@ fn a_damaged_copy_is_not_passed_over_for_another_roots() {
     let relative = Path::new("Design").join("Annotation").join("Graphics");
     let stored = r"\\WIN-SPID\Plant\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
     let (first, second) = (scratch.0.join("first"), scratch.0.join("second"));
-    let sound = std::fs::read(CIRCLE).expect("the circle");
+    let sound = circle_without_root_shape(&std::fs::read(CIRCLE).expect("the circle"));
     let (_, damaged_sheet) =
-        read_with(CIRCLE, "/Sheet12", Damage::ZeroLength(0)).expect("a record to stop on");
+        read_bytes_with(&sound, "circle-no-root", "/Sheet12", Damage::ZeroLength(0))
+            .expect("a record to stop on");
     let package = PidPackage::from_bytes(&sound).expect("the circle parses");
     let damaged = PidWriter::write_to_bytes(
         &package,
@@ -1256,7 +1311,7 @@ fn a_copy_with_an_emptied_sheet_is_not_passed_over_either() {
     let relative = Path::new("Design").join("Annotation").join("Graphics");
     let stored = r"\\WIN-SPID\Plant\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
     let (first, second) = (scratch.0.join("first"), scratch.0.join("second"));
-    let sound = std::fs::read(CIRCLE).expect("the circle");
+    let sound = circle_without_root_shape(&std::fs::read(CIRCLE).expect("the circle"));
     let package = PidPackage::from_bytes(&sound).expect("the circle parses");
     let emptied = PidWriter::write_to_bytes(
         &package,

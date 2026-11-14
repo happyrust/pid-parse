@@ -104,11 +104,13 @@ const UNEXERCISED_PENS: [(&str, f64); 4] = [
     ("0.7999", 4.0),
 ];
 
+/// The corpus `PID_PARSE_SELF_CHECK_DIR` names, when the run names one.
+fn named_corpus() -> Option<PathBuf> {
+    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map(PathBuf::from)
+}
+
 fn corpus_dir() -> PathBuf {
-    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
-        || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
-        PathBuf::from,
-    )
+    named_corpus().unwrap_or_else(|| PathBuf::from(r"D:\work\cad\PID自研软件验证"))
 }
 
 /// The eleven acceptance sheets, laid out against their own directory.
@@ -126,8 +128,10 @@ fn backup_dir() -> Option<PathBuf> {
         roots.push(PathBuf::from(dir));
     }
     roots.push(corpus_dir());
-    roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
-    roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    if named_corpus().is_none() {
+        roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
+        roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    }
     roots
         .into_iter()
         .map(|root| root.join("backup-plant-data"))
