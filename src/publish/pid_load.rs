@@ -670,10 +670,39 @@ fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
 }
 
 /// The published attribute a label property fills on an item of `class`.
+///
+/// `Description` follows the plant's data map (`SPPIDDataMap.xml`, one file
+/// in all three backup packages on hand): an equipment item's `Description`
+/// publishes as its material description, because `IObject.Description` on
+/// equipment is the item's `Name` (`SPMP_Vessel_Name`, `SPMP_Exchanger_Name`,
+/// `SPMP_EquipmentOther_Name` and `SPMP_Mechanical_Name` all map to
+/// `Description`). `SPMP_Mechanical_Description` and
+/// `SPMP_ItemNote_Description` map to nothing, so those labels are not
+/// published. Every other class keeps `Description` on `IObject`.
+///
+/// How much the corpus says about each branch, over the thirteen reference
+/// drawings and the two Oracle dumps at hand: three `Description` labels
+/// reach an item at all. One is on a vessel (DWG-0202GP06-01), where the
+/// reference states it as `LongMaterialDescription`; two are on piping
+/// components and stay on `IObject`. No label sits on a heat exchanger, on
+/// mechanical equipment, on other equipment or on a note, so those four
+/// branches rest on the data map. For other equipment the plant database
+/// bears the map out: all 34 `T_MODELITEM.DESCRIPTION` values of reference
+/// objects are the reference's `LongMaterialDescription3`. The heat
+/// exchanger, mechanical and note branches have no sample of any kind, and
+/// nothing in the corpus contradicts a branch.
 fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'static str)> {
     let instrument = INSTRUMENT_CLASSES.contains(&class);
     let equipment = EQUIPMENT_CLASSES.contains(&class);
     match property {
+        "Description" => match class {
+            "PIDProcessVessel" | "PIDHeatTransferEquipment" => {
+                Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+            }
+            "PIDProcessEquipment" => Some(("ISpecifiedMatlItem", "LongMaterialDescription3")),
+            "PIDMechanicalEquipment" | "PIDNote" => None,
+            _ => Some(("IObject", "Description")),
+        },
         "MeasuredVariableCode" if instrument => Some(("INamedInstrument", "MeasuredVariable")),
         "TagSequenceNo" if instrument => Some(("INamedInstrument", "InstrTagSequenceNo")),
         "TagSequenceNo" if class == "PIDPipingConnector" => {
@@ -683,11 +712,36 @@ fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'s
         "TagPrefix" if equipment => Some(("INamedEquipment", "EquipPrefix")),
         "PipingMaterialsClass" => Some(("IPipingSpecifiedItem", "PipingMaterialsClass")),
         "InsulationSpec" => Some(("IInsulatedItem", "InsulSpec")),
-        "Description" => Some(("IObject", "Description")),
         "ToFromText" => Some(("IOffpageConnector", "ToFromText")),
         "Note.Body" => Some(("INote", "NoteText")),
         _ => None,
     }
+}
+
+/// A note's label text with the line breaks `T_NOTE.BODY` stores.
+///
+/// The label caches the text box's rendition, where a line ends in a bare
+/// carriage return; the plant database keeps the body as it was typed, with
+/// `\r\n`, and that is what `SmartPlant` publishes as `INote.NoteText`
+/// (DWG-0202GP06-01, note `6A2C6590…`: the dump's `BODY` and the reference
+/// both read `…5m。\r\n2、…`, the label `…5m。\r2、…`). A carriage return that
+/// already has its line feed is left alone.
+///
+/// That note is the one sample. It is the only note with a line break in
+/// the thirteen reference drawings, and the only one among the 481 non-empty
+/// `T_NOTE.BODY` cells of the two Oracle dumps at hand. A line feed with no
+/// carriage return before it is left as it is, on no evidence either way,
+/// and no other text attribute goes through this.
+fn note_body_line_breaks(text: &str) -> String {
+    let mut body = String::with_capacity(text.len() + 2);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        body.push(ch);
+        if ch == '\r' && chars.peek() != Some(&'\n') {
+            body.push('\n');
+        }
+    }
+    body
 }
 
 /// `<F>name=value</F>` pairs of a label format string.
@@ -1023,6 +1077,11 @@ fn load_from_records(
                 continue;
             }
             if let Some((interface, name)) = published_attribute(&property, class) {
+                let value = if (interface, name) == ("INote", "NoteText") {
+                    note_body_line_breaks(&value)
+                } else {
+                    value
+                };
                 found
                     .entry((*item, interface, name))
                     .or_default()
@@ -1352,6 +1411,54 @@ mod tests {
             published_attribute("NominalDiameter", "PIDPipingConnector"),
             None
         );
+    }
+
+    // `SPPIDDataMap.xml`: `SPMP_Vessel_Description` and
+    // `SPMP_Exchanger_Description` map to `LongMaterialDescription`,
+    // `SPMP_EquipmentOther_Description` to `LongMaterialDescription3`,
+    // `SPMP_Mechanical_Description` and `SPMP_ItemNote_Description` to
+    // nothing; the run, component, nozzle and instrument maps keep
+    // `Description`.
+    #[test]
+    fn a_description_lands_where_the_data_map_sends_the_class() {
+        let description = |class| published_attribute("Description", class);
+        assert_eq!(
+            description("PIDProcessVessel"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+        );
+        assert_eq!(
+            description("PIDHeatTransferEquipment"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription"))
+        );
+        assert_eq!(
+            description("PIDProcessEquipment"),
+            Some(("ISpecifiedMatlItem", "LongMaterialDescription3"))
+        );
+        assert_eq!(description("PIDMechanicalEquipment"), None);
+        assert_eq!(description("PIDNote"), None);
+        for class in [
+            "PIDPipingConnector",
+            "PIDPipingComponent",
+            "PIDNozzle",
+            "PIDSignalConnector",
+            "PIDInstrument",
+            "PIDInlineInstrument",
+            "PIDControlSystemFunction",
+        ] {
+            assert_eq!(description(class), Some(("IObject", "Description")));
+        }
+    }
+
+    #[test]
+    fn a_note_body_gets_the_line_feed_its_label_dropped() {
+        assert_eq!(
+            note_body_line_breaks("1、first\r2、second"),
+            "1、first\r\n2、second"
+        );
+        assert_eq!(note_body_line_breaks("a\r\nb"), "a\r\nb");
+        assert_eq!(note_body_line_breaks("a\r\rb\r"), "a\r\n\r\nb\r\n");
+        assert_eq!(note_body_line_breaks("设备自带"), "设备自带");
+        assert_eq!(note_body_line_breaks("a\nb"), "a\nb");
     }
 
     #[test]

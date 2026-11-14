@@ -116,14 +116,25 @@ pub struct DrawingPorts {
 
 /// Tables from one Oracle `exp` dump, read once and shared by every drawing.
 ///
-/// [`Self::read`] loads the twelve tables the four publish entries use,
-/// then the first `CODELISTS` insert and `T_DRAWING`. `APPLICATIONS` is
-/// pinned first and is not kept: a dump that fails the pin returns
+/// [`Self::read`] loads the port, connectivity, composition, OPC, model
+/// item and plant item tables the publish stages follow, the first
+/// `CODELISTS` insert (pipeline names spell codelist 19) and `T_DRAWING`
+/// (the package index and the revision check). `APPLICATIONS` is pinned
+/// first and is not kept: a dump that fails the pin returns
 /// [`ExpError::FormatUnpinned`] and the other tables are not read.
 ///
-/// `CODELISTS` and `T_DRAWING` are stored for later stages. Nothing in
-/// this stage publishes them. The `&[u8]` functions still read only the
-/// tables that entry used before, so one drawing keeps today's call.
+/// Every other table is read cell by cell without judging the columns no
+/// stage follows: `T_PIPERUN` alone has 293 columns, and a run that is
+/// insulated or sloped states the thickness or the slope in SI units
+/// beside its text (`SP_INSULTHICKSI` 0.05 for `50mm`), a `NUMBER` that is
+/// not an integer. Such a `NUMBER`, a `DATE` that does not decode and a
+/// character cell that is not AL16UTF16 are kept unread. A projection
+/// refuses a column it follows when any cell of it was not read, whether it
+/// requires the column or only uses it when the dump has one, so an unread
+/// cell never passes for an empty one. A column the dump lacks is not an
+/// unread one: where a projection can do without it, it still does. The
+/// `&[u8]` functions still read only the tables that entry used before, so
+/// one drawing keeps today's call.
 pub struct ExpTables {
     piping_point: Table,
     signal_point: Table,
@@ -148,18 +159,17 @@ impl ExpTables {
     /// # Errors
     ///
     /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not
-    /// pin the row format, and [`ExpError::Table`] when a stored table is
-    /// not that format. `T_DRAWING` has date columns; those cells are
-    /// skipped. `CODELISTS` is the first insert of that name.
+    /// pin the row format, and [`ExpError::Table`] when a stored table's
+    /// bytes do not frame. `CODELISTS` is the first insert of that name.
     pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
         Self::pin(dump)?;
         Ok(Self {
-            piping_point: read_table(dump, "T_PIPINGPOINT")?,
-            signal_point: read_table(dump, "T_SIGNALPOINT")?,
+            piping_point: read_table_tolerant(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table_tolerant(dump, "T_SIGNALPOINT")?,
             connector: read_table_tolerant(dump, "T_CONNECTOR")?,
             representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
-            piperun: read_table(dump, "T_PIPERUN")?,
-            signalrun: read_table(dump, "T_SIGNALRUN")?,
+            piperun: read_table_tolerant(dump, "T_PIPERUN")?,
+            signalrun: read_table_tolerant(dump, "T_SIGNALRUN")?,
             opc: read_table_tolerant(dump, "T_OPC")?,
             nozzle: read_table_tolerant(dump, "T_NOZZLE")?,
             note: read_table_tolerant(dump, "T_NOTE")?,
@@ -167,7 +177,7 @@ impl ExpTables {
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
             plantitem: read_optional_table(dump, "T_PLANTITEM")?,
             inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
-            codelists: read_table(dump, "CODELISTS")?,
+            codelists: read_table_tolerant(dump, "CODELISTS")?,
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
         })
     }
@@ -176,7 +186,10 @@ impl ExpTables {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpError::Table`] when a port row is not the pinned shape.
+    /// Returns [`ExpError::Table`] when a port table lacks a column the
+    /// projection reads or kept it unread, a port row states no plant item
+    /// or no integer point number, or a row's `FLOWDIRECTION` /
+    /// `NOMINALDIAMETER` is neither an integer nor NULL.
     pub fn port_tables(&self) -> Result<PortTables, ExpError> {
         Ok(PortTables {
             piping_row_count: self.piping_point.rows.len(),
@@ -203,12 +216,17 @@ impl ExpTables {
     /// The join columns (`SP_ID`, `NAME`, `PATH`, `DRAWINGNUMBER`,
     /// `SP_PLANTGROUPID`) are required; every other projected column is
     /// optional — a dump that lacks it gets empty strings / `None`s,
-    /// and a NULL cell reads the same way.
+    /// and a NULL cell reads the same way. A column the dump has is held
+    /// to the same terms either way: one whose cells were not all read
+    /// (database-charset text, a `NUMBER` that is not an integer, a `DATE`
+    /// that does not decode) fails the projection rather than reading as
+    /// empty.
     ///
     /// # Errors
     ///
     /// Returns [`ExpError::Table`] when `SP_ID`, `NAME`, `PATH`,
-    /// `DRAWINGNUMBER` or `SP_PLANTGROUPID` is missing.
+    /// `DRAWINGNUMBER` or `SP_PLANTGROUPID` is missing, or a projected
+    /// column holds a cell that was not read.
     pub fn drawings(&self) -> Result<Vec<BackupDrawing>, ExpError> {
         project_drawings(&self.drawing)
     }
@@ -218,8 +236,10 @@ impl ExpTables {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpError::Table`] when a required column is missing or a
-    /// number cell is not an integer.
+    /// Returns [`ExpError::Table`] when a required `T_PIPERUN` column is
+    /// missing, or a followed column of it or of `T_PLANTITEM` holds a cell
+    /// that was not read. A dump with no `T_PLANTITEM`, or one without
+    /// `SP_ID` or `ITEMTAG`, gives every run `item_tag: None`.
     pub fn pipe_runs(&self) -> Result<Vec<PipeRunRow>, ExpError> {
         let id = column_index(&self.piperun, "SP_ID")?;
         let class = column_index(&self.piperun, "PIPINGMATERIALSCLASS")?;
@@ -228,7 +248,7 @@ impl ExpTables {
         column_index(&self.piperun, "NOMINALDIAMETER")?;
         column_index(&self.piperun, "OPERFLUIDCODE")?;
         column_index(&self.piperun, "FLUIDSYSTEM")?;
-        let item_tags = self.item_tags();
+        let item_tags = self.item_tags()?;
         let mut runs = Vec::with_capacity(self.piperun.rows.len());
         for (index, row) in self.piperun.rows.iter().enumerate() {
             let id_text = cell_text(row, id);
@@ -270,7 +290,8 @@ impl ExpTables {
     /// # Errors
     ///
     /// Returns [`ExpError::Table`] when `T_REPRESENTATION` or
-    /// `T_MODELITEM` lacks a join column.
+    /// `T_MODELITEM` lacks a join column, or a followed column of those
+    /// two or of `T_INLINECOMP` holds a cell that was not read.
     pub fn dump_only_piping_components(
         &self,
         drawing_uid: &str,
@@ -279,7 +300,7 @@ impl ExpTables {
         let drawing_uid = norm_uid(drawing_uid);
         let models = &self.modelitem;
         let model_id = column_index(models, "SP_ID")?;
-        let Some(model_type) = optional_column_index(models, "ITEMTYPENAME") else {
+        let Some(model_type) = optional_column_index(models, "ITEMTYPENAME")? else {
             return Ok(Vec::new());
         };
         let components: HashSet<String> = models
@@ -290,8 +311,8 @@ impl ExpTables {
             .collect();
         let mut diameters = HashMap::<String, i64>::new();
         if let (Some(id), Some(diameter)) = (
-            optional_column_index(&self.inlinecomp, "SP_ID"),
-            optional_column_index(&self.inlinecomp, "NOMINALDIAMETER"),
+            optional_column_index(&self.inlinecomp, "SP_ID")?,
+            optional_column_index(&self.inlinecomp, "NOMINALDIAMETER")?,
         ) {
             for row in &self.inlinecomp.rows {
                 if let (Some(id), Some(code)) =
@@ -359,19 +380,20 @@ impl ExpTables {
 
     /// `T_PLANTITEM.ITEMTAG` keyed by the folded `SP_ID`. Empty when the
     /// dump carries no `T_PLANTITEM` or the table lacks either column.
-    fn item_tags(&self) -> HashMap<String, String> {
+    fn item_tags(&self) -> Result<HashMap<String, String>, ExpError> {
         let (Some(id), Some(tag)) = (
-            optional_column_index(&self.plantitem, "SP_ID"),
-            optional_column_index(&self.plantitem, "ITEMTAG"),
+            optional_column_index(&self.plantitem, "SP_ID")?,
+            optional_column_index(&self.plantitem, "ITEMTAG")?,
         ) else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
-        self.plantitem
+        Ok(self
+            .plantitem
             .rows
             .iter()
             .map(|row| (norm_uid(&cell_text(row, id)), cell_text(row, tag)))
             .filter(|(id, _)| !id.is_empty())
-            .collect()
+            .collect())
     }
 
     /// `CODELIST_SHORT_TEXT` for one list number, keyed by `CODELIST_INDEX`.
@@ -428,21 +450,21 @@ impl ExpTables {
 
     fn blank() -> Self {
         Self {
-            piping_point: Table::blank(),
-            signal_point: Table::blank(),
-            connector: Table::blank(),
-            representation: Table::blank(),
-            piperun: Table::blank(),
-            signalrun: Table::blank(),
-            opc: Table::blank(),
-            nozzle: Table::blank(),
-            note: Table::blank(),
-            itemnote: Table::blank(),
-            modelitem: Table::blank(),
-            plantitem: Table::blank(),
-            inlinecomp: Table::blank(),
-            codelists: Table::blank(),
-            drawing: Table::blank(),
+            piping_point: Table::blank("T_PIPINGPOINT"),
+            signal_point: Table::blank("T_SIGNALPOINT"),
+            connector: Table::blank("T_CONNECTOR"),
+            representation: Table::blank("T_REPRESENTATION"),
+            piperun: Table::blank("T_PIPERUN"),
+            signalrun: Table::blank("T_SIGNALRUN"),
+            opc: Table::blank("T_OPC"),
+            nozzle: Table::blank("T_NOZZLE"),
+            note: Table::blank("T_NOTE"),
+            itemnote: Table::blank("T_ITEMNOTE"),
+            modelitem: Table::blank("T_MODELITEM"),
+            plantitem: Table::blank("T_PLANTITEM"),
+            inlinecomp: Table::blank("T_INLINECOMP"),
+            codelists: Table::blank("CODELISTS"),
+            drawing: Table::blank("T_DRAWING"),
         }
     }
 
@@ -460,8 +482,8 @@ impl ExpTables {
     fn load_ports(dump: &[u8]) -> Result<Self, ExpError> {
         Self::pin(dump)?;
         Ok(Self {
-            piping_point: read_table(dump, "T_PIPINGPOINT")?,
-            signal_point: read_table(dump, "T_SIGNALPOINT")?,
+            piping_point: read_table_tolerant(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table_tolerant(dump, "T_SIGNALPOINT")?,
             ..Self::blank()
         })
     }
@@ -471,10 +493,10 @@ impl ExpTables {
         Ok(Self {
             connector: read_table_tolerant(dump, "T_CONNECTOR")?,
             representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
-            piping_point: read_table(dump, "T_PIPINGPOINT")?,
-            signal_point: read_table(dump, "T_SIGNALPOINT")?,
-            piperun: read_table(dump, "T_PIPERUN")?,
-            signalrun: read_table(dump, "T_SIGNALRUN")?,
+            piping_point: read_table_tolerant(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table_tolerant(dump, "T_SIGNALPOINT")?,
+            piperun: read_table_tolerant(dump, "T_PIPERUN")?,
+            signalrun: read_table_tolerant(dump, "T_SIGNALRUN")?,
             opc: read_table_tolerant(dump, "T_OPC")?,
             ..Self::blank()
         })
@@ -624,7 +646,8 @@ pub fn backup_uid_key(text: &str) -> String {
 /// # Errors
 ///
 /// Returns [`ExpError::Table`] when `T_DRAWING` lacks one of the columns
-/// [`ExpTables::drawings`] projects.
+/// [`ExpTables::drawings`] requires, or a column it projects holds a cell
+/// that was not read.
 pub fn drawing_in_dump(tables: &ExpTables, uid: &str) -> Result<bool, ExpError> {
     let key = backup_uid_key(uid);
     Ok(tables
@@ -707,8 +730,10 @@ pub fn plant_group_path(groups: &[PlantGroup], id: &str) -> String {
 /// # Errors
 ///
 /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
-/// the row format, and [`ExpError::Table`] when `T_DRAWING` is missing or
-/// lacks `SP_ID` / `NAME` / `PATH` / `DRAWINGNUMBER` / `SP_PLANTGROUPID`.
+/// the row format, and [`ExpError::Table`] when `T_DRAWING` is missing,
+/// lacks `SP_ID` / `NAME` / `PATH` / `DRAWINGNUMBER` / `SP_PLANTGROUPID`,
+/// or holds a cell that was not read in a column [`ExpTables::drawings`]
+/// projects.
 pub fn read_backup_drawings(dump: &[u8]) -> Result<Vec<BackupDrawing>, ExpError> {
     ExpTables::pin(dump)?;
     let drawing = read_table_tolerant(dump, "T_DRAWING")?;
@@ -721,21 +746,21 @@ fn project_drawings(drawing: &Table) -> Result<Vec<BackupDrawing>, ExpError> {
     let path = column_index(drawing, "PATH")?;
     let number = column_index(drawing, "DRAWINGNUMBER")?;
     let group = column_index(drawing, "SP_PLANTGROUPID")?;
-    let description = optional_column_index(drawing, "DESCRIPTION");
-    let title = optional_column_index(drawing, "TITLE");
-    let revision = optional_column_index(drawing, "REVISION");
-    let version = optional_column_index(drawing, "VERSION");
-    let document_type = optional_column_index(drawing, "DOCUMENTTYPE");
-    let document_category = optional_column_index(drawing, "DOCUMENTCATEGORY");
-    let item_status = optional_column_index(drawing, "ITEMSTATUS");
-    let template = optional_column_index(drawing, "TEMPLATE");
-    let design_phase = optional_column_index(drawing, "DESIGNPHASE");
-    let project_number = optional_column_index(drawing, "PROJECTNUMBER");
-    let date_created = optional_column_index(drawing, "DATECREATED");
-    let drawing_date = optional_column_index(drawing, "DRAWINGDATE");
-    let date_of_drawing = optional_column_index(drawing, "DATEOFDRAWING");
-    let last_publish_time = optional_column_index(drawing, "LASTPUBLISHTIME");
-    let last_archive_time = optional_column_index(drawing, "LASTARCHIVETIME");
+    let description = optional_column_index(drawing, "DESCRIPTION")?;
+    let title = optional_column_index(drawing, "TITLE")?;
+    let revision = optional_column_index(drawing, "REVISION")?;
+    let version = optional_column_index(drawing, "VERSION")?;
+    let document_type = optional_column_index(drawing, "DOCUMENTTYPE")?;
+    let document_category = optional_column_index(drawing, "DOCUMENTCATEGORY")?;
+    let item_status = optional_column_index(drawing, "ITEMSTATUS")?;
+    let template = optional_column_index(drawing, "TEMPLATE")?;
+    let design_phase = optional_column_index(drawing, "DESIGNPHASE")?;
+    let project_number = optional_column_index(drawing, "PROJECTNUMBER")?;
+    let date_created = optional_column_index(drawing, "DATECREATED")?;
+    let drawing_date = optional_column_index(drawing, "DRAWINGDATE")?;
+    let date_of_drawing = optional_column_index(drawing, "DATEOFDRAWING")?;
+    let last_publish_time = optional_column_index(drawing, "LASTPUBLISHTIME")?;
+    let last_archive_time = optional_column_index(drawing, "LASTARCHIVETIME")?;
     let mut drawings = Vec::with_capacity(drawing.rows.len());
     for row in &drawing.rows {
         let id = cell_text(row, id);
@@ -855,7 +880,8 @@ pub fn flow_spelling(code: i64) -> Option<&'static str> {
 ///
 /// Below 5000 the code is millimetres (`25` → `25 mm`). Above 5000,
 /// `(code - 5000) / 32` is inches (`5032` → `1 in`, `5024` → `0.75 in`,
-/// `5384` → `12 in`). A code that does not land on that grid is `None`.
+/// `5384` → `12 in`). A code that does not land on that grid, or is too
+/// large to scale onto it, is `None`.
 #[must_use]
 pub fn nominal_spelling(code: i64) -> Option<String> {
     if (1..5000).contains(&code) {
@@ -864,11 +890,11 @@ pub fn nominal_spelling(code: i64) -> Option<String> {
     if code <= 5000 {
         return None;
     }
-    let ticks = code - 5000;
-    if (ticks * 100) % 32 != 0 {
+    let scaled = (code - 5000).checked_mul(100)?;
+    if scaled % 32 != 0 {
         return None;
     }
-    let hundredths = ticks * 100 / 32;
+    let hundredths = scaled / 32;
     let whole = hundredths / 100;
     let fraction = hundredths % 100;
     let body = if fraction == 0 {
@@ -889,7 +915,8 @@ pub fn nominal_spelling(code: i64) -> Option<String> {
 ///
 /// # Errors
 ///
-/// Returns [`ExpError::Table`] when a followed table lacks a join column.
+/// Returns [`ExpError::Table`] when a followed table lacks a join column
+/// or holds a cell that was not read in a followed one.
 pub fn attach_dump_only_components(
     drawing: &mut PidPublishDrawing,
     tables: &ExpTables,
@@ -1005,7 +1032,8 @@ fn signal_port(point: &SignalPoint) -> PidPort {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Char,
-    /// Character form other than AL16UTF16. The payload is skipped.
+    /// A character column that is not AL16UTF16 national text. The payload
+    /// is skipped, and [`column_index`] refuses the column.
     Bytes,
     Num,
     /// Oracle `DATE` (type code 12). The payload is skipped.
@@ -1016,6 +1044,10 @@ struct Column {
     name: String,
     kind: Kind,
     maxlen: u16,
+    /// The first row whose cell in this column was kept unread
+    /// ([`Field::Unscaled`]). [`optional_column_index`] refuses a column
+    /// that has one.
+    unread_row: Option<usize>,
 }
 
 enum Field {
@@ -1024,18 +1056,22 @@ enum Field {
     Text(String),
     /// An Oracle `DATE` cell decoded to `YYYY/MM/DD HH:MM:SS`.
     Date(String),
-    /// A `NUMBER` that is not an integer, or a skipped byte string.
+    /// A cell kept unread: a `NUMBER` that is not an integer `i64` holds, a
+    /// `DATE` that does not decode, or a skipped byte string.
     Unscaled,
 }
 
 struct Table {
+    /// The `INSERT INTO` name, for error messages.
+    name: String,
     columns: Vec<Column>,
     rows: Vec<Vec<Field>>,
 }
 
 impl Table {
-    fn blank() -> Self {
+    fn blank(name: &str) -> Self {
         Self {
+            name: name.to_string(),
             columns: Vec::new(),
             rows: Vec::new(),
         }
@@ -1052,6 +1088,14 @@ fn applications_pinned(table: &Table) -> bool {
 }
 
 fn project_piping(table: &Table) -> Result<Vec<PipingPoint>, ExpError> {
+    for followed in [
+        "SP_PLANTITEMID",
+        "PIPINGPOINTNUMBER",
+        "FLOWDIRECTION",
+        "NOMINALDIAMETER",
+    ] {
+        column_index(table, followed)?;
+    }
     let mut points = Vec::with_capacity(table.rows.len());
     for (index, row) in table.rows.iter().enumerate() {
         let plant_item_id = required_text("T_PIPINGPOINT", table, row, "SP_PLANTITEMID", index)?;
@@ -1067,6 +1111,9 @@ fn project_piping(table: &Table) -> Result<Vec<PipingPoint>, ExpError> {
 }
 
 fn project_signal(table: &Table) -> Result<Vec<SignalPoint>, ExpError> {
+    for followed in ["SP_PLANTITEMID", "SIGNALPOINTNUMBER"] {
+        column_index(table, followed)?;
+    }
     let mut points = Vec::with_capacity(table.rows.len());
     for (index, row) in table.rows.iter().enumerate() {
         points.push(SignalPoint {
@@ -1170,7 +1217,11 @@ fn read_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
     loop {
         let peek = read_u16(dump, pos).map_err(fail)?;
         if peek == 0xFFFF {
-            return Ok(Table { columns, rows });
+            return Ok(Table {
+                name: name.to_string(),
+                columns,
+                rows,
+            });
         }
         let mut row = Vec::with_capacity(columns.len());
         for column in &columns {
@@ -1194,8 +1245,11 @@ fn read_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
 fn column_names(line: &str) -> Result<Vec<String>, String> {
     let open = line.find('(').ok_or("INSERT has no column list")?;
     let close = line.find(") VALUES").ok_or("INSERT has no VALUES")?;
+    let list = line
+        .get(open + 1..close)
+        .ok_or("INSERT column list does not come before VALUES")?;
     let mut names = Vec::new();
-    for piece in line[open + 1..close].split(',') {
+    for piece in list.split(',') {
         let name = piece.trim().trim_matches('"');
         if name.is_empty() {
             return Err("empty column name".to_string());
@@ -1248,6 +1302,7 @@ fn parse_header(
             name: name.clone(),
             kind,
             maxlen,
+            unread_row: None,
         });
     }
     if dump.get(pos..pos + 4) != Some(&[0, 0, 0, 0]) {
@@ -1391,7 +1446,10 @@ impl ExpTables {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    /// Returns [`ExpError::Table`] when a followed table is missing a
+    /// column or holds a cell that was not read in one, and when a point
+    /// table does not project: the ends are looked up among the rows
+    /// [`Self::port_tables`] reads, on its terms.
     pub fn connectivity_ends(&self, drawing_uid: &str) -> Result<Vec<ConnectivityEnd>, ExpError> {
         let drawing_uid = norm_uid(drawing_uid);
         let connector = &self.connector;
@@ -1418,8 +1476,17 @@ impl ExpTables {
                 ),
             );
         }
-        let pipe_pts = point_keys(piping, "SP_PLANTITEMID", "PIPINGPOINTNUMBER")?;
-        let sig_pts = point_keys(signal, "SP_PLANTITEMID", "SIGNALPOINTNUMBER")?;
+        // The port stage's own projection of the two point tables: a row it
+        // refuses is refused here in the same words, and a connector end is
+        // looked up among exactly the points that stage publishes.
+        let pipe_pts: HashSet<(String, i64)> = project_piping(piping)?
+            .into_iter()
+            .map(|point| (norm_uid(&point.plant_item_id), point.number))
+            .collect();
+        let sig_pts: HashSet<(String, i64)> = project_signal(signal)?
+            .into_iter()
+            .map(|point| (norm_uid(&point.plant_item_id), point.number))
+            .collect();
         let run_ids = id_set(runs, "SP_ID")?;
         let srun_ids = id_set(signal_runs, "SP_ID")?;
         let mut opc_pair = HashMap::<String, Option<String>>::new();
@@ -1540,7 +1607,8 @@ impl ExpTables {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    /// Returns [`ExpError::Table`] when a followed table is missing a
+    /// column or holds a cell that was not read in one.
     pub fn composition_relations(&self) -> Result<Vec<ExpRelation>, ExpError> {
         let nozzles = &self.nozzle;
         let notes = &self.note;
@@ -1617,7 +1685,8 @@ impl ExpTables {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    /// Returns [`ExpError::Table`] when a followed table is missing a
+    /// column or holds a cell that was not read in one.
     pub fn opc_points(&self, drawing_uid: &str) -> Result<Vec<PidOpcPoint>, ExpError> {
         let drawing_uid = norm_uid(drawing_uid);
         let opc = &self.opc;
@@ -1765,26 +1834,6 @@ fn symbol_uids(index: &EndIndex<'_>, rep_id: &str, object_index: Option<i64>) ->
     uids
 }
 
-fn point_keys(
-    table: &Table,
-    parent_name: &str,
-    number_name: &str,
-) -> Result<HashSet<(String, i64)>, ExpError> {
-    let parent = column_index(table, parent_name)?;
-    let number = column_index(table, number_name)?;
-    let mut keys = HashSet::new();
-    for row in &table.rows {
-        let Some(parent_id) = text_of(row, parent) else {
-            continue;
-        };
-        let Some(point) = int_of(row, number) else {
-            continue;
-        };
-        keys.insert((norm_uid(parent_id), point));
-    }
-    Ok(keys)
-}
-
 fn id_set(table: &Table, name: &str) -> Result<HashSet<String>, ExpError> {
     let index = column_index(table, name)?;
     let mut ids = HashSet::new();
@@ -1796,18 +1845,44 @@ fn id_set(table: &Table, name: &str) -> Result<HashSet<String>, ExpError> {
     Ok(ids)
 }
 
+/// The index of a column a projection requires: [`optional_column_index`],
+/// with a table that lacks the column refused as well.
 fn column_index(table: &Table, name: &str) -> Result<usize, ExpError> {
-    table
-        .columns
-        .iter()
-        .position(|column| column.name == name)
-        .ok_or_else(|| table_error("exp", format!("column {name} is missing")))
+    optional_column_index(table, name)?
+        .ok_or_else(|| table_error(&table.name, format!("column {name} is missing")))
 }
 
-/// `None` when `name` is not a column of `table` — the marker for
-/// optional projections that must not fail `ExpTables::drawings`.
-fn optional_column_index(table: &Table, name: &str) -> Option<usize> {
-    table.columns.iter().position(|column| column.name == name)
+/// The index of a column a projection follows when the dump has it: `None`
+/// when `name` is not a column of `table`.
+///
+/// A column that is there is refused unless every cell of it was read. Its
+/// header may declare text that is not AL16UTF16 ([`Kind::Bytes`]), or a
+/// row may hold a `NUMBER` that is not an integer or a `DATE` that does not
+/// decode ([`Field::Unscaled`]). The cell accessors read such a cell as an
+/// empty one, so a projection that took the column anyway would publish a
+/// drawing with part of the dump silently missing. Every projection takes
+/// its columns through here or through [`column_index`].
+fn optional_column_index(table: &Table, name: &str) -> Result<Option<usize>, ExpError> {
+    let Some(index) = table.columns.iter().position(|column| column.name == name) else {
+        return Ok(None);
+    };
+    let column = &table.columns[index];
+    if column.kind == Kind::Bytes {
+        return Err(table_error(
+            &table.name,
+            format!("column {name} is not AL16UTF16 text; its cells were not read"),
+        ));
+    }
+    if let Some(row) = column.unread_row {
+        let detail = match column.kind {
+            Kind::Date => format!("row {row} {name} is a DATE that does not decode"),
+            Kind::Char | Kind::Bytes | Kind::Num => {
+                format!("row {row} {name} is not an integer or NULL")
+            }
+        };
+        return Err(table_error(&table.name, detail));
+    }
+    Ok(Some(index))
 }
 
 /// [`cell_text`] for an [`optional_column_index`]. Absent columns read
@@ -1817,7 +1892,8 @@ fn optional_cell_text(row: &[Field], index: Option<usize>) -> String {
 }
 
 /// Integer cell for an [`optional_column_index`]. `None` when the
-/// column is absent, the cell is NULL, or the cell is not an integer.
+/// column is absent, the cell is NULL, or the column is not a number
+/// column.
 fn optional_cell_int(row: &[Field], index: Option<usize>) -> Option<i64> {
     match index.and_then(|index| row.get(index)) {
         Some(Field::Int(value)) => Some(*value),
@@ -1865,7 +1941,7 @@ fn lesser_id(model: &str, paired: &str) -> String {
 fn read_optional_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
     let marker = format!("INSERT INTO \"{name}\"");
     if find_slice(dump, marker.as_bytes()).is_none() {
-        return Ok(Table::blank());
+        return Ok(Table::blank(name));
     }
     read_table_tolerant(dump, name)
 }
@@ -1886,18 +1962,25 @@ fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
     let line = std::str::from_utf8(&dump[at..line_end])
         .map_err(|_| fail("INSERT line is not ASCII".to_string()))?;
     let names = column_names(line).map_err(fail)?;
-    let (columns, mut pos) = parse_header_tolerant(dump, line_end + 1, &names).map_err(fail)?;
+    let (mut columns, mut pos) = parse_header_tolerant(dump, line_end + 1, &names).map_err(fail)?;
     let mut rows = Vec::new();
     loop {
         let peek = read_u16(dump, pos).map_err(fail)?;
         if peek == 0xFFFF {
-            return Ok(Table { columns, rows });
+            return Ok(Table {
+                name: name.to_string(),
+                columns,
+                rows,
+            });
         }
         let mut row = Vec::with_capacity(columns.len());
-        for column in &columns {
+        for column in &mut columns {
             let (field, next) = read_field_tolerant(dump, pos, column)
                 .map_err(|detail| fail(format!("row {} {detail}", rows.len())))?;
             pos = next;
+            if matches!(field, Field::Unscaled) && column.unread_row.is_none() {
+                column.unread_row = Some(rows.len());
+            }
             row.push(field);
         }
         if dump.get(pos..pos + 2) != Some(&[0, 0]) {
@@ -1933,11 +2016,11 @@ fn parse_header_tolerant(
             1 => {
                 let maxlen = read_u16(dump, pos)?;
                 pos += 2;
-                let _charset = read_u16(dump, pos)?;
+                let charset = read_u16(dump, pos)?;
                 pos += 2;
                 let form = read_u16(dump, pos)?;
                 pos += 2;
-                if form == CHARSET_FORM {
+                if charset == CHARSET_AL16UTF16 && form == CHARSET_FORM {
                     (Kind::Char, maxlen)
                 } else {
                     (Kind::Bytes, maxlen)
@@ -1959,6 +2042,7 @@ fn parse_header_tolerant(
             name: name.clone(),
             kind,
             maxlen,
+            unread_row: None,
         });
     }
     if dump.get(pos..pos + 4) != Some(&[0, 0, 0, 0]) {
@@ -2039,6 +2123,20 @@ mod tests {
             Some("@{23F9414C-B87D-11D6-80D4-00A0C92487AF}")
         );
         assert_eq!(flow_spelling(9), None);
+    }
+
+    // A `NUMBER` cell can hold any integer `i64` does, and the inch grid
+    // multiplies the code before it divides.
+    #[test]
+    fn a_nominal_diameter_code_at_the_far_end_of_i64_is_not_spelled() {
+        assert_eq!(nominal_spelling(i64::MAX), None);
+        assert_eq!(nominal_spelling(1_000_000_000_000_000_000), None);
+        assert_eq!(nominal_spelling(i64::MIN), None);
+        // A large code whose product still fits is spelled like any other.
+        assert_eq!(
+            nominal_spelling(5000 + 32 * 1_000_000).as_deref(),
+            Some("1000000 in")
+        );
     }
 
     #[test]
@@ -2158,10 +2256,21 @@ mod tests {
         let mut out = format!("INSERT INTO \"{name}\" ({listed}) VALUES\n").into_bytes();
         out.extend(u16::try_from(columns.len()).unwrap().to_le_bytes());
         for column in columns {
-            out.extend(column.kind.to_le_bytes());
+            let kind = if column.kind == DB_CHAR || column.kind == NATIONAL_UTF8 {
+                1
+            } else {
+                column.kind
+            };
+            out.extend(kind.to_le_bytes());
             out.extend(4000u16.to_le_bytes());
             if column.kind == 1 {
                 out.extend(CHARSET_AL16UTF16.to_le_bytes());
+                out.extend(CHARSET_FORM.to_le_bytes());
+            } else if column.kind == DB_CHAR {
+                out.extend(852u16.to_le_bytes());
+                out.extend(1u16.to_le_bytes());
+            } else if column.kind == NATIONAL_UTF8 {
+                out.extend(871u16.to_le_bytes());
                 out.extend(CHARSET_FORM.to_le_bytes());
             }
         }
@@ -2186,8 +2295,800 @@ mod tests {
         Col { name, kind: 12 }
     }
 
+    /// Header kind the fixture writes as a character column in the database
+    /// character set (charset 852, form 1) instead of AL16UTF16.
+    const DB_CHAR: u16 = 0x0101;
+
+    fn ch_db(name: &'static str) -> Col {
+        Col {
+            name,
+            kind: DB_CHAR,
+        }
+    }
+
+    /// Header kind the fixture writes as a national character column whose
+    /// character set is UTF8 (charset 871, form 2): the form AL16UTF16 text
+    /// carries, under another charset id.
+    const NATIONAL_UTF8: u16 = 0x0201;
+
+    fn ch_national_utf8(name: &'static str) -> Col {
+        Col {
+            name,
+            kind: NATIONAL_UTF8,
+        }
+    }
+
     fn one() -> Vec<u8> {
         vec![0xc1, 0x02]
+    }
+
+    fn pinned() -> Vec<u8> {
+        table(
+            "APPLICATIONS",
+            &[num("ID"), ch("NAME"), ch("SHORTNAME")],
+            &[row(&[
+                Some(one()),
+                Some(utf16("SmartPlant PID")),
+                Some(utf16("SPPID")),
+            ])],
+        )
+    }
+
+    #[test]
+    fn a_column_list_after_values_is_refused_not_a_panic() {
+        assert!(column_names("INSERT INTO \"T_X\" ) VALUES (").is_err());
+        assert!(ExpTables::read(b"INSERT INTO \"APPLICATIONS\" ) VALUES (\n").is_err());
+    }
+
+    /// The tables [`ExpTables::read`] requires beyond the ones a test
+    /// states itself, all empty.
+    fn other_tables(stated: &[&str]) -> Vec<u8> {
+        let mut dump = Vec::new();
+        let empty: [(&str, &[Col]); 10] = [
+            (
+                "T_PIPINGPOINT",
+                &[
+                    ch("SP_PLANTITEMID"),
+                    num("PIPINGPOINTNUMBER"),
+                    num("FLOWDIRECTION"),
+                    num("NOMINALDIAMETER"),
+                ],
+            ),
+            (
+                "T_SIGNALPOINT",
+                &[ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")],
+            ),
+            ("T_CONNECTOR", &[ch("SP_ID")]),
+            ("T_REPRESENTATION", &[ch("SP_ID")]),
+            ("T_SIGNALRUN", &[ch("SP_ID")]),
+            ("T_OPC", &[ch("SP_ID")]),
+            ("T_NOZZLE", &[ch("SP_ID")]),
+            ("T_NOTE", &[ch("SP_ID")]),
+            ("T_ITEMNOTE", &[ch("SP_ID")]),
+            ("T_MODELITEM", &[ch("SP_ID")]),
+        ];
+        for (name, columns) in empty {
+            if !stated.contains(&name) {
+                dump.extend(table(name, columns, &[]));
+            }
+        }
+        dump.extend(table(
+            "CODELISTS",
+            &[
+                num("CODELIST_NUMBER"),
+                num("CODELIST_INDEX"),
+                ch("CODELIST_SHORT_TEXT"),
+            ],
+            &[],
+        ));
+        dump.extend(table(
+            "T_DRAWING",
+            &[
+                ch("SP_ID"),
+                ch("NAME"),
+                ch("PATH"),
+                ch("DRAWINGNUMBER"),
+                ch("SP_PLANTGROUPID"),
+            ],
+            &[],
+        ));
+        dump
+    }
+
+    /// The seven `T_PIPERUN` columns [`ExpTables::pipe_runs`] follows.
+    fn pipe_run_columns() -> Vec<Col> {
+        vec![
+            ch("SP_ID"),
+            num("NOMINALDIAMETER"),
+            num("OPERFLUIDCODE"),
+            ch("PIPINGMATERIALSCLASS"),
+            ch("TAGSEQUENCENO"),
+            num("FLUIDSYSTEM"),
+            ch("INSULATIONSPEC"),
+        ]
+    }
+
+    // DWG-0202GP06-01_p's first pipe run is insulated 50 mm, which its
+    // `SP_INSULTHICKSI` states as 0.05; a plant also writes dates and
+    // database-charset text into the table's other columns. None of those
+    // is a column a stage follows, so the run reads.
+    #[test]
+    fn a_pipe_run_reads_past_the_columns_no_stage_follows() {
+        let mut columns = pipe_run_columns();
+        columns.extend([
+            num("SP_INSULTHICKSI"),
+            date("DATECREATED"),
+            ch_db("REMARKS"),
+        ]);
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &columns,
+            &[row(&[
+                Some(utf16("RUN1")),
+                Some(vec![0xc2, 0x02]),
+                None,
+                Some(utf16("B5")),
+                Some(utf16("0101")),
+                None,
+                None,
+                // 0.05: one base-100 digit, 5, at exponent -1.
+                Some(vec![0xc0, 0x06]),
+                Some(vec![120, 126, 4, 25, 20, 12, 1]),
+                Some(b"x".to_vec()),
+            ])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let runs = tables.pipe_runs().expect("the followed columns read");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, "RUN1");
+        assert_eq!(runs[0].nominal_diameter, Some(100));
+        assert_eq!(runs[0].materials_class, "B5");
+        assert_eq!(runs[0].tag_sequence, "0101");
+    }
+
+    #[test]
+    fn a_fraction_in_a_followed_column_is_refused_with_its_table() {
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &pipe_run_columns(),
+            &[row(&[
+                Some(utf16("RUN1")),
+                Some(vec![0xc0, 0x1f]),
+                None,
+                None,
+                Some(utf16("0101")),
+                None,
+                None,
+            ])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let error = tables.pipe_runs().unwrap_err().to_string();
+        assert!(error.contains("T_PIPERUN"), "{error}");
+        assert!(error.contains("NOMINALDIAMETER"), "{error}");
+    }
+
+    #[test]
+    fn a_followed_column_left_unread_is_refused_with_its_table() {
+        let mut columns = pipe_run_columns();
+        columns[4] = ch_db("TAGSEQUENCENO");
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &columns,
+            &[row(&[
+                Some(utf16("RUN1")),
+                None,
+                None,
+                None,
+                Some(b"0101".to_vec()),
+                None,
+                None,
+            ])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let error = tables.pipe_runs().unwrap_err().to_string();
+        assert!(error.contains("T_PIPERUN"), "{error}");
+        assert!(error.contains("TAGSEQUENCENO"), "{error}");
+        assert!(error.contains("not AL16UTF16"), "{error}");
+
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPINGPOINT",
+            &[
+                ch_db("SP_PLANTITEMID"),
+                num("PIPINGPOINTNUMBER"),
+                num("FLOWDIRECTION"),
+                num("NOMINALDIAMETER"),
+            ],
+            &[row(&[Some(b"AB".to_vec()), Some(one()), None, None])],
+        ));
+        dump.extend(table(
+            "T_SIGNALPOINT",
+            &[ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")],
+            &[],
+        ));
+        let error = read_port_tables(&dump).unwrap_err().to_string();
+        assert!(error.contains("T_PIPINGPOINT"), "{error}");
+        assert!(error.contains("SP_PLANTITEMID"), "{error}");
+        assert!(error.contains("not AL16UTF16"), "{error}");
+    }
+
+    // The header's form says national text; only charset id 2000 says
+    // UTF-16. A database whose national character set is UTF8 writes form 2
+    // under id 871, and its bytes read as UTF-16 would publish a tag
+    // sequence nobody wrote.
+    #[test]
+    fn national_text_in_another_charset_is_kept_unread() {
+        let mut columns = pipe_run_columns();
+        columns[4] = ch_national_utf8("TAGSEQUENCENO");
+        let mut dump = pinned();
+        dump.extend(table(
+            "T_PIPERUN",
+            &columns,
+            &[row(&[
+                Some(utf16("RUN1")),
+                None,
+                None,
+                None,
+                Some(b"0101".to_vec()),
+                None,
+                None,
+            ])],
+        ));
+        dump.extend(other_tables(&[]));
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let error = tables.pipe_runs().unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "T_PIPERUN: column TAGSEQUENCENO is not AL16UTF16 text; its cells were not read"
+        );
+    }
+
+    // A port table answers for its columns before any row is read: a table
+    // with no rows still has to carry them, and a column that was not read
+    // is reported as that, not as a row whose cell is empty.
+    #[test]
+    fn a_port_table_answers_for_its_columns_before_its_rows() {
+        let ports = |piping: Vec<u8>, signal: Vec<u8>| {
+            let mut dump = pinned();
+            dump.extend(piping);
+            dump.extend(signal);
+            read_port_tables(&dump)
+                .map(|tables| (tables.piping_points.len(), tables.signal_points.len()))
+        };
+        let piping_columns = [
+            ch("SP_PLANTITEMID"),
+            num("PIPINGPOINTNUMBER"),
+            num("FLOWDIRECTION"),
+            num("NOMINALDIAMETER"),
+        ];
+        let signal_columns = [ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")];
+        let no_piping = || table("T_PIPINGPOINT", &piping_columns, &[]);
+        let no_signal = || table("T_SIGNALPOINT", &signal_columns, &[]);
+        assert_eq!(
+            ports(no_piping(), no_signal()).expect("two empty tables"),
+            (0, 0)
+        );
+
+        let refused = |piping: Vec<u8>, signal: Vec<u8>| {
+            ports(piping, signal)
+                .expect_err("the port tables were accepted")
+                .to_string()
+        };
+        for (missing, column) in piping_columns.iter().enumerate() {
+            let mut short = piping_columns.to_vec();
+            short.remove(missing);
+            assert_eq!(
+                refused(table("T_PIPINGPOINT", &short, &[]), no_signal()),
+                format!("T_PIPINGPOINT: column {} is missing", column.name)
+            );
+        }
+        for (missing, column) in signal_columns.iter().enumerate() {
+            let mut short = signal_columns.to_vec();
+            short.remove(missing);
+            assert_eq!(
+                refused(no_piping(), table("T_SIGNALPOINT", &short, &[])),
+                format!("T_SIGNALPOINT: column {} is missing", column.name)
+            );
+        }
+
+        let mut unread = piping_columns;
+        unread[0] = ch_db("SP_PLANTITEMID");
+        assert_eq!(
+            refused(
+                table(
+                    "T_PIPINGPOINT",
+                    &unread,
+                    &[row(&[Some(b"AB".to_vec()), Some(one()), None, None])]
+                ),
+                no_signal()
+            ),
+            "T_PIPINGPOINT: column SP_PLANTITEMID is not AL16UTF16 text; its cells were not read"
+        );
+        let mut unread = signal_columns;
+        unread[0] = ch_db("SP_PLANTITEMID");
+        assert_eq!(
+            refused(
+                no_piping(),
+                table(
+                    "T_SIGNALPOINT",
+                    &unread,
+                    &[row(&[Some(b"AB".to_vec()), Some(one())])]
+                )
+            ),
+            "T_SIGNALPOINT: column SP_PLANTITEMID is not AL16UTF16 text; its cells were not read"
+        );
+    }
+
+    /// One table of [`followed_fixture`]: its name, its columns and its rows.
+    type FixtureTable = (&'static str, Vec<Col>, Vec<Vec<Option<Vec<u8>>>>);
+
+    /// Every table a projection follows, each with exactly the columns
+    /// followed and rows every projection accepts: on drawing `D`,
+    /// equipment `E` whose piping point 1 starts connector `C` of run `R`,
+    /// which ends on off-page connector `O1`; a nozzle, a note and a piping
+    /// component `P` only the dump places.
+    fn followed_fixture() -> Vec<FixtureTable> {
+        let text = |value: &str| Some(utf16(value));
+        let two = || Some(vec![0xc1, 0x03]);
+        let a_date = || Some(vec![120, 126, 4, 25, 20, 12, 1]);
+        vec![
+            (
+                "T_PIPINGPOINT",
+                vec![
+                    ch("SP_PLANTITEMID"),
+                    num("PIPINGPOINTNUMBER"),
+                    num("FLOWDIRECTION"),
+                    num("NOMINALDIAMETER"),
+                ],
+                vec![row(&[
+                    text("E"),
+                    Some(one()),
+                    two(),
+                    Some(vec![0xc2, 0x02]),
+                ])],
+            ),
+            (
+                "T_SIGNALPOINT",
+                vec![ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")],
+                vec![row(&[text("E"), two()])],
+            ),
+            (
+                "T_CONNECTOR",
+                vec![
+                    ch("SP_ID"),
+                    ch("SP_CONNECTITEM1ID"),
+                    ch("SP_CONNECTITEM2ID"),
+                    num("STARTOBJECT"),
+                    num("ENDOBJECT"),
+                ],
+                vec![row(&[
+                    text("C"),
+                    text("RE"),
+                    text("RO"),
+                    Some(one()),
+                    Some(one()),
+                ])],
+            ),
+            (
+                "T_REPRESENTATION",
+                vec![
+                    ch("SP_ID"),
+                    ch("SP_MODELITEMID"),
+                    ch("SP_DRAWINGID"),
+                    num("REPRESENTATIONTYPE"),
+                    num("GRAPHICOID"),
+                ],
+                vec![
+                    row(&[text("C"), text("R"), text("D"), two(), Some(one())]),
+                    row(&[text("RE"), text("E"), text("D"), two(), two()]),
+                    row(&[
+                        text("RO"),
+                        text("O1"),
+                        text("D"),
+                        two(),
+                        Some(vec![0xc1, 0x04]),
+                    ]),
+                    // Representation type 13 is a piping component.
+                    row(&[
+                        text("RP"),
+                        text("P"),
+                        text("D"),
+                        Some(vec![0xc1, 0x0e]),
+                        Some(vec![0xc1, 0x06]),
+                    ]),
+                ],
+            ),
+            (
+                "T_PIPERUN",
+                pipe_run_columns(),
+                vec![row(&[
+                    text("R"),
+                    Some(vec![0xc2, 0x02]),
+                    Some(one()),
+                    text("B5"),
+                    text("0101"),
+                    Some(one()),
+                    text("P40"),
+                ])],
+            ),
+            ("T_SIGNALRUN", vec![ch("SP_ID")], vec![row(&[text("S")])]),
+            (
+                "T_OPC",
+                vec![
+                    ch("SP_ID"),
+                    ch("SP_PAIREDWITHID"),
+                    ch("OPCTAG"),
+                    ch("TOFROMTEXT"),
+                ],
+                vec![row(&[text("O1"), text("O0"), text("565"), text("to G")])],
+            ),
+            (
+                "T_NOZZLE",
+                vec![ch("SP_ID"), ch("SP_EQUIPMENTID")],
+                vec![row(&[text("N"), text("E")])],
+            ),
+            (
+                "T_NOTE",
+                vec![ch("SP_ITEMNOTEID"), ch("SP_MODELITEMID")],
+                vec![row(&[text("T"), text("E")])],
+            ),
+            ("T_ITEMNOTE", vec![ch("SP_ID")], vec![row(&[text("T")])]),
+            (
+                "T_MODELITEM",
+                vec![ch("SP_ID"), ch("DESCRIPTION"), ch("ITEMTYPENAME")],
+                vec![
+                    row(&[text("P"), text("a valve"), text("PipingComp")]),
+                    row(&[text("O1"), text("to G"), text("OPC")]),
+                ],
+            ),
+            (
+                "T_PLANTITEM",
+                vec![ch("SP_ID"), ch("ITEMTAG")],
+                vec![row(&[text("R"), text("OD-50")])],
+            ),
+            (
+                "T_INLINECOMP",
+                vec![ch("SP_ID"), num("NOMINALDIAMETER")],
+                vec![row(&[text("P"), Some(vec![0xc1, 0x1a])])],
+            ),
+            (
+                "CODELISTS",
+                vec![
+                    num("CODELIST_NUMBER"),
+                    num("CODELIST_INDEX"),
+                    ch("CODELIST_SHORT_TEXT"),
+                ],
+                vec![row(&[Some(vec![0xc1, 0x14]), Some(one()), text("OD")])],
+            ),
+            (
+                "T_DRAWING",
+                vec![
+                    ch("SP_ID"),
+                    ch("NAME"),
+                    ch("PATH"),
+                    ch("DRAWINGNUMBER"),
+                    ch("SP_PLANTGROUPID"),
+                    ch("DESCRIPTION"),
+                    ch("TITLE"),
+                    ch("REVISION"),
+                    ch("VERSION"),
+                    num("DOCUMENTTYPE"),
+                    num("DOCUMENTCATEGORY"),
+                    num("ITEMSTATUS"),
+                    ch("TEMPLATE"),
+                    ch("DESIGNPHASE"),
+                    ch("PROJECTNUMBER"),
+                    date("DATECREATED"),
+                    date("DRAWINGDATE"),
+                    ch("DATEOFDRAWING"),
+                    date("LASTPUBLISHTIME"),
+                    date("LASTARCHIVETIME"),
+                ],
+                vec![row(&[
+                    text("D"),
+                    text("One"),
+                    text("\\00\\One.pid"),
+                    text("D-1"),
+                    text("G"),
+                    text("a drawing"),
+                    text("a title"),
+                    text("A"),
+                    text("1"),
+                    Some(one()),
+                    Some(one()),
+                    Some(one()),
+                    text("A1.pid"),
+                    text("FEED"),
+                    text("P-1"),
+                    a_date(),
+                    a_date(),
+                    text("2026"),
+                    a_date(),
+                    a_date(),
+                ])],
+            ),
+            (
+                "T_PLANTGROUP",
+                vec![ch("SP_ID"), ch("NAME"), ch("PARENTID")],
+                vec![row(&[text("G"), text("Plant"), text("-1")])],
+            ),
+        ]
+    }
+
+    /// The fifteen `T_DRAWING` columns [`followed_fixture`] carries beyond
+    /// the five the package index joins on.
+    const DRAWING_DISPLAY_COLUMNS: [&str; 15] = [
+        "DESCRIPTION",
+        "TITLE",
+        "REVISION",
+        "VERSION",
+        "DOCUMENTTYPE",
+        "DOCUMENTCATEGORY",
+        "ITEMSTATUS",
+        "TEMPLATE",
+        "DESIGNPHASE",
+        "PROJECTNUMBER",
+        "DATECREATED",
+        "DRAWINGDATE",
+        "DATEOFDRAWING",
+        "LASTPUBLISHTIME",
+        "LASTARCHIVETIME",
+    ];
+
+    /// The pinned `APPLICATIONS` table followed by `tables`.
+    fn dump_of(tables: &[FixtureTable]) -> Vec<u8> {
+        let mut dump = pinned();
+        for (name, columns, rows) in tables {
+            dump.extend(table(name, columns, rows));
+        }
+        dump
+    }
+
+    /// [`followed_fixture`] without one of its tables (`columns` is `None`)
+    /// or without some columns of it.
+    fn fixture_without(table_name: &str, columns: Option<&[&str]>) -> Vec<u8> {
+        let mut tables = followed_fixture();
+        let at = tables
+            .iter()
+            .position(|(name, _, _)| *name == table_name)
+            .expect("a fixture table");
+        match columns {
+            None => {
+                tables.remove(at);
+            }
+            Some(names) => {
+                let (_, stated, rows) = &mut tables[at];
+                for name in names {
+                    let index = stated
+                        .iter()
+                        .position(|column| column.name == *name)
+                        .expect("a fixture column");
+                    stated.remove(index);
+                    for row in rows.iter_mut() {
+                        row.remove(index);
+                    }
+                }
+            }
+        }
+        dump_of(&tables)
+    }
+
+    /// Every projection of a dump, stopping at the first that refuses it.
+    fn every_projection(dump: &[u8]) -> Result<(), ExpError> {
+        let tables = ExpTables::read(dump)?;
+        tables.port_tables()?;
+        tables.pipe_runs()?;
+        tables.codelist_short_text(19)?;
+        tables.connectivity_ends("D")?;
+        tables.composition_relations()?;
+        tables.opc_points("D")?;
+        tables.drawings()?;
+        tables.dump_only_piping_components("D", &HashSet::new())?;
+        read_plant_groups(dump)?;
+        Ok(())
+    }
+
+    // Every projection reads something out of the fixture, so each of its
+    // columns is one some projection follows.
+    #[test]
+    fn the_followed_fixture_projects_through_every_stage() {
+        let dump = dump_of(&followed_fixture());
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let ports = tables.port_tables().expect("ports");
+        assert_eq!(
+            (ports.piping_points.len(), ports.signal_points.len()),
+            (1, 1)
+        );
+        let runs = tables.pipe_runs().expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].item_tag.as_deref(), Some("OD-50"));
+        assert_eq!(runs[0].insulation_spec, "P40");
+        assert_eq!(tables.codelist_short_text(19).expect("codes")[&1], "OD");
+        let ends = tables.connectivity_ends("D").expect("ends");
+        assert_eq!(
+            ends.iter()
+                .map(|end| end.symbol_uid.as_str())
+                .collect::<Vec<_>>(),
+            ["E.1", "O0"]
+        );
+        assert_eq!(tables.composition_relations().expect("rels").len(), 2);
+        let opc = tables.opc_points("D").expect("off-page");
+        assert_eq!(opc.len(), 1);
+        assert_eq!(opc[0].to_from_text, "to G");
+        let drawings = tables.drawings().expect("drawings");
+        assert_eq!(drawings[0].template, "A1.pid");
+        assert_eq!(drawings[0].document_type, Some(1));
+        assert_eq!(drawings[0].last_archive_time, "2026/04/25 19:11:00");
+        let components = tables
+            .dump_only_piping_components("D", &HashSet::new())
+            .expect("components");
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].0.attributes[0].value, "25 mm");
+        assert_eq!(read_plant_groups(&dump).expect("groups").len(), 1);
+    }
+
+    // Each followed column in turn is made one the reader keeps unread: a
+    // character column becomes database-charset text, a number column holds
+    // a fraction, a date column a cell that is not a date. Whichever
+    // projection follows the column says which table and column it could
+    // not read, and why. A projection that read the column as empty cells
+    // instead would leave every projection accepting the dump.
+    #[test]
+    fn every_followed_column_is_refused_when_its_cells_were_not_read() {
+        let fixture = followed_fixture();
+        every_projection(&dump_of(&fixture)).expect("the fixture as stated projects");
+        let mut columns_tried = 0;
+        let mut not_refused = Vec::new();
+        for (table_index, (table_name, columns, _)) in fixture.iter().enumerate() {
+            for (column_index, column) in columns.iter().enumerate() {
+                let mut damaged = followed_fixture();
+                let (_, damaged_columns, damaged_rows) = &mut damaged[table_index];
+                let reason = match column.kind {
+                    1 => {
+                        damaged_columns[column_index] = ch_db(column.name);
+                        damaged_rows[0][column_index] = Some(b"x".to_vec());
+                        "is not AL16UTF16 text"
+                    }
+                    2 => {
+                        // 0.3: one base-100 digit, 30, at exponent -1.
+                        damaged_rows[0][column_index] = Some(vec![0xc0, 0x1f]);
+                        "is not an integer"
+                    }
+                    _ => {
+                        damaged_rows[0][column_index] = Some(vec![1, 2, 3]);
+                        "is a DATE that does not decode"
+                    }
+                };
+                columns_tried += 1;
+                let what = format!("{table_name}.{}", column.name);
+                match every_projection(&dump_of(&damaged)) {
+                    Ok(()) => not_refused.push(format!("{what}: every projection accepted it")),
+                    Err(error) => {
+                        let error = error.to_string();
+                        if !(error.starts_with(&format!("{table_name}: "))
+                            && error.contains(column.name)
+                            && error.contains(reason))
+                        {
+                            not_refused.push(format!("{what}: refused as `{error}`"));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(columns_tried, 66);
+        assert!(
+            not_refused.is_empty(),
+            "{} of {columns_tried} followed columns were not refused by name and reason:\n{}",
+            not_refused.len(),
+            not_refused.join("\n")
+        );
+    }
+
+    // A dump may lack `T_PLANTITEM`, `T_INLINECOMP`, the item-type column
+    // and the drawing's display columns, and what it lacks reads as nothing
+    // stated. That is the other case from a column it has and the reader
+    // kept unread.
+    #[test]
+    fn a_column_the_dump_lacks_reads_as_nothing_stated() {
+        let no_components = HashSet::new();
+
+        for dump in [
+            fixture_without("T_PLANTITEM", None),
+            fixture_without("T_PLANTITEM", Some(&["ITEMTAG"])),
+            fixture_without("T_PLANTITEM", Some(&["SP_ID"])),
+        ] {
+            every_projection(&dump).expect("a dump without item tags projects");
+            let tables = ExpTables::read(&dump).expect("reads");
+            assert_eq!(tables.pipe_runs().expect("runs")[0].item_tag, None);
+        }
+
+        let dump = fixture_without("T_MODELITEM", Some(&["ITEMTYPENAME"]));
+        every_projection(&dump).expect("a dump without item types projects");
+        let tables = ExpTables::read(&dump).expect("reads");
+        assert!(tables
+            .dump_only_piping_components("D", &no_components)
+            .expect("components")
+            .is_empty());
+
+        for dump in [
+            fixture_without("T_INLINECOMP", None),
+            fixture_without("T_INLINECOMP", Some(&["NOMINALDIAMETER"])),
+            fixture_without("T_INLINECOMP", Some(&["SP_ID"])),
+        ] {
+            every_projection(&dump).expect("a dump without inline diameters projects");
+            let tables = ExpTables::read(&dump).expect("reads");
+            let components = tables
+                .dump_only_piping_components("D", &no_components)
+                .expect("components");
+            assert_eq!(components.len(), 1);
+            assert!(components[0].0.attributes.is_empty());
+        }
+
+        for column in DRAWING_DISPLAY_COLUMNS {
+            every_projection(&fixture_without("T_DRAWING", Some(&[column])))
+                .unwrap_or_else(|error| panic!("without {column}: {error}"));
+        }
+        let dump = fixture_without("T_DRAWING", Some(&DRAWING_DISPLAY_COLUMNS));
+        let drawings = ExpTables::read(&dump)
+            .expect("reads")
+            .drawings()
+            .expect("the join columns are enough");
+        assert_eq!(drawings[0].name, "One");
+        assert_eq!(
+            (
+                drawings[0].template.as_str(),
+                drawings[0].document_type,
+                drawings[0].date_created.as_str()
+            ),
+            ("", None, "")
+        );
+    }
+
+    // The connectivity stage looks a connector's end up among the port
+    // rows. It takes them through the port stage's own projection, so what
+    // that stage refuses in a point table this one refuses in the same
+    // words, and neither drops a point the other reads.
+    #[test]
+    fn the_connectivity_stage_refuses_the_port_rows_the_port_stage_refuses() {
+        let with_point_number = |number: Option<Vec<u8>>| {
+            let mut tables = followed_fixture();
+            let (name, columns, rows) = &mut tables[0];
+            assert_eq!(
+                (*name, columns[1].name),
+                ("T_PIPINGPOINT", "PIPINGPOINTNUMBER")
+            );
+            rows[0][1] = number;
+            dump_of(&tables)
+        };
+
+        let read = with_point_number(Some(one()));
+        let ports = read_port_tables(&read).expect("ports");
+        assert_eq!(ports.piping_points.len(), 1);
+        let ends = connectivity_ends_for_drawing(&read, "D").expect("ends");
+        assert!(ends.iter().any(|end| end.symbol_uid == "E.1"), "{ends:?}");
+
+        // 0.3 is a point number the reader kept unread; NULL is none at all.
+        for (number, reason) in [
+            (
+                Some(vec![0xc0, 0x1f]),
+                "row 0 PIPINGPOINTNUMBER is not an integer or NULL",
+            ),
+            (None, "row 0 PIPINGPOINTNUMBER is not an integer"),
+        ] {
+            let dump = with_point_number(number);
+            let ports = read_port_tables(&dump).unwrap_err().to_string();
+            let ends = connectivity_ends_for_drawing(&dump, "D")
+                .unwrap_err()
+                .to_string();
+            assert_eq!(ports, format!("T_PIPINGPOINT: {reason}"));
+            assert_eq!(ends, ports);
+        }
     }
 
     // One ExpTables serves two drawings. The fragment also stores CODELISTS
@@ -2674,6 +3575,140 @@ mod tests {
         assert_eq!(ports.signal_row_count, 22_057);
         let from_dump = read_port_tables(&dump).unwrap();
         assert_eq!(ports, from_dump);
+    }
+
+    /// The dump of the committed backup package
+    /// `test-file/backup-test/DWG-0202GP06-01_p`: an Oracle `exp` dump of
+    /// seven drawings, read on every checkout.
+    fn committed_dwg_dump() -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-file/backup-test/DWG-0202GP06-01_p/Export.dmp");
+        std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    // A reader that takes `T_PIPERUN` whole or not at all stops on this
+    // dump at `row 0 NUMBER at 0x7a4c07 is not an integer`, and with it the
+    // package publishes no drawing. The cell is the first run's
+    // `SP_INSULTHICKSI`: the dump's own dictionary calls the attribute
+    // "Insulation Thickness SI Value", a double, and the run's `INSULTHICK`
+    // beside it reads `50mm`, which is 0.05 m. No stage follows the column,
+    // so the run reads with every cell a stage does follow, and so does
+    // every other table.
+    #[test]
+    fn the_committed_dwg_dump_projects_through_every_stage() {
+        let dump = committed_dwg_dump();
+        // The cell's two length bytes, then at `0x7a4c07` its two payload
+        // bytes: one base-100 digit, 5, at exponent -1.
+        assert_eq!(dump[0x007a_4c05..0x007a_4c09], [0x02, 0x00, 0xc0, 0x06]);
+
+        every_projection(&dump).expect("every stage reads the committed dump");
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        assert_eq!(tables.drawing_row_count(), 7);
+        assert_eq!(tables.codelist_row_count(), 3_384);
+        let ports = tables.port_tables().expect("ports");
+        assert_eq!(
+            (ports.piping_points.len(), ports.signal_points.len()),
+            (93, 151)
+        );
+        let runs = tables.pipe_runs().expect("pipe runs");
+        assert_eq!(runs.len(), 50);
+        let named = |run: &&PipeRunRow| !run.tag_sequence.is_empty();
+        assert_eq!(runs.iter().filter(named).count(), 20);
+        let first = &runs[0];
+        assert_eq!(first.id, "7042E6B0A1A944E390A08A5A44771C46");
+        assert_eq!(first.tag_sequence, "01");
+        assert_eq!(first.materials_class, "1.6AR12");
+        assert_eq!(first.insulation_spec, "");
+        assert_eq!(first.nominal_diameter, Some(50));
+        assert_eq!(first.fluid_code, Some(493));
+        assert_eq!(first.fluid_system, Some(8));
+        assert_eq!(
+            first.item_tag.as_deref(),
+            Some("OD-50 mm-03-0401-1.6AR12-WE50mm")
+        );
+    }
+
+    // What the fifteen tables of that dump hold that the reader keeps
+    // unread, column by column with the first row and the number of cells.
+    // The two `NUMBER` columns are SI values: 0.05 m beside `50mm` on eight
+    // runs, and 0.0029999910000486 rad, the arctangent of the `0.3 %` beside
+    // it, on two. The three text columns are in the database character
+    // set. None is a column a stage follows, which is why every projection
+    // of the dump goes through.
+    #[test]
+    fn the_committed_dwg_dump_keeps_unread_only_columns_no_stage_follows() {
+        let dump = committed_dwg_dump();
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let mut unread = Vec::new();
+        for table in [
+            &tables.piping_point,
+            &tables.signal_point,
+            &tables.connector,
+            &tables.representation,
+            &tables.piperun,
+            &tables.signalrun,
+            &tables.opc,
+            &tables.nozzle,
+            &tables.note,
+            &tables.itemnote,
+            &tables.modelitem,
+            &tables.plantitem,
+            &tables.inlinecomp,
+            &tables.codelists,
+            &tables.drawing,
+        ] {
+            for (index, column) in table.columns.iter().enumerate() {
+                let cells = table
+                    .rows
+                    .iter()
+                    .filter(|row| matches!(row[index], Field::Unscaled))
+                    .count();
+                if column.kind != Kind::Bytes && column.unread_row.is_none() && cells == 0 {
+                    continue;
+                }
+                let kind = match column.kind {
+                    Kind::Char => "national text",
+                    Kind::Bytes => "database-charset text",
+                    Kind::Num => "NUMBER",
+                    Kind::Date => "DATE",
+                };
+                unread.push((
+                    table.name.as_str(),
+                    column.name.as_str(),
+                    kind,
+                    column.unread_row,
+                    cells,
+                ));
+            }
+        }
+        assert_eq!(
+            unread,
+            [
+                (
+                    "T_REPRESENTATION",
+                    "FILENAME",
+                    "database-charset text",
+                    Some(2),
+                    228
+                ),
+                ("T_PIPERUN", "SP_INSULTHICKSI", "NUMBER", Some(0), 8),
+                ("T_PIPERUN", "SP_SLOPESI", "NUMBER", Some(21), 2),
+                (
+                    "T_OPC",
+                    "MATINGOPCPATH",
+                    "database-charset text",
+                    Some(0),
+                    14
+                ),
+                ("T_NOTE", "BODY", "database-charset text", Some(0), 8),
+            ]
+        );
+        // The two fractions as the dump writes them.
+        assert_eq!(decode_i64(&[0xc0, 0x06]), None);
+        assert_eq!(
+            decode_i64(&[0xbf, 0x1e, 0x64, 0x64, 0x0b, 0x01, 0x05, 0x57]),
+            None
+        );
     }
 
     #[test]

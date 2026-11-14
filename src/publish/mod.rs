@@ -51,6 +51,8 @@
 //!   canonical-shape parity for `_Meta.xml`).
 //! * [`diff`] — emitted-vs-reference scoring (`--diff-against`) and the
 //!   coverage report behind `_Coverage.json`.
+//! * [`completeness`] — how much of a reference `_Data.xml` a generated one
+//!   states, counted against the whole reference with nothing excused.
 //!
 //! The normal path no longer depends on the C# `OrcaMDF` probe. The
 //! legacy `SQLite` loader remains for fixture compatibility and as a
@@ -84,6 +86,7 @@ pub mod backup_package;
 // classes an item through the row's `pid_class`.
 mod catalog;
 pub mod catalog_index;
+pub mod completeness;
 pub mod diff;
 #[cfg(feature = "backup-mdf")]
 pub mod mdf_load;

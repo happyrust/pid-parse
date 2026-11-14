@@ -12,6 +12,12 @@ use std::process::Command;
 
 use serde_json::Value;
 
+// Every scratch directory here is a `Scratch` under the system temp dir,
+// removed when it drops. Nothing is ever written inside the repository or
+// next to a fixture.
+mod common;
+use common::Scratch;
+
 const CLI: &str = env!("CARGO_BIN_EXE_pid_publish_xml");
 const BASELINE_REL: &str = "docs/baselines/publish-diff-accepted.json";
 const A01_DIR: &str = "test-file/export-test/publish-data/A01";
@@ -186,33 +192,6 @@ where
     Run {
         code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-    }
-}
-
-/// A scratch directory under the system temp dir, removed on drop. Nothing is
-/// ever written inside the repository or next to a fixture.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(tag: &str) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |delta| delta.as_nanos());
-        let path =
-            std::env::temp_dir().join(format!("pid-parse-{tag}-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(&path)
-            .unwrap_or_else(|error| panic!("create {}: {error}", path.display()));
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 

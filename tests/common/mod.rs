@@ -18,9 +18,73 @@
 
 #![allow(dead_code)]
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use pid_parse::publish::{
     load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishError, PublishStyle,
 };
+
+// -----------------------------------------------------------------
+// Scratch directories
+// -----------------------------------------------------------------
+
+/// A path of this process's own under the system temp dir. Whatever is at
+/// it when the value drops is removed, so what a test writes there is gone
+/// when the test ends — on a normal return and while a failed assertion
+/// unwinds alike. A removal at the end of the test body would only run on
+/// the first of the two.
+///
+/// It reads as a `&Path` (`scratch.join(..)`, `scratch.exists()`), and
+/// [`Scratch::path`] hands the path to `Command::arg` and `std::fs`. It is
+/// deliberately neither `AsRef<OsStr>` nor `AsRef<Path>`: taken by value
+/// by `Command::arg` it would drop, removing nothing, before the command
+/// ran and created the directory.
+pub struct Scratch(PathBuf);
+
+impl Scratch {
+    /// Names a directory and creates it.
+    pub fn new(tag: &str) -> Self {
+        let scratch = Self::unmade(tag);
+        std::fs::create_dir_all(&scratch.0)
+            .unwrap_or_else(|error| panic!("create {}: {error}", scratch.0.display()));
+        scratch
+    }
+
+    /// Names a directory without creating it: the output directory of a run
+    /// that creates its own, or of one that must be shown to write nothing.
+    pub fn unmade(tag: &str) -> Self {
+        // Two guards of one tag made in the same clock tick still differ.
+        static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "pid-parse-{tag}-{}-{nanos}-{sequence}",
+            std::process::id()
+        )))
+    }
+
+    /// The path, for an argument that takes one by reference.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 // -----------------------------------------------------------------
 // Fixture paths and identifiers — A01 plant (TEST02)

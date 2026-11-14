@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### publish：GitHub #70 是这条分支 11-10 修掉的那处读法；入库的 DWG 包在库一级有了用例（2026-11-12）
+
+工单 `happyrust/pid-parse` #70「入库的 `DWG-0202GP06-01_p` 整包发布以 `T_PIPERUN … is not an integer` 退出」是在 `main` 上看到的。`main` 的 `ExpTables::read` 对五张表还是严格读法；发布这条线（分支 `publish-export-20261110`）在 2026-11-10 已经把它们改成逐格读（`80a5f73`，见下面 2026-11-10「DWG-0202GP06-01 的备份包读得进来了」那一条的第一项），分支没有合回 `main`，所以两边现象不同。这一条没有改发布的代码，写出的字节一个没变；逐项的读数在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第五阶段。
+
+- **复现。** `main`（`7f71586`）的程序对入库包整包发布：退出 1，`T_PIPERUN: row 0 NUMBER at 0x7a4c07 is not an integer`，不建输出目录。本分支的程序：退出 0，7 张图写出、0 张失败，`_Index.json` 的问题清单 0 条。
+- **是哪一格、什么含义。** `T_PIPERUN` 第 0 行的 `SP_INSULTHICKSI`，两个字节 `c0 06`，值 0.05。dump 自己的数据字典管它叫「Insulation Thickness SI Value」，类型是双精度：同一行的 `INSULTHICK` 写着 `50mm`，这一列是它的米数。同一张表另有 `SP_SLOPESI`（「Slope SI Value」）两格 0.0029999910000486，是 `SLOPE` `0.3 %` 的反正切，参考发布件的 `SlopedPipingAngle "2.9999910000486E-03 rad"` 就是它。字典里 244 个 `SP_…SI` 属性全是双精度，小数是这类列的正常内容。发布读的 15 张表里不是整数的 `NUMBER` 只有这 10 格，没有一格在阶段跟的列里，所以逐格读之后表照读、这 10 格留着不用；「被跟的列有格子没读懂就报错」那条规则在这里不适用。
+- **用例。** `oracle_exp` 加两条单测，读入库的 dump，任何检出都真跑（这个模块原有的真 dump 单测都读仓库外的库，CI 上软跳过）：每个投影都读得过、第 0 行那条管段被跟的每一格都读出来；15 张表里留作没读的 5 个列逐个钉住。整包那条用例（`the_dwg_package_publishes_every_drawing_it_lists`）另断言问题清单为空、没有告警、逐图的对象 / 值 / 关系个数与全包合计。把 `ExpTables::read` 换回 `main` 的写法，这个夹具的 8 条用例红 6 条，报的就是工单那一句。
+- **留给定夺的一件事。** 那条规则真适用的时候——被跟的列里有一格读不懂——取这一列的阶段整个报错，整包里凡是要挂库内容的图全部失败（拿入库包试：一格坏、7 张失败 6 张，退出 1，`_Index.json` 逐图点名表、列、行）。工单的口径是「只拒收那一处并在告警与 `_Index.json` 里说明，而不是让整个包发布失败」。两份真实的 dump 都不触发，这一轮没有改，记为计划的 Q7。
+
+### publish：`main` 并入发布分支，重发 `publish-v4`；对库普查量出 23 个没发的对象（2026-11-12）
+
+发布这条线（分支 `publish-export-20261110`）把 `main` 并了进来（`7de1ef1`），用合并树重发了 53 张整包的交付目录，并第一次拿包里的数据库核对没有原厂参考的那 46 张图。发布规则没有改，写出的字节只有先前已经提交的一处变化。逐项的读数与没做的事在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第四阶段。
+
+- **合并。** 两边都改过的 5 个文件里 3 个各有一处冲突（`tests/parser_panic_safety.rs` 的模块注释、`AGENTS.md` 的门禁表、本文件的顶部），两边的内容都留；`pid_load.rs` 自动合并，`main` 那边的断链告警（`read_publish_from_reader`、`PublishChainFault::describe`）与本分支的设备 `Description`、注释换行都在。合并树上第一次用 CI 那一档工具链（stable 1.99.1）跑全量：`cargo test -p pid-parse --all-targets` 1 896 过 / 0 败 / 3 ignored，`--no-default-features --lib` 928 过，clippy、fmt、wasm32、缺文档（0 = 基线 0，rustdoc 退出 0）、`cargo build --workspace --all-targets` 都通过。完整度的 17 个钉原样通过；整张对照矩阵 30 次运行、253 个文件与合并前逐字节相同，调试构建与发布构建的输出也逐字节相同。
+- **`publish-v4`。** `D:\work\cad\pid-test-data\publish-v4`，出自 `7de1ef1` 的发布构建，命令与 `publish-v3` 相同：53 张写出、0 张失败，`_Index.json` 的问题清单 0 条，没有断链告警。与 `publish-v3` 逐文件比，160 个里 158 个逐字节相同；2 个 `_Data.xml`（轻烃分离器I、低压气压缩机入口改造）一共少 20 行空的 `<IOffpageConnector/>`，就是 2026-11-10 那一条的第四处修复（`dc78a7c`）。7 张同版参考图上写出参考的对象 100 %、关系 100 %、写得不同的值 0，接口元素 56.8 %、非空值 50.4 %、空值属性 0 %，与钉值相同：缺的那一半还是没做的工作，不是这次导出的变化。目录里带 `BUILD.txt`（提交、命令行、起止时间、构建类型）、`RUN-LOG.txt` 与三个对照子目录。
+- **对库普查。** 新探针 `examples/probe_which_database_representations_a_publish_leaves_out.rs`（`3411263`）不靠参考：数据库的 `T_REPRESENTATION` 给每个对象在图上的每个图形记一行，发布件把它写成同一个 UID 的 `PIDRepresentation`。51 张有内容的图上库里画着 42 048 条，写出 23 762 条，没有一条是库里没有的；没写出的里 18 263 条属于三类——标签、管段上的符号、信号线上的符号——7 张参考图上原厂对这三类也一条不发。**另有 23 条不在那三类里：C井场 21 条、Q井场 2 条，是库里画着而包里的 `.pid` 没画的仪表、注释、管嘴、机械设备与容器，现在不发。** 同样情形的管件是照库发了的（J K井场 的参考里有 3 例作证）；别的类没有任何参考样本，这一轮只量出来、记为计划 S17，等 C井场 的原厂发布件。`D03`、`D04` 两张只发了图纸对象，库里这两张图上确实什么都没有。见 `docs/analysis/2026-11-12-what-the-plant-database-draws-that-a-publish-leaves-out.md`。
+- **一处环境上的坑。** 在路径较长的 worktree 里，`cargo fmt --all -- --check` 交给 rustfmt 的命令行（根包 355 个根文件的绝对路径）到了 Windows 的 32 767 字符上限，报 `os error 206`、一个文件都不读。那里要对同一批文件分批跑 `rustfmt --check`，写法在 `AGENTS.md` 的 Pre-commit gates 一节。
+
 ### 文档：排字规则由谁守、三处说法写准（2026-11-11）
 
 - `AGENTS.md` 新增一节「排字规则由谁守」：守文字写法的是 `pid-plot` 的库内用例与验收门禁
@@ -370,6 +388,34 @@ Narrow、字格 24」这一档。所以实现只写了这一档的 20，别的�
 用例，所以「红」是用变异补的，五种改法各跑一遍库内用例：关掉参考图画法 2 条失败，把新宋体
 挪回第五位 6 条，写出器改回按字型表次序 7 条，去掉 `?` 步进 2 条，去掉参考字型表里新宋体
 那一行 1 条。
+
+### publish：独立审查之后的收紧，数据映射读全（2026-11-10）
+
+一个只读的独立审查核对了紧接在下面那一条的四处修复与分析页，这一条是照它的十条结论做的改动，加上计划的 S6。
+**没有一个输出文件变**：整张对照矩阵 30 次运行、253 个文件逐字节相同，退出码与标准输出也相同。逐条的复现、变异验证与没做的事在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第三阶段。
+
+- **exp 里没读懂的列不再当空值用。** 下面那一条把五张表改成逐格读之后，「跟的列若没读出来就报错」只对其中一部分列成立：可选列的查找不看这一列读没读懂。把 `T_PLANTITEM.ITEMTAG` 的列头改成数据库字符集，发布照样退出 0，管线从 6 条变 0 条。现在取列的两个函数都拒绝「列在、但没读懂」的列（不是 AL16UTF16 的字符列，或有一格没读出来的列），报错点名表、列与行；「dump 里没有这一列」对可选列仍然合法。连接关系对读不懂的点号原来是跳过，现在与端口阶段一样报错。16 张表里被跟的 66 个列逐个弄坏的单测，改前的读法放过 24 个。两份真实的 Oracle dump 里被跟的列与格没有一个没读懂，所以输出不变。（`51521ef`）
+- **exp 读法的两处 panic。** INSERT 行的 `(` 落在 `VALUES` 之后时 `column_names` 按下标切片；公称直径代码乘 100 时 `i64` 溢出。两处都改成报错或 `None`。`publish::oracle_exp` 的 7 个字节级入口进了 `tests/parser_panic_safety.rs`，另有一条用例把一份合成 dump 逐前缀截断、逐字节替换——第二处就是它找出来的。（`b2576fc`）
+- **钉内容，不钉个数。** DWG 夹具的两条用例原来钉 `("missing value", 17)`：把豁免清单里的属性一进一出，总数不变，用例照过。现在逐行钉打印出来的 17 行与 18 行。字符集 id 的检查与端口表开头的列检查各补一条用例，都做了变异验证。用例 `…reads_its_own_packages_exp_dump` 改名 `the_dwg_fixture_publishes_against_its_packages_later_dump`：`.pid` 是参考那一版，dump 是后来的。（`71e02a2`、`ba5a83f`）
+- **更正两处说法。** DWG `--oracle-exp` 少的那个 OPC（`799B9008…`）不是版本差：dump 里它的配对在本图的 stockpile 里（`INSTOCKPILE = 2`，没有 `GRAPHICOID`），原厂照发一个没有表示、没有关系的对象。这条规则只有 1 例，这一轮不写进代码，记为计划 S12 并写明要什么样的第二个样本。「数据映射对 87.5 % 的参考值给得出名字」是名字级的匹配，分母含已经写出的值；只看 7 张图还没写出的 19 437 个值是 76.9 %，叫不出名字的 4 488 个是层级枚举里映射没有点名的几级。三条规则（设备的 `Description`、注释换行、没有 `ToFromText` 的 OPC）各自的样本量写进了代码注释。（`0569645` 与本提交）
+- **数据映射读全。** `backup::datamap` 原来只读 `MapEnumToEnum`。现在 `DataMap` 另外带物项类型与它发成的类、每个库属性发成的属性与那条关系自己点名的类、值表、`ProcessPropertyCriteria`、枚举的上一级。没有一条写出路径用它。单测读入库的 `RefData~4~804.zip`（任何检出都真跑）：31 个物项类型、1 818 个属性定义、12 087 条关系按 18 种 `DefUID` 逐种钉。探针 `examples/probe_where_the_data_map_says_a_published_value_comes_from.rs` 对参考的每个 `(类, 接口, 属性)` 回答它来自哪个库属性，给了 dump 就再落到表和列；它复现了上面两组数（40 208 / 45 963，14 949 / 19 437）。读到的结构有一处与原先的设想不同：`MapEnumMapEnum` 是库这一侧的层级，发布件各级的值跟的是目标枚举在 schema 一侧的层级，这份映射里没有。（`28a8e29`）
+
+上一批的三个提交没有记进这个文件，补在这里：`publish::completeness::measure` 与探针 `probe_how_much_of_a_reference_does_a_publish_state`（`0c8f9dc`）量一份输出写出了参考的多少；`tests/publish_completeness.rs` 把比例钉住，分母精确、分子只许升（`0bb5045`）；`tests/common` 的 `Scratch` 让 `publish_*` 测试结束时删掉自己的临时目录，通过与否都删（`624916d`）。
+
+### publish：DWG-0202GP06-01 的备份包读得进来了，`.pid` 线在 13 张参考图上不再写错值（2026-11-10）
+
+把每张有原厂参考的图、每种输入方式重新对了一遍（`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`）。
+7 张图的 `--oracle-exp` 仍然 exit 0，但这一轮量出来它们只写出参考里 56–58 % 的接口元素和约 50 % 的非空值，其余被豁免清单整类放过；
+接下来怎么补在 `docs/plans/2026-11-10-publish-export-completion.md`，等批复。这一条只记已经修掉的四处，前三处出在此前没有任何门看着的 DWG-0202GP06-01 上：
+
+- **Oracle `exp` 的五张表改成逐格读。** `T_PIPERUN` / `T_PIPINGPOINT` / `T_SIGNALPOINT` / `T_SIGNALRUN` / `CODELISTS` 原来用严格读法，遇到第一个非整数的 `NUMBER` 就整表拒绝。`DWG-0202GP06-01_p` 的第一条管段保温 50 mm，`SP_INSULTHICKSI = 0.05`，`--oracle-exp` 与整包目录都退出 1、一个文件不写。现在没人跟的列读到什么都行；跟的列若没被读出来（非 AL16UTF16 的字符列）会被点名拒绝，不当成空值。（`80a5f73`）
+  更正：这一条原先写的是「第一条管段 `SLOPE = 0.3`」，`80a5f73` 的提交说明也这样写，错了。`SLOPE` 是字符列，值是 `0.3 %`；让旧读法停下的格子在偏移 `0x7a4c07`，是第 0 行 `SP_INSULTHICKSI` 的 `c0 06`。提交说明没法改，以这一句为准。
+- **设备的 `Description` 标签按数据映射发。** 三个备份包里是同一份 `SPPIDDataMap.xml`：容器、换热器的 `Description` 发成 `ISpecifiedMatlItem.LongMaterialDescription`，其它设备发成 `LongMaterialDescription3`，机械设备与注释不发；设备的 `IObject.Description` 是它的 `Name`。原来一律写到 `IObject.Description`，DWG 的容器因此写成 `"新建"`（参考是 `"污水池"`）。（`a796323`）
+- **注释正文的换行。** 标签缓存的正文行尾只有 `\r`，库里的 `T_NOTE.BODY` 和原厂发布的都是 `\r\n`；`INote.NoteText` 现在把落单的 `\r` 写成 `\r\n`。13 份参考里带换行的注释只有 DWG 这一条。（`a0f075f`）
+- **没有 `ToFromText` 的 OPC 不再写空的 `<IOffpageConnector/>`。** 13 份参考的 142 个 `PIDBranchPoint` 里 123 个带 `ToFromText`、19 个没有这个元素，没有一个写空的。我方在轻烃分离器I 上多写了 14 个、DWG 上 4 个；门禁不比接口元素，所以一直是 clean。（`dc78a7c`）
+
+`tests/publish_from_pid.rs` 新增三条只读仓库内夹具的用例（`.pid` 单发、带包里的 dump、整包目录），任何检出都真跑，钉住各模式现在打印的内容。
+前三处修完，7 张参考图与 53 张整包的输出逐字节不变；第四处只去掉那些空元素（53 张整包里 20 个：轻烃分离器I 14 个、低压气压缩机入口改造 6 个）。交付目录 `publish-v3` 没有重发。
 
 ### 出图测试里「显示通过、其实没验」的地方补成真断言（2026-11-10）
 

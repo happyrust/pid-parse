@@ -24,6 +24,9 @@ use pid_parse::publish::{
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
+mod common;
+use common::Scratch;
+
 const DEFAULT_CORPUS: &str = r"D:\work\cad\PID自研软件验证";
 const CORPUS_ENV: &str = "PID_PARSE_SELF_CHECK_DIR";
 
@@ -304,15 +307,6 @@ fn the_pid_alone_export_matches_the_reference_wherever_it_says_anything() {
 
 const CLI: &str = env!("CARGO_BIN_EXE_pid_publish_xml");
 
-/// A directory of this process's own under the system temp dir.
-fn unique_out_dir(label: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!("pid-parse-{label}-{}-{nanos}", std::process::id()))
-}
-
 #[test]
 fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
     let Some(drawings) = corpus() else {
@@ -320,11 +314,11 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
         return;
     };
     let (stem, pid, _) = &drawings[0];
-    let out_dir = unique_out_dir("out-dir");
+    let out_dir = Scratch::unmade("out-dir");
     let output = Command::new(CLI)
         .arg(pid)
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn pid_publish_xml --out-dir");
@@ -354,7 +348,6 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
         drawing.representations.len()
     );
     assert_eq!(report["files"]["data"], format!("{stem}_Data.xml"));
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -596,11 +589,11 @@ fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
 #[test]
 fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
     for value in ["dwg", "a01"] {
-        let out_dir = unique_out_dir("style-refused");
+        let out_dir = Scratch::unmade("style-refused");
         let output = Command::new(CLI)
             .arg("test-file/D06.pid")
             .arg("--out-dir")
-            .arg(&out_dir)
+            .arg(out_dir.path())
             .args(["--style", value])
             .output()
             .expect("spawn pid_publish_xml <file.pid> --style");
@@ -625,11 +618,11 @@ fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
         eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
-    let out_dir = unique_out_dir("style-refused-package");
+    let out_dir = Scratch::unmade("style-refused-package");
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--style", "dwg"])
         .output()
         .expect("spawn pid_publish_xml <backup-dir> --style");
@@ -651,10 +644,10 @@ fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
 
 #[test]
 fn out_dir_is_refused_beside_out_and_for_a_database_input() {
-    let out_dir = unique_out_dir("refused");
+    let out_dir = Scratch::unmade("refused");
     let beside_out = Command::new(CLI)
         .args(["drawing.pid", "--out-dir"])
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--out", "drawing_Data.xml"])
         .output()
         .expect("spawn pid_publish_xml --out-dir --out");
@@ -663,7 +656,7 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
 
     let database = Command::new(CLI)
         .args(["Export.mdf", "--drawing", "X", "--out-dir"])
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .output()
         .expect("spawn pid_publish_xml <mdf> --out-dir");
     assert_eq!(database.status.code(), Some(2));
@@ -795,8 +788,7 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         return;
     }
     let bytes = std::fs::read(&pid).expect("read D06.pid");
-    let package = unique_out_dir("mini-package");
-    std::fs::create_dir_all(&package).expect("mini package dir");
+    let package = Scratch::new("mini-package");
     std::fs::write(package.join("Manifest.txt"), "BackupType<<|>>2\n").expect("manifest");
     std::fs::write(
         package.join("PlantData~2~1.zip"),
@@ -811,17 +803,17 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         ),
     )
     .expect("template zip");
-    let out = unique_out_dir("mini-out");
+    let out = Scratch::unmade("mini-out");
     let missing_out = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .output()
         .expect("spawn directory without --out-dir");
     assert_eq!(missing_out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&missing_out.stderr).contains("--out-dir"));
     let output = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn mini backup");
@@ -864,13 +856,13 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     // G4: the package gate takes a reference DIRECTORY of <Name>_Data.xml
     // files, scores every written drawing and exits non-zero when one is
     // not clean.
-    let gate_out = unique_out_dir("mini-gate");
+    let gate_out = Scratch::unmade("mini-gate");
     let gated = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(&gate_out)
+        .arg(gate_out.path())
         .arg("--diff-against")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn gated mini backup");
@@ -887,14 +879,14 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
 
     // A reference directory without the drawing's file is reported as
     // unpaired, never as clean.
-    let empty = unique_out_dir("mini-gate-empty");
-    std::fs::create_dir_all(&empty).expect("empty reference dir");
+    let empty = Scratch::new("mini-gate-empty");
+    let unpaired_out = Scratch::unmade("mini-gate-unpaired");
     let unpaired = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-unpaired"))
+        .arg(unpaired_out.path())
         .arg("--diff-against")
-        .arg(&empty)
+        .arg(empty.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn unpaired mini backup");
@@ -904,18 +896,18 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     assert!(stdout.contains("no reference"), "{stdout}");
 
     // One drifting drawing makes the gate exit 1 and names the drawing.
-    let drift = unique_out_dir("mini-gate-drift");
-    std::fs::create_dir_all(&drift).expect("drift reference dir");
+    let drift = Scratch::new("mini-gate-drift");
     let reference = std::fs::read_to_string(out.join("D06_Data.xml")).expect("D06 data xml");
     let mutated = reference.replacen("<IObject UID=\"", "<IObject UID=\"ZZZ", 1);
     assert_ne!(mutated, reference);
     std::fs::write(drift.join("D06_Data.xml"), mutated).expect("drifted reference");
+    let dirty_out = Scratch::unmade("mini-gate-dirty");
     let dirty = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-dirty"))
+        .arg(dirty_out.path())
         .arg("--diff-against")
-        .arg(&drift)
+        .arg(drift.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn dirty mini backup");
@@ -926,8 +918,7 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     // A reference that states another `<Container DocUID>` is another
     // revision of the same name, not a document full of differences: the
     // gate says so once, prints no finding, and still exits 1.
-    let other = unique_out_dir("mini-gate-revision");
-    std::fs::create_dir_all(&other).expect("other-revision reference dir");
+    let other = Scratch::new("mini-gate-revision");
     let own_uid = reference
         .split_once("DocUID=\"")
         .map(|(_, rest)| rest.split('"').next().unwrap_or_default().to_string())
@@ -940,12 +931,13 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     );
     assert_ne!(foreign, reference);
     std::fs::write(other.join("D06_Data.xml"), &foreign).expect("other-revision reference");
+    let mismatch_out = Scratch::unmade("mini-gate-mismatch");
     let mismatch = Command::new(CLI)
-        .arg(&package)
+        .arg(package.path())
         .arg("--out-dir")
-        .arg(unique_out_dir("mini-gate-mismatch"))
+        .arg(mismatch_out.path())
         .arg("--diff-against")
-        .arg(&other)
+        .arg(other.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn other-revision mini backup");
@@ -968,12 +960,12 @@ fn backup_directory_publishes_the_whole_package() {
         eprintln!("skip: D:\\work\\cad\\pid-test-data is not a backup package");
         return;
     }
-    let out = unique_out_dir("sqplant");
+    let out = Scratch::unmade("sqplant");
     let started = std::time::Instant::now();
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "P01"])
         .output()
         .expect("spawn backup directory");
@@ -1150,11 +1142,11 @@ fn backup_directory_publishes_the_whole_package() {
         eprintln!("skip: I井场 is not in the corpus");
         return;
     };
-    let single = unique_out_dir("ijingchang-single");
+    let single = Scratch::unmade("ijingchang-single");
     let single_run = Command::new(CLI)
         .arg(pid)
         .arg("--out-dir")
-        .arg(&single)
+        .arg(single.path())
         .arg("--oracle-exp")
         .arg(package.join("Export.dmp"))
         .arg("--datamap")
@@ -1198,11 +1190,11 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
         eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
         return;
     }
-    let out = unique_out_dir("test02-mtf");
+    let out = Scratch::unmade("test02-mtf");
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "TEST02"])
         .output()
         .expect("spawn MTF backup directory");
@@ -1270,13 +1262,13 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
     assert!(!meta.contains("Template"), "{meta}");
     assert!(meta.contains(r#"IFile FilePath="""#), "{meta}");
 
-    let gate_out = unique_out_dir("test02-mtf-gate");
+    let gate_out = Scratch::unmade("test02-mtf-gate");
     let gated = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
-        .arg(&gate_out)
+        .arg(gate_out.path())
         .arg("--diff-against")
-        .arg(&out)
+        .arg(out.path())
         .args(["--plant", "TEST02"])
         .output()
         .expect("spawn gated MTF backup directory");
@@ -1303,8 +1295,6 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
         !stdout.lines().any(|line| line.starts_with("  ")),
         "a clean gate prints no finding line:\n{stdout}"
     );
-
-    let _ = std::fs::remove_dir_all(&out);
 }
 
 // ---------------------------------------------------------------------
@@ -1356,11 +1346,11 @@ fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
         eprintln!("skip: {A01_DIR} fixture is missing");
         return;
     }
-    let out_dir = unique_out_dir("meta-gate");
+    let out_dir = Scratch::unmade("meta-gate");
     let output = Command::new(CLI)
         .arg(a01_fixture("A01.pid"))
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .args(["--plant", "TEST02"])
         .arg("--diff-against")
         .arg(a01_fixture("A01_Data.xml"))
@@ -1378,7 +1368,6 @@ fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
     assert!(!stdout.contains("value Container"), "stdout:\n{stdout}");
     // The _Data.xml side still has its registered findings, so exit 1.
     assert_eq!(output.status.code(), Some(1), "{stdout}\n{stderr}");
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1387,19 +1376,17 @@ fn meta_gate_names_a_drifted_container_attribute() {
         eprintln!("skip: {A01_DIR} fixture is missing");
         return;
     }
-    let reference = unique_out_dir("meta-gate-attr");
+    let reference = Scratch::unmade("meta-gate-attr");
     let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
     let drifted = meta.replacen("ToolSignature=\"AAAD\"", "ToolSignature=\"BBBB\"", 1);
     assert_ne!(drifted, meta);
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-attr-out");
+    let out_dir = Scratch::unmade("meta-gate-attr-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["ToolSignature", "AAAD", "BBBB"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1432,16 +1419,14 @@ fn meta_gate_names_a_drifted_block_order() {
         &meta[dv_open..dv_close],
         &meta[dr_close..],
     );
-    let reference = unique_out_dir("meta-gate-order");
+    let reference = Scratch::unmade("meta-gate-order");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-order-out");
+    let out_dir = Scratch::unmade("meta-gate-order-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["block-order", "DocumentVersion", "DocumentRevision"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1455,16 +1440,14 @@ fn meta_gate_names_a_drifted_def_uid_and_wiring() {
     // (a) RevisedDocument relabelled as VersionedDoc.
     let drifted = meta.replacen("DefUID=\"RevisedDocument\"", "DefUID=\"VersionedDoc\"", 1);
     assert_ne!(drifted, meta);
-    let reference = unique_out_dir("meta-gate-defuid");
+    let reference = Scratch::unmade("meta-gate-defuid");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-defuid-out");
+    let out_dir = Scratch::unmade("meta-gate-defuid-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["VersionedDoc", "RevisedDocument"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 
     // (b) FileComposition's UID1 / UID2 ends swapped.
     let drifted = meta.replacen(
@@ -1473,16 +1456,14 @@ fn meta_gate_names_a_drifted_def_uid_and_wiring() {
         1,
     );
     assert_ne!(drifted, meta);
-    let reference = unique_out_dir("meta-gate-wiring");
+    let reference = Scratch::unmade("meta-gate-wiring");
     let data = stage_a01_reference(&reference, &drifted);
-    let out_dir = unique_out_dir("meta-gate-wiring-out");
+    let out_dir = Scratch::unmade("meta-gate-wiring-out");
     let (code, combined) = run_meta_gate(&data, &out_dir);
     assert_eq!(code, Some(1), "{combined}");
     for needle in ["FileComposition", "is not the registered"] {
         assert!(combined.contains(needle), "{needle} missing:\n{combined}");
     }
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 #[test]
@@ -1517,17 +1498,314 @@ fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
     }
     // Only the `_Data.xml` is staged: the run writes a meta document, but
     // there is no `<Name>_Meta.xml` beside the reference to score it against.
-    let reference = unique_out_dir("meta-gate-no-sibling");
-    std::fs::create_dir_all(&reference).expect("reference dir");
+    let reference = Scratch::new("meta-gate-no-sibling");
     let data = reference.join("A01_Data.xml");
     std::fs::copy(a01_fixture("A01_Data.xml"), &data).expect("copy data xml");
-    let out_dir = unique_out_dir("meta-gate-no-sibling-out");
+    let out_dir = Scratch::unmade("meta-gate-no-sibling-out");
     let (_, combined) = run_meta_gate(&data, &out_dir);
     assert!(
         combined.contains("Meta diff not run: no sibling <Name>_Meta.xml beside"),
         "{combined}"
     );
     assert!(!combined.contains("Meta diff against"), "{combined}");
-    let _ = std::fs::remove_dir_all(&reference);
-    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+// ---------------------------------------------------------------------
+// DWG-0202GP06-01: the one drawing whose `.pid`, Oracle `exp` backup
+// package and `SmartPlant` reference are all committed, so these run
+// wherever the repository is checked out.
+//
+// The `.pid` is the reference's revision of the drawing and the package a
+// later state of the plant: its `T_PIPERUN` rows carry tag sequences
+// (`565`, `01`) and item tags (`OD-50 mm-03-565-1.6AR12-WE50mm`) the
+// reference does not, so the `--oracle-exp` figure keeps its pipeline
+// findings. The pins below are the finding lines each mode prints, line
+// for line: a finding traded for another one fails them, and a slice that
+// closes a difference moves them.
+// ---------------------------------------------------------------------
+
+const DWG_DIR: &str = "test-file/export-test/publish-data/DWG-0202GP06-01";
+const DWG_PACKAGE: &str = "test-file/backup-test/DWG-0202GP06-01_p";
+
+fn repo_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+/// `DWG-0202GP06-01.pid --diff-against <its reference>`, alone or with the
+/// package's own dump and data map: `(exit code, stdout, stderr)`.
+fn dwg_diff(oracle_exp: bool) -> (Option<i32>, String, String) {
+    let mut command = Command::new(CLI);
+    command
+        .arg(repo_path(DWG_DIR).join("DWG-0202GP06-01.pid"))
+        .arg("--diff-against")
+        .arg(repo_path(DWG_DIR).join("DWG-0202GP06-01_Data.xml"))
+        .args(["--plant", "P01"]);
+    if oracle_exp {
+        command
+            .arg("--oracle-exp")
+            .arg(repo_path(DWG_PACKAGE).join("Export.dmp"))
+            .arg("--datamap")
+            .arg(repo_path(DWG_PACKAGE).join("RefData~4~804.zip"));
+    }
+    let output = command.output().expect("spawn pid_publish_xml");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// The finding lines of a `--diff-against` run, in the order printed: every
+/// object, value or relation the run reports as extra, missing, of another
+/// class or stated otherwise.
+fn finding_lines(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .filter(|line| {
+            ["missing ", "extra ", "class ", "value ", "rel ("]
+                .iter()
+                .any(|kind| line.starts_with(kind))
+        })
+        .collect()
+}
+
+// The 17 reference values on objects both modes publish that neither
+// states and no exclusion covers. Each is an attribute the plant database
+// holds: the data map names the item attribute behind it, the dump's own
+// dictionary names its column, and sixteen of the seventeen cells are
+// filled in the package's dump.
+//
+//   InsulThickSrc x6         T_PIPERUN.INSULATIONTHKSOURCE = 3
+//   TotalInsulThick x6       T_PIPERUN.INSULTHICK = `50mm`,
+//                            SP_INSULTHICKSI = 0.05
+//   SlopedPipeDirection      T_PIPERUN.SLOPEDIRECTION = 2
+//   SlopedPipingAngle        T_PIPERUN.SLOPE = `0.3 %`,
+//                            SP_SLOPESI = 0.0029999910000486
+//   HeightRelativeToGrade    T_EQUIPMENT.HEIGHT = `3m`, SP_HEIGHTSI = 3
+//   ProcessVessel_VesselVolumetricCapacity
+//                            T_VESSEL.VOLUMERATING = `27m^3`,
+//                            SP_VOLUMERATINGSI = 27
+//   CatalogPartNumber        T_PLANTITEM.SP_PARTNO, NULL in this later state
+//
+// No stage follows those columns yet, so the values are missing with the
+// dump as without it (plan S9).
+const DWG_VALUES_NOT_STATED: [&str; 17] = [
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipeDirection: "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}" not in generated"#,
+    r#"missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipingAngle: "2.9999910000486E-03 rad" not in generated"#,
+    r#"missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPartOcc.CatalogPartNumber: "A3" not in generated"#,
+    r#"missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.InsulThickSrc: "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" not in generated"#,
+    r#"missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.TotalInsulThick: "50 mm" not in generated"#,
+    r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IPBSItem.HeightRelativeToGrade: "3 m" not in generated"#,
+    r#"missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IProcessVessel.ProcessVessel_VesselVolumetricCapacity: "27 m^3" not in generated"#,
+];
+
+// What `--oracle-exp` prints beyond those values.
+//
+// Six pipelines with their six `PipingConnectors` relations are extra and
+// the reference's five pipelines are missing: the dump names a run's
+// pipeline by its item tag as the package's later state spells it, the
+// reference by the tag of its own revision
+// (`A3jqz0301-OD-50 mm-1.6AR12-WE-50mm`), and a pipeline pairs by name.
+//
+// The missing `PIDBranchPoint` is another matter. `799B9008...` (`278`) is
+// an off-page connector the reference publishes with no representation and
+// no relation. In the dump its pair `9B50CC42...` is in this drawing's
+// stockpile (`T_REPRESENTATION.INSTOCKPILE` 2, which the dump's own
+// codelist reads `True`; no `GRAPHICOID`), and this line publishes an
+// off-page connector only through a representation the `.pid` draws. The
+// dump as it stands accounts for the reference, so this is an open rule
+// rather than a difference of revision; with one sample it stays open
+// (plan S12).
+const DWG_EXP_OBJECT_AND_REL_FINDINGS: [&str; 18] = [
+    r#"extra PIDPipeline 21D922A9687A59B29FAEEE92442380DC name "OD-50 mm-03-0201-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 266578B3F91156A38745A8A9B1369429 name "OD-50 mm-03-565-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 3B5898FB5A385C07A6B15B86E7CBC8BC name "OD-100 mm-06-0101-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline 80BA4A7AC26D5E1AB8834902B13CA57D name "LFL-80 mm-06-0201-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline B0175A5AC8525E93BC80DC7325B1B2AF name "OD-50 mm-03-0401-1.6AR12-WE50mm""#,
+    r#"extra PIDPipeline F968D84B23F95F8BBFB45B8A32D20406 name "OD-50 mm-03-0101-1.6AR12-WE50mm""#,
+    r#"rel ("PCN-4C2F232018CE42E8B7FFCABD553BDBC4-3B5898FB5A385C07A6B15B86E7CBC8BC", "4C2F232018CE42E8B7FFCABD553BDBC4", "3B5898FB5A385C07A6B15B86E7CBC8BC", "PipingConnectors")"#,
+    r#"rel ("PCN-61BA43D9FA854B8EBE6E0FACBCBC64BD-21D922A9687A59B29FAEEE92442380DC", "61BA43D9FA854B8EBE6E0FACBCBC64BD", "21D922A9687A59B29FAEEE92442380DC", "PipingConnectors")"#,
+    r#"rel ("PCN-7042E6B0A1A944E390A08A5A44771C46-B0175A5AC8525E93BC80DC7325B1B2AF", "7042E6B0A1A944E390A08A5A44771C46", "B0175A5AC8525E93BC80DC7325B1B2AF", "PipingConnectors")"#,
+    r#"rel ("PCN-9CE3F6FAD0F949DDBE8630B0A0DB5993-F968D84B23F95F8BBFB45B8A32D20406", "9CE3F6FAD0F949DDBE8630B0A0DB5993", "F968D84B23F95F8BBFB45B8A32D20406", "PipingConnectors")"#,
+    r#"rel ("PCN-C7C3E09265174C91AC008F3CE02E9653-266578B3F91156A38745A8A9B1369429", "C7C3E09265174C91AC008F3CE02E9653", "266578B3F91156A38745A8A9B1369429", "PipingConnectors")"#,
+    r#"rel ("PCN-ED053C1B662D45F887952F3C5968A094-80BA4A7AC26D5E1AB8834902B13CA57D", "ED053C1B662D45F887952F3C5968A094", "80BA4A7AC26D5E1AB8834902B13CA57D", "PipingConnectors")"#,
+    r#"missing PIDPipeline 1AC9974272E54B6CA8D4E095F6EEAEA2"#,
+    r#"missing PIDPipeline 2D010BCE5F9848048BFED35D63AF18BD"#,
+    r#"missing PIDPipeline 7779C14F6FCD4259A741ADF5552607C1"#,
+    r#"missing PIDBranchPoint 799B9008DB6848F28127C78AC745C5A8"#,
+    r#"missing PIDPipeline 81C620DDE0A044BF94EDC1DF7C7FF237"#,
+    r#"missing PIDPipeline B3D0A6FD8F07493AB43C5DDAE20F32E1"#,
+];
+
+#[test]
+fn the_dwg_fixture_alone_states_nothing_the_reference_lacks() {
+    let (code, stdout, stderr) = dwg_diff(false);
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stdout.lines().any(|line| line
+            == "pid export diff: objects 78 (extra 0, wrong class 0), values 71 \
+                (different 0, not in reference 0), rels 81 (not in reference 0)"),
+        "{stdout}"
+    );
+    // No value reads otherwise and nothing else is reported.
+    assert_eq!(finding_lines(&stdout), DWG_VALUES_NOT_STATED, "{stdout}");
+    // The vessel's `Description` label is its material description.
+    assert!(
+        !stdout.contains("F1081777313D41ABB14B7B18FA210D83 IObject.Description"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
+    let (code, stdout, stderr) = dwg_diff(true);
+    assert!(
+        !stderr.contains("error:"),
+        "the package's dump must read: {stderr}"
+    );
+    // Five of the six runs carry fluid code 493. That row of codelist 19
+    // states `OD` as its `CODELIST_TEXT` and has no `CODELIST_SHORT_TEXT`,
+    // and the pipeline stage spells a code from the short text alone, so it
+    // counts the five as missing. Nothing published turns on it here: each
+    // of the six runs has a plant item, whose `ITEMTAG` is the name.
+    assert!(
+        stderr.contains(
+            "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, \
+             5 fluid codes missing, 0 fluid systems unmapped"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stdout.lines().any(|line| line
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 99 \
+                (different 0, not in reference 0), rels 133 (not in reference 6)"),
+        "{stdout}"
+    );
+    let expected: Vec<&str> = DWG_EXP_OBJECT_AND_REL_FINDINGS
+        .iter()
+        .chain(&DWG_VALUES_NOT_STATED)
+        .copied()
+        .collect();
+    assert_eq!(finding_lines(&stdout), expected, "{stdout}");
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+}
+
+#[test]
+fn the_dwg_package_publishes_every_drawing_it_lists() {
+    let out_dir = Scratch::unmade("dwg-package");
+    let output = Command::new(CLI)
+        .arg(repo_path(DWG_PACKAGE))
+        .arg("--out-dir")
+        .arg(out_dir.path())
+        .output()
+        .expect("spawn pid_publish_xml <DWG package>");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("_Index.json")).expect("_Index.json"),
+    )
+    .expect("index json");
+    assert_index_shape(&index);
+    assert_eq!(index["export"], "OracleExp");
+    assert_eq!(index["pid_entries"], 7);
+    assert_eq!(index["drawing_rows"], 7);
+    assert_eq!(index["paired"], 7);
+    assert_eq!(index["failed"], 0);
+    assert_eq!(index["shells"], 1);
+    for name in [
+        "001",
+        "002",
+        "222",
+        "DWG-0104GP01-08",
+        "DWG-0201GP01-01",
+        "DWG-0201GP06-01",
+        "DWG-0202GP06-01",
+    ] {
+        for suffix in ["_Data.xml", "_Meta.xml", "_Coverage.json"] {
+            assert!(
+                out_dir.join(format!("{name}{suffix}")).is_file(),
+                "{name}{suffix} was not written"
+            );
+        }
+    }
+    // Nothing is refused on the way. The dump's `T_PIPERUN` holds SI values
+    // that are not integers (`SP_INSULTHICKSI` 0.05 on its first row), in
+    // columns no stage follows: the index lists no problem, for the package
+    // or for a drawing, and the run prints no warning and no error.
+    assert_eq!(index["problems"], serde_json::json!([]), "{index}");
+    let drawings = index["drawings"].as_array().expect("drawings");
+    for drawing in drawings {
+        assert_eq!(drawing["problems"], serde_json::json!([]), "{drawing}");
+    }
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("warning:") || line.starts_with("error:")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("(0 failed, 1 without a DrawingNo)"),
+        "{stderr}"
+    );
+    // What each drawing states today, as the index counts it: objects,
+    // attribute values, relations. `001` has no `P&IDAttributes` row and is
+    // written as its `PIDDrawing` alone, outside the package's totals.
+    let stated: Vec<(&str, u64, u64, u64)> = drawings
+        .iter()
+        .map(|drawing| {
+            (
+                drawing["name"].as_str().expect("name"),
+                drawing["objects"].as_u64().expect("objects"),
+                drawing["values"].as_u64().expect("values"),
+                drawing["relationships"].as_u64().expect("relationships"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        stated,
+        [
+            ("001", 1, 1, 0),
+            ("002", 3, 2, 2),
+            ("222", 3, 2, 2),
+            ("DWG-0201GP01-01", 492, 362, 688),
+            ("DWG-0201GP06-01", 170, 150, 233),
+            ("DWG-0202GP06-01", 113, 121, 141),
+            ("DWG-0104GP01-08", 5, 6, 4),
+        ]
+    );
+    assert_eq!(index["objects"], 786);
+    assert_eq!(index["values"], 643);
+    assert_eq!(index["relationships"], 1_070);
+    // As many ports as the dump has rows in `T_PIPINGPOINT` and in
+    // `T_SIGNALPOINT`.
+    assert_eq!(index["piping_ports"], 93);
+    assert_eq!(index["signal_ports"], 151);
+    assert_eq!(index["connectivity_rels"], 192);
+    assert_eq!(index["opc_branch_points"], 5);
+    assert_eq!(index["equipment_composition_rels"], 10);
+    assert_eq!(index["item_note_rels"], 2);
+    assert_eq!(index["pipelines"], 12);
+    assert_eq!(index["piping_connectors"], 20);
+    // The package draws four off-page connectors on DWG-0202GP06-01 and
+    // none has a `ToFromText`. The reference writes `IOffpageConnector`
+    // only with one, never as an empty element.
+    //
+    // Four is what this line publishes from the package, not a count the
+    // vendor is known to publish: the same dump keeps a fifth off-page
+    // connector in this drawing's stockpile, and the one reference of the
+    // drawing publishes that pair as a `PIDBranchPoint` no relation names
+    // (see `DWG_EXP_OBJECT_AND_REL_FINDINGS`; plan S12).
+    let data = std::fs::read_to_string(out_dir.join("DWG-0202GP06-01_Data.xml")).expect("data");
+    assert_eq!(data.matches("<PIDBranchPoint>").count(), 4, "{data}");
+    assert!(!data.contains("<IOffpageConnector"), "{data}");
 }
