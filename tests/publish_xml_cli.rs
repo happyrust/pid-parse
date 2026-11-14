@@ -314,13 +314,14 @@ fn cli_help_advertises_diff_against_flag() {
 }
 
 #[test]
-fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
-    // A14 closes the last semantic diff against the SmartPlant
-    // reference A01 export: filtering pure annotation/label
-    // representations brings PIDRepresentation from 6 to 4 and the
-    // report goes fully clean. This test pins the post-A14
-    // milestone — the writer now reproduces the reference fixture's
-    // PID tag set exactly.
+fn cli_diff_against_real_a01_reference_prints_the_synthetic_residuals_and_exits_one() {
+    // The database line scores through `diff_pid_export`, as the `.pid` line
+    // and the backup package gate do. What A01 prints against its reference
+    // is the three synthetic residuals — the connector this line derives
+    // under its own UID, the Rel UIDs it composes, and the GraphicOIDs it
+    // numbers itself — each registered line by line in
+    // `docs/baselines/publish-diff-accepted.json` and held there by
+    // `tests/publish_diff_accepted_baseline.rs`. The run exits 1.
     if !fixture_available() {
         return;
     }
@@ -341,81 +342,41 @@ fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
         ])
         .output()
         .expect("spawn pid_publish_xml --diff-against");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "A01 reference diff should exit 0 (clean); got {out:?}",
-    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert!(
-        stdout.contains("Publish Data XML semantic diff"),
-        "stdout should carry the SemanticDiffReport header; got:\n{stdout}"
+        stdout.contains(
+            "pid export diff: objects 12 (extra 4, wrong class 0), values 18 \
+             (different 4, not in reference 0), rels 15 (not in reference 15)"
+        ),
+        "{stdout}"
     );
-    // All eight tag varieties on A01 must be MATCH.
-    for tag in [
-        "PIDDrawing",
-        "PIDNozzle",
-        "PIDPipeline",
-        "PIDPipingConnector",
-        "PIDPipingPort",
-        "PIDProcessPoint",
-        "PIDProcessVessel",
-        "PIDRepresentation",
-    ] {
+    let findings: Vec<&str> = stdout
+        .lines()
+        .filter(|line| {
+            ["extra ", "missing ", "value ", "rel (", "class "]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        })
+        .collect();
+    assert_eq!(findings.len(), 27, "{stdout}");
+    for line in &findings {
+        let residual = line.contains("185EF98B03E844158E3BD8E82806E6CF-CNX")
+            || line.contains("8B6386EF73A497F1A03D67B6A046D596")
+            || line.starts_with("rel (")
+            || line.contains("IDrawingRepresentation.GraphicOID");
         assert!(
-            stdout.contains(tag),
-            "report should list {tag}; got:\n{stdout}"
-        );
-    }
-    // No actionable rows allowed.
-    assert!(
-        !stdout.contains("MISSING"),
-        "no MISSING rows expected; got:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("EXTRA"),
-        "no EXTRA rows expected; got:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("DELTA"),
-        "no DELTA rows expected; got:\n{stdout}"
-    );
-    assert!(
-        stderr.contains("clean ("),
-        "stderr should announce the clean verdict; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("8 matching"),
-        "summary should report eight matching tag varieties; got:\n{stderr}"
-    );
-    // A40: the Rel DefUID section must also appear and be
-    // clean (every DefUID matches). The summary line on
-    // stderr is expected to carry both counts.
-    assert!(
-        stdout.contains("Publish Data XML Rel DefUID diff"),
-        "stdout should carry the A40 Rel diff header; got:\n{stdout}"
-    );
-    for def_uid in [
-        "DrawingItems",
-        "DwgRepresentationComposition",
-        "EquipmentComponentComposition",
-        "PipingConnectors",
-        "PipingEnd1Conn",
-        "PipingEnd2Conn",
-        "PipingPortComposition",
-        "ProcessPointCollection",
-    ] {
-        assert!(
-            stdout.contains(def_uid),
-            "Rel block should list `{def_uid}`; got:\n{stdout}"
+            residual,
+            "{line:?} is none of the three synthetic residuals"
         );
     }
     assert!(
-        stderr.contains("matching Rel DefUIDs"),
-        "stderr summary should count matching Rel DefUIDs; got:\n{stderr}"
+        stderr.contains("surfaced findings in database mode"),
+        "{stderr}"
     );
+    assert!(!stderr.contains("is clean"), "{stderr}");
 }
 
 #[test]
@@ -462,8 +423,69 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
     );
     let stderr = String::from_utf8_lossy(&diff.stderr);
     assert!(
-        stderr.contains("clean ("),
+        stderr.contains("is clean in database mode ("),
         "stderr should announce the clean verdict; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_diff_against_a_reference_with_one_value_changed_exits_one() {
+    // The run's own output is a clean reference (exit 0, above). Change one
+    // attribute of one object in a copy and the same run must exit 1 and
+    // name that value: the gate scores values, not tag counts.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("mutated-diff");
+    let data_path = dir.join("A01_Data.xml");
+    let gen = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --out (gen)");
+    assert!(gen.status.success(), "initial generation must succeed");
+    let own = std::fs::read_to_string(&data_path).expect("generated data xml");
+    let original = format!("<IObject UID=\"{A01_DRAWING_UID}\" Name=\"A01\"");
+    assert_eq!(own.matches(&original).count(), 1, "{own}");
+    let mutated = own.replace(
+        &original,
+        &format!("<IObject UID=\"{A01_DRAWING_UID}\" Name=\"A01-changed\""),
+    );
+    let reference = dir.join("A01_Data_changed.xml");
+    std::fs::write(&reference, mutated).expect("write the changed reference");
+
+    let diff = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--diff-against",
+            reference.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --diff-against a changed reference");
+    assert_eq!(diff.status.code(), Some(1), "{diff:?}");
+    let stdout = String::from_utf8_lossy(&diff.stdout);
+    let stderr = String::from_utf8_lossy(&diff.stderr);
+    assert!(
+        stdout.lines().any(|line| line
+            == format!(
+                "value PIDDrawing {A01_DRAWING_UID} IObject.Name: \"A01\" reference \"A01-changed\""
+            )),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("surfaced findings in database mode"),
+        "{stderr}"
     );
 }
 
@@ -876,10 +898,10 @@ fn cli_legacy_sqlite_list_drawings_smoke_still_works_with_deprecation_warning() 
 }
 
 #[test]
-fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
+fn cli_diff_against_combined_with_out_writes_xml_and_reports() {
     // --diff-against composes with --out: the XML lands on disk
-    // AND the report is printed. Post-A14 the A01 reference is
-    // semantically clean, so the combined flow exits 0.
+    // AND the report is printed. A01 carries its registered
+    // synthetic residuals, so the combined flow exits 1.
     if !fixture_available() {
         return;
     }
@@ -906,22 +928,16 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
         .expect("spawn pid_publish_xml --out --diff-against");
     assert_eq!(
         out.status.code(),
-        Some(0),
-        "post-A14 the combined flow against A01 reference should exit 0; got {out:?}",
+        Some(1),
+        "the combined flow against the A01 reference should exit 1; got {out:?}",
     );
     assert!(
         data_path.exists(),
         "--out should still produce the _Data.xml file when paired with --diff-against",
     );
     let report = String::from_utf8_lossy(&out.stdout);
-    // The report content survives even on clean exits — it is the
-    // canonical artifact a CI run records for traceability.
     assert!(
-        report.contains("Publish Data XML semantic diff"),
-        "report on stdout should carry the SemanticDiffReport header; got:\n{report}"
-    );
-    assert!(
-        report.contains("PIDRepresentation"),
-        "report should list PIDRepresentation as MATCH; got:\n{report}"
+        report.contains("pid export diff: objects 12 "),
+        "report on stdout should carry the pid export diff summary; got:\n{report}"
     );
 }

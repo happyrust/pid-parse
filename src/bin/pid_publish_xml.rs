@@ -37,10 +37,9 @@ use pid_parse::publish::pid_writer::{
 };
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    check_publish_document, diff_pid_export, diff_publish_xml, diff_rel_defuids,
-    load_drawing_graph, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
+    diff_pid_export, load_drawing_graph, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
     write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml, MalformedPublishDocument,
-    PublishDocumentSide, PublishError, PublishStyle,
+    PublishError, PublishStyle,
 };
 use std::path::{Path, PathBuf};
 
@@ -62,9 +61,9 @@ struct CliOptions {
     /// `--out` / `--stdout` / `--meta-out`.
     out_dir: Option<PathBuf>,
     /// Optional reference `_Data.xml` to diff the generated output
-    /// against. When set, the binary prints a [`SemanticDiffReport`]
-    /// to stdout and exits 0 if no differences (clean) or 1 if any
-    /// missing / extra / count-delta rows are surfaced.
+    /// against. When set, the binary prints the object / value / rel
+    /// findings of `diff_pid_export` to stdout and exits 0 when there
+    /// are none, 1 otherwise.
     ///
     /// Compatible with `--out` and `--stdout` (those still write
     /// the generated XML before the diff report) and with no
@@ -142,11 +141,10 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          --diff-against PATH compare the generated _Data.xml against a reference\n\
          \x20                   SmartPlant export, or, for a backup directory, a\n\
          \x20                   DIRECTORY of <Name>_Data.xml files: every drawing\n\
-         \x20                   is scored and reported. A database input prints the tag\n\
-         \x20                   and Rel-DefUID count report and exits 1 when any\n\
-         \x20                   variety differs. A .pid input scores emitted objects,\n\
-         \x20                   values and Rels: one the reference does not carry\n\
-         \x20                   exits 1. Reference-only content the exclusion\n\
+         \x20                   is scored and reported. A database or .pid input\n\
+         \x20                   scores emitted objects, values and Rels: one the\n\
+         \x20                   reference does not carry exits 1. Reference-only\n\
+         \x20                   content the exclusion\n\
          \x20                   list does not cover exits 1 too. Excused by\n\
          \x20                   design and printed with their reason: classes\n\
          \x20                   the .pid file cannot state (Port / Enrichment),\n\
@@ -155,15 +153,15 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20                   plant database's attribute classes, and the\n\
          \x20                   tag-named duplicate elements. With --oracle-exp\n\
          \x20                   the clean line says oracle-exp mode.\n\
-         \x20                   With a .pid input, a _Meta.xml this run writes
-         \x20                   (--out-dir or --meta-out) is scored too: the
-         \x20                   <Name>_Meta.xml beside the reference
-         \x20                   <Name>_Data.xml is compared on the 13
-         \x20                   <Container> attributes, the top-level block
-         \x20                   order, the three Rel DefUIDs and their role
-         \x20                   wiring, and the sibling _Data.xml DocUID.
-         \x20                   DocVersionDate, FilePath and the six derived
-         \x20                   UUID v5 ids are registered accepted
+         \x20                   With a .pid or database input, a _Meta.xml this\n\
+         \x20                   run writes (--out-dir or --meta-out) is scored\n\
+         \x20                   too: the <Name>_Meta.xml beside the reference\n\
+         \x20                   <Name>_Data.xml is compared on the 13\n\
+         \x20                   <Container> attributes, the top-level block\n\
+         \x20                   order, the three Rel DefUIDs and their role\n\
+         \x20                   wiring, and the sibling _Data.xml DocUID.\n\
+         \x20                   DocVersionDate, FilePath and the six derived\n\
+         \x20                   UUID v5 ids are registered accepted\n\
          \x20                   differences. Drift exits 1.\n\
          --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
          \x20                   an Oracle exp dump and emit them for parents this\n\
@@ -529,15 +527,25 @@ fn run(options: CliOptions) -> Result<i32, String> {
 
     emit_data(&options, &xml)?;
 
-    if let Some(meta_path) = &options.meta_output {
-        let meta_xml = write_meta_xml(&graph, &options.plant_name)
-            .map_err(|e| format!("render meta XML: {e}"))?;
-        write_file(meta_path, &meta_xml)?;
-        eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
-    }
+    let meta_xml = match &options.meta_output {
+        Some(meta_path) => {
+            let meta_xml = write_meta_xml(&graph, &options.plant_name)
+                .map_err(|e| format!("render meta XML: {e}"))?;
+            write_file(meta_path, &meta_xml)?;
+            eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
+            Some(meta_xml)
+        }
+        None => None,
+    };
 
     match &options.diff_against {
-        Some(ref_path) => report_diff(ref_path, &xml),
+        Some(ref_path) => {
+            let meta_exit = match &meta_xml {
+                Some(meta_xml) => report_meta_diff(ref_path, &xml, meta_xml)?,
+                None => 0,
+            };
+            report_pid_diff(ref_path, &xml, DiffMode::Database, meta_exit != 0)
+        }
         None => Ok(0),
     }
 }
@@ -808,7 +816,12 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             } else {
                 0
             };
-            report_pid_diff(ref_path, &xml, options.oracle_exp.is_some(), meta_exit != 0)
+            let mode = if options.oracle_exp.is_some() {
+                DiffMode::OracleExp
+            } else {
+                DiffMode::Pid
+            };
+            report_pid_diff(ref_path, &xml, mode, meta_exit != 0)
         }
         None => Ok(0),
     }
@@ -842,7 +855,28 @@ fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> i32 
     1
 }
 
-/// Print the `.pid` export's object / value / rel score. An emitted object,
+/// Which input a `--diff-against` run scored, as its verdict line names it.
+#[derive(Clone, Copy)]
+enum DiffMode {
+    /// A `.pid` read on its own.
+    Pid,
+    /// A `.pid` with `--oracle-exp`.
+    OracleExp,
+    /// An `Export.mdf` or `Export_v2.sqlite` with `--drawing`.
+    Database,
+}
+
+impl DiffMode {
+    fn label(self) -> &'static str {
+        match self {
+            DiffMode::Pid => ".pid",
+            DiffMode::OracleExp => "oracle-exp",
+            DiffMode::Database => "database",
+        }
+    }
+}
+
+/// Print the export's object / value / rel score. An emitted object,
 /// value or rel the reference does not carry exits 1, and so does
 /// reference-only content the explicit exclusion list does not cover:
 /// classes the `.pid` file cannot state, relation classes this line never
@@ -853,16 +887,18 @@ fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> i32 
 /// class follow the findings. A document that is not well-formed XML is
 /// not scored: the refusal goes to stdout and stderr and exits 1.
 ///
-/// `oracle_exp` narrows one excuse: a class the catalog says the dump
-/// supplies (`PidTagRole::Port` / `PidTagRole::Enrichment`) excused with
-/// "this run published no <class>" is a finding in this mode, because the
-/// dump is in the run. Each such class prints
-/// `oracle-exp run excused <class> ×N the dump should supply` and the run
+/// [`DiffMode::OracleExp`] and [`DiffMode::Database`] narrow one excuse: a
+/// class the catalog says the dump supplies (`PidTagRole::Port` /
+/// `PidTagRole::Enrichment`) excused with "this run published no <class>" is
+/// a finding in these modes, because the dump or the database is in the run.
+/// Each such class prints
+/// `oracle-exp run excused <class> ×N the dump should supply` (or
+/// `database run excused <class> ×N the database should supply`) and the run
 /// exits 1.
 fn report_pid_diff(
     ref_path: &Path,
     xml: &str,
-    oracle_exp: bool,
+    mode: DiffMode,
     meta_dirty: bool,
 ) -> Result<i32, String> {
     let reference = std::fs::read_to_string(ref_path)
@@ -872,20 +908,27 @@ fn report_pid_diff(
         Err(malformed) => return Ok(refuse("Semantic diff", ref_path, &malformed)),
     };
     print!("{diff}");
-    // The dump is in this run, so a class it should have supplied is not an
-    // excuse. The `.pid`-alone mode keeps its excuse: there is no dump there.
-    let excused_dump_classes: Vec<(&str, usize)> = if oracle_exp {
-        diff.dump_supplied_excused
+    // The dump or the database is in this run, so a class it should have
+    // supplied is not an excuse. The `.pid`-alone mode keeps its excuse:
+    // there is no dump there.
+    let source = match mode {
+        DiffMode::Pid => None,
+        DiffMode::OracleExp => Some("dump"),
+        DiffMode::Database => Some("database"),
+    };
+    let excused_dump_classes: Vec<(&str, usize)> = match source {
+        Some(_) => diff
+            .dump_supplied_excused
             .iter()
             .map(|(class, count)| (class.as_str(), *count))
-            .collect()
-    } else {
-        Vec::new()
+            .collect(),
+        None => Vec::new(),
     };
+    let mode = mode.label();
     for (class, count) in &excused_dump_classes {
-        println!("oracle-exp run excused {class} ×{count} the dump should supply");
+        let source = source.unwrap_or_default();
+        println!("{mode} run excused {class} ×{count} the {source} should supply");
     }
-    let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
     if diff.is_clean() && !meta_dirty && excused_dump_classes.is_empty() {
         eprintln!(
             "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
@@ -994,72 +1037,6 @@ fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<
         );
         Ok(1)
     }
-}
-
-/// Print the semantic diff of `xml` against the reference at `ref_path`;
-/// the exit code is 1 when it surfaces findings. A document that is not
-/// well-formed XML is not scored: the refusal goes to stdout and stderr and
-/// exits 1.
-fn report_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
-    let mut exit_code = 0;
-    {
-        let reference = std::fs::read_to_string(ref_path)
-            .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-        // The tag counts scan bytes, so a document cut short would score as
-        // the part that survived: refuse one that is not well-formed first.
-        let sides = [
-            (xml, PublishDocumentSide::Generated),
-            (reference.as_str(), PublishDocumentSide::Reference),
-        ];
-        for (document, side) in sides {
-            if let Err(malformed) = check_publish_document(document, side) {
-                return Ok(refuse("Semantic diff", ref_path, &malformed));
-            }
-        }
-        let tag_report = diff_publish_xml(xml, &reference);
-        // Surface the report on stdout so it can be redirected to
-        // a file or compared in tests; the "Loaded drawing..." line
-        // stays on stderr.
-        println!("{tag_report}");
-
-        // A40: append a Rel-DefUID-level diff block. `<PIDxxx>` tag
-        // counts answer "are all business objects emitted?"; the
-        // Rel block answers the complementary question "are all
-        // cross-references emitted?" A drawing can pass one and
-        // fail the other — the combined report catches both.
-        let rel_report = diff_rel_defuids(xml, &reference);
-        println!();
-        println!("{rel_report}");
-
-        let tag_clean = tag_report.is_clean();
-        let rel_clean = rel_report.is_clean();
-        if !tag_clean || !rel_clean {
-            eprintln!(
-                "Semantic diff against {} surfaced findings:\n  \
-                 PID tag  findings — missing={} extra={} count_deltas={}\n  \
-                 Rel DefUID findings — missing={} extra={} count_deltas={}\n\
-                 exit 1.",
-                ref_path.display(),
-                tag_report.missing_from_generated,
-                tag_report.extra_in_generated,
-                tag_report.count_deltas,
-                rel_report.missing_from_generated,
-                rel_report.extra_in_generated,
-                rel_report.count_deltas,
-            );
-            exit_code = 1;
-        } else {
-            eprintln!(
-                "Semantic diff against {} is clean ({} matching tag varieties, \
-                 {} matching Rel DefUIDs).",
-                ref_path.display(),
-                tag_report.matching,
-                rel_report.matching,
-            );
-        }
-    }
-
-    Ok(exit_code)
 }
 
 fn open_input_as_sqlite(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
