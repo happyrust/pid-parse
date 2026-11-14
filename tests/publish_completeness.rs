@@ -31,11 +31,14 @@
 //! directory it did not find and skips.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pid_parse::publish::completeness::{measure, Completeness, Share};
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
 
 mod common;
 use common::Scratch;
@@ -121,9 +124,118 @@ fn attributes_in(xml: &str) -> usize {
     xml[declaration..].matches("=\"").count()
 }
 
+/// Each object block's interface element names in document order, by
+/// `IObject UID`, with the block's class; a `PIDPipeline` is also filed under
+/// `name:<IObject Name>`, the key a pipeline pairs by when the UIDs differ.
+fn interface_sequences(xml: &str) -> HashMap<String, (String, Vec<String>)> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut sequences = HashMap::new();
+    let mut depth = 0usize;
+    /// The class, the element names, the `IObject UID` and `Name`.
+    type OpenBlock = (String, Vec<String>, Option<String>, Option<String>);
+    let mut block: Option<OpenBlock> = None;
+    let element = |start: &BytesStart<'_>, block: &mut Option<OpenBlock>| {
+        let Some((_, names, uid, name)) = block.as_mut() else {
+            return;
+        };
+        let interface = start.name().as_ref().to_string();
+        if interface == "IObject" {
+            for attribute in start.attributes().flatten() {
+                let value = attribute
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .map(std::borrow::Cow::into_owned)
+                    .unwrap_or_default();
+                match attribute.key.as_ref() {
+                    "UID" => *uid = Some(value),
+                    "Name" => *name = Some(value),
+                    _ => {}
+                }
+            }
+        }
+        names.push(interface);
+    };
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) => {
+                if depth == 1 {
+                    let class = start.name().as_ref().to_string();
+                    block = Some((class, Vec::new(), None, None));
+                } else if depth == 2 {
+                    element(&start, &mut block);
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(start)) if depth == 2 => element(&start, &mut block),
+            Ok(Event::End(_)) => {
+                depth = depth.saturating_sub(1);
+                if depth != 1 {
+                    continue;
+                }
+                let Some((class, names, Some(uid), name)) = block.take() else {
+                    continue;
+                };
+                if class == "Rel" {
+                    continue;
+                }
+                if let (true, Some(name)) = (class == "PIDPipeline", name) {
+                    sequences.insert(format!("name:{name}"), (class.clone(), names.clone()));
+                }
+                sequences.insert(uid, (class, names));
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    sequences
+}
+
+/// Every object the generated document shares with the reference writes the
+/// interface elements both carry in the reference's order: what it writes,
+/// less what the reference's block lacks, is a subsequence of the
+/// reference's sequence. Returns how many objects were compared.
+fn hold_interface_order(what: &str, generated_xml: &str, reference_xml: &str) -> usize {
+    let generated = interface_sequences(generated_xml);
+    let reference = interface_sequences(reference_xml);
+    let mut compared = 0;
+    let mut out_of_order = Vec::new();
+    for (key, (class, names)) in &generated {
+        let Some((reference_class, reference_names)) = reference.get(key) else {
+            continue;
+        };
+        // A pipeline is compared once, by name.
+        if class != reference_class || class == "PIDPipeline" && !key.starts_with("name:") {
+            continue;
+        }
+        compared += 1;
+        let mut rest = reference_names.iter();
+        let mut shared = names.iter().filter(|name| reference_names.contains(name));
+        if !shared.all(|name| rest.any(|found| found == name)) {
+            out_of_order.push(format!(
+                "{class} {key}: ours {names:?}, reference {reference_names:?}"
+            ));
+        }
+    }
+    out_of_order.sort();
+    assert!(
+        out_of_order.is_empty(),
+        "{what}: {} objects write their interface elements out of the reference's order\n  {}",
+        out_of_order.len(),
+        out_of_order
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    compared
+}
+
 /// Measure `generated_xml` against `reference_xml` and hold the result to
 /// `pin`.
 fn hold(what: &str, generated_xml: &str, reference_xml: &str, pin: &Pin) {
+    let ordered = hold_interface_order(what, generated_xml, reference_xml);
+    eprintln!("{what}: {ordered} objects write their interface elements in the reference's order");
     let measured =
         measure(generated_xml, reference_xml).unwrap_or_else(|error| panic!("{what}: {error}"));
     assert_eq!(
@@ -239,9 +351,9 @@ const DWG_ALONE: Pin = Pin {
     container: (15, 15),
     objects: (78, 108),
     paired_by_name: 0,
-    interfaces: (164, 747),
+    interfaces: (509, 747),
     values: (71, 236),
-    empty_attributes: (0, 93),
+    empty_attributes: (91, 93),
     relations: (81, 133),
     relations_verbatim: 81,
     values_different: 0,
@@ -257,9 +369,9 @@ const DWG_WITH_ITS_DUMP: Pin = Pin {
     container: (15, 15),
     objects: (102, 108),
     paired_by_name: 0,
-    interfaces: (332, 747),
+    interfaces: (677, 747),
     values: (99, 236),
-    empty_attributes: (0, 93),
+    empty_attributes: (91, 93),
     relations: (127, 133),
     relations_verbatim: 127,
     values_different: 0,
@@ -275,9 +387,9 @@ const DWG_PACKAGE_DIRECTORY: Pin = Pin {
     container: (15, 15),
     objects: (100, 108),
     paired_by_name: 0,
-    interfaces: (328, 747),
+    interfaces: (673, 747),
     values: (58, 236),
-    empty_attributes: (0, 93),
+    empty_attributes: (91, 93),
     relations: (123, 133),
     relations_verbatim: 123,
     values_different: 39,
@@ -429,9 +541,9 @@ const I_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (1735, 3093),
         paired_by_name: 0,
-        interfaces: (3559, 22930),
+        interfaces: (13274, 22930),
         values: (1530, 6702),
-        empty_attributes: (0, 2802),
+        empty_attributes: (2496, 2802),
         relations: (1971, 4107),
         relations_verbatim: 1971,
         values_different: 0,
@@ -441,9 +553,9 @@ const I_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (3093, 3093),
         paired_by_name: 79,
-        interfaces: (12944, 22930),
+        interfaces: (22659, 22930),
         values: (3323, 6702),
-        empty_attributes: (0, 2802),
+        empty_attributes: (2496, 2802),
         relations: (4107, 4107),
         relations_verbatim: 4001,
         values_different: 0,
@@ -458,9 +570,9 @@ const JK_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (2605, 4655),
         paired_by_name: 0,
-        interfaces: (5374, 34527),
+        interfaces: (19937, 34527),
         values: (2296, 10034),
-        empty_attributes: (0, 4241),
+        empty_attributes: (3772, 4241),
         relations: (2955, 6175),
         relations_verbatim: 2955,
         values_different: 0,
@@ -470,9 +582,9 @@ const JK_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (4655, 4655),
         paired_by_name: 123,
-        interfaces: (19520, 34527),
+        interfaces: (34135, 34527),
         values: (5019, 10034),
-        empty_attributes: (0, 4241),
+        empty_attributes: (3775, 4241),
         relations: (6175, 6175),
         relations_verbatim: 6012,
         values_different: 0,
@@ -487,9 +599,9 @@ const LM_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (3068, 5493),
         paired_by_name: 0,
-        interfaces: (6321, 40755),
+        interfaces: (23535, 40755),
         values: (2720, 11847),
-        empty_attributes: (0, 5029),
+        empty_attributes: (4493, 5029),
         relations: (3474, 7274),
         relations_verbatim: 3474,
         values_different: 0,
@@ -499,9 +611,9 @@ const LM_WELL_SITE: Drawing = Drawing {
         container: (15, 15),
         objects: (5493, 5493),
         paired_by_name: 141,
-        interfaces: (23087, 40755),
+        interfaces: (40301, 40755),
         values: (5954, 11847),
-        empty_attributes: (0, 5029),
+        empty_attributes: (4493, 5029),
         relations: (7274, 7274),
         relations_verbatim: 7082,
         values_different: 0,
@@ -516,9 +628,9 @@ const LIGHT_HYDROCARBON_SEPARATOR: Drawing = Drawing {
         container: (15, 15),
         objects: (667, 1219),
         paired_by_name: 0,
-        interfaces: (1367, 8906),
+        interfaces: (5005, 8906),
         values: (578, 2574),
-        empty_attributes: (0, 1046),
+        empty_attributes: (884, 1046),
         relations: (789, 1685),
         relations_verbatim: 789,
         values_different: 0,
@@ -528,9 +640,9 @@ const LIGHT_HYDROCARBON_SEPARATOR: Drawing = Drawing {
         container: (15, 15),
         objects: (1219, 1219),
         paired_by_name: 31,
-        interfaces: (5176, 8906),
+        interfaces: (8814, 8906),
         values: (1292, 2574),
-        empty_attributes: (0, 1046),
+        empty_attributes: (884, 1046),
         relations: (1685, 1685),
         relations_verbatim: 1638,
         values_different: 0,
@@ -545,9 +657,9 @@ const AIR_COOLER_A: Drawing = Drawing {
         container: (15, 15),
         objects: (695, 1260),
         paired_by_name: 0,
-        interfaces: (1421, 9446),
+        interfaces: (5301, 9446),
         values: (613, 2733),
-        empty_attributes: (0, 1220),
+        empty_attributes: (1068, 1220),
         relations: (780, 1652),
         relations_verbatim: 780,
         values_different: 0,
@@ -557,9 +669,9 @@ const AIR_COOLER_A: Drawing = Drawing {
         container: (15, 15),
         objects: (1260, 1260),
         paired_by_name: 47,
-        interfaces: (5440, 9446),
+        interfaces: (9320, 9446),
         values: (1410, 2733),
-        empty_attributes: (0, 1220),
+        empty_attributes: (1068, 1220),
         relations: (1652, 1652),
         relations_verbatim: 1596,
         values_different: 0,
@@ -574,9 +686,9 @@ const AIR_COOLER_B: Drawing = Drawing {
         container: (15, 15),
         objects: (699, 1248),
         paired_by_name: 0,
-        interfaces: (1427, 9293),
+        interfaces: (5331, 9293),
         values: (615, 2665),
-        empty_attributes: (0, 1184),
+        empty_attributes: (1077, 1184),
         relations: (784, 1636),
         relations_verbatim: 784,
         values_different: 0,
@@ -586,9 +698,9 @@ const AIR_COOLER_B: Drawing = Drawing {
         container: (15, 15),
         objects: (1248, 1248),
         paired_by_name: 30,
-        interfaces: (5285, 9293),
+        interfaces: (9189, 9293),
         values: (1381, 2665),
-        empty_attributes: (0, 1184),
+        empty_attributes: (1077, 1184),
         relations: (1636, 1636),
         relations_verbatim: 1603,
         values_different: 0,
@@ -603,9 +715,9 @@ const AIR_COOLER_C: Drawing = Drawing {
         container: (15, 15),
         objects: (690, 1229),
         paired_by_name: 0,
-        interfaces: (1412, 9126),
+        interfaces: (5245, 9126),
         values: (607, 2616),
-        empty_attributes: (0, 1158),
+        empty_attributes: (1054, 1158),
         relations: (775, 1614),
         relations_verbatim: 775,
         values_different: 0,
@@ -615,9 +727,9 @@ const AIR_COOLER_C: Drawing = Drawing {
         container: (15, 15),
         objects: (1229, 1229),
         paired_by_name: 28,
-        interfaces: (5194, 9126),
+        interfaces: (9027, 9126),
         values: (1355, 2616),
-        empty_attributes: (0, 1158),
+        empty_attributes: (1054, 1158),
         relations: (1614, 1614),
         relations_verbatim: 1582,
         values_different: 0,

@@ -3,8 +3,11 @@
 //! The `.pid`-only counterpart of [`super::xml_writer`] (plan
 //! `docs/plans/2026-10-10-publish-from-the-pid-alone.md`; on 2026-10-10 the
 //! user chose a separate writer that emits nothing the file does not give).
-//! An object carries `IObject` and only the interfaces it has values for; a
-//! representation its `GraphicOID`; the relationships are the two the items'
+//! An object carries the interface elements its class's row of
+//! `catalog::CLASS_INTERFACES` lists, in that order: the ones every
+//! reference object of the class carries, bare when the file gives them no
+//! value, and the others only with a value. A representation carries its
+//! `GraphicOID`; the relationships are the two the items'
 //! own rows state -- `DwgRepresentationComposition` (drawing -> representation)
 //! and `DrawingItems` (representation -> item) -- plus one
 //! `ProcessPointCollection` per derived process point, under the
@@ -28,7 +31,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::catalog::{self, PidTagRole};
+use super::catalog::{self, AttributeRule, InterfaceRule, PidTagRole};
 use super::model::{PublishDrawing, PublishError};
 use super::pid_load::{
     ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
@@ -69,14 +72,14 @@ fn write_document(
 ) -> std::fmt::Result {
     writeln!(buf, r#"<?xml version ="1.0" encoding="UTF-8"?>"#)?;
     write_data_container_open(buf, plant_name, &drawing.drawing_uid, &drawing.drawing_name)?;
-    writeln!(buf, "   <PIDDrawing>")?;
-    writeln!(
+    write_object(
         buf,
-        r#"      <IObject UID="{}" Name="{}"/>"#,
-        escape_attr(&drawing.drawing_uid),
-        escape_attr(&drawing.drawing_name),
+        "PIDDrawing",
+        &[
+            Stated::new("IObject", "UID", &drawing.drawing_uid),
+            Stated::new("IObject", "Name", &drawing.drawing_name),
+        ],
     )?;
-    writeln!(buf, "   </PIDDrawing>")?;
 
     for item in &drawing.items {
         if let Some(class) = item.class {
@@ -84,9 +87,11 @@ fn write_document(
         }
     }
     for point in &drawing.process_points {
-        writeln!(buf, "   <PIDProcessPoint>")?;
-        writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&point.uid))?;
-        writeln!(buf, "   </PIDProcessPoint>")?;
+        write_object(
+            buf,
+            "PIDProcessPoint",
+            &[Stated::new("IObject", "UID", &point.uid)],
+        )?;
     }
     for point in &drawing.branch_points {
         write_branch_point(buf, point)?;
@@ -102,18 +107,18 @@ fn write_document(
     }
     let published = published_items(drawing);
     for representation in &drawing.representations {
-        writeln!(buf, "   <PIDRepresentation>")?;
-        writeln!(
+        write_object(
             buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(&representation.uid)
+            "PIDRepresentation",
+            &[
+                Stated::new("IObject", "UID", &representation.uid),
+                Stated::owned(
+                    "IDrawingRepresentation",
+                    "GraphicOID",
+                    representation.graphic_oid.to_string(),
+                ),
+            ],
         )?;
-        writeln!(
-            buf,
-            r#"      <IDrawingRepresentation GraphicOID="{}"/>"#,
-            representation.graphic_oid
-        )?;
-        writeln!(buf, "   </PIDRepresentation>")?;
     }
     for representation in &drawing.representations {
         write_rel(
@@ -178,34 +183,17 @@ fn write_document(
 }
 
 fn write_pipeline(buf: &mut String, pipeline: &PidPipeline) -> std::fmt::Result {
-    writeln!(buf, "   <PIDPipeline>")?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}" Name="{}"/>"#,
-        escape_attr(&pipeline.uid),
-        escape_attr(&pipeline.name),
-    )?;
-    for interface in [
-        "IPBSItem",
-        "IPlannedFacility",
-        "IPBSItemCollection",
-        "IPipeline",
-        "IPipingConnectorComposition",
-    ] {
-        writeln!(buf, "      <{interface}/>")?;
-    }
-    write!(buf, "      <IFluidSystem")?;
+    let mut stated = vec![
+        Stated::new("IObject", "UID", &pipeline.uid),
+        Stated::new("IObject", "Name", &pipeline.name),
+    ];
     if let Some(code) = &pipeline.fluid_code {
-        write!(buf, r#" FluidCode="{}""#, escape_attr(code))?;
+        stated.push(Stated::new("IFluidSystem", "FluidCode", code));
     }
     if let Some(fluid) = &pipeline.fluid_system {
-        write!(buf, r#" FluidSystem="{}""#, escape_attr(fluid))?;
+        stated.push(Stated::new("IFluidSystem", "FluidSystem", fluid));
     }
-    writeln!(buf, "/>")?;
-    for interface in ["INoteCollection", "IExpandableThing", "IPIDTypical"] {
-        writeln!(buf, "      <{interface}/>")?;
-    }
-    writeln!(buf, "   </PIDPipeline>")
+    write_object(buf, "PIDPipeline", &stated)
 }
 
 /// The connectivity relationships the `_Data.xml` carries: those whose
@@ -283,155 +271,151 @@ fn composition_rels(drawing: &PidPublishDrawing) -> Vec<&ExpRelation> {
 }
 
 fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Result {
-    let interfaces: &[&str] = if point.class == "PIDSignalBranchPoint" {
-        &[
-            "IConnection",
-            "IDrawingItem",
-            "ISignalConnection",
-            "ISignalBranchPoint",
-            "IFacilityPoint",
-            "IDocumentItem",
-        ]
-    } else {
-        &[
-            "IConnection",
-            "IPipingConnection",
-            "IDrawingItem",
-            "IPipingBranchPoint",
-            "IDocumentItem",
-        ]
-    };
-    writeln!(buf, "   <{}>", point.class)?;
-    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&point.uid))?;
-    for interface in interfaces {
-        writeln!(buf, "      <{interface}/>")?;
-    }
-    writeln!(buf, "   </{}>", point.class)
+    write_object(
+        buf,
+        point.class,
+        &[Stated::new("IObject", "UID", &point.uid)],
+    )
 }
 
 fn write_opc_point(buf: &mut String, point: &PidOpcPoint) -> std::fmt::Result {
-    writeln!(buf, "   <PIDBranchPoint>")?;
-    let mut object = format!(r#"UID="{}""#, escape_attr(&point.uid));
+    let mut stated = vec![Stated::new("IObject", "UID", &point.uid)];
     if !point.name.is_empty() {
-        write!(object, r#" Name="{}""#, escape_attr(&point.name))?;
+        stated.push(Stated::new("IObject", "Name", &point.name));
     }
     if !point.description.is_empty() {
-        write!(
-            object,
-            r#" Description="{}""#,
-            escape_attr(&point.description)
-        )?;
+        stated.push(Stated::new("IObject", "Description", &point.description));
     }
-    writeln!(buf, "      <IObject {object}/>")?;
-    writeln!(buf, "      <IPIDBranchPoint/>")?;
     // The reference states `IOffpageConnector` only with a `ToFromText`:
     // of the 142 off-page connectors in the thirteen reference drawings,
     // 123 carry one and the other 19 leave the element out; none writes
     // it empty. The 19 are on two drawings, 14 on one and 5 on the other.
-    if !point.to_from_text.is_empty() {
-        writeln!(
-            buf,
-            r#"      <IOffpageConnector ToFromText="{}"/>"#,
-            escape_attr(&point.to_from_text)
-        )?;
-    }
-    for interface in [
-        "IDuctConnection",
-        "IConnection",
-        "IDrawingItem",
-        "IPipingConnection",
-        "ISignalConnection",
-        "IDocumentItem",
-    ] {
-        writeln!(buf, "      <{interface}/>")?;
-    }
-    writeln!(buf, "   </PIDBranchPoint>")
+    stated.push(Stated::new(
+        "IOffpageConnector",
+        "ToFromText",
+        &point.to_from_text,
+    ));
+    write_object(buf, "PIDBranchPoint", &stated)
 }
 
 fn write_port(buf: &mut String, port: &super::pid_load::PidPort) -> std::fmt::Result {
-    let interfaces: &[&str] = if port.class == "PIDSignalPort" {
-        &[
-            "IConnection",
-            "ISignalConnection",
-            "ISignalPort",
-            "IPipingConnection",
-            "IFacilityPoint",
-            "IPIDTypical",
-        ]
-    } else {
-        &[
-            "IConnection",
-            "IPipingPort",
-            "IPipingConnection",
-            "IPort",
-            "IPipeCrossSectionItem",
-        ]
-    };
-    writeln!(buf, "   <{}>", port.class)?;
     let name = port
         .attributes
         .iter()
         .find(|attribute| attribute.interface == "IObject" && attribute.name == "Name")
         .map_or("", |attribute| attribute.value.as_str());
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}" Name="{}"/>"#,
-        escape_attr(&port.uid),
-        escape_attr(name)
-    )?;
-    for interface in interfaces {
-        let mut pairs = String::new();
-        for attribute in port
-            .attributes
+    let mut stated = vec![
+        Stated::new("IObject", "UID", &port.uid),
+        Stated::new("IObject", "Name", name),
+    ];
+    stated.extend(
+        port.attributes
             .iter()
-            .filter(|attribute| attribute.interface == *interface)
-        {
-            write!(
-                pairs,
-                r#" {}="{}""#,
-                attribute.name,
-                escape_attr(&attribute.value)
-            )?;
-        }
-        if pairs.is_empty() {
-            writeln!(buf, "      <{interface}/>")?;
-        } else {
-            writeln!(buf, "      <{interface}{pairs}/>")?;
-        }
-    }
-    writeln!(buf, "   </{}>", port.class)
+            .filter(|attribute| attribute.interface != "IObject")
+            .map(|attribute| Stated::new(attribute.interface, attribute.name, &attribute.value)),
+    );
+    write_object(buf, port.class, &stated)
 }
 
 fn write_item(buf: &mut String, item: &PidPublishItem, class: &str) -> std::fmt::Result {
-    writeln!(buf, "   <{class}>")?;
-    let mut object = format!(r#"UID="{}""#, escape_attr(&item.uid));
-    for name in ["Name", "Description"] {
-        if let Some(attribute) = item
-            .attributes
+    let mut stated = vec![Stated::new("IObject", "UID", &item.uid)];
+    stated.extend(
+        item.attributes
             .iter()
-            .find(|attribute| attribute.interface == "IObject" && attribute.name == name)
-        {
-            write!(object, r#" {name}="{}""#, escape_attr(&attribute.value))?;
-        }
-    }
-    writeln!(buf, "      <IObject {object}/>")?;
+            .map(|attribute| Stated::new(attribute.interface, attribute.name, &attribute.value)),
+    );
+    write_object(buf, class, &stated)
+}
 
-    let mut interfaces: Vec<(&str, String)> = Vec::new();
-    for attribute in item
-        .attributes
-        .iter()
-        .filter(|attribute| attribute.interface != "IObject")
-    {
-        let pair = format!(r#" {}="{}""#, attribute.name, escape_attr(&attribute.value));
-        match interfaces.last_mut() {
-            Some((interface, pairs)) if *interface == attribute.interface => pairs.push_str(&pair),
-            _ => interfaces.push((attribute.interface, pair)),
+/// One value an object states: its interface, attribute and value.
+struct Stated<'a> {
+    interface: &'a str,
+    name: &'a str,
+    value: std::borrow::Cow<'a, str>,
+}
+
+impl<'a> Stated<'a> {
+    fn new(interface: &'a str, name: &'a str, value: &'a str) -> Self {
+        Self {
+            interface,
+            name,
+            value: value.into(),
         }
     }
-    for (interface, pairs) in interfaces {
+
+    fn owned(interface: &'a str, name: &'a str, value: String) -> Self {
+        Self {
+            interface,
+            name,
+            value: value.into(),
+        }
+    }
+}
+
+/// Write one object block: the interface elements `catalog::class_interfaces`
+/// lists for `class` in their order, each with the values `stated` gives it.
+///
+/// An element the class's row does not list, or an object of a class with no
+/// row, is written after the listed ones with its values in the order
+/// `stated` gives them, so no stated value is dropped.
+fn write_object(buf: &mut String, class: &str, stated: &[Stated<'_>]) -> std::fmt::Result {
+    writeln!(buf, "   <{class}>")?;
+    let slots = catalog::class_interfaces(class).unwrap_or_default();
+    for slot in slots {
+        let values: Vec<&Stated<'_>> = stated
+            .iter()
+            .filter(|value| value.interface == slot.interface)
+            .collect();
+        let written = match slot.rule {
+            InterfaceRule::Always => true,
+            InterfaceRule::IfValue | InterfaceRule::ByEquipmentType(_) => {
+                values.iter().any(|value| !value.value.is_empty())
+            }
+        };
+        if !written {
+            continue;
+        }
+        let mut pairs = String::new();
+        for &(name, rule) in slot.attributes {
+            match values.iter().find(|value| value.name == name) {
+                Some(value) => write_pair(&mut pairs, name, &value.value)?,
+                None if rule == AttributeRule::AlwaysEmpty => write_pair(&mut pairs, name, "")?,
+                None => {}
+            }
+        }
+        for value in values
+            .iter()
+            .filter(|value| !slot.attributes.iter().any(|(name, _)| *name == value.name))
+        {
+            write_pair(&mut pairs, value.name, &value.value)?;
+        }
+        writeln!(buf, "      <{}{pairs}/>", slot.interface)?;
+    }
+    let mut unlisted: Vec<(&str, String)> = Vec::new();
+    for value in stated
+        .iter()
+        .filter(|value| !slots.iter().any(|slot| slot.interface == value.interface))
+    {
+        let index = match unlisted
+            .iter()
+            .position(|(interface, _)| *interface == value.interface)
+        {
+            Some(index) => index,
+            None => {
+                unlisted.push((value.interface, String::new()));
+                unlisted.len() - 1
+            }
+        };
+        write_pair(&mut unlisted[index].1, value.name, &value.value)?;
+    }
+    for (interface, pairs) in unlisted {
         writeln!(buf, "      <{interface}{pairs}/>")?;
     }
     writeln!(buf, "   </{class}>")
+}
+
+fn write_pair(pairs: &mut String, name: &str, value: &str) -> std::fmt::Result {
+    write!(pairs, r#" {name}="{}""#, escape_attr(value))
 }
 
 fn write_rel(buf: &mut String, def_uid: &str, uid1: &str, uid2: &str) -> std::fmt::Result {
@@ -887,17 +871,258 @@ mod tests {
         }
     }
 
+    /// The interface elements of the block whose `IObject UID` is `uid`, in
+    /// document order.
+    fn interfaces_of(xml: &str, uid: &str) -> Vec<String> {
+        let object = format!("<IObject UID=\"{uid}\"");
+        let start = xml.find(&object).expect("the object is written");
+        let block = &xml[start..];
+        let end = block.find("\n   </").expect("the block ends");
+        block[..end]
+            .lines()
+            .map(|line| {
+                let element = line.trim_start().trim_start_matches('<');
+                element
+                    .split([' ', '/'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn item(
+        uid: &str,
+        class: &'static str,
+        attributes: &[(&'static str, &'static str, &str)],
+    ) -> PidPublishItem {
+        PidPublishItem {
+            uid: uid.to_string(),
+            model_item_type: String::new(),
+            class: Some(class),
+            attributes: attributes
+                .iter()
+                .map(|&(interface, name, value)| PidPublishAttribute {
+                    interface,
+                    name,
+                    value: value.to_string(),
+                    source: PidValueSource::Label { row: 1 },
+                })
+                .collect(),
+        }
+    }
+
     #[test]
-    fn an_item_carries_only_the_interfaces_it_has_values_for() {
+    fn an_item_carries_its_classs_interfaces_in_order_bare_where_it_states_nothing() {
         let xml = write_pid_data_xml(&drawing(), "P01");
         assert!(xml.contains(r#"DocName="A &amp; B""#));
-        assert!(xml.contains(
-            "   <PIDInstrument>\n      <IObject UID=\"I1\" Name=\"TT-0112101A\"/>\n      <INamedInstrument InstrTagSequenceNo=\"0112101A\" MeasuredVariable=\"TT\"/>\n   </PIDInstrument>\n"
-        ));
+        assert!(xml.contains(concat!(
+            "   <PIDInstrument>\n",
+            "      <IObject UID=\"I1\" Name=\"TT-0112101A\"/>\n",
+            "      <IInstrument/>\n",
+            "      <IInstrumentOcc/>\n",
+            "      <IPBSItem/>\n",
+            "      <IPlannedMatl/>\n",
+            "      <IDrawingItem/>\n",
+            "      <IExpandableThing/>\n",
+            "      <IInlineComponentOcc/>\n",
+            "      <IPipingPortComposition/>\n",
+            "      <IHeatTracedItem HTraceRqmt=\"\"/>\n",
+            "      <ILoopMember/>\n",
+            "      <IPartOcc/>\n",
+            "      <IPressureReliefItem/>\n",
+            "      <IProcessPointCollection/>\n",
+            "      <ISignalPortComposition/>\n",
+            "      <IDocumentItem/>\n",
+            "      <IElecPowerConsumer/>\n",
+            "      <IPart/>\n",
+            "      <INoteCollection/>\n",
+            "      <INamedInstrument InstrFuncModifier=\"\" InstrLoopSuffix=\"\" ",
+            "InstrTagPrefix=\"\" InstrTagSequenceNo=\"0112101A\" InstrTagSuffix=\"\" ",
+            "MeasuredVariable=\"TT\"/>\n",
+            "      <IPIDTypical/>\n",
+            "   </PIDInstrument>\n",
+        )));
         assert!(
             !xml.contains("UID=\"I2\""),
             "an unclassified item is left out"
         );
+    }
+
+    #[test]
+    fn an_always_interface_is_written_bare_with_its_always_empty_attributes() {
+        let mut drawing = drawing();
+        drawing.items = vec![item("CSF", "PIDControlSystemFunction", &[])];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            "      <INamedInstrument InstrFuncModifier=\"\" InstrLoopSuffix=\"\" \
+             InstrTagPrefix=\"\" InstrTagSuffix=\"\"/>\n   </PIDControlSystemFunction>\n"
+        ));
+        assert_eq!(interfaces_of(&xml, "CSF").len(), 12);
+    }
+
+    #[test]
+    fn an_if_value_interface_is_written_only_where_a_value_is_stated() {
+        let mut drawing = drawing();
+        drawing.items = vec![
+            item(
+                "RUN1",
+                "PIDPipingConnector",
+                &[
+                    ("IInsulatedItem", "InsulSpec", "H"),
+                    ("INamedPipingConnector", "PipingConnectorSeqNo", "1001"),
+                    ("IPipeCrossSectionItem", "NominalDiameter", "50 mm"),
+                    ("IPipingSpecifiedItem", "PipingMaterialsClass", "A1"),
+                ],
+            ),
+            item("RUN2", "PIDPipingConnector", &[]),
+            item(
+                "RUN3",
+                "PIDPipingConnector",
+                &[("INamedPipingConnector", "PipingConnectorSeqNo", "")],
+            ),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        let common = [
+            "IObject",
+            "IPBSItem",
+            "IPlannedFacility",
+            "IConnector",
+            "IDrawingItem",
+            "IPBSItemCollection",
+            "IPipingConnector",
+            "IFabricatedItem",
+            "IHeatTracedItem",
+            "IProcessPointCollection",
+            "IDocumentItem",
+            "IElecPowerConsumer",
+            "INoteCollection",
+            "IProcessDataCaseComposition",
+            "IExpandableThing",
+        ];
+        let mut with_values: Vec<&str> = common.to_vec();
+        with_values.extend([
+            "INamedPipingConnector",
+            "IPipeCrossSectionItem",
+            "IPipingSpecifiedItem",
+            "IInsulatedItem",
+            "IJacketedItem",
+            "IPIDTypical",
+        ]);
+        assert_eq!(interfaces_of(&xml, "RUN1"), with_values);
+        let mut bare: Vec<&str> = common.to_vec();
+        bare.extend(["IPipeCrossSectionItem", "IJacketedItem", "IPIDTypical"]);
+        assert_eq!(interfaces_of(&xml, "RUN2"), bare);
+        assert_eq!(
+            interfaces_of(&xml, "RUN3"),
+            bare,
+            "an empty value is no value"
+        );
+        assert!(xml.contains(
+            r#"      <INamedPipingConnector PipingConnectorPrefix="" PipingConnectorSeqNo="1001" PipingConnectorSuff=""/>"#
+        ));
+    }
+
+    #[test]
+    fn an_interface_the_equipment_type_decides_is_left_out() {
+        let mut drawing = drawing();
+        drawing.items = vec![
+            item("V1", "PIDProcessVessel", &[]),
+            item("E1", "PIDHeatTransferEquipment", &[]),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        let vessel = interfaces_of(&xml, "V1");
+        assert!(!vessel
+            .iter()
+            .any(|name| name.starts_with("ILowPressureTank")));
+        assert!(!vessel.iter().any(|name| name == "INamedEquipment"));
+        let exchanger = interfaces_of(&xml, "E1");
+        assert!(!exchanger.iter().any(|name| name.starts_with("IAirCool")));
+        assert_eq!(
+            exchanger[exchanger.len() - 3..],
+            [
+                "IShellAndTubeHeatExchanger",
+                "INamedEquipment",
+                "IPIDTypical"
+            ]
+        );
+        assert!(xml.contains(r#"      <INamedEquipment EquipSuff=""/>"#));
+    }
+
+    #[test]
+    fn mechanical_equipment_writes_only_what_a_pump_and_a_motor_write_in_one_order() {
+        let mut drawing = drawing();
+        drawing.items = vec![
+            item("M1", "PIDMechanicalEquipment", &[]),
+            item(
+                "M2",
+                "PIDMechanicalEquipment",
+                &[
+                    ("INamedEquipment", "EquipPrefix", "P"),
+                    ("INamedEquipment", "EquipSeqNo", "101"),
+                ],
+            ),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        let shared = [
+            "IObject",
+            "IPIDMechanicalEquipmentOcc",
+            "IProcessEquipmentOcc",
+            "IPIDMechanicalEquipment",
+            "IProcessEquipment",
+            "IEquipmentOcc",
+            "IEquipment",
+            "IPlannedMatl",
+            "IDrawingItem",
+            "IPBSItem",
+            "IPump",
+        ];
+        let mut bare: Vec<&str> = shared.to_vec();
+        bare.push("IPIDTypical");
+        assert_eq!(interfaces_of(&xml, "M1"), bare);
+        let mut named: Vec<&str> = shared.to_vec();
+        named.extend(["INamedEquipment", "IPIDTypical"]);
+        assert_eq!(interfaces_of(&xml, "M2"), named);
+        assert!(xml
+            .contains(r#"      <INamedEquipment EquipPrefix="P" EquipSeqNo="101" EquipSuff=""/>"#));
+    }
+
+    #[test]
+    fn an_interface_its_class_does_not_list_follows_the_listed_ones() {
+        let mut drawing = drawing();
+        drawing.items = vec![
+            item(
+                "E1",
+                "PIDHeatTransferEquipment",
+                &[("ISpecifiedMatlItem", "LongMaterialDescription", "new")],
+            ),
+            item("X1", "PIDUnlisted", &[("IThing", "Value", "1")]),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        let exchanger = interfaces_of(&xml, "E1");
+        assert_eq!(
+            exchanger[exchanger.len() - 2..],
+            ["IPIDTypical", "ISpecifiedMatlItem"]
+        );
+        assert!(xml.contains(
+            "   <PIDUnlisted>\n      <IObject UID=\"X1\"/>\n      <IThing Value=\"1\"/>\n   </PIDUnlisted>\n"
+        ));
+    }
+
+    #[test]
+    fn the_drawing_carries_its_seven_interfaces() {
+        let xml = write_pid_data_xml(&drawing(), "P01");
+        assert!(xml.contains(concat!(
+            "   <PIDDrawing>\n",
+            "      <IObject UID=\"D1\" Name=\"A &amp; B\" Description=\"\"/>\n",
+            "      <IDocument DocSubtype=\"\"/>\n",
+            "      <IDocVersionComposition/>\n",
+            "      <IDwgRepresentationComposition/>\n",
+            "      <IPIDDrawing/>\n",
+            "      <ISchematicDwg/>\n",
+            "      <IPBSItem/>\n",
+            "   </PIDDrawing>\n",
+        )));
     }
 
     #[test]
@@ -1081,9 +1306,18 @@ mod tests {
             },
         });
         let xml = write_pid_data_xml(&drawing, "P01");
-        assert!(xml.contains(
-            "   <PIDProcessPoint>\n      <IObject UID=\"RUN.PPT\"/>\n   </PIDProcessPoint>\n"
-        ));
+        assert!(xml.contains(concat!(
+            "   <PIDProcessPoint>\n",
+            "      <IObject UID=\"RUN.PPT\"/>\n",
+            "      <IProcessPoint/>\n",
+            "      <IFacilityPoint/>\n",
+            "      <IProcessPointCaseComposition/>\n",
+            "      <IBulkMaxProcessPoint PhaseTemperatureMax=\"\" PressureMax=\"\"/>\n",
+            "      <IBulkMinProcessPoint PhaseTemperatureMin=\"\" PressureMin=\"\"/>\n",
+            "      <IBulkNormProcessPoint MolecularWeightNorm=\"\" CpCvRatioNorm=\"\"/>\n",
+            "      <IBulkBaseProcessPoint PhaseTemperatureBase=\"\" PressureBase=\"\"/>\n",
+            "   </PIDProcessPoint>\n",
+        )));
         assert!(xml.contains(
             "   <Rel>\n      <IObject UID=\"PRP-RUN.PPT-RUN\"/>\n      <IRel UID1=\"RUN.PPT\" UID2=\"RUN\" DefUID=\"ProcessPointCollection\"/>\n   </Rel>\n"
         ));

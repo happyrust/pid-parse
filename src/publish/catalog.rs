@@ -548,6 +548,586 @@ pub(crate) fn pid_file_cannot_state(tag: &str) -> Option<(&'static str, PidTagRo
     found
 }
 
+/// When the `.pid` line writes one interface element of a class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterfaceRule {
+    /// On every object of the class, bare when the object states no value
+    /// for it.
+    Always,
+    /// Only when the object states a non-empty value of one of the
+    /// element's attributes.
+    IfValue,
+    /// On the objects of some equipment types only, which the `IEquipment`
+    /// code list (`EqType0` … `EqType5`) decides; the text names the codes.
+    /// The `.pid` line does not carry those codes, so it writes the element
+    /// only where the object states a non-empty value for it, which no
+    /// label does today.
+    ByEquipmentType(&'static str),
+}
+
+/// How the `.pid` line writes one attribute of an interface element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttributeRule {
+    /// Written when the object states it.
+    Stated,
+    /// Written empty when the object does not state it: every reference
+    /// object of the class that carries the element states it empty.
+    AlwaysEmpty,
+}
+
+/// One interface element of a class, at its place in the class's order.
+#[derive(Debug)]
+pub(crate) struct InterfaceSlot {
+    /// The element's name.
+    pub interface: &'static str,
+    /// When the element is written.
+    pub rule: InterfaceRule,
+    /// The element's attributes in the order the references write them,
+    /// for the elements whose order or empty attributes the line restates.
+    /// An attribute the object states and this list does not name is
+    /// written after these, in the order the object states it.
+    pub attributes: &'static [(&'static str, AttributeRule)],
+}
+
+/// The interface elements of one published class, in the order every
+/// reference object of the class writes them.
+#[derive(Debug)]
+pub(crate) struct ClassInterfaces {
+    /// The published class tag.
+    pub class: &'static str,
+    /// The class's elements, `IObject` first.
+    pub interfaces: &'static [InterfaceSlot],
+}
+
+const fn always(interface: &'static str) -> InterfaceSlot {
+    InterfaceSlot {
+        interface,
+        rule: InterfaceRule::Always,
+        attributes: &[],
+    }
+}
+
+const fn if_value(interface: &'static str) -> InterfaceSlot {
+    InterfaceSlot {
+        interface,
+        rule: InterfaceRule::IfValue,
+        attributes: &[],
+    }
+}
+
+const fn by_equipment_type(interface: &'static str, codes: &'static str) -> InterfaceSlot {
+    InterfaceSlot {
+        interface,
+        rule: InterfaceRule::ByEquipmentType(codes),
+        attributes: &[],
+    }
+}
+
+const fn with_attributes(
+    slot: InterfaceSlot,
+    attributes: &'static [(&'static str, AttributeRule)],
+) -> InterfaceSlot {
+    InterfaceSlot {
+        interface: slot.interface,
+        rule: slot.rule,
+        attributes,
+    }
+}
+
+use AttributeRule::{AlwaysEmpty, Stated};
+
+const ITEM_OBJECT: InterfaceSlot = with_attributes(
+    always("IObject"),
+    &[("UID", Stated), ("Name", Stated), ("Description", Stated)],
+);
+const HEAT_TRACED: InterfaceSlot =
+    with_attributes(always("IHeatTracedItem"), &[("HTraceRqmt", AlwaysEmpty)]);
+const NAMED_INSTRUMENT: InterfaceSlot = with_attributes(
+    always("INamedInstrument"),
+    &[
+        ("InstrFuncModifier", AlwaysEmpty),
+        ("InstrLoopSuffix", AlwaysEmpty),
+        ("InstrTagPrefix", AlwaysEmpty),
+        ("InstrTagSequenceNo", Stated),
+        ("InstrTagSuffix", AlwaysEmpty),
+        ("MeasuredVariable", Stated),
+    ],
+);
+const NAMED_EQUIPMENT_ATTRIBUTES: &[(&str, AttributeRule)] = &[
+    ("EquipPrefix", Stated),
+    ("EquipSeqNo", Stated),
+    ("EquipSuff", AlwaysEmpty),
+];
+const AIR_COOLER: &str = "an air cooler: EqType2 @EE796";
+
+/// The interface elements of every class the `.pid` line writes, in the
+/// order the references write them, and when each is written.
+///
+/// Measured on the thirteen reference drawings (the eleven acceptance
+/// sheets, A01 and DWG-0202GP06-01): every reference object's sequence of
+/// elements follows its class's order here, an `Always` element is on
+/// every reference object of the class, an `IfValue` element is on a
+/// reference object exactly when one of its attributes is non-empty (A01
+/// alone writes three bare: a nozzle's `IPipingSpecifiedItem`, a pipe run's
+/// `ISlopedPipingItem` and `IInsulatedItem`), and an `AlwaysEmpty`
+/// attribute is on every reference element and empty on every one.
+///
+/// What the equipment type decides is not decidable here, because the
+/// `.pid` line does not carry the `EqType*` codes, so those elements are
+/// left out rather than written where the reference may lack them:
+///
+/// * `PIDProcessVessel`: `ILowPressureTank` (`EqType1` @EE793, a tank) and
+///   `ILowPressureTankOcc` (`EqType2` @EE7A6, an open-top tank);
+/// * `PIDHeatTransferEquipment`: the four `IAirCooler*` elements of an air
+///   cooler (`EqType2` @EE796);
+/// * `PIDMechanicalEquipment` has no one order. A pump (`EqType1` @EE791)
+///   writes `IPump` before `IEquipmentDriver`, a motor (`EqType1` @EE792)
+///   after it, and each writes elements the other lacks. The row lists the
+///   pump's order with the motor's own elements where they fall among the
+///   elements both write; the elements written are those on both — the
+///   ten up to `IPBSItem`, then `IPump`, then `IPIDTypical` — and they are
+///   in the same order on both. `IEquipmentDriver`, on both but on either
+///   side of `IPump`, is left out with the elements of one type.
+pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
+    ClassInterfaces {
+        class: "PIDDrawing",
+        interfaces: &[
+            with_attributes(
+                always("IObject"),
+                &[
+                    ("UID", Stated),
+                    ("Name", Stated),
+                    ("Description", AlwaysEmpty),
+                ],
+            ),
+            with_attributes(
+                always("IDocument"),
+                &[
+                    ("DocCategory", Stated),
+                    ("DocTitle", Stated),
+                    ("DocType", Stated),
+                    ("DocSubtype", AlwaysEmpty),
+                ],
+            ),
+            always("IDocVersionComposition"),
+            always("IDwgRepresentationComposition"),
+            always("IPIDDrawing"),
+            always("ISchematicDwg"),
+            always("IPBSItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDControlSystemFunction",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPBSItem"),
+            always("IControlSystemFunction"),
+            always("IDrawingItem"),
+            always("ISignalPortComposition"),
+            always("IInstrument"),
+            always("IPlannedMatl"),
+            always("ILoopMember"),
+            always("IDocumentItem"),
+            always("INoteCollection"),
+            always("IExpandableThing"),
+            NAMED_INSTRUMENT,
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDInstrument",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IInstrument"),
+            always("IInstrumentOcc"),
+            always("IPBSItem"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("IExpandableThing"),
+            always("IInlineComponentOcc"),
+            always("IPipingPortComposition"),
+            HEAT_TRACED,
+            always("ILoopMember"),
+            always("IPartOcc"),
+            always("IPressureReliefItem"),
+            always("IProcessPointCollection"),
+            always("ISignalPortComposition"),
+            always("IDocumentItem"),
+            always("IElecPowerConsumer"),
+            always("IPart"),
+            always("INoteCollection"),
+            NAMED_INSTRUMENT,
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDInlineInstrument",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IInlineInstrument"),
+            always("IInstrument"),
+            always("IInstrumentOcc"),
+            always("IPBSItem"),
+            always("IPipingPortComposition"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("IInlineInstrumentOcc"),
+            always("IExpandableThing"),
+            always("IDuctPortComposition"),
+            always("IInlineComponentOcc"),
+            HEAT_TRACED,
+            always("ILoopMember"),
+            always("IPartOcc"),
+            always("IPressureReliefItem"),
+            always("IProcessPointCollection"),
+            always("ISignalPortComposition"),
+            always("IDocumentItem"),
+            always("IElecPowerConsumer"),
+            always("IPart"),
+            always("INoteCollection"),
+            NAMED_INSTRUMENT,
+            always("IPipeCrossSectionItem"),
+            if_value("IInsulatedItem"),
+            always("IInlineComponent"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDNote",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IDrawingItem"),
+            always("IPBSNote"),
+            always("INote"),
+            always("IDocumentItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDNozzle",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPBSItem"),
+            always("IPipingPortComposition"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("INozzleOcc"),
+            always("INozzle"),
+            always("IEquipmentComponent"),
+            always("IEquipmentComponentOcc"),
+            always("IFabricatedItem"),
+            HEAT_TRACED,
+            always("IPBSItemCollection"),
+            always("IProcessPointCollection"),
+            always("ISignalPortComposition"),
+            always("IPartOcc"),
+            always("IDocumentItem"),
+            always("IElecPowerConsumer"),
+            always("IPart"),
+            always("INoteCollection"),
+            always("IProcessDataCaseComposition"),
+            always("IPipeCrossSectionItem"),
+            if_value("IPipingSpecifiedItem"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDPipingComponent",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPBSItem"),
+            always("IPipingPortComposition"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("IPipingComponent"),
+            always("IPipingComponentOcc"),
+            always("IInlineComponentOcc"),
+            always("IFabricatedItem"),
+            HEAT_TRACED,
+            always("IPartOcc"),
+            always("IPressureReliefItem"),
+            always("IDocumentItem"),
+            always("IElecPowerConsumer"),
+            always("IPart"),
+            always("INoteCollection"),
+            always("IPipeCrossSectionItem"),
+            if_value("IInsulatedItem"),
+            always("IInlineComponent"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDPipingConnector",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPBSItem"),
+            always("IPlannedFacility"),
+            always("IConnector"),
+            always("IDrawingItem"),
+            always("IPBSItemCollection"),
+            always("IPipingConnector"),
+            always("IFabricatedItem"),
+            HEAT_TRACED,
+            always("IProcessPointCollection"),
+            always("IDocumentItem"),
+            always("IElecPowerConsumer"),
+            always("INoteCollection"),
+            always("IProcessDataCaseComposition"),
+            always("IExpandableThing"),
+            with_attributes(
+                if_value("INamedPipingConnector"),
+                &[
+                    ("PipingConnectorPrefix", AlwaysEmpty),
+                    ("PipingConnectorSeqNo", Stated),
+                    ("PipingConnectorSuff", AlwaysEmpty),
+                ],
+            ),
+            always("IPipeCrossSectionItem"),
+            if_value("IPipingSpecifiedItem"),
+            if_value("ISlopedPipingItem"),
+            if_value("IInsulatedItem"),
+            always("IJacketedItem"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDSignalConnector",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPlannedFacility"),
+            with_attributes(always("IConnector"), &[("FlowDirection", AlwaysEmpty)]),
+            always("IDrawingItem"),
+            always("ISignalConnector"),
+            always("IDocumentItem"),
+            always("IExpandableThing"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDProcessPoint",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IProcessPoint"),
+            always("IFacilityPoint"),
+            always("IProcessPointCaseComposition"),
+            with_attributes(
+                always("IBulkMaxProcessPoint"),
+                &[
+                    ("PhaseTemperatureMax", AlwaysEmpty),
+                    ("PressureMax", AlwaysEmpty),
+                ],
+            ),
+            with_attributes(
+                always("IBulkMinProcessPoint"),
+                &[
+                    ("PhaseTemperatureMin", AlwaysEmpty),
+                    ("PressureMin", AlwaysEmpty),
+                ],
+            ),
+            with_attributes(
+                always("IBulkNormProcessPoint"),
+                &[
+                    ("MolecularWeightNorm", AlwaysEmpty),
+                    ("CpCvRatioNorm", AlwaysEmpty),
+                ],
+            ),
+            with_attributes(
+                always("IBulkBaseProcessPoint"),
+                &[
+                    ("PhaseTemperatureBase", AlwaysEmpty),
+                    ("PressureBase", AlwaysEmpty),
+                ],
+            ),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDProcessEquipment",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPBSItem"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("IEquipmentOcc"),
+            always("IPBSItemCollection"),
+            always("IEquipment"),
+            with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
+            if_value("ISpecifiedMatlItem"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDProcessVessel",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPIDProcessVesselOcc"),
+            always("IProcessVesselOcc"),
+            always("IEquipment"),
+            always("IEquipmentOcc"),
+            always("IPBSItem"),
+            always("IPBSItemCollection"),
+            always("IPlannedMatl"),
+            always("IProcessEquipment"),
+            always("IProcessEquipmentOcc"),
+            always("IProcessVessel"),
+            always("IDrawingItem"),
+            always("IPIDProcessVessel"),
+            by_equipment_type("ILowPressureTankOcc", "an open-top tank: EqType2 @EE7A6"),
+            by_equipment_type("ILowPressureTank", "a tank: EqType1 @EE793"),
+            with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
+            if_value("ISpecifiedMatlItem"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDHeatTransferEquipment",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPIDHeatTransferEquipmentOcc"),
+            always("IHeatTransferEquipmentOcc"),
+            always("IPIDHeatTransferEquipment"),
+            always("IHeatTransferEquipment"),
+            always("IProcessEquipmentOcc"),
+            always("IEquipmentOcc"),
+            always("IPlannedMatl"),
+            always("IProcessEquipment"),
+            always("IEquipment"),
+            always("IDrawingItem"),
+            always("IPBSItem"),
+            by_equipment_type("IAirCooler", AIR_COOLER),
+            by_equipment_type("IAirCoolerOcc", AIR_COOLER),
+            by_equipment_type("IAirCooledExchanger", AIR_COOLER),
+            by_equipment_type("IAirCooledExchangerOcc", AIR_COOLER),
+            always("IShellAndTubeHeatExchanger"),
+            with_attributes(always("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDMechanicalEquipment",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPIDMechanicalEquipmentOcc"),
+            always("IProcessEquipmentOcc"),
+            always("IPIDMechanicalEquipment"),
+            always("IProcessEquipment"),
+            always("IEquipmentOcc"),
+            always("IEquipment"),
+            always("IPlannedMatl"),
+            always("IDrawingItem"),
+            always("IPBSItem"),
+            by_equipment_type("IPositiveDisplacementPumpOcc", "a pump: EqType1 @EE791"),
+            by_equipment_type("IPositiveDisplacementPump", "a pump: EqType1 @EE791"),
+            by_equipment_type("IPumpOcc", "a pump: EqType1 @EE791"),
+            by_equipment_type("IElectricMotorOcc", "a motor: EqType1 @EE792"),
+            by_equipment_type("IElectricMotor", "a motor: EqType1 @EE792"),
+            always("IPump"),
+            by_equipment_type("IFluidTransferMachineOcc", "a pump: EqType1 @EE791"),
+            by_equipment_type("IFluidTransferMachine", "a pump: EqType1 @EE791"),
+            by_equipment_type("IMaterialTransferEquipment", "a pump: EqType1 @EE791"),
+            by_equipment_type("IMaterialTransferEquipmentOcc", "a pump: EqType1 @EE791"),
+            by_equipment_type(
+                "IEquipmentDriver",
+                "after IPump on a pump (EqType1 @EE791), before it on a motor (EqType1 @EE792)",
+            ),
+            by_equipment_type(
+                "IProcessEquipmentDriverOcc",
+                "a motor, before IPump: EqType1 @EE792",
+            ),
+            with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDPipeline",
+        interfaces: &[
+            with_attributes(always("IObject"), &[("UID", Stated), ("Name", Stated)]),
+            always("IPBSItem"),
+            always("IPlannedFacility"),
+            always("IPBSItemCollection"),
+            always("IPipeline"),
+            always("IPipingConnectorComposition"),
+            with_attributes(
+                always("IFluidSystem"),
+                &[("FluidCode", Stated), ("FluidSystem", Stated)],
+            ),
+            always("INoteCollection"),
+            always("IExpandableThing"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDBranchPoint",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IPIDBranchPoint"),
+            if_value("IOffpageConnector"),
+            always("IDuctConnection"),
+            always("IConnection"),
+            always("IDrawingItem"),
+            always("IPipingConnection"),
+            always("ISignalConnection"),
+            always("IDocumentItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDPipingBranchPoint",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IConnection"),
+            always("IPipingConnection"),
+            always("IDrawingItem"),
+            always("IPipingBranchPoint"),
+            always("IDocumentItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDSignalBranchPoint",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IConnection"),
+            always("IDrawingItem"),
+            always("ISignalConnection"),
+            always("ISignalBranchPoint"),
+            always("IFacilityPoint"),
+            always("IDocumentItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDPipingPort",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IConnection"),
+            always("IPipingPort"),
+            always("IPipingConnection"),
+            always("IPort"),
+            always("IPipeCrossSectionItem"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDSignalPort",
+        interfaces: &[
+            ITEM_OBJECT,
+            always("IConnection"),
+            always("ISignalConnection"),
+            always("ISignalPort"),
+            always("IPipingConnection"),
+            always("IFacilityPoint"),
+            always("IPIDTypical"),
+        ],
+    },
+    ClassInterfaces {
+        class: "PIDRepresentation",
+        interfaces: &[ITEM_OBJECT, always("IDrawingRepresentation")],
+    },
+];
+
+/// The interface elements of `class` in their order, or `None` for a class
+/// [`CLASS_INTERFACES`] does not list.
+pub(crate) fn class_interfaces(class: &str) -> Option<&'static [InterfaceSlot]> {
+    CLASS_INTERFACES
+        .iter()
+        .find(|row| row.class == class)
+        .map(|row| row.interfaces)
+}
+
 /// One class of attributes the vendor reference carries and this line cannot
 /// state, with the reason it is not published.
 ///
@@ -970,6 +1550,144 @@ mod tests {
                 "PIDSignalPort",
             ]
         );
+    }
+
+    #[test]
+    fn every_pid_line_class_has_one_interface_row_led_by_iobject() {
+        let tags = supported_pid_line_tags();
+        let mut rows: Vec<&str> = CLASS_INTERFACES.iter().map(|row| row.class).collect();
+        rows.sort_unstable();
+        assert_eq!(rows, tags, "one interface row per `.pid`-line class");
+        for row in CLASS_INTERFACES {
+            assert_eq!(row.interfaces[0].interface, "IObject", "{}", row.class);
+            assert_eq!(
+                row.interfaces[0].rule,
+                InterfaceRule::Always,
+                "{}",
+                row.class
+            );
+            let mut names: Vec<&str> = row.interfaces.iter().map(|slot| slot.interface).collect();
+            names.sort_unstable();
+            let count = names.len();
+            names.dedup();
+            assert_eq!(names.len(), count, "{} lists an interface twice", row.class);
+        }
+    }
+
+    /// The elements the `.pid` line can write for `class`, in order: every
+    /// one but those the equipment type decides.
+    fn writable(class: &str) -> Vec<&'static str> {
+        class_interfaces(class)
+            .unwrap_or_default()
+            .iter()
+            .filter(|slot| !matches!(slot.rule, InterfaceRule::ByEquipmentType(_)))
+            .map(|slot| slot.interface)
+            .collect()
+    }
+
+    fn is_subsequence(part: &[&str], whole: &[&str]) -> bool {
+        let mut rest = whole.iter();
+        part.iter().all(|wanted| rest.any(|found| found == wanted))
+    }
+
+    #[test]
+    fn mechanical_equipment_writes_in_an_order_both_a_pump_and_a_motor_keep() {
+        // The two sequences of the fifteen reference objects: six pumps
+        // (`EqType1` @EE791) and nine motors (@EE792).
+        let pump = [
+            "IObject",
+            "IPIDMechanicalEquipmentOcc",
+            "IProcessEquipmentOcc",
+            "IPIDMechanicalEquipment",
+            "IProcessEquipment",
+            "IEquipmentOcc",
+            "IEquipment",
+            "IPlannedMatl",
+            "IDrawingItem",
+            "IPBSItem",
+            "IPositiveDisplacementPumpOcc",
+            "IPositiveDisplacementPump",
+            "IPumpOcc",
+            "IPump",
+            "IFluidTransferMachineOcc",
+            "IFluidTransferMachine",
+            "IMaterialTransferEquipment",
+            "IMaterialTransferEquipmentOcc",
+            "IEquipmentDriver",
+            "INamedEquipment",
+            "IPIDTypical",
+        ];
+        let motor = [
+            "IObject",
+            "IPIDMechanicalEquipmentOcc",
+            "IProcessEquipmentOcc",
+            "IPIDMechanicalEquipment",
+            "IProcessEquipment",
+            "IEquipmentOcc",
+            "IEquipment",
+            "IPlannedMatl",
+            "IDrawingItem",
+            "IPBSItem",
+            "IElectricMotorOcc",
+            "IElectricMotor",
+            "IEquipmentDriver",
+            "IProcessEquipmentDriverOcc",
+            "IPump",
+            "IPIDTypical",
+        ];
+        let written = writable("PIDMechanicalEquipment");
+        assert!(is_subsequence(&written, &pump), "{written:?}");
+        let without_value: Vec<&str> = written
+            .iter()
+            .copied()
+            .filter(|name| *name != "INamedEquipment")
+            .collect();
+        assert!(is_subsequence(&without_value, &motor), "{without_value:?}");
+        assert!(!written.contains(&"IEquipmentDriver"));
+        let every_slot: Vec<&str> = class_interfaces("PIDMechanicalEquipment")
+            .unwrap_or_default()
+            .iter()
+            .map(|slot| slot.interface)
+            .collect();
+        for name in pump.iter().chain(&motor) {
+            assert!(every_slot.contains(name), "{name} is not in the row");
+        }
+    }
+
+    #[test]
+    fn only_the_equipment_classes_carry_interfaces_the_type_decides() {
+        for row in CLASS_INTERFACES {
+            let decided: Vec<&str> = row
+                .interfaces
+                .iter()
+                .filter(|slot| matches!(slot.rule, InterfaceRule::ByEquipmentType(_)))
+                .map(|slot| slot.interface)
+                .collect();
+            let expected: &[&str] = match row.class {
+                "PIDProcessVessel" => &["ILowPressureTankOcc", "ILowPressureTank"],
+                "PIDHeatTransferEquipment" => &[
+                    "IAirCooler",
+                    "IAirCoolerOcc",
+                    "IAirCooledExchanger",
+                    "IAirCooledExchangerOcc",
+                ],
+                "PIDMechanicalEquipment" => &[
+                    "IPositiveDisplacementPumpOcc",
+                    "IPositiveDisplacementPump",
+                    "IPumpOcc",
+                    "IElectricMotorOcc",
+                    "IElectricMotor",
+                    "IFluidTransferMachineOcc",
+                    "IFluidTransferMachine",
+                    "IMaterialTransferEquipment",
+                    "IMaterialTransferEquipmentOcc",
+                    "IEquipmentDriver",
+                    "IProcessEquipmentDriverOcc",
+                ],
+                _ => &[],
+            };
+            assert_eq!(decided, expected, "{}", row.class);
+        }
     }
 
     #[test]

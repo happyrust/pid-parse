@@ -169,6 +169,9 @@ fn a_ghost_attribute_is_a_missing_finding() {
     let excluded = r#"<Container>
         <PIDInstrument><IObject UID="A" Name="PT-1"/><IPBSItem ConstructionStatus="1"/></PIDInstrument>
     </Container>"#;
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPBSItem/></PIDInstrument>
+    </Container>"#;
     let clean = diff_pid_export(generated, excluded).expect("well-formed");
     assert!(clean.is_clean(), "{clean}");
     assert_eq!(clean.values_not_in_generated, 0);
@@ -691,6 +694,38 @@ fn an_interface_element_the_reference_object_lacks_is_a_finding() {
             .any(|f| f == "interface PIDBranchPoint O IOffpageConnector not in reference"),
         "{diff}"
     );
+}
+
+#[test]
+fn an_always_interface_the_emitted_object_lacks_is_a_finding() {
+    // `IDrawingItem` is on every reference note, `IPBSNote` too; the
+    // reference leaves out `IDocumentItem` here, so its absence is no finding.
+    let reference = r#"<Container>
+        <PIDNote><IObject UID="N"/><IDrawingItem/><IPBSNote/><INote NoteText="x"/></PIDNote>
+    </Container>"#;
+    let generated = r#"<Container>
+        <PIDNote><IObject UID="N"/><IPBSNote/><INote NoteText="x"/><IDocumentItem/></PIDNote>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.interfaces_not_in_generated, 1, "{diff}");
+    assert!(
+        diff.findings
+            .iter()
+            .any(|f| f == "interface PIDNote N IDrawingItem not in generated"),
+        "{diff}"
+    );
+    assert_eq!(diff.interfaces_not_in_reference, 1, "{diff}");
+
+    // An element the class writes only with a value is the reference's to add.
+    let reference = r#"<Container>
+        <PIDPipingConnector><IObject UID="R"/><IPipingSpecifiedItem PipingMaterialsClass="A1"/></PIDPipingConnector>
+    </Container>"#;
+    let generated = r#"<Container>
+        <PIDPipingConnector><IObject UID="R"/></PIDPipingConnector>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert_eq!(diff.interfaces_not_in_generated, 0, "{diff}");
 }
 
 #[test]

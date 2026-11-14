@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：`.pid` 这条线按类的接口表写接口元素（S5，2026-11-15）
+
+**`.pid` 这条线写出的 `_Data.xml` 变了：每个对象现在带它这一类的整张接口元素表，拿旧输出做逐字节比较会不同。** 对象、关系、非空值一个没变；`_Meta.xml`、`_Coverage.json`、`_Index.json` 逐字节不变。数据库那条线（`xml_writer.rs`）的输出不变。
+
+- **接口表。** `catalog::CLASS_INTERFACES`：`.pid` 这条线写的 21 个类各一行，按参考写的次序列出接口元素与何时写——`Always`（每个对象都写，文件没给值时写空元素）、`IfValue`（有非空值才写）、`ByEquipmentType`（由 `EqType*` 代码决定）。在 13 张参考图（11 张验收、A01、DWG-0202GP06-01）上逐条核过；参考每个对象都写成空串的属性随元素一起写空（`INamedInstrument` 的四个、`HTraceRqmt`、`EquipSuff`、管段的前后缀、过程点的八个、信号线的 `FlowDirection`、图纸的 `Description` 与 `DocSubtype`）。写出器对所有对象（条目、图纸、过程点、分支点、端口、管线、表示）都按这张表写，`.pid` 单独与 `--oracle-exp` 两种模式同一张表。管段的 `IInsulatedItem` 原来写在最前，现在在参考的位置上（整包 656 个对象）。
+- **定不了的不写。** 这条线不带 `EqType*` 代码，所以由设备类型决定的元素不写：容器的 `ILowPressureTank` / `ILowPressureTankOcc`、换热器的四个 `IAirCooler*`；机械设备的泵（`@EE791`）与电机（`@EE792`）把 `IPump` 和 `IEquipmentDriver` 排成相反的次序，只写两者都有、次序一致的那些（到 `IPBSItem` 的十个、`IPump`、有值时的 `INamedEquipment`、`IPIDTypical`）。
+- **读数。** 7 张同版参考图在 `--oracle-exp` 下：接口元素 76 646 → 133 445 / 134 983（56.8 % → 98.9 %），空值属性 0 → 14 847 / 16 680，对象与关系仍 100 %，写错的值 0，参考没有的接口元素 0。剩下的 1 538 个：设备类型决定的 105 个（机械设备 84、换热器 12、容器 9），其余是这条线没有值的 `IfValue` 元素（`IPipingSpecifiedItem` 514、`IInsulatedItem` 470、`INamedPipingConnector` 398、`ISpecifiedMatlItem` 34、`INamedEquipment` 17）。整包重发与 `publish-v4` 比：160 个文件里 53 个 `_Data.xml` 变了，其余 107 个逐字节相同。
+- **门禁。** `diff_pid_export` 新增一类发现：表里 `Always` 的元素参考有、我们没写（`interface <class> <uid> <iface> not in generated`），记入 `interfaces_not_in_generated` 并算进 `is_clean`；登记的各次运行上都不出现。`tests/publish_completeness.rs` 另查每个对象写出的元素次序是参考对象次序的子序列，接口元素与空值属性的钉值提到新读数。
+
 ### publish：GitHub #70 是这条分支 11-10 修掉的那处读法；入库的 DWG 包在库一级有了用例（2026-11-12）
 
 工单 `happyrust/pid-parse` #70「入库的 `DWG-0202GP06-01_p` 整包发布以 `T_PIPERUN … is not an integer` 退出」是在 `main` 上看到的。`main` 的 `ExpTables::read` 对五张表还是严格读法；发布这条线（分支 `publish-export-20261110`）在 2026-11-10 已经把它们改成逐格读（`80a5f73`，见下面 2026-11-10「DWG-0202GP06-01 的备份包读得进来了」那一条的第一项），分支没有合回 `main`，所以两边现象不同。这一条没有改发布的代码，写出的字节一个没变；逐项的读数在 `docs/plans/2026-11-10-publish-export-completion.md` §5 第五阶段。
