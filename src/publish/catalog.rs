@@ -1257,7 +1257,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "typical and status flags",
         reason: "the typical flag the plant database supplies: a .pid file states the \
-                 typical's geometry, not the register flag.",
+                 typical's geometry, not the register flag (an --oracle-exp run states it \
+                 from the dump).",
         members: &[("IPIDTypical", &["IsTypical"])],
     },
     ExcludedAttributeClass {
@@ -1306,6 +1307,14 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 14] = [
     ("IPipingComponent", "CommoditySpecialtyType"),
     ("IPipingComponent", "PipModelCode"),
     ("IPipingConnector", "PipingConnectorType"),
+];
+
+/// Excluded attributes an `--oracle-exp` run states from the cells the dump
+/// stores them in (`stored_values`) and no label on the sheet gives: held
+/// like [`DUMP_CODELIST_ATTRIBUTES`].
+pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 2] = [
+    ("IConnector", "RepresentationsAreAllZeroLength"),
+    ("IPIDTypical", "IsTypical"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

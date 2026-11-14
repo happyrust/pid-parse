@@ -62,6 +62,10 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IConnector",
         property: "RepresentationsAreAllZeroLength",
     },
+    StoredProperty {
+        interface: "IPIDTypical",
+        property: "IsTypical",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
@@ -296,7 +300,7 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 12,
+                written: 26,
                 confirmed_labels: 17,
                 disagreeing_labels: 2,
                 ..StoredValues::default()
@@ -397,7 +401,7 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 10);
+        assert_eq!(report.written, 23);
         assert_eq!(report.disagreeing_labels, 3);
         let run = stated(
             &drawing,
@@ -441,6 +445,47 @@ mod tests {
             Some("T_Instrument.InsulationSpec")
         );
         assert_eq!(column("PIDPipingConnector", "DuctRun"), None);
+    }
+
+    /// A property no label gives is one the diff holds a run that states it
+    /// on some object to on every object; a labelled one is held by the
+    /// labels' rule instead.
+    #[test]
+    fn the_properties_no_label_gives_are_the_ones_the_diff_holds_a_dump_run_to() {
+        let unlabelled: BTreeSet<(&str, &str)> = STORED_PROPERTIES
+            .iter()
+            .map(|stored| (stored.interface, stored.property))
+            .filter(|pair| !crate::publish::catalog::LABELLED_ATTRIBUTES.contains(pair))
+            .collect();
+        let held: BTreeSet<(&str, &str)> = crate::publish::catalog::DUMP_STORED_ATTRIBUTES
+            .into_iter()
+            .collect();
+        assert_eq!(unlabelled, held);
+        for (interface, attribute) in held {
+            assert!(
+                crate::publish::catalog::excluded_attribute(interface, attribute).is_some(),
+                "{interface}.{attribute} is excused in a run without the dump"
+            );
+        }
+    }
+
+    /// The fourteen items of the fixture the dump flags are the fourteen
+    /// its reference flags, each stored `1`, `False`, in `T_ModelItem`, the
+    /// table every item type inherits the attribute from.
+    #[test]
+    fn every_item_states_whether_it_is_a_typical_from_its_model_item_row() {
+        let (drawing, _) = dwg_with_stored_values();
+        let flags: Vec<_> = drawing
+            .items
+            .iter()
+            .filter_map(|item| stated(&drawing, &item.uid, "IsTypical"))
+            .collect();
+        assert_eq!(flags.len(), 14);
+        for flag in flags {
+            assert_eq!(flag.interface, "IPIDTypical");
+            assert_eq!(flag.value, "False");
+            assert_eq!(flag.source, placed("T_ModelItem", "SP_IsTypical"));
+        }
     }
 
     #[test]
