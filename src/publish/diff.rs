@@ -1558,11 +1558,11 @@ pub fn check_publish_document(
     read_publish_document(xml, side).map(|_| ())
 }
 
-/// Score `generated_xml` against `reference_xml` for a `.pid` export.
+/// Score `generated_xml` against `reference_xml` for a `.pid`, database or
+/// backup-package export.
 ///
-/// This is the gate [`PidExportDiff`] documents. The tag-count report from
-/// [`diff_publish_xml`] stays the database input's report: there, a class
-/// the reference has and we do not emit really is missing.
+/// This is the gate [`PidExportDiff`] documents, and the one every
+/// `pid_publish_xml --diff-against` run scores with.
 ///
 /// # Errors
 ///

@@ -378,6 +378,509 @@
         "A clean branch that printed anything matching difference_line_kinds.",
         "An alias branch whose differences are anything but IObject.Name and the container DocName."
       ]
+    },
+    "A01 · Export.mdf": {
+      "what": "The database publish of the A01 drawing out of test-file/backup-test/TEST02_p/extracted/Export.mdf against the reference A01_Data.xml, scored by the same `diff_pid_export` as the `.pid` line. Exits 1 by design: the 27 items below are accepted and recorded, not suppressed.",
+      "command": "pid_publish_xml.exe test-file/backup-test/TEST02_p/extracted/Export.mdf --drawing D9635C3C898840D1990B7E8BEE1D55DA --plant TEST02 --diff-against test-file/export-test/publish-data/A01/A01_Data.xml",
+      "exit_code": 1,
+      "summary": "pid export diff: objects 12 (extra 4, wrong class 0), values 18 (different 4, not in reference 0), rels 15 (not in reference 15)",
+      "residuals": {
+        "connector_uid": "The database line derives the pipeline's PIDPipingConnector, its two PIDPipingPort and its PIDProcessPoint under `<pipeline UID>-CNX`; the reference carries the same four under 8B6386EF73A497F1A03D67B6A046D596. Four `extra` lines and four `missing` lines.",
+        "rel_uid": "The database line composes every Rel UID it writes (`DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` / `PPC-` / `PRP-` and the ends); the reference's are GUIDs. Fifteen `rel (` lines; their reference-side counterparts are excused as the same relation under another Rel UID or as ending on the connector the run publishes under its own UID.",
+        "graphic_oid": "IDrawingRepresentation.GraphicOID on four PIDRepresentation: the database states 417 / 420 / 51 / 184, the reference 24615 / 24613 / 24606 / 24601. Four `value` lines."
+      },
+      "differences": {
+        "extra": {
+          "count": 4,
+          "items": [
+            {
+              "line": "extra PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDPipingPort 185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "class_name": "PIDPipingPort",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDPipingPort 185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "class_name": "PIDPipingPort",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDProcessPoint 185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "residual": "connector_uid"
+            }
+          ]
+        },
+        "value_different": {
+          "count": 4,
+          "items": [
+            {
+              "line": "value PIDRepresentation 4B38DB541B1342F99A39838AC9871E3C IDrawingRepresentation.GraphicOID: \"417\" reference \"24615\"",
+              "class_name": "PIDRepresentation",
+              "uid": "4B38DB541B1342F99A39838AC9871E3C",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "417",
+              "reference": "24615",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation AC9DFB6629974E428402C938E60F4B9C IDrawingRepresentation.GraphicOID: \"420\" reference \"24613\"",
+              "class_name": "PIDRepresentation",
+              "uid": "AC9DFB6629974E428402C938E60F4B9C",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "420",
+              "reference": "24613",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation C33E5BD9B9CC4287B244A925A7A1F29B IDrawingRepresentation.GraphicOID: \"51\" reference \"24606\"",
+              "class_name": "PIDRepresentation",
+              "uid": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "51",
+              "reference": "24606",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation CA8A0A9DD1784E3BB6913445CE3F6375 IDrawingRepresentation.GraphicOID: \"184\" reference \"24601\"",
+              "class_name": "PIDRepresentation",
+              "uid": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "184",
+              "reference": "24601",
+              "residual": "graphic_oid"
+            }
+          ]
+        },
+        "rel_not_in_reference": {
+          "count": 15,
+          "items": [
+            {
+              "line": "rel (\"DRC-185EF98B03E844158E3BD8E82806E6CF-4B38DB541B1342F99A39838AC9871E3C\", \"185EF98B03E844158E3BD8E82806E6CF\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-185EF98B03E844158E3BD8E82806E6CF-4B38DB541B1342F99A39838AC9871E3C",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-185EF98B03E844158E3BD8E82806E6CF-AC9DFB6629974E428402C938E60F4B9C\", \"185EF98B03E844158E3BD8E82806E6CF\", \"AC9DFB6629974E428402C938E60F4B9C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-185EF98B03E844158E3BD8E82806E6CF-AC9DFB6629974E428402C938E60F4B9C",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "AC9DFB6629974E428402C938E60F4B9C",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-7465E81219DB49B492BDF60A055AA391-C33E5BD9B9CC4287B244A925A7A1F29B\", \"7465E81219DB49B492BDF60A055AA391\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-7465E81219DB49B492BDF60A055AA391-C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid1": "7465E81219DB49B492BDF60A055AA391",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-C57494A1B154442C9DF0F4BA713E88EC-CA8A0A9DD1784E3BB6913445CE3F6375\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-C57494A1B154442C9DF0F4BA713E88EC-CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid1": "C57494A1B154442C9DF0F4BA713E88EC",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-AC9DFB6629974E428402C938E60F4B9C\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"AC9DFB6629974E428402C938E60F4B9C\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-AC9DFB6629974E428402C938E60F4B9C",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "AC9DFB6629974E428402C938E60F4B9C",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"EQC-C57494A1B154442C9DF0F4BA713E88EC-7465E81219DB49B492BDF60A055AA391\", \"7465E81219DB49B492BDF60A055AA391\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"EquipmentComponentComposition\")",
+              "rel_uid": "EQC-C57494A1B154442C9DF0F4BA713E88EC-7465E81219DB49B492BDF60A055AA391",
+              "uid1": "7465E81219DB49B492BDF60A055AA391",
+              "uid2": "C57494A1B154442C9DF0F4BA713E88EC",
+              "def_uid": "EquipmentComponentComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PCN-185EF98B03E844158E3BD8E82806E6CF\", \"185EF98B03E844158E3BD8E82806E6CF\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"PipingConnectors\")",
+              "rel_uid": "PCN-185EF98B03E844158E3BD8E82806E6CF",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "def_uid": "PipingConnectors",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PE1-185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"7465E81219DB49B492BDF60A055AA391\", \"PipingEnd1Conn\")",
+              "rel_uid": "PE1-185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "uid2": "7465E81219DB49B492BDF60A055AA391",
+              "def_uid": "PipingEnd1Conn",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PE2-185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.PPT\", \"PipingEnd2Conn\")",
+              "rel_uid": "PE2-185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "def_uid": "PipingEnd2Conn",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-1\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"PipingPortComposition\")",
+              "rel_uid": "PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-1",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "def_uid": "PipingPortComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"PipingPortComposition\")",
+              "rel_uid": "PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-2",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "def_uid": "PipingPortComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PRP-185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.PPT\", \"ProcessPointCollection\")",
+              "rel_uid": "PRP-185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "def_uid": "ProcessPointCollection",
+              "residual": "rel_uid"
+            }
+          ]
+        }
+      },
+      "reference_only_differences": {
+        "missing_object": {
+          "count": 4,
+          "items": [
+            {
+              "line": "missing PIDPipingConnector 8B6386EF73A497F1A03D67B6A046D596",
+              "class_name": "PIDPipingConnector",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDPipingPort 8B6386EF73A497F1A03D67B6A046D596.1",
+              "class_name": "PIDPipingPort",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.1",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDPipingPort 8B6386EF73A497F1A03D67B6A046D596.2",
+              "class_name": "PIDPipingPort",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.2",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDProcessPoint 8B6386EF73A497F1A03D67B6A046D596.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.PPT",
+              "residual": "connector_uid"
+            }
+          ]
+        }
+      },
+      "category_counts": {
+        "extra": 4,
+        "value_different": 4,
+        "rel_not_in_reference": 15,
+        "missing_object": 4
+      },
+      "notes": [
+        "Do not pass --meta-out when reproducing this figure: that adds `meta ...` lines to stdout. They are not differences, and the command above omits it.",
+        "Every line is one of the three synthetic residuals named under `residuals`; each item says which in `residual`.",
+        "The interface is IDrawingRepresentation.GraphicOID on <PIDRepresentation>, not IDrawingPresentation.",
+        "This figure exits 1 on purpose. The baseline records the differences; it does not make them go away."
+      ]
+    },
+    "A01 · TEST02_p 目录": {
+      "what": "The whole-package publish of test-file/backup-test/TEST02_p, whose Export.dmp is a SQL Server MTF dump staged to its MDF, scored against the directory that holds A01_Data.xml. Its one drawing is A01 out of the same database, so it prints the 27 lines of `A01 · Export.mdf`, each led by `  A01: `, under one dirty verdict. Exits 1 by design.",
+      "command": "pid_publish_xml.exe test-file/backup-test/TEST02_p --out-dir <scratch> --diff-against test-file/export-test/publish-data/A01",
+      "exit_code": 1,
+      "verdict": "A01: dirty (objects 12, values 18, rels 15, findings 27)",
+      "printed_prefix": "  A01: ",
+      "residuals": {
+        "connector_uid": "The database line derives the pipeline's PIDPipingConnector, its two PIDPipingPort and its PIDProcessPoint under `<pipeline UID>-CNX`; the reference carries the same four under 8B6386EF73A497F1A03D67B6A046D596. Four `extra` lines and four `missing` lines.",
+        "rel_uid": "The database line composes every Rel UID it writes (`DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` / `PPC-` / `PRP-` and the ends); the reference's are GUIDs. Fifteen `rel (` lines; their reference-side counterparts are excused as the same relation under another Rel UID or as ending on the connector the run publishes under its own UID.",
+        "graphic_oid": "IDrawingRepresentation.GraphicOID on four PIDRepresentation: the database states 417 / 420 / 51 / 184, the reference 24615 / 24613 / 24606 / 24601. Four `value` lines."
+      },
+      "differences": {
+        "extra": {
+          "count": 4,
+          "items": [
+            {
+              "line": "extra PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDPipingPort 185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "class_name": "PIDPipingPort",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDPipingPort 185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "class_name": "PIDPipingPort",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "extra PIDProcessPoint 185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "residual": "connector_uid"
+            }
+          ]
+        },
+        "value_different": {
+          "count": 4,
+          "items": [
+            {
+              "line": "value PIDRepresentation 4B38DB541B1342F99A39838AC9871E3C IDrawingRepresentation.GraphicOID: \"417\" reference \"24615\"",
+              "class_name": "PIDRepresentation",
+              "uid": "4B38DB541B1342F99A39838AC9871E3C",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "417",
+              "reference": "24615",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation AC9DFB6629974E428402C938E60F4B9C IDrawingRepresentation.GraphicOID: \"420\" reference \"24613\"",
+              "class_name": "PIDRepresentation",
+              "uid": "AC9DFB6629974E428402C938E60F4B9C",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "420",
+              "reference": "24613",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation C33E5BD9B9CC4287B244A925A7A1F29B IDrawingRepresentation.GraphicOID: \"51\" reference \"24606\"",
+              "class_name": "PIDRepresentation",
+              "uid": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "51",
+              "reference": "24606",
+              "residual": "graphic_oid"
+            },
+            {
+              "line": "value PIDRepresentation CA8A0A9DD1784E3BB6913445CE3F6375 IDrawingRepresentation.GraphicOID: \"184\" reference \"24601\"",
+              "class_name": "PIDRepresentation",
+              "uid": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "184",
+              "reference": "24601",
+              "residual": "graphic_oid"
+            }
+          ]
+        },
+        "rel_not_in_reference": {
+          "count": 15,
+          "items": [
+            {
+              "line": "rel (\"DRC-185EF98B03E844158E3BD8E82806E6CF-4B38DB541B1342F99A39838AC9871E3C\", \"185EF98B03E844158E3BD8E82806E6CF\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-185EF98B03E844158E3BD8E82806E6CF-4B38DB541B1342F99A39838AC9871E3C",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-185EF98B03E844158E3BD8E82806E6CF-AC9DFB6629974E428402C938E60F4B9C\", \"185EF98B03E844158E3BD8E82806E6CF\", \"AC9DFB6629974E428402C938E60F4B9C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-185EF98B03E844158E3BD8E82806E6CF-AC9DFB6629974E428402C938E60F4B9C",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "AC9DFB6629974E428402C938E60F4B9C",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-7465E81219DB49B492BDF60A055AA391-C33E5BD9B9CC4287B244A925A7A1F29B\", \"7465E81219DB49B492BDF60A055AA391\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-7465E81219DB49B492BDF60A055AA391-C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid1": "7465E81219DB49B492BDF60A055AA391",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRC-C57494A1B154442C9DF0F4BA713E88EC-CA8A0A9DD1784E3BB6913445CE3F6375\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-C57494A1B154442C9DF0F4BA713E88EC-CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid1": "C57494A1B154442C9DF0F4BA713E88EC",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DwgRepresentationComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-AC9DFB6629974E428402C938E60F4B9C\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"AC9DFB6629974E428402C938E60F4B9C\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-AC9DFB6629974E428402C938E60F4B9C",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "AC9DFB6629974E428402C938E60F4B9C",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"DRI-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DrawingItems\")",
+              "rel_uid": "DRI-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DrawingItems",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"EQC-C57494A1B154442C9DF0F4BA713E88EC-7465E81219DB49B492BDF60A055AA391\", \"7465E81219DB49B492BDF60A055AA391\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"EquipmentComponentComposition\")",
+              "rel_uid": "EQC-C57494A1B154442C9DF0F4BA713E88EC-7465E81219DB49B492BDF60A055AA391",
+              "uid1": "7465E81219DB49B492BDF60A055AA391",
+              "uid2": "C57494A1B154442C9DF0F4BA713E88EC",
+              "def_uid": "EquipmentComponentComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PCN-185EF98B03E844158E3BD8E82806E6CF\", \"185EF98B03E844158E3BD8E82806E6CF\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"PipingConnectors\")",
+              "rel_uid": "PCN-185EF98B03E844158E3BD8E82806E6CF",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "def_uid": "PipingConnectors",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PE1-185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"7465E81219DB49B492BDF60A055AA391\", \"PipingEnd1Conn\")",
+              "rel_uid": "PE1-185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "uid2": "7465E81219DB49B492BDF60A055AA391",
+              "def_uid": "PipingEnd1Conn",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PE2-185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.PPT\", \"PipingEnd2Conn\")",
+              "rel_uid": "PE2-185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "def_uid": "PipingEnd2Conn",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-1\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.1\", \"PipingPortComposition\")",
+              "rel_uid": "PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-1",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.1",
+              "def_uid": "PipingPortComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-2\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.2\", \"PipingPortComposition\")",
+              "rel_uid": "PPC-185EF98B03E844158E3BD8E82806E6CF-CNX-2",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.2",
+              "def_uid": "PipingPortComposition",
+              "residual": "rel_uid"
+            },
+            {
+              "line": "rel (\"PRP-185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX\", \"185EF98B03E844158E3BD8E82806E6CF-CNX.PPT\", \"ProcessPointCollection\")",
+              "rel_uid": "PRP-185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF-CNX",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF-CNX.PPT",
+              "def_uid": "ProcessPointCollection",
+              "residual": "rel_uid"
+            }
+          ]
+        }
+      },
+      "reference_only_differences": {
+        "missing_object": {
+          "count": 4,
+          "items": [
+            {
+              "line": "missing PIDPipingConnector 8B6386EF73A497F1A03D67B6A046D596",
+              "class_name": "PIDPipingConnector",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDPipingPort 8B6386EF73A497F1A03D67B6A046D596.1",
+              "class_name": "PIDPipingPort",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.1",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDPipingPort 8B6386EF73A497F1A03D67B6A046D596.2",
+              "class_name": "PIDPipingPort",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.2",
+              "residual": "connector_uid"
+            },
+            {
+              "line": "missing PIDProcessPoint 8B6386EF73A497F1A03D67B6A046D596.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.PPT",
+              "residual": "connector_uid"
+            }
+          ]
+        }
+      },
+      "category_counts": {
+        "extra": 4,
+        "value_different": 4,
+        "rel_not_in_reference": 15,
+        "missing_object": 4
+      },
+      "notes": [
+        "Each difference line is printed with `printed_prefix` in front; `line` is the text after it. The package gate prints no `pid export diff:` summary; `verdict` is its one line for the drawing.",
+        "Every line is one of the three synthetic residuals named under `residuals`; each item says which in `residual`.",
+        "The interface is IDrawingRepresentation.GraphicOID on <PIDRepresentation>, not IDrawingPresentation.",
+        "This figure exits 1 on purpose. The baseline records the differences; it does not make them go away."
+      ]
     }
   },
   "acceptance_figures": {
