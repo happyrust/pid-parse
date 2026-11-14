@@ -43,6 +43,8 @@
 //! * [`placement`] — where a published property is stored in an Oracle
 //!   `exp` dump: the data map's attribute placed in a table and a column
 //!   by the dump's own data dictionary.
+//! * [`stored_values`] — the published properties the dump stores as they
+//!   are, read through [`placement`] onto the items a `.pid` publishes.
 //! * [`pid_load`] — `.pid` → `PidPublishDrawing`, with a per-value
 //!   provenance record (`PidValueSource`).
 //! * [`pid_writer`] — that DTO → `_Data.xml` / `_Meta.xml` / `_Coverage.json`.
@@ -105,6 +107,7 @@ pub mod pipeline;
 pub mod placement;
 #[cfg(feature = "backup-mdf")]
 pub mod sqlite_load;
+pub mod stored_values;
 pub mod xml_writer;
 
 pub use catalog::{cross_check_catalog_index, CatalogIndexCrossCheck};

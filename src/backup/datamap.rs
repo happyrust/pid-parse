@@ -21,8 +21,10 @@
 //! * how many `<Rel>` blocks the file holds under each `DefUID`.
 //!
 //! The class and property maps are read out and nothing more: no
-//! conversion is run and no enum hierarchy is walked here, and no publish
-//! stage consults them. The file may be the XML itself or the
+//! conversion is run and no enum hierarchy is walked here.
+//! [`crate::publish::placement`] joins the property map to a dump's data
+//! dictionary, and [`crate::publish::stored_values`] writes the properties
+//! it places. The file may be the XML itself or the
 //! `SPPIDDataMap.xml` entry inside a zip (dated copies in the same zip
 //! are left alone).
 

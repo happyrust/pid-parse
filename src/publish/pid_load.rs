@@ -116,6 +116,10 @@ pub enum PidValueSource {
         /// Column the value was read from, e.g. `PIPINGPOINTNUMBER`.
         column: &'static str,
     },
+    /// A column of the item's own row in the plant-database backup, which
+    /// the data map and the dump's data dictionary place
+    /// ([`super::placement::place_property`]).
+    PlacedColumn(super::placement::DumpColumn),
 }
 
 /// One published attribute value of an item.

@@ -711,6 +711,13 @@ pub(crate) fn pid_coverage_json(
             "piping_port_composition": piping,
             "signal_port_composition": signal,
             "backup_row_values": backup_rows,
+            "placed_column_values": drawing
+                .items
+                .iter()
+                .filter(|item| item.class.is_some())
+                .flat_map(|item| &item.attributes)
+                .filter(|attribute| matches!(attribute.source, PidValueSource::PlacedColumn(_)))
+                .count(),
             "nominal_diameter_unspelled": exp.nominal_diameter_unspelled,
             "connectivity_ends": drawing.connectivity_ends.len(),
             "connectivity_rels": written.len(),

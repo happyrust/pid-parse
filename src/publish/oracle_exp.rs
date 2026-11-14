@@ -21,7 +21,7 @@ use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
 };
-use super::placement::DumpDictionary;
+use super::placement::{DumpColumn, DumpDictionary};
 
 const CHARSET_AL16UTF16: u16 = 2000;
 const CHARSET_FORM: u16 = 2;
@@ -325,6 +325,8 @@ pub struct ExpTables {
     drawing: Table,
     equipment: Table,
     vessel: Table,
+    pipingcomp: Table,
+    instrument: Table,
     dictionary: DumpDictionary,
 }
 
@@ -358,8 +360,79 @@ impl ExpTables {
             drawing: read_table_tolerant(dump, "T_DRAWING")?,
             equipment: read_optional_table(dump, "T_EQUIPMENT")?,
             vessel: read_optional_table(dump, "T_VESSEL")?,
+            pipingcomp: read_optional_table(dump, "T_PIPINGCOMP")?,
+            instrument: read_optional_table(dump, "T_INSTRUMENT")?,
             dictionary: DumpDictionary::read(dump)?,
         })
+    }
+
+    /// The table [`Self::read`] holds under the `INSERT INTO` name `name`.
+    fn table_named(&self, name: &str) -> Option<&Table> {
+        [
+            &self.piperun,
+            &self.nozzle,
+            &self.modelitem,
+            &self.plantitem,
+            &self.inlinecomp,
+            &self.equipment,
+            &self.vessel,
+            &self.pipingcomp,
+            &self.instrument,
+        ]
+        .into_iter()
+        .find(|table| table.name == name)
+    }
+
+    /// The cells of a placed column, keyed by the row's `SP_ID` folded like
+    /// [`backup_uid_key`]. A NULL cell and an empty text are left out.
+    ///
+    /// `Ok(None)` when [`Self::read`] does not hold the column's table, or
+    /// the dump's insert of it has no such column: the attribute is then not
+    /// read from this dump at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when the table has no `SP_ID`, or the
+    /// column holds a cell that was not read (database-charset text, a
+    /// `NUMBER` or a `DATE` that does not decode).
+    pub fn stored_column(
+        &self,
+        column: &DumpColumn,
+    ) -> Result<Option<HashMap<String, StoredCell>>, ExpError> {
+        let Some(table) = self.table_named(&column.insert_table()) else {
+            return Ok(None);
+        };
+        let name = column.insert_column();
+        let Some(declared) = table
+            .columns
+            .iter()
+            .find(|candidate| candidate.name == name)
+        else {
+            return Ok(None);
+        };
+        let wanted = match declared.kind {
+            Kind::Num | Kind::Decimal => Kind::Decimal,
+            kind => kind,
+        };
+        let Some(index) = optional_column_index(table, &name, wanted)? else {
+            return Ok(None);
+        };
+        let id = column_index(table, "SP_ID", Kind::Char)?;
+        let mut cells = HashMap::new();
+        for row in &table.rows {
+            let Some(id) = text_of(row, id) else {
+                continue;
+            };
+            let cell = match row.get(index) {
+                Some(Field::Text(text)) if !text.is_empty() => StoredCell::Text(text.clone()),
+                Some(Field::Date(text)) => StoredCell::Text(text.clone()),
+                Some(Field::Int(value)) => StoredCell::Integer(*value),
+                Some(Field::Number(number)) => StoredCell::Number(number.clone()),
+                _ => continue,
+            };
+            cells.insert(norm_uid(id), cell);
+        }
+        Ok(Some(cells))
     }
 
     /// The dump's own data dictionary, read with the tables. Empty when the
@@ -725,6 +798,8 @@ impl ExpTables {
             drawing: Table::blank("T_DRAWING"),
             equipment: Table::blank("T_EQUIPMENT"),
             vessel: Table::blank("T_VESSEL"),
+            pipingcomp: Table::blank("T_PIPINGCOMP"),
+            instrument: Table::blank("T_INSTRUMENT"),
             dictionary: DumpDictionary::default(),
         }
     }
@@ -782,6 +857,17 @@ impl ExpTables {
             ..Self::blank()
         })
     }
+}
+
+/// One cell of a placed column ([`ExpTables::stored_column`]), as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredCell {
+    /// National text, or a `DATE` as `YYYY/MM/DD HH:MM:SS`.
+    Text(String),
+    /// A `NUMBER` that is an integer `i64` holds: a code, a count, a flag.
+    Integer(i64),
+    /// Any other `NUMBER`.
+    Number(OracleNumber),
 }
 
 /// One `T_PIPERUN` row the pipeline name is spelled from.
