@@ -812,6 +812,7 @@ mod tests {
             symbol_information: None,
             nested_geometry: None,
             stroke_styles: Default::default(),
+            refused_records: Vec::new(),
         }
     }
 

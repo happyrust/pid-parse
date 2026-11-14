@@ -2629,6 +2629,7 @@ fn push_symbol_instance(
                     .entry(key)
                     .or_insert_with(|| crate::ledger::SymbolFileFaults {
                         symbol: named.to_owned(),
+                        resolved: symbols.resolved_relative(path),
                         placements: 0,
                         not_drawn: shown.as_ref().err().copied(),
                         faults: body.chain_faults.clone(),

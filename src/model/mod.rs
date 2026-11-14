@@ -696,6 +696,12 @@ pub struct JSite {
     /// [`crate::symbol_library::PrimitiveStyle`] vocabulary.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub stroke_styles: BTreeMap<u32, crate::symbol_library::PrimitiveStyle>,
+    /// Graphic records inside this storage's `PSMcluster0` whose drawable
+    /// family decoder walked over them and refused their bytes. Excludes
+    /// `0x8000` native skips, `0x005E` connect points, `0x0021`/`0x007B`
+    /// associations, and non-linear `0x0115` dimensions (`kind != 1`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_records: Vec<SheetRefusedRecord>,
 }
 
 /// The symbol-information / expression family of one `JSite`, decoded from

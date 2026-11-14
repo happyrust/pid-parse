@@ -126,6 +126,13 @@ fn main() -> ExitCode {
     for page in model.ledger.page_warnings() {
         eprintln!("warning: {pid}: {page}");
     }
+    // Graphic records in a sheet or cached symbol body that their family's
+    // decoder refused are dropped from the page and filed as suspect
+    // (`DropReason::RecordRefused`). Name each site here (border frames are
+    // already spoken for by `page_warnings` above).
+    for refused in model.ledger.refused_record_warnings() {
+        eprintln!("warning: {pid}: {refused}");
+    }
     let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {

@@ -5326,3 +5326,138 @@ fn a_refused_frame_that_states_no_page_of_the_drawings_is_not_the_pages_to_say()
         "{case}: a frame that is no page of the drawing's drew a warning\n{said}"
     );
 }
+
+/// A degree-33 `igBspCurve2d` inside `DWG-0202GP06-01.pid`'s cached symbol
+/// body (`/JSite793/PSMcluster0`) is refused by its decoder, drops from the
+/// cached body (340 -> 339 primitives), surfaces as `DropReason::RecordRefused`
+/// in the ledger (`suspect` increases by 1), and prints a warning on stderr
+/// rather than silently dropping a curve.
+#[test]
+fn a_refused_record_in_a_cached_symbol_body_warns_and_raises_suspect() {
+    use pid_parse::parsers::sheet_records::{SheetChain, parse_psm_header};
+    use pid_parse::writer::{PidWriter, StreamReplacement, WritePlan};
+
+    let case = "cache-bspline-degree33";
+    let corpus = fixtures().join("backup-test").join("DWG-0202GP06-01_p");
+    let sound_path = dwg_0202();
+    let sound_model = lay_out_drawing(&sound_path, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", sound_path.display()));
+    let sound_ledger = account_of(&sound_model, &sound_path);
+    assert!(
+        sound_model.missing_templates.is_empty(),
+        "DWG-0202 wears its archived template: {:?}",
+        sound_model.missing_templates
+    );
+
+    const CACHE_STREAM: &str = "/JSite793/PSMcluster0";
+    let package = pid_parse::PidParser::new()
+        .parse_package(&sound_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", sound_path.display()));
+    let cluster = package
+        .get_stream(CACHE_STREAM)
+        .unwrap_or_else(|| panic!("{} has no {CACHE_STREAM}", sound_path.display()))
+        .data
+        .clone();
+    let bsp_at = SheetChain::walk(&cluster)
+        .starts
+        .into_iter()
+        .find(|&at| parse_psm_header(&cluster, at).is_some_and(|h| h.type_code == 0x005D))
+        .expect("/JSite793/PSMcluster0 holds a 0x005D B-spline");
+    let bsp_header = parse_psm_header(&cluster, bsp_at).expect("header");
+    let bsp_end = bsp_header.body_start + bsp_header.bytes_to_follow as usize;
+
+    let mut payload = cluster[bsp_header.body_start..bsp_header.body_start + 18].to_vec();
+    payload.extend_from_slice(&40u32.to_le_bytes());
+    for i in 0..40usize {
+        payload.extend_from_slice(&(i as f64 * 0.001).to_le_bytes());
+        payload.extend_from_slice(&((i % 2) as f64 * 0.001).to_le_bytes());
+    }
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    payload.extend_from_slice(&74u32.to_le_bytes());
+    for knot in std::iter::repeat_n(0.0, 34)
+        .chain((1..7).map(|k| k as f64))
+        .chain(std::iter::repeat_n(7.0, 34))
+    {
+        payload.extend_from_slice(&knot.to_le_bytes());
+    }
+    payload.extend_from_slice(&(-1.0f64).to_le_bytes());
+    payload.extend_from_slice(&[0x04, 0x01, 0x01, 0x00]);
+    let mut replacement = 0x005Du16.to_le_bytes().to_vec();
+    replacement.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    replacement.extend_from_slice(&payload);
+
+    let mut modified_cluster = cluster[..bsp_at].to_vec();
+    modified_cluster.extend_from_slice(&replacement);
+    modified_cluster.extend_from_slice(&cluster[bsp_end..]);
+
+    let drawing = scratch(case).join("DWG-0202GP06-01-cache-refused.pid");
+    PidWriter::write_to(
+        &package,
+        &WritePlan {
+            stream_replacements: vec![StreamReplacement {
+                path: CACHE_STREAM.to_string(),
+                new_data: modified_cluster,
+            }],
+            ..WritePlan::default()
+        },
+        &drawing,
+    )
+    .unwrap_or_else(|error| panic!("write {}: {error}", drawing.display()));
+
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert_eq!(
+        model.primitives.len() + 1,
+        sound_model.primitives.len(),
+        "the refused B-spline drops from the page (340 -> 339)"
+    );
+    let ledger = account_of(&model, &drawing);
+    assert_eq!(
+        suspects(&ledger),
+        suspects_with(&sound_ledger, &[("record_refused", 1)])
+    );
+    assert_eq!(ledger.summary().suspect, sound_ledger.summary().suspect + 1);
+    let expected_warning = "1 record(s) of 0x005D (BspCurve Object) in /JSite793/PSMcluster0 \
+         are a shape this crate's decoder for that type refuses, and are dropped from the drawing";
+    assert_eq!(
+        model.ledger.refused_record_warnings(),
+        [expected_warning.to_string()]
+    );
+
+    let out = unwritten(&scratch(case), "cache-refused.pdf");
+    let fonts = fonts_for_a_child();
+    let mut command = pid_plot();
+    if let Ok(fonts) = &fonts {
+        command.env("PID_PLOT_FONTS", fonts);
+    }
+    let said = run(command.arg(&drawing).arg(&out).arg(&corpus));
+    match fonts {
+        Ok(_) => {
+            assert_eq!(said.code, Some(0), "{said}");
+            assert!(out.exists(), "{} was not written\n{said}", out.display());
+        }
+        Err(searched) => {
+            eprintln!(
+                "{case}: no font directory is present (searched {searched}), so the run \
+                 can only get as far as the first missing face"
+            );
+            assert_eq!(said.code, Some(1), "{said}");
+        }
+    }
+    let warned = warnings(&said.stderr);
+    assert_eq!(
+        warned,
+        [format!(
+            "warning: {}: {expected_warning}",
+            drawing.display()
+        )],
+        "{said}"
+    );
+    if said.code == Some(0) {
+        assert_eq!(
+            ledger_count(&said, "suspect"),
+            ledger.summary().suspect,
+            "{said}"
+        );
+    }
+}

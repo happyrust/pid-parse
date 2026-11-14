@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -41,8 +41,8 @@ use crate::api::PidParser;
 use crate::error::PidError;
 use crate::package::PidPackage;
 use crate::parsers::sheet_records::{
-    igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, parse_psm_header, SheetChain,
-    IGTEXTBOX_BODY_START, IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT,
+    igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, jsheet_oids, parse_psm_header,
+    SheetChain, IGTEXTBOX_BODY_START, IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT,
     IGTEXTBOX_TAIL_KIND_BOX, IGTEXTBOX_TAIL_KIND_PLACEMENT, IGTEXTBOX_TAIL_LEN,
 };
 use crate::style_link::{DocumentStyleTable, ResolvedTextStyle, TextAlignment};
@@ -582,6 +582,14 @@ pub struct SymbolGeometry {
     /// PSM type code. Reported rather than dropped silently so a symbol that
     /// comes out looking too sparse can be told apart from one that is.
     pub skipped_records: BTreeMap<u16, usize>,
+    /// Records the walk stepped over because their type word carries the
+    /// native skip bit ([`crate::parsers::sheet_records::PSM_TYPE_FLAG_NATIVE_SKIP`]),
+    /// keyed by PSM type code. `SmartPlant`'s own reader seeks past such a
+    /// record without reading it, so it is a copy the file has retired, not a
+    /// shape this reader failed on — which is why it is counted apart from
+    /// [`Self::skipped_records`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub retired_records: BTreeMap<u16, usize>,
     /// The `JSheetLayer` objects the symbol's own `PSMcluster0` declares —
     /// the table [`StyledPrimitive::sheet_layer_name`] resolves against.
     ///
@@ -1306,7 +1314,13 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
                 coordinate(payload, PAYLOAD_HEADER_LEN + 8)?,
             );
             let radius = coordinate(payload, PAYLOAD_HEADER_LEN + 16)?;
-            (radius > 0.0).then_some(SymbolPrimitive::Circle { center, radius })
+            (radius > 0.0
+                && crate::parsers::sheet_records::circle_keeps_to_the_domain(
+                    center,
+                    radius,
+                    COORDINATE_LIMIT,
+                ))
+            .then_some(SymbolPrimitive::Circle { center, radius })
         }
         TYPE_ARC if payload.len() >= ARC_PAYLOAD_LEN => {
             let center = (
@@ -1322,6 +1336,16 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             // The trailing byte names the direction, `0` clockwise: the two
             // `90° -> 270°` records of the ultrasonic wave differ only here.
             let clockwise = *payload.get(ARC_PAYLOAD_LEN - 1)? == 0;
+            if !crate::parsers::sheet_records::arc_keeps_to_the_domain(
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                clockwise,
+                COORDINATE_LIMIT,
+            ) {
+                return None;
+            }
             Some(SymbolPrimitive::Arc {
                 center,
                 radius,
@@ -1381,6 +1405,12 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             }
             let (poles, weights, knots) =
                 crate::bspline::elliptical_arc(center, major, ratio, std::f64::consts::TAU, 0.0)?;
+            crate::bspline::try_sample(
+                &poles,
+                &weights,
+                &knots,
+                crate::bspline::SEGMENTS_PER_SPAN,
+            )?;
             Some(SymbolPrimitive::BSpline {
                 poles,
                 weights,
@@ -1413,6 +1443,12 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
                 sweep_start,
                 sweep_end,
                 clockwise,
+            )?;
+            crate::bspline::try_sample(
+                &poles,
+                &weights,
+                &knots,
+                crate::bspline::SEGMENTS_PER_SPAN,
             )?;
             Some(SymbolPrimitive::BSpline {
                 poles,
@@ -1574,9 +1610,9 @@ pub(crate) fn boundary_primitives(
     out
 }
 
-/// Decode the records of one symbol `Sheet*` stream into `out`: the ones
-/// that start at `starts`, which are the offsets the stream's own chain
-/// reads a record at ([`SheetChain::walk`]).
+/// Decode the records of one symbol `Sheet*` or root cluster stream into
+/// `out`: the ones that start at `starts`, which are the offsets the
+/// stream's own chain reads a record at ([`SheetChain::walk`]).
 ///
 /// That walk is the one a drawing's sheets and cached bodies are read by,
 /// so the two readers take the same records of the same bytes: all of them
@@ -1589,12 +1625,18 @@ pub(crate) fn boundary_primitives(
 /// through the `0x4000` flag the walk stops on. What a short sheet may
 /// draw is now [`SymbolGeometry::displayed`]'s decision, not this reader's.
 ///
-/// A record the native reader skips (`0x8000` in its type word) is decoded
-/// like any other, as it always was here; the drawing-side decoders do not.
+/// A record whose type word carries the native skip bit is walked over and
+/// counted in [`SymbolGeometry::retired_records`], never decoded: the
+/// vendor's `PSMSerializeIn` seeks past it without reading its oid, the rule
+/// every drawing-side decoder already keeps through `parse_live_psm_header`.
+///
+/// `sheet_of` names the sheet each record's payload belongs to: the
+/// stream's own number for a `SheetN` stream, the record's parent chain for
+/// the root cluster ([`RootSheets`]).
 fn read_sheet_records(
     bytes: &[u8],
     starts: &[usize],
-    sheet_ref: u32,
+    sheet_of: &dyn Fn(&[u8]) -> u32,
     styles: Option<&DocumentStyleTable>,
     layers: Option<&[SymbolSheetLayer]>,
     out: &mut SymbolGeometry,
@@ -1620,6 +1662,10 @@ fn read_sheet_records(
             continue;
         };
         let type_code = header.type_code;
+        if header.native_reader_skips() {
+            *out.retired_records.entry(type_code).or_default() += 1;
+            continue;
+        }
         match decode_primitive(type_code, payload) {
             Some(mut primitive) => {
                 // A boundary's style index names a fill, not a line —
@@ -1653,7 +1699,7 @@ fn read_sheet_records(
                     sheet_layer_name: found.map(|layer| layer.name.clone()),
                     sheet_layer_number: found
                         .map_or_else(unresolved_layer_number, |layer| layer.layer_number),
-                    sheet_ref,
+                    sheet_ref: sheet_of(payload),
                 });
             }
             None => *out.skipped_records.entry(type_code).or_default() += 1,
@@ -1816,6 +1862,109 @@ pub fn read_symbol_geometry_from_bytes(bytes: &[u8]) -> Result<SymbolGeometry, P
 /// the `PSMcluster0` of its root.
 const ROOT_CLUSTER: &str = "/PSMcluster0";
 
+/// How many parent hops [`RootSheets::sheet_of`] follows before giving up:
+/// the corpus needs two (a rectangle's edge, its rectangle, its sheet); the
+/// bound only stops a parent cycle.
+const ROOT_PARENT_HOPS: usize = 8;
+
+/// Which sheet a shape record of the symbol's root `/PSMcluster0` sits on.
+///
+/// PSM files most of a symbol's shapes in the `SheetN` stream of their sheet,
+/// but not all: across the reference library shape records live in the root
+/// cluster instead — among them the four edges of `Wellhead Control
+/// Panel.sym`'s rectangle, `Circle.sym`'s oid 267 on Sheet 6, and every
+/// stroke of `Cone Roof Tank.sym` — and the drawings' own cached copies draw
+/// them like any other stroke of the body.
+///
+/// Each one's payload `+4` parent reference names the sheet: directly for
+/// most, or through the rectangle that owns it. Where the parent chain reaches
+/// no sheet (for example when its parent object is gone), it takes the unique
+/// root sheet whose own stream draws on its layer. Uses [`SheetChain::walk`]
+/// (matching [`read_sheet_records`]) so a stopped sheet stream gives the exact
+/// same resolution as the same stream cut off at its stop.
+struct RootSheets {
+    /// The `JSheet` oids the file's root storage declares: each root
+    /// `SheetN` stream's `N` and each `0x0114` record of the root cluster.
+    sheets: BTreeSet<u32>,
+    /// Payload `+4` of every live record on the root chains, by oid.
+    parents: HashMap<u32, u32>,
+    /// The root sheets whose own `SheetN` stream draws on each layer oid.
+    layer_sheets: HashMap<u32, BTreeSet<u32>>,
+}
+
+impl RootSheets {
+    fn of(package: &PidPackage) -> Self {
+        let mut sheets: BTreeSet<u32> = BTreeSet::new();
+        let mut parents: HashMap<u32, u32> = HashMap::new();
+        let mut layer_sheets: HashMap<u32, BTreeSet<u32>> = HashMap::new();
+        for (stream_path, raw) in &package.streams {
+            if !parent_storage(stream_path).is_empty() {
+                continue;
+            }
+            let sheet = stream_path
+                .rsplit('/')
+                .next()
+                .and_then(|name| name.strip_prefix("Sheet"))
+                .and_then(|number| number.parse::<u32>().ok());
+            if stream_path == ROOT_CLUSTER {
+                sheets.extend(jsheet_oids(&raw.data));
+            } else if sheet.is_none() {
+                continue;
+            }
+            sheets.extend(sheet);
+            for at in SheetChain::walk(&raw.data).starts {
+                let Some(header) = parse_psm_header(&raw.data, at) else {
+                    continue;
+                };
+                if header.native_reader_skips() {
+                    continue;
+                }
+                let Some(end) = header
+                    .body_start
+                    .checked_add(header.bytes_to_follow as usize)
+                else {
+                    continue;
+                };
+                let Some(payload) = raw.data.get(header.body_start..end) else {
+                    continue;
+                };
+                let (Some(oid), Some(parent)) = (u32_le(payload, 0), u32_le(payload, 4)) else {
+                    continue;
+                };
+                parents.insert(oid, parent);
+                if let (Some(sheet), Some(layer)) = (sheet, u32_le(payload, 8)) {
+                    layer_sheets.entry(layer).or_default().insert(sheet);
+                }
+            }
+        }
+        Self {
+            sheets,
+            parents,
+            layer_sheets,
+        }
+    }
+
+    /// The sheet a root-cluster record's payload belongs to, `0` where
+    /// neither its parent chain nor its layer names one.
+    fn sheet_of(&self, payload: &[u8]) -> u32 {
+        let mut cursor = u32_le(payload, 4).unwrap_or(0);
+        for _ in 0..ROOT_PARENT_HOPS {
+            if self.sheets.contains(&cursor) {
+                return cursor;
+            }
+            match self.parents.get(&cursor) {
+                Some(&parent) if parent != cursor => cursor = parent,
+                _ => break,
+            }
+        }
+        u32_le(payload, 8)
+            .and_then(|layer| self.layer_sheets.get(&layer))
+            .filter(|sheets| sheets.len() == 1)
+            .and_then(|sheets| sheets.first().copied())
+            .unwrap_or(0)
+    }
+}
+
 /// The drawable body of a `.sym` already parsed as a package.
 ///
 /// What [`read_symbol_geometry`] and [`read_symbol_geometry_from_bytes`]
@@ -1840,6 +1989,7 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
     let mut layer_tables: BTreeMap<&str, Vec<SymbolSheetLayer>> = BTreeMap::new();
     let mut geometry = SymbolGeometry::default();
     let mut sheets: Vec<(&str, u32, &[u8], SheetChain)> = Vec::new();
+    let mut root_chain: Option<SheetChain> = None;
     for (stream_path, raw) in &package.streams {
         let name = stream_path.rsplit('/').next().unwrap_or("");
         let is_sheet = name.starts_with("Sheet");
@@ -1873,6 +2023,9 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
                 );
             }
             "PSMcluster0" => {
+                if stream_path == ROOT_CLUSTER {
+                    root_chain = Some(chain.clone());
+                }
                 // A symbol file's cluster is a plain chain, and its layers
                 // and view sets are the records that chain reads: all of
                 // them under a wrong magic, the ones before the stop where
@@ -1945,6 +2098,25 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
     // `displayed_primitives` draws.
     sheets.sort_by_key(|&(_, sheet_ref, _, _)| !is_normal_sheet(&geometry.sheet_views, sheet_ref));
 
+    // The shapes PSM filed in the root cluster join the sheet each one sits
+    // on, as if its own stream had held them; a sheet with no stream of its
+    // own keeps them after every stream has been read.
+    let mut root = SymbolGeometry::default();
+    if let Some((raw, chain)) = package.streams.get(ROOT_CLUSTER).zip(root_chain.as_ref()) {
+        let owners = RootSheets::of(package);
+        read_sheet_records(
+            &raw.data,
+            &chain.starts,
+            &|payload| owners.sheet_of(payload),
+            tables.get(parent_storage(ROOT_CLUSTER)),
+            layer_tables
+                .get(parent_storage(ROOT_CLUSTER))
+                .map(Vec::as_slice),
+            &mut root,
+        );
+    }
+
+    let mut sheet_ends: Vec<SymbolGeometry> = Vec::new();
     for (stream_path, sheet_ref, data, chain) in sheets {
         // What a sheet read after a short one holds may be the short
         // sheet's own strokes, kept here only because the short sheet's
@@ -1959,14 +2131,24 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
         read_sheet_records(
             data,
             &chain.starts,
-            sheet_ref,
+            &|_| sheet_ref,
             tables.get(parent_storage(stream_path)),
             layer_tables
                 .get(parent_storage(stream_path))
                 .map(Vec::as_slice),
             &mut sheet,
         );
+        let (own, others): (Vec<StyledPrimitive>, Vec<StyledPrimitive>) = root
+            .primitives
+            .drain(..)
+            .partition(|styled| styled.sheet_ref == sheet_ref);
+        root.primitives = others;
+        sheet.primitives.extend(own);
+        sheet_ends.push(sheet);
+    }
+    sheet_ends.push(root);
 
+    for sheet in sheet_ends {
         // A symbol often keeps more than one sheet holding the same body:
         // the angle globe valve's `Sheet63` is nine primitives that are
         // byte-identical to nine of `Sheet6`'s eleven. Drawing both doubles
@@ -1985,6 +2167,9 @@ pub fn symbol_geometry_of_package(package: &PidPackage) -> SymbolGeometry {
         }
         for (code, count) in sheet.skipped_records {
             *geometry.skipped_records.entry(code).or_default() += count;
+        }
+        for (code, count) in sheet.retired_records {
+            *geometry.retired_records.entry(code).or_default() += count;
         }
     }
     geometry
@@ -2099,6 +2284,10 @@ pub struct SymbolLibrary {
     #[cfg(feature = "refdata-archive")]
     archives: Vec<PathBuf>,
     cache: BTreeMap<String, Option<SymbolGeometry>>,
+    /// The library-relative path that supplied each resolved entry of
+    /// [`Self::cache`], using `/` separators. Absent for misses and unlooked-up
+    /// paths.
+    resolved_paths: BTreeMap<String, String>,
     /// Every `.sym` name in the roots, mapped to the `(root, relative)` pairs
     /// that carry it. Built on the first path that is not library-relative,
     /// because walking 618 files is only worth it for the placements that have
@@ -2115,6 +2304,7 @@ impl SymbolLibrary {
             #[cfg(feature = "refdata-archive")]
             archives: Vec::new(),
             cache: BTreeMap::new(),
+            resolved_paths: BTreeMap::new(),
             by_name: None,
         }
     }
@@ -2126,6 +2316,7 @@ impl SymbolLibrary {
             #[cfg(feature = "refdata-archive")]
             archives: Vec::new(),
             cache: BTreeMap::new(),
+            resolved_paths: BTreeMap::new(),
             by_name: None,
         }
     }
@@ -2225,10 +2416,25 @@ impl SymbolLibrary {
             if library_relative_path(symbol_path).is_none() {
                 self.index_by_name();
             }
-            let body = self.read_from_roots(symbol_path);
+            let (body, resolved) = match self.read_from_roots(symbol_path) {
+                Some((body, candidate)) => (Some(body), Some(candidate)),
+                None => (None, None),
+            };
             self.cache.insert(symbol_path.to_owned(), body);
+            if let Some(candidate) = resolved {
+                self.resolved_paths
+                    .insert(symbol_path.to_owned(), candidate);
+            }
         }
         self.cache.get(symbol_path)?.as_ref()
+    }
+
+    /// The library-relative path (using `/` separators) that answered the
+    /// prior [`Self::resolve`] call for `symbol_path`, or `None` if it has
+    /// not resolved or missed.
+    #[must_use]
+    pub fn resolved_relative(&self, symbol_path: &str) -> Option<String> {
+        self.resolved_paths.get(symbol_path).cloned()
     }
 
     /// Why the file name of a path that names no share gave no body.
@@ -2404,12 +2610,12 @@ impl SymbolLibrary {
     /// drawings, plus 21 for `Filter Type 2.sym`). The stored spelling is
     /// tried first, then the same path with each component's leading spaces
     /// trimmed.
-    fn read_from_roots(&self, symbol_path: &str) -> Option<SymbolGeometry> {
+    fn read_from_roots(&self, symbol_path: &str) -> Option<(SymbolGeometry, String)> {
         let relative = match library_relative_path(symbol_path) {
             Some(relative) => relative.replace('\\', "/"),
             None => self.relative_by_name(symbol_path)?,
         };
-        let mut empty = None;
+        let mut empty: Option<(SymbolGeometry, String)> = None;
         for candidate in symbol_candidates(&relative) {
             for root in &self.roots {
                 let path = root.join(&candidate);
@@ -2420,18 +2626,18 @@ impl SymbolLibrary {
                     continue;
                 };
                 if !body.primitives.is_empty() || !body.short.is_empty() {
-                    return Some(body);
+                    return Some((body, candidate));
                 }
-                empty.get_or_insert(body);
+                empty.get_or_insert((body, candidate.clone()));
             }
             for archive in self.archived_roots() {
                 let Some(body) = archived_symbol_body(archive, &candidate) else {
                     continue;
                 };
                 if !body.primitives.is_empty() || !body.short.is_empty() {
-                    return Some(body);
+                    return Some((body, candidate));
                 }
-                empty.get_or_insert(body);
+                empty.get_or_insert((body, candidate.clone()));
             }
         }
         empty
@@ -2801,18 +3007,187 @@ mod tests {
             return;
         };
         let body = read_symbol_geometry(&path).expect("Circle.sym is a readable compound file");
+        // Sheet 6 holds its circle (oid 267, r = 7.62 mm) in the root cluster,
+        // while Sheet 12 carries the 3.81 mm copy; the normal view displays
+        // Sheet 6's single circle.
+        assert_eq!(body.primitives.len(), 2, "{:?}", body.primitives);
+        let displayed = body.displayed_primitives();
         assert_eq!(
-            body.primitives.len(),
+            displayed.len(),
             1,
-            "the annotation Circle symbol is one circle: {:?}",
-            body.primitives
+            "the annotation Circle symbol displays one circle: {displayed:?}"
         );
-        let SymbolPrimitive::Circle { center, radius } = body.primitives[0].primitive else {
-            panic!("expected a circle, got {:?}", body.primitives[0]);
+        let SymbolPrimitive::Circle { center, radius } = displayed[0].primitive else {
+            panic!("expected a circle, got {:?}", displayed[0]);
         };
-        assert!((radius - 0.003_810).abs() < 1e-9, "radius {radius}");
+        assert_eq!(displayed[0].sheet_ref, 6);
+        assert!((radius - 0.007_620).abs() < 1e-9, "radius {radius}");
         assert!((center.0 - 0.101_600).abs() < 1e-9, "centre x {}", center.0);
         assert!((center.1 - 0.127_000).abs() < 1e-9, "centre y {}", center.1);
+    }
+
+    /// One PSM record: type word, payload length, payload.
+    fn psm_record(type_word: u16, payload: &[u8]) -> Vec<u8> {
+        let mut out = type_word.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    /// A symbol `Sheet*` or `PSMcluster0` stream: the chain magic, live record
+    /// count, then the records back to back from [`CHAIN_START`].
+    fn psm_chain_stream(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut stream = vec![0u8; CHAIN_START];
+        for record in records {
+            stream.extend_from_slice(record);
+        }
+        let live = u32::try_from(SheetChain::walk(&stream).live_records).unwrap_or(u32::MAX);
+        stream[..4]
+            .copy_from_slice(&crate::parsers::sheet_records::SHEET_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&live.to_le_bytes());
+        stream
+    }
+
+    /// An `igLine2d` payload: the 18-byte header (oid, parent, layer, sub-type,
+    /// style index), then start and end.
+    fn line_payload_with_parent_layer(
+        oid: u32,
+        parent: u32,
+        layer: u32,
+        start: (f64, f64),
+        end: (f64, f64),
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(LINE_PAYLOAD_LEN);
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent.to_le_bytes());
+        out.extend_from_slice(&layer.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        for value in [start.0, start.1, end.0, end.1] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out
+    }
+
+    /// A record whose type word carries the native skip bit is a copy the
+    /// file has retired: the walk steps over it, counts it apart in
+    /// [`SymbolGeometry::retired_records`], and draws only the live record.
+    #[test]
+    fn a_record_carrying_the_native_skip_bit_is_retired_not_drawn() {
+        let stream = psm_chain_stream(&[
+            psm_record(
+                0x8018,
+                &line_payload_with_parent_layer(7, 6, 0, (0.0, 0.0), (0.01, 0.0)),
+            ),
+            psm_record(
+                0x0018,
+                &line_payload_with_parent_layer(7, 6, 0, (0.0, 0.0), (0.0, 0.01)),
+            ),
+        ]);
+        let chain = SheetChain::walk(&stream);
+        let mut out = SymbolGeometry::default();
+        read_sheet_records(&stream, &chain.starts, &|_| 6, None, None, &mut out);
+        assert_eq!(
+            out.primitives
+                .iter()
+                .map(|styled| &styled.primitive)
+                .collect::<Vec<_>>(),
+            [&SymbolPrimitive::Line {
+                start: (0.0, 0.0),
+                end: (0.0, 0.01),
+            }]
+        );
+        assert_eq!(out.retired_records, BTreeMap::from([(0x0018, 1)]));
+        assert!(out.skipped_records.is_empty());
+
+        // `PG-Pressure Gauge.sym` carries two retired 0x004D text records on
+        // `/Sheet6`; verify `symbol_geometry_of_package` counts them in
+        // `retired_records` and never puts them into `primitives`.
+        let Some(gauge) = fixture(
+            r"Instrumentation/Off-Line/Without Implied Components/Pressure/PG-Pressure Gauge.sym",
+        ) else {
+            return;
+        };
+        let body = read_symbol_geometry(&gauge).expect("PG reads");
+        assert_eq!(body.retired_records, BTreeMap::from([(0x004D, 2)]));
+    }
+
+    /// Shape records stored in root `/PSMcluster0` join their sheet via direct
+    /// parent oid, multi-hop parent chain (edge -> rectangle -> sheet), or
+    /// unique layer fallback, and stay identical on stopped vs cut streams.
+    #[test]
+    fn root_sheets_assigns_root_cluster_shapes_by_parent_or_layer() {
+        let jsheet = |oid: u32| {
+            let mut pl = vec![0u8; 18];
+            pl[..4].copy_from_slice(&oid.to_le_bytes());
+            psm_record(0x0114, &pl)
+        };
+        let rect_stub = |oid: u32, parent: u32| {
+            let mut pl = vec![0u8; 62];
+            pl[..4].copy_from_slice(&oid.to_le_bytes());
+            pl[4..8].copy_from_slice(&parent.to_le_bytes());
+            psm_record(0x0020, &pl)
+        };
+        let line_direct = psm_record(
+            0x0018,
+            &line_payload_with_parent_layer(101, 6, 5, (0.0, 0.0), (0.01, 0.0)),
+        );
+        let rect = rect_stub(200, 6);
+        let line_via_rect = psm_record(
+            0x0018,
+            &line_payload_with_parent_layer(201, 200, 5, (0.01, 0.0), (0.01, 0.01)),
+        );
+        let line_via_layer = psm_record(
+            0x0018,
+            &line_payload_with_parent_layer(301, 9999, 77, (0.0, 0.01), (0.01, 0.01)),
+        );
+        let sheet12_line = psm_record(
+            0x0018,
+            &line_payload_with_parent_layer(401, 12, 77, (0.02, 0.0), (0.02, 0.02)),
+        );
+        let sheet12_trailing = psm_record(
+            0x0018,
+            &line_payload_with_parent_layer(402, 12, 77, (0.03, 0.0), (0.03, 0.03)),
+        );
+
+        let root_data =
+            psm_chain_stream(&[jsheet(6), rect, line_direct, line_via_rect, line_via_layer]);
+        let make_package = |sheet12_data: Vec<u8>| {
+            let mut streams = BTreeMap::new();
+            let raw = |path: &str, data: Vec<u8>| crate::package::RawStream {
+                path: path.to_string(),
+                data,
+                modified: false,
+            };
+            streams.insert(
+                ROOT_CLUSTER.to_string(),
+                raw(ROOT_CLUSTER, root_data.clone()),
+            );
+            streams.insert("/Sheet6".to_string(), raw("/Sheet6", psm_chain_stream(&[])));
+            streams.insert("/Sheet12".to_string(), raw("/Sheet12", sheet12_data));
+            PidPackage::new(None, streams, crate::model::PidDocument::default())
+        };
+        let mut sheet12 = psm_chain_stream(&[sheet12_line, sheet12_trailing]);
+        let body = symbol_geometry_of_package(&make_package(sheet12.clone()));
+        let by_sheet: Vec<u32> = body.primitives.iter().map(|p| p.sheet_ref).collect();
+        assert_eq!(by_sheet, [12, 12, 12, 6, 6], "{:?}", body.primitives);
+
+        // Stopping `/Sheet12` on its second record must yield the exact same
+        // `RootSheets` resolution as truncating `/Sheet12` at that stop.
+        let second_at = SheetChain::walk(&sheet12).starts[1];
+        sheet12[second_at + 2..second_at + 6].copy_from_slice(&0u32.to_le_bytes());
+        let stopped_end = SheetChain::walk(&sheet12).end;
+        let stopped_body = symbol_geometry_of_package(&make_package(sheet12.clone()));
+        let cut_body = symbol_geometry_of_package(&make_package(sheet12[..stopped_end].to_vec()));
+        assert_eq!(stopped_body.primitives, cut_body.primitives);
+        assert_eq!(
+            stopped_body
+                .primitives
+                .iter()
+                .map(|p| p.sheet_ref)
+                .collect::<Vec<_>>(),
+            [12, 12, 6, 6]
+        );
     }
 
     /// An arc's trailing byte is the direction it runs, and the reader hands
@@ -3246,6 +3621,7 @@ mod tests {
                 },
             )],
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: vec![SymbolSheetLayer {
                 oid: 1,
                 layer_number: 1,
@@ -3288,6 +3664,7 @@ mod tests {
                 styled(8, line(2.0)),
             ],
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![view(6, 0b01), view(8, 0b11)],
             chain_faults: Vec::new(),
@@ -3316,6 +3693,7 @@ mod tests {
         let body = SymbolGeometry {
             primitives: vec![styled(6, 0.0), styled(374, 1.0), styled(374, 2.0)],
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: vec![SymbolSheetLayer {
                 oid: 1,
                 layer_number: 0,
@@ -3402,6 +3780,7 @@ mod tests {
                 styled_on(182, 0, "Default", line(3.0)),
             ],
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![SymbolSheetView {
                 sheet_ref: 6,
@@ -3443,6 +3822,7 @@ mod tests {
         let body = SymbolGeometry {
             primitives,
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![
                 SymbolSheetView {
@@ -3495,6 +3875,7 @@ mod tests {
         let body = |primitives: Vec<StyledPrimitive>, short: SymbolShortRead| SymbolGeometry {
             primitives,
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![normal_view(6)],
             chain_faults: Vec::new(),
@@ -3573,6 +3954,7 @@ mod tests {
         let two_views = |primitives: Vec<StyledPrimitive>| SymbolGeometry {
             primitives,
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: vec![normal_view(6), normal_view(7)],
             chain_faults: Vec::new(),
@@ -3627,7 +4009,7 @@ mod tests {
         let mut library = SymbolLibrary::new(&root);
         let hit = library
             .resolve(CIRCLE_UNC)
-            .map(|body| body.primitives.len());
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1));
 
         assert!(library
@@ -3656,7 +4038,9 @@ mod tests {
 
         let mut library = SymbolLibrary::new(&root);
         let stored = r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym";
-        let hit = library.resolve(stored).map(|body| body.primitives.len());
+        let hit = library
+            .resolve(stored)
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1), "the share holds a body of that name");
         assert!(
             library.missing().is_empty(),
@@ -3765,7 +4149,7 @@ mod tests {
         let mut library = SymbolLibrary::with_roots([first.clone(), second.clone()]);
         let hit = library
             .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym")
-            .map(|body| body.primitives.len());
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1), "the first root's readable copy is the one");
         std::fs::remove_dir_all(&first).ok();
         std::fs::remove_dir_all(&second).ok();
@@ -3797,7 +4181,7 @@ mod tests {
         let mut library = SymbolLibrary::with_roots([absent.clone(), symbols_root()]);
         let hit = library
             .resolve(CIRCLE_UNC)
-            .map(|body| body.primitives.len());
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1), "the second root holds the symbol");
         std::fs::remove_dir_all(&absent).ok();
     }
@@ -3816,7 +4200,9 @@ mod tests {
         }
         let mut library = SymbolLibrary::new(symbols_root());
         let stored = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\ Circle.sym";
-        let hit = library.resolve(stored).map(|body| body.primitives.len());
+        let hit = library
+            .resolve(stored)
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1), "the stray space is the share's, not ours");
         assert!(library.missing().is_empty());
     }
@@ -3851,7 +4237,7 @@ mod tests {
         let mut library = SymbolLibrary::with_roots([broken.clone(), symbols_root()]);
         let hit = library
             .resolve(CIRCLE_UNC)
-            .map(|body| body.primitives.len());
+            .map(|body| body.displayed_primitives().len());
         assert_eq!(hit, Some(1), "the readable copy wins");
         std::fs::remove_dir_all(&broken).ok();
     }
@@ -4352,6 +4738,7 @@ mod tests {
                 }),
             ],
             skipped_records: BTreeMap::new(),
+            retired_records: BTreeMap::new(),
             sheet_layers: Vec::new(),
             sheet_views: Vec::new(),
             chain_faults: Vec::new(),
@@ -4426,7 +4813,7 @@ mod tests {
             SymbolLibrary::with_roots(Vec::<PathBuf>::new()).with_archives([archive.clone()]);
         let body = library.resolve(CIRCLE_UNC).expect("the archive's member");
         assert_eq!(
-            body.primitives.len(),
+            body.displayed_primitives().len(),
             1,
             "the annotation Circle: {:?}",
             body.primitives
@@ -4473,9 +4860,50 @@ mod tests {
 
         let mut library = SymbolLibrary::with_roots([root.clone()]).with_archives([archive]);
         let body = library.resolve(CIRCLE_UNC).expect("the directory's copy");
-        assert_eq!(body.primitives.len(), 1, "{:?}", body.primitives);
+        assert_eq!(
+            body.displayed_primitives().len(),
+            1,
+            "{:?}",
+            body.primitives
+        );
         assert_eq!(library.archives().len(), 1, "the archive is still searched");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `Circle.sym` with the one shape record of `/PSMcluster0` removed so the
+    /// symbol genuinely keeps its single circle on `/Sheet12` alone (the raw
+    /// fixture now resolves Sheet 6's root-cluster circle oid 267).
+    #[cfg(feature = "refdata-archive")]
+    fn circle_without_root_shape(bytes: &[u8]) -> Vec<u8> {
+        use crate::writer::{PidWriter, StreamReplacement, WritePlan};
+
+        let package = PidPackage::from_bytes(bytes).expect("Circle.sym parses");
+        let cluster = &package.streams[ROOT_CLUSTER].data;
+        let mut stripped = cluster[..CHAIN_START].to_vec();
+        let mut live = 0u32;
+        for at in SheetChain::walk(cluster).starts {
+            let header = parse_psm_header(cluster, at).expect("chain start");
+            let end = header.body_start + header.bytes_to_follow as usize;
+            if header.type_code == TYPE_CIRCLE {
+                continue;
+            }
+            if !header.native_reader_skips() {
+                live += 1;
+            }
+            stripped.extend_from_slice(&cluster[at..end]);
+        }
+        stripped[4..8].copy_from_slice(&live.to_le_bytes());
+        PidWriter::write_to_bytes(
+            &package,
+            &WritePlan {
+                stream_replacements: vec![StreamReplacement {
+                    path: ROOT_CLUSTER.to_string(),
+                    new_data: stripped,
+                }],
+                ..WritePlan::default()
+            },
+        )
+        .expect("Circle.sym without root shape is written")
     }
 
     /// A library of several sources that hold the symbol a placement names,
@@ -4483,12 +4911,12 @@ mod tests {
     /// an archive as out of a directory: the search does not go on to the
     /// next source for a file to draw in its place.
     ///
-    /// The copy is `Circle.sym` with the one record of `/Sheet12`, its
-    /// circle, behind a stop. Nothing of it is read, so it holds no
-    /// primitive — which is also what a sound file with nothing to draw
-    /// holds, and from such a file the search does go on. The two are told
-    /// apart by what was read short, in the loop over the directories and in
-    /// the loop over the archives alike. The directories' has its case in
+    /// The copy is `Circle.sym` (without its root-cluster shape) with the one
+    /// record of `/Sheet12`, its circle, behind a stop. Nothing of it is read,
+    /// so it holds no primitive — which is also what a sound file with nothing
+    /// to draw holds, and from such a file the search does go on. The two are
+    /// told apart by what was read short, in the loop over the directories and
+    /// in the loop over the archives alike. The directories' has its case in
     /// `tests/sym_file_chain_faults.rs`; until 2026-11-13 the archives' had
     /// none, and reading on from a short copy there passed every test.
     #[cfg(feature = "refdata-archive")]
@@ -4497,8 +4925,9 @@ mod tests {
         use crate::writer::{PidWriter, StreamReplacement, WritePlan};
 
         const MEMBER: &str = "Design/Annotation/Graphics/Circle.sym";
-        let sound = std::fs::read(symbols_root().join(MEMBER))
+        let raw_sound = std::fs::read(symbols_root().join(MEMBER))
             .expect("Circle.sym is committed under test-file/symbols");
+        let sound = circle_without_root_shape(&raw_sound);
         let package = PidPackage::from_bytes(&sound).expect("Circle.sym parses");
         let mut sheet = package.streams["/Sheet12"].data.clone();
         let starts = SheetChain::walk(&sheet).starts;
@@ -4605,5 +5034,78 @@ mod tests {
             Some(NameMiss::NoSuchFile)
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn circle_and_arc_reaching_past_coordinate_limit_are_refused() {
+        use std::f64::consts::{PI, TAU};
+
+        let circle_payload = |cx: f64, cy: f64, r: f64| {
+            let mut out = vec![0u8; PAYLOAD_HEADER_LEN];
+            for v in [cx, cy, r] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.push(0);
+            out
+        };
+        let arc_payload = |cx: f64, cy: f64, r: f64, start: f64, end: f64, flag: u8| {
+            let mut out = vec![0u8; PAYLOAD_HEADER_LEN];
+            for v in [cx, cy, r, start, end] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.push(flag);
+            out
+        };
+
+        assert!(decode_primitive(TYPE_CIRCLE, &circle_payload(5.0, -5.0, 5.0)).is_some());
+        assert!(decode_primitive(TYPE_CIRCLE, &circle_payload(9.0, 0.0, 2.0)).is_none());
+        assert!(decode_primitive(TYPE_CIRCLE, &circle_payload(0.0, -9.0, 2.0)).is_none());
+
+        assert!(decode_primitive(TYPE_ARC, &arc_payload(9.0, 0.0, 2.0, 2.9, 3.38, 1)).is_some());
+        assert!(decode_primitive(TYPE_ARC, &arc_payload(9.0, 0.0, 2.0, 2.9, 3.38, 0)).is_none());
+        assert!(decode_primitive(TYPE_ARC, &arc_payload(0.0, 9.0, 2.0, PI, TAU, 1)).is_some());
+        assert!(decode_primitive(TYPE_ARC, &arc_payload(0.0, 9.0, 2.0, PI, TAU, 0)).is_none());
+        assert!(decode_primitive(TYPE_ARC, &arc_payload(0.0, 9.0, 2.0, 0.0, TAU, 1)).is_none());
+    }
+
+    #[test]
+    fn resolved_relative_reports_the_matched_library_relative_path() {
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let root = scratch_root("resolved-relative");
+        let subdir = root.join("Design").join("Subdir");
+        std::fs::create_dir_all(&subdir).expect("subdir");
+        std::fs::copy(&circle, subdir.join("BLFH.sym")).expect("copied body");
+
+        let mut library = SymbolLibrary::with_roots([root.clone(), symbols_root()]);
+        // Before resolve: None.
+        assert_eq!(library.resolved_relative(CIRCLE_UNC), None);
+        // Share-relative UNC path resolves to its canonical relative path.
+        assert!(library.resolve(CIRCLE_UNC).is_some());
+        assert_eq!(
+            library.resolved_relative(CIRCLE_UNC).as_deref(),
+            Some("Design/Annotation/Graphics/Circle.sym")
+        );
+        // Leading-space trimmed path resolves to the trimmed candidate that matched.
+        let spacey = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\ Circle.sym";
+        assert!(library.resolve(spacey).is_some());
+        assert_eq!(
+            library.resolved_relative(spacey).as_deref(),
+            Some("Design/Annotation/Graphics/Circle.sym")
+        );
+        // Author local path resolved by file name reports the subdirectory path.
+        let local = r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym";
+        assert!(library.resolve(local).is_some());
+        assert_eq!(
+            library.resolved_relative(local).as_deref(),
+            Some("Design/Subdir/BLFH.sym")
+        );
+        // Miss returns None.
+        let missing = r"\\WIN-SPID\p\Ref\Symbols\No\Such.sym";
+        assert!(library.resolve(missing).is_none());
+        assert_eq!(library.resolved_relative(missing), None);
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

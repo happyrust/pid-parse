@@ -217,8 +217,10 @@ fn backup_dir() -> Option<PathBuf> {
         roots.push(PathBuf::from(dir));
     }
     roots.push(named_corpus().unwrap_or_else(share_dir));
-    roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
-    roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    if named_corpus().is_none() {
+        roots.push(PathBuf::from(r"D:\work\cad\pid-test-data"));
+        roots.push(PathBuf::from(r"D:\work\plant-code\cad\pid-test-data"));
+    }
     roots
         .into_iter()
         .map(|root| root.join("backup-plant-data"))

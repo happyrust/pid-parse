@@ -1123,6 +1123,31 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             });
         }
     }
+    for site in &doc.jsites {
+        let cluster_path = format!("{}/PSMcluster0", site.path);
+        for census in &site.refused_records {
+            if !census.is_graphic {
+                continue;
+            }
+            let class_name = census
+                .rad_class_name
+                .as_deref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default();
+            warnings.push(format!(
+                "{count} record(s) of 0x{code:04X}{class_name} in {cluster_path} are a shape \
+                 this crate's decoder for that type refuses, and are dropped from the drawing",
+                count = census.count,
+                code = census.type_code,
+            ));
+            refused_graphic_records.push(PidRefusedGraphicRecords {
+                stream_path: cluster_path.clone(),
+                type_code: census.type_code,
+                rad_class_name: census.rad_class_name.clone(),
+                count: census.count,
+            });
+        }
+    }
 
     // The records the native reader skips. Listed, not warned about: they
     // are not drawn on purpose, the same purpose the native reader has.
@@ -1822,16 +1847,25 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     arc.sweep_end,
                     arc.flag == 0,
                 ) {
-                    push(
-                        SymbolPrimitive::BSpline {
-                            poles,
-                            weights,
-                            knots,
-                        },
-                        arc.sheet_layer_ref,
-                        Some(arc.index),
-                        None,
-                    );
+                    if crate::bspline::try_sample(
+                        &poles,
+                        &weights,
+                        &knots,
+                        BSPLINE_SEGMENTS_PER_SPAN,
+                    )
+                    .is_some()
+                    {
+                        push(
+                            SymbolPrimitive::BSpline {
+                                poles,
+                                weights,
+                                knots,
+                            },
+                            arc.sheet_layer_ref,
+                            Some(arc.index),
+                            None,
+                        );
+                    }
                 }
             }
             // Closed ellipses after the elliptical arcs, as the same exact
@@ -1848,16 +1882,25 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     std::f64::consts::TAU,
                     0.0,
                 ) {
-                    push(
-                        SymbolPrimitive::BSpline {
-                            poles,
-                            weights,
-                            knots,
-                        },
-                        ellipse.sheet_layer_ref,
-                        Some(ellipse.index),
-                        None,
-                    );
+                    if crate::bspline::try_sample(
+                        &poles,
+                        &weights,
+                        &knots,
+                        BSPLINE_SEGMENTS_PER_SPAN,
+                    )
+                    .is_some()
+                    {
+                        push(
+                            SymbolPrimitive::BSpline {
+                                poles,
+                                weights,
+                                knots,
+                            },
+                            ellipse.sheet_layer_ref,
+                            Some(ellipse.index),
+                            None,
+                        );
+                    }
                 }
             }
             // Boundaries last, like elliptical arcs: every body without
@@ -3563,11 +3606,16 @@ impl GeometryEmitter for IgEllipticalArc2dEmitter {
                 skips.shape_rejected();
                 continue;
             };
-            let points: Vec<PidPoint> =
-                crate::bspline::sample(&poles, &weights, &knots, BSPLINE_SEGMENTS_PER_SPAN)
-                    .into_iter()
-                    .map(|(x, y)| PidPoint { x, y })
-                    .collect();
+            let Some(sampled) =
+                crate::bspline::try_sample(&poles, &weights, &knots, BSPLINE_SEGMENTS_PER_SPAN)
+            else {
+                skips.shape_rejected();
+                continue;
+            };
+            let points: Vec<PidPoint> = sampled
+                .into_iter()
+                .map(|(x, y)| PidPoint { x, y })
+                .collect();
             if points.len() < 2 {
                 skips.shape_rejected();
                 continue;
