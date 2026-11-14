@@ -14,9 +14,14 @@
 //! only when this stage runs the same one (see [`spell`]), and a cell it
 //! cannot spell is counted and left out.
 //!
-//! A label on the sheet may already have given the item the property. The
-//! dump is the database the reference was published from, so its value is
-//! the one written; the labels that said otherwise are counted.
+//! A label on the sheet may already have given the item the property; the
+//! label is then kept, and a dump that says otherwise is counted. On the
+//! seven acceptance drawings, whose dump is their own revision, no label
+//! disagrees with the dump. On `DWG-0202GP06-01`, whose package dump is a
+//! later revision than the sheet and its reference, two runs' sequence
+//! numbers do (`0401` / `0301` on the sheet and in the reference, `01` /
+//! `565` in the dump): an item the sheet does not label cannot be checked
+//! that way, and is written from the dump.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -45,15 +50,21 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IInsulatedItem",
         property: "InsulSpec",
     },
+    StoredProperty {
+        interface: "INamedPipingConnector",
+        property: "PipingConnectorSeqNo",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StoredValues {
-    /// Values written.
+    /// Values written where no label gave the property.
     pub written: usize,
-    /// Of those, values that replace a different value a label gave.
-    pub replaced_labels: usize,
+    /// Labels the dump agrees with.
+    pub confirmed_labels: usize,
+    /// Labels kept where the dump says otherwise.
+    pub disagreeing_labels: usize,
     /// Cells left out because [`spell`] does not spell them.
     pub unspelled: usize,
     /// Placed columns this dump does not let the stage read, each with the
@@ -132,23 +143,20 @@ pub fn attach_stored_values(
                 report.unspelled += 1;
                 continue;
             };
-            let attribute = PidPublishAttribute {
-                interface: stored.interface,
-                name: stored.property,
-                value,
-                source: PidValueSource::PlacedColumn(column.clone()),
-            };
-            report.written += 1;
-            match item.attributes.iter_mut().find(|existing| {
-                existing.interface == attribute.interface && existing.name == attribute.name
+            match item.attributes.iter().find(|existing| {
+                existing.interface == stored.interface && existing.name == stored.property
             }) {
-                Some(existing) => {
-                    if existing.value != attribute.value {
-                        report.replaced_labels += 1;
-                        *existing = attribute;
-                    }
+                Some(existing) if existing.value == value => report.confirmed_labels += 1,
+                Some(_) => report.disagreeing_labels += 1,
+                None => {
+                    report.written += 1;
+                    item.attributes.push(PidPublishAttribute {
+                        interface: stored.interface,
+                        name: stored.property,
+                        value,
+                        source: PidValueSource::PlacedColumn(column.clone()),
+                    });
                 }
-                None => item.attributes.push(attribute),
             }
         }
         item.attributes
@@ -267,7 +275,9 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 9,
+                written: 3,
+                confirmed_labels: 10,
+                disagreeing_labels: 2,
                 ..StoredValues::default()
             }
         );
@@ -282,8 +292,26 @@ mod tests {
         }
     }
 
+    /// The fixture's sheet is the revision of its reference and the
+    /// package's dump a later one: four runs' sequence numbers agree, and
+    /// the two the dump renumbered keep what the sheet and the reference
+    /// say.
     #[test]
-    fn the_dumps_value_replaces_a_label_that_says_otherwise_and_a_class_less_item_gets_none() {
+    fn a_sequence_number_the_sheet_labels_otherwise_keeps_the_label() {
+        let (drawing, _) = dwg_with_stored_values();
+        let sequence = |uid: &str| {
+            let attribute = stated(&drawing, uid, "PipingConnectorSeqNo").expect("labelled");
+            assert_eq!(attribute.interface, "INamedPipingConnector");
+            assert!(matches!(attribute.source, PidValueSource::Label { .. }));
+            attribute.value.as_str()
+        };
+        assert_eq!(sequence("4C2F232018CE42E8B7FFCABD553BDBC4"), "0101");
+        assert_eq!(sequence("7042E6B0A1A944E390A08A5A44771C46"), "0401");
+        assert_eq!(sequence("C7C3E09265174C91AC008F3CE02E9653"), "0301");
+    }
+
+    #[test]
+    fn a_label_the_dump_disagrees_with_is_kept_and_a_class_less_item_gets_nothing() {
         let (mut drawing, tables, map) = dwg();
         let label = drawing
             .items
@@ -303,16 +331,16 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 8);
-        assert_eq!(report.replaced_labels, 1);
+        assert_eq!(report.written, 2);
+        assert_eq!(report.disagreeing_labels, 3);
         let run = stated(
             &drawing,
             "4C2F232018CE42E8B7FFCABD553BDBC4",
             "PipingMaterialsClass",
         )
         .unwrap();
-        assert_eq!(run.value, "1.6AR12");
-        assert_eq!(run.source, placed("T_PipeRun", "PipingMaterialsClass"));
+        assert_eq!(run.value, "B2");
+        assert!(matches!(run.source, PidValueSource::Label { .. }));
         assert!(stated(
             &drawing,
             "06F9755FE3FE408D8A1D6A5F3B38F2DF",
