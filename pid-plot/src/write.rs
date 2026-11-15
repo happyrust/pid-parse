@@ -491,6 +491,7 @@ pub fn write_plot_audited(
     })
     .map_err(|error| PlotWriteError::Save(error.to_string()))?;
 
+    compress_plain_streams(&mut doc);
     let pdf = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
         .map_err(|error| PlotWriteError::Save(error.to_string()))?;
     Ok(WrittenPlot { pdf, audit, ledger })
@@ -616,6 +617,34 @@ fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
     ocg.set(b"Type".to_vec(), Object::name("OCG"));
     ocg.set(b"Name".to_vec(), Object::String(PdfString::text(name)));
     doc.add(Object::Dict(ocg))
+}
+
+/// Flate-compress every stream still stored as plain bytes.
+///
+/// `pdfcraft`'s embedder stores each font program and its `ToUnicode` CMap
+/// unfiltered; on the eleven reference sheets the programs alone were two
+/// thirds of the bytes written. Only the stored encoding changes: what each
+/// stream decodes to, the program's `/Length1` and every glyph a page draws
+/// stay as they were.
+///
+/// Runs after the last face is embedded: the embedder finds a program it
+/// already holds by its plain bytes and the `/PCFullFont` marker, and that
+/// marker means nothing to a reader, so it is dropped here.
+fn compress_plain_streams(doc: &mut Document) {
+    let plain: Vec<_> = doc
+        .scan_objects()
+        .filter_map(|(reference, object)| match object.as_ref() {
+            Object::Stream(stream) if stream.dict.get(b"Filter").is_none() => {
+                Some((reference, stream.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    for (reference, stream) in plain {
+        let mut dict = stream.dict;
+        dict.remove(b"PCFullFont");
+        doc.set(reference, Object::Stream(Stream::flate(dict, &stream.raw)));
+    }
 }
 
 /// Whether any run on the page needs a typeface.
@@ -8268,6 +8297,41 @@ mod tests {
             bytes: pdfcraft_fonts::INTER_REGULAR,
             subset: false,
         }]
+    }
+
+    /// The font program and its `ToUnicode` CMap are stored compressed like
+    /// the page's content, and the program decodes to exactly the `/Length1`
+    /// bytes it declares.
+    #[test]
+    fn a_plot_stores_every_stream_compressed() {
+        let pdf = write_plot(&lettered_sheet(&[("SP:", "Arial")]), &inter_font()).expect("write");
+        let doc = Document::open(std::sync::Arc::new(pdf)).expect("open");
+        let mut programs = 0;
+        for (_, object) in doc.scan_objects() {
+            let super::Object::Stream(stream) = object.as_ref() else {
+                continue;
+            };
+            if stream.dict.get(b"Type") == Some(&super::Object::name("XRef")) {
+                continue;
+            }
+            assert_eq!(
+                stream.dict.get(b"Filter"),
+                Some(&super::Object::name("FlateDecode")),
+                "{:?}",
+                stream.dict
+            );
+            assert!(
+                stream.dict.get(b"PCFullFont").is_none(),
+                "{:?}",
+                stream.dict
+            );
+            if let Some(super::Object::Int(length)) = stream.dict.get(b"Length1") {
+                programs += 1;
+                let decoded = stream.decoded().expect("the program decodes");
+                assert_eq!(Ok(decoded.len()), usize::try_from(*length));
+            }
+        }
+        assert_eq!(programs, 1);
     }
 
     /// Feature: pdf-export-ledger, Property 5: 判定与真实写出一致
