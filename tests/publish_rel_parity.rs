@@ -326,12 +326,18 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
 
 /// Mirror-backed DWG sibling of A33.
 ///
-/// Once the DWG MDF fixture is bundled, the writer's
-/// generated DWG `_Data.xml` must emit at least the same Rel
-/// `DefUID` inventory as the `SmartPlant` DWG reference. Extras are
-/// tolerated and only logged, matching the A33 contract on A01.
+/// The writer's generated DWG `_Data.xml` — the committed `.pid`
+/// published against its package's own Oracle `exp` dump and data map
+/// — must emit at least the same Rel `DefUID` inventory as the
+/// `SmartPlant` DWG reference. Extras are tolerated and only logged,
+/// matching the A33 contract on A01.
+///
+/// Measured on the committed package: the Oracle line emits all 12
+/// `DefUID`s the reference carries, at exactly the reference's counts,
+/// and no `DefUID` the reference lacks — `under_emit` and `extras` are
+/// both empty.
 #[test]
-fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_available() {
+fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
@@ -449,60 +455,65 @@ fn a36_piping_end1_conn_uid2_is_real_upstream_on_a01() {
     );
 }
 
-/// A36 · Sanity sub-test: the same property on the DWG
-/// generated output, when the mirror is available. DWG has
-/// multiple `PipeRuns` so the signal is stronger (more
-/// opportunities for a `.PPT`-only regression to surface).
-/// Soft-skipped when the DWG `SQLite` mirror is absent — the
-/// fidelity of the A01 test remains the hard contract.
+/// A36 · Sanity sub-test: the same property on the DWG generated
+/// output. DWG has multiple `PipeRuns`, so the signal is stronger
+/// (more opportunities for a `.PPT`-only regression to surface).
+///
+/// Measured on the committed package: the Oracle line emits 7
+/// `PipingEnd1Conn` rels and every one of them names a real upstream
+/// item — four through a `.BPT` branch point and three through a
+/// connector's `.1` port — so none falls back to a `.PPT`
+/// placeholder.
 #[test]
-fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
+fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
     let rels = parse_rel_details(&generated_xml);
     let end1_rels: Vec<_> = rels
         .iter()
         .filter(|r| r.def_uid == "PipingEnd1Conn")
         .collect();
-    if end1_rels.is_empty() {
-        return;
-    }
+    assert_eq!(
+        end1_rels.len(),
+        7,
+        "the DWG drawing's pipe ends: 7 PipingEnd1Conn rels"
+    );
     let real_count = end1_rels
         .iter()
         .filter(|r| !r.uid2.ends_with(".PPT"))
         .count();
-    assert!(
-        real_count > 0,
-        "A36 DWG UID2 regression: every writer-generated \
-         PipingEnd1Conn rel on DWG points at a `.PPT` \
-         placeholder. Observed {} end1 rels, all with \
-         placeholder UID2 — either the DWG loader failed to \
-         populate upstream endpoints or the writer stopped \
-         consuming them.",
+    assert_eq!(
+        real_count,
+        7,
+        "every PipingEnd1Conn rel on DWG names a real upstream item; observed {} of {}",
+        real_count,
         end1_rels.len(),
     );
 }
 
-/// DWG sibling of A36b. When the mirror is available every
-/// writer-generated `<IRel UID2="...">` must resolve within the
-/// generated DWG document, either as a concrete `<IObject UID>`
-/// or as one of the known derived port/process-point suffixes.
+/// DWG sibling of A36b. Every writer-generated `<IRel UID2="...">` must
+/// resolve within the generated DWG document, either as a concrete
+/// `<IObject UID>` or as one of the known derived port/process-point
+/// suffixes. Measured on the committed package: 133 rels, 241
+/// `IObject` UIDs, nothing dangling.
 #[test]
-fn a36b_every_rel_uid2_resolves_within_the_document_on_dwg_when_available() {
+fn a36b_every_rel_uid2_resolves_within_the_document_on_dwg() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
 
     let iobject_uids: BTreeSet<String> = collect_iobject_uids(&generated_xml);
-    assert!(
-        !iobject_uids.is_empty(),
-        "A36b DWG sanity: writer must emit at least one <IObject UID=\"...\"/>"
+    assert_eq!(
+        iobject_uids.len(),
+        241,
+        "the DWG drawing's <IObject UID> inventory"
     );
 
     let rels = parse_rel_details(&generated_xml);
+    assert_eq!(rels.len(), 133, "the DWG drawing's <Rel> count");
     let mut dangling: Vec<(String, String, String)> = Vec::new();
     for r in &rels {
         if r.uid2.is_empty() {

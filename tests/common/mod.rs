@@ -19,10 +19,11 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pid_parse::publish::{
-    load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishError, PublishStyle,
+    load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishError,
 };
 
 // -----------------------------------------------------------------
@@ -133,40 +134,37 @@ pub const DWG_REFERENCE_DATA_XML: &str =
 pub const DWG_REFERENCE_META_XML: &str =
     "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Meta.xml";
 
-/// Expected location of the DWG plant's MDF fixture. The path
-/// convention mirrors the A01 layout:
-/// `test-file/backup-test/<plant>_p/extracted/Export.mdf`.
-/// When the file is present, every DWG loader/writer gate runs
-/// end-to-end through the Rust MDF reader; when absent,
-/// dependent tests soft-skip with [`DWG_MDF_MISSING_HINT`].
-pub const DWG_MDF_PATH: &str = "test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf";
+/// The `.pid` of the DWG-0202GP06-01 drawing, committed twice
+/// (byte-identical apart from the container's own store) under
+/// `test-file/` and beside its reference export.
+pub const DWG_PID_PATH: &str = "test-file/DWG-0202GP06-01.pid";
+
+/// The package's Oracle `exp` dump — the DWG plant's only database
+/// export in the repository.
+pub const DWG_ORACLE_EXP_PATH: &str = "test-file/backup-test/DWG-0202GP06-01_p/Export.dmp";
+
+/// The package's `SPPIDDataMap.xml` archive (the data map entry the
+/// `.pid` line reads to spell codelist values and pipeline fluids).
+pub const DWG_DATAMAP_ARCHIVE: &str = "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip";
 
 /// `T_Drawing.SP_ID` of the DWG-0202GP06-01 drawing, sourced
 /// from the reference `_Meta.xml`'s `DocUID` attribute so the
-/// constant stays aligned with the bundled reference fixture
-/// independently of whether the MDF fixture has been produced.
+/// constant stays aligned with the bundled reference fixture.
 pub const DWG_DRAWING_UID: &str = "9D1F3F232C47409D8C54EFB22FC3682A";
 
 /// Plant name the DWG reference fixture publishes under.
 /// Sourced from the reference `_Meta.xml`'s `Plant`
-/// attribute. Used as the `plant_name` argument when the DWG
-/// loader/writer pipeline is available.
+/// attribute; passed as `--plant` to the run that publishes the
+/// package's `.pid`.
 pub const DWG_PLANT_NAME: &str = "P01";
 
-/// Single soft-skip message every DWG-loader-dependent test
-/// emits when [`DWG_MDF_PATH`] is not present. The wording
-/// explicitly flags the blockage so a reader seeing the
-/// message in test output knows the Stage 2–4 gates
-/// (loader canonical-field enrichment, A24/A27b whitelist
-/// closure, `PIDBranchPoint` / `PIDPipingBranchPoint` parity) are
-/// NOT validated on this run even though the suite appears
-/// green.
-pub const DWG_MDF_MISSING_HINT: &str = "skipping: DWG Export.mdf fixture not found at \
-     `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` — \
-     loader canonical-field enrichment, A24/A27b whitelist closure, \
-     PIDBranchPoint / PIDPipingBranchPoint parity, and every other \
-     DWG loader / branch-point gate in Stage 2-4 are NOT verifiable \
-     on this run. Drop the MDF fixture in place to re-enable them.";
+/// Soft-skip message the DWG gates print when a piece of the
+/// committed package is missing. Every piece is committed, so this
+/// only fires on a checkout that dropped one.
+pub const DWG_PACKAGE_MISSING_HINT: &str = "skipping: the DWG package's `.pid`, `Export.dmp` or \
+     `RefData~4~804.zip` is not in the repository — the DWG publish gates read \
+     `test-file/DWG-0202GP06-01.pid` against \
+     `test-file/backup-test/DWG-0202GP06-01_p/{Export.dmp,RefData~4~804.zip}`.";
 
 // -----------------------------------------------------------------
 // Parity scope
@@ -175,9 +173,10 @@ pub const DWG_MDF_MISSING_HINT: &str = "skipping: DWG Export.mdf fixture not fou
 /// PID tag varieties under fidelity parity (A23 / A24 / A27 /
 /// A27b). This is the full writer-supported tag surface as of
 /// Stage-4, including the two formerly-backlogged branch-point
-/// varieties. A23 still soft-skips tags absent from the A01
-/// fixture; keeping the union here means the shared whitelist /
-/// drift guards stay aligned with `publish::supported_pid_tags()`.
+/// varieties. A23 scores a tag the A01 reference does not carry
+/// against the DWG reference instead; keeping the union here means the
+/// shared whitelist / drift guards stay aligned with
+/// `publish::supported_pid_tags()`.
 ///
 /// Sorted alphabetically for stability across whitelists and
 /// diff readers.
@@ -237,52 +236,70 @@ pub fn generate_a01_meta_xml() -> Option<Result<String, PublishError>> {
     Some(write_meta_xml(&drawing, PLANT_NAME))
 }
 
-/// Generate `DWG-0202GP06-01_Data.xml` through the real
-/// publish pipeline, opening the DWG plant's MDF fixture at
-/// [`DWG_MDF_PATH`] and emitting with
-/// [`PublishStyle::Dwg`] explicitly applied (per the
-/// "`PublishStyle` stays an explicit input" convention — the
-/// helper never guesses style from the source file).
+/// Generate `DWG-0202GP06-01_Data.xml` through the Oracle line: the
+/// committed `.pid` published against its package's own `Export.dmp`
+/// and data map. This is the line the CLI's `--oracle-exp` runs, so
+/// what the test reads is what a delivery writes.
 ///
-/// Returns `None` when [`DWG_MDF_PATH`] is missing; emits
-/// [`DWG_MDF_MISSING_HINT`] so the blockage is visible in
-/// test output and not mistaken for a silent pass.
+/// Returns `None` (with a `skipping: ` line) when a piece is absent.
 pub fn generate_dwg_data_xml() -> Option<Result<String, PublishError>> {
-    let mut drawing = open_dwg_drawing()?;
-    drawing.style = PublishStyle::Dwg;
-    Some(write_data_xml(&drawing, DWG_PLANT_NAME))
+    generate_dwg_documents().map(|documents| Ok(documents.data))
 }
 
-/// Generate `DWG-0202GP06-01_Meta.xml` through the real
-/// publish pipeline. Sibling of [`generate_dwg_data_xml`].
+/// Generate `DWG-0202GP06-01_Meta.xml` through the same Oracle line.
+/// The meta document is the CLI's `--out-dir` companion; it carries
+/// no dump content of its own, but taking it from the same run keeps
+/// the pair one document set.
 pub fn generate_dwg_meta_xml() -> Option<Result<String, PublishError>> {
-    let mut drawing = open_dwg_drawing()?;
-    drawing.style = PublishStyle::Dwg;
-    Some(write_meta_xml(&drawing, DWG_PLANT_NAME))
+    generate_dwg_documents().map(|documents| Ok(documents.meta))
 }
 
-/// Open + load the DWG drawing graph. Returns `None` with a
-/// descriptive soft-skip notice when the MDF fixture is missing or
-/// the loader step itself fails before reaching the writer.
-/// Private because every public DWG helper delegates here —
-/// adding a new DWG scenario should extend this function
-/// rather than duplicate the skip logic.
-fn open_dwg_drawing() -> Option<pid_parse::publish::PublishDrawing> {
-    let mdf_path = std::path::Path::new(DWG_MDF_PATH);
-    if !mdf_path.exists() {
-        eprintln!("{DWG_MDF_MISSING_HINT}");
-        return None;
-    }
-    match load_drawing_graph_from_mdf(mdf_path, DWG_DRAWING_UID) {
-        Ok(d) => Some(d),
-        Err(e) => {
-            eprintln!(
-                "skipping: DWG MDF present but load_drawing_graph_from_mdf failed for \
-                 drawing UID `{DWG_DRAWING_UID}`: {e}"
-            );
-            None
+/// The two documents one `--oracle-exp` run of the committed package
+/// writes.
+struct DwgDocuments {
+    data: String,
+    meta: String,
+}
+
+/// Run the CLI over the committed package and read back the two
+/// documents it writes. One run produces the pair, so a test that
+/// needs both documents takes them from one call to this.
+fn generate_dwg_documents() -> Option<DwgDocuments> {
+    let pid = Path::new(DWG_PID_PATH);
+    let dump = Path::new(DWG_ORACLE_EXP_PATH);
+    let datamap = Path::new(DWG_DATAMAP_ARCHIVE);
+    for piece in [pid, dump, datamap] {
+        if !piece.is_file() {
+            eprintln!("{DWG_PACKAGE_MISSING_HINT} missing: {}", piece.display());
+            return None;
         }
     }
+    let out_dir = Scratch::unmade("dwg-oracle-exp");
+    let output = Command::new(env!("CARGO_BIN_EXE_pid_publish_xml"))
+        .arg(pid)
+        .arg("--oracle-exp")
+        .arg(dump)
+        .arg("--datamap")
+        .arg(datamap)
+        .arg("--out-dir")
+        .arg(out_dir.path())
+        .args(["--plant", DWG_PLANT_NAME])
+        .output()
+        .expect("spawn pid_publish_xml --oracle-exp on the DWG package");
+    assert!(
+        output.status.success(),
+        "the DWG package's own dump must publish: exit {:?}\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let read = |suffix: &str| {
+        let path = out_dir.join(format!("DWG-0202GP06-01{suffix}"));
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+    };
+    Some(DwgDocuments {
+        data: read("_Data.xml"),
+        meta: read("_Meta.xml"),
+    })
 }
 
 /// Load the SmartPlant-produced reference A01 `_Data.xml`.
