@@ -73,12 +73,15 @@
 //! (`--oracle-exp`, and its whole package); what the `.pid` + exp line
 //! still leaves out is in `docs/plans/2026-11-10-publish-export-completion.md`:
 //!
-//! * the interfaces each class carries: a fixed, ordered interface table
-//!   per class in `catalog` (S5);
-//! * the attributes the plant database states, by `SPPIDDataMap.xml`:
-//!   values as stored (S7), enumerations, whose hierarchical levels follow
-//!   a schema-side hierarchy the map does not hold (S8); the values with
-//!   units (S9) are written from the dump's SI columns by [`unit_values`];
+//! * two of the properties stored as they are (S7): `IObject.Name` and
+//!   `IObject.Description`, which [`stored_values`] does not write yet;
+//! * the hierarchical levels of enumerations (`PipingComponentType1`–`3`,
+//!   `EqType0`–`5`, `ProcessEqCompType1`, `InstrumentType`), which follow
+//!   a schema-side hierarchy the map does not hold (S8), and the
+//!   interfaces an equipment type decides;
+//! * a few scattered values (instrument tag parts,
+//!   `LongMaterialDescription3`, `EquipPrefix`, `ReliefPressure`,
+//!   `EquipmentTrimSpec`) and the interfaces stated only beside them;
 //! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
 //!   off-page connectors in a drawing's stockpile (S12), and objects other
 //!   than piping components the database draws on a sheet its `.pid` does
