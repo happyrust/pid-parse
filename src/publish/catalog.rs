@@ -1236,7 +1236,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
         class: "connector and port model",
         reason: "connector and port model columns the plant database supplies: a .pid file \
                  states the run's ends, not the resolved connector row (an --oracle-exp run \
-                 states a run's flow direction from the dump).",
+                 states a run's flow direction and its flags, and whether a component is \
+                 flow-directional, from the dump).",
         members: &[
             (
                 "IConnector",
@@ -1257,7 +1258,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "typical and status flags",
         reason: "the typical flag the plant database supplies: a .pid file states the \
-                 typical's geometry, not the register flag.",
+                 typical's geometry, not the register flag (an --oracle-exp run states it \
+                 from the dump).",
         members: &[("IPIDTypical", &["IsTypical"])],
     },
     ExcludedAttributeClass {
@@ -1306,6 +1308,15 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 14] = [
     ("IPipingComponent", "CommoditySpecialtyType"),
     ("IPipingComponent", "PipModelCode"),
     ("IPipingConnector", "PipingConnectorType"),
+];
+
+/// Excluded attributes an `--oracle-exp` run states from the cells the dump
+/// stores them in (`stored_values`) and no label on the sheet gives: held
+/// like [`DUMP_CODELIST_ATTRIBUTES`].
+pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 3] = [
+    ("IConnector", "RepresentationsAreAllZeroLength"),
+    ("IInlineComponent", "IsFlowDirectional"),
+    ("IPIDTypical", "IsTypical"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

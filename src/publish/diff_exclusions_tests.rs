@@ -334,6 +334,35 @@ fn a_run_that_states_a_codelist_value_somewhere_is_held_to_it_everywhere() {
     );
 }
 
+// The same holds for a value the dump stores as it is and no label gives.
+#[test]
+fn a_run_that_states_a_stored_flag_somewhere_is_held_to_it_everywhere() {
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPIDTypical IsTypical="False"/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPIDTypical IsTypical="False"/></PIDInstrument>
+    </Container>"#;
+    let alone = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPIDTypical/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPIDTypical/></PIDInstrument>
+    </Container>"#;
+    let excused = diff_pid_export(alone, reference).expect("well-formed");
+    assert!(excused.is_clean(), "{excused}");
+    assert_eq!(excused.values_excused_by_design, 2);
+
+    let with_dump = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/><IPIDTypical IsTypical="False"/></PIDInstrument>
+        <PIDInstrument><IObject UID="B" Name="PT-2"/><IPIDTypical/></PIDInstrument>
+    </Container>"#;
+    let held = diff_pid_export(with_dump, reference).expect("well-formed");
+    assert_eq!(
+        held.findings,
+        [
+            "missing value PIDInstrument B IPIDTypical.IsTypical: \"False\" not in generated, \
+             and the run states IPIDTypical.IsTypical from the dump on other objects"
+        ]
+    );
+}
+
 #[test]
 fn the_excused_accounting_prints_with_findings_not_on_a_clean_run() {
     let generated = r#"<Container>

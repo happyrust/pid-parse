@@ -23,7 +23,7 @@
 //! `565` in the dump): an item the sheet does not label cannot be checked
 //! that way, and is written from the dump.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::oracle_exp::{backup_uid_key, nominal_spelling, ExpTables, StoredCell};
 use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidValueSource};
@@ -62,6 +62,14 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IConnector",
         property: "RepresentationsAreAllZeroLength",
     },
+    StoredProperty {
+        interface: "IPIDTypical",
+        property: "IsTypical",
+    },
+    StoredProperty {
+        interface: "IInlineComponent",
+        property: "IsFlowDirectional",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
@@ -83,9 +91,13 @@ pub struct StoredValues {
 /// Spell one stored cell as the reference writes the property, under the
 /// conversion the map names: none (`None` or empty) is the value as
 /// stored, `EFAdapter.NominalDiameterConv` spells a code the way a port's
-/// diameter is spelled ([`nominal_spelling`]: `80 mm`, `1 in`), and
+/// diameter is spelled ([`nominal_spelling`]: `80 mm`, `1 in`),
 /// `EFAdapter.EnumToBoolConv` spells a code of the dump's Boolean list
-/// (codelist 73: 1 `False`, 2 `True`).
+/// (codelist 73: 1 `False`, 2 `True`), and `EFAdapter.CompFlowDirConv`
+/// spells a component's flow direction (the map's `SP_47`) as whether it
+/// has one: 1 `Undefined` is `False`, 2 `End 1 is upstream` and 3 `End 1
+/// is downstream` are `True`. The references hold no component of 4
+/// `Bi-Directional` or 5 `No Flow`, so neither is spelled.
 ///
 /// `None` when the conversion is not one this stage runs, or the cell is
 /// not a value it converts.
@@ -106,7 +118,36 @@ pub fn spell(criteria: Option<&str>, cell: &StoredCell) -> Option<String> {
             StoredCell::Integer(2) => Some("True".to_string()),
             _ => None,
         },
+        COMPONENT_FLOW_DIRECTION => match cell {
+            StoredCell::Integer(1) => Some("False".to_string()),
+            StoredCell::Integer(2 | 3) => Some("True".to_string()),
+            _ => None,
+        },
         _ => None,
+    }
+}
+
+/// The conversion that publishes `IsFlowDirectional` from the item's
+/// `FlowDirection`.
+const COMPONENT_FLOW_DIRECTION: &str = "EFAdapter.CompFlowDirConv";
+
+/// What a row whose cell is NULL is spelled as under `criteria`: a
+/// component that states no flow direction is not flow-directional. `None`
+/// for every other conversion, which leaves such a row out.
+fn spell_null(criteria: Option<&str>) -> Option<&'static str> {
+    (criteria == Some(COMPONENT_FLOW_DIRECTION)).then_some("False")
+}
+
+/// The attribute of the item type the conversion reads, where it is not
+/// the one the map names: the dictionary attributes no `IsFlowDirectional`
+/// to a piping component or an instrument, and the adapter derives it from
+/// the attribute the map lists beside it, `InlineComp.FlowDirection`, which
+/// the dictionary places in `T_InlineComp`, in the item's own row.
+fn attribute_read<'a>(criteria: Option<&str>, attribute: &'a str) -> &'a str {
+    if criteria == Some(COMPONENT_FLOW_DIRECTION) {
+        "InlineComp.FlowDirection"
+    } else {
+        attribute
     }
 }
 
@@ -128,6 +169,7 @@ pub fn attach_stored_values(
     let mut report = StoredValues::default();
     let mut sources: HashMap<(&'static str, &'static str, String), Source> = HashMap::new();
     let mut columns: HashMap<DumpColumn, Option<HashMap<String, StoredCell>>> = HashMap::new();
+    let mut rows: HashMap<String, HashSet<String>> = HashMap::new();
     for item in &mut drawing.items {
         let Some(class) = item.class else {
             continue;
@@ -157,12 +199,26 @@ pub fn attach_stored_values(
                     }
                 }
             });
-            let Some(cell) = cells.as_ref().and_then(|cells| cells.get(&key)) else {
+            let Some(cells) = cells.as_ref() else {
                 continue;
             };
-            let Some(value) = spell(criteria.as_deref(), cell) else {
-                report.unspelled += 1;
-                continue;
+            let value = if let Some(cell) = cells.get(&key) {
+                let Some(value) = spell(criteria.as_deref(), cell) else {
+                    report.unspelled += 1;
+                    continue;
+                };
+                value
+            } else {
+                let Some(null) = spell_null(criteria.as_deref()) else {
+                    continue;
+                };
+                let held = rows
+                    .entry(column.table.clone())
+                    .or_insert_with(|| rows_of(tables, &column.table));
+                if !held.contains(&key) {
+                    continue;
+                }
+                null.to_string()
             };
             match item.attributes.iter().find(|existing| {
                 existing.interface == stored.interface && existing.name == stored.property
@@ -186,6 +242,19 @@ pub fn attach_stored_values(
     report
 }
 
+/// The `SP_ID`s of the rows of `table`, folded like [`backup_uid_key`];
+/// empty when the dump does not let the stage read them.
+fn rows_of(tables: &ExpTables, table: &str) -> HashSet<String> {
+    let id = DumpColumn {
+        table: table.to_string(),
+        column: "SP_ID".to_string(),
+    };
+    match tables.stored_column(&id) {
+        Ok(Some(cells)) => cells.into_keys().collect(),
+        Ok(None) | Err(_) => HashSet::new(),
+    }
+}
+
 /// The placed column the map publishes `property` of `class` from, for an
 /// item of type `item_type`.
 ///
@@ -201,21 +270,24 @@ fn source_of(
     item_type: &str,
 ) -> Source {
     let placements = place_property(map, tables.dictionary(), class, property);
-    if let Some(placement) = placements
-        .iter()
-        .find(|placement| placement.item_type() == Some(item_type))
-    {
-        let column = placement.column.clone().ok()?;
-        return Some((column, placement.source.property.process_criteria.clone()));
-    }
     let placement = placements
         .iter()
-        .find(|placement| matches!(placement.column, Err(Unplaced::NoItemType { .. })))?;
-    let column = tables
-        .dictionary()
-        .place(item_type, &placement.source.property.name)
-        .ok()?;
-    Some((column, placement.source.property.process_criteria.clone()))
+        .find(|placement| placement.item_type() == Some(item_type))
+        .or_else(|| {
+            placements
+                .iter()
+                .find(|placement| matches!(placement.column, Err(Unplaced::NoItemType { .. })))
+        })?;
+    let criteria = placement.source.property.process_criteria.clone();
+    let named = placement.source.property.name.as_str();
+    let attribute = attribute_read(criteria.as_deref(), named);
+    let column = match &placement.column {
+        Ok(column) if attribute == named && placement.item_type() == Some(item_type) => {
+            column.clone()
+        }
+        _ => tables.dictionary().place(item_type, attribute).ok()?,
+    };
+    Some((column, criteria))
 }
 
 #[cfg(test)]
@@ -296,7 +368,7 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 12,
+                written: 28,
                 confirmed_labels: 17,
                 disagreeing_labels: 2,
                 ..StoredValues::default()
@@ -397,7 +469,7 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 10);
+        assert_eq!(report.written, 25);
         assert_eq!(report.disagreeing_labels, 3);
         let run = stated(
             &drawing,
@@ -441,6 +513,92 @@ mod tests {
             Some("T_Instrument.InsulationSpec")
         );
         assert_eq!(column("PIDPipingConnector", "DuctRun"), None);
+    }
+
+    /// A property no label gives is one the diff holds a run that states it
+    /// on some object to on every object; a labelled one is held by the
+    /// labels' rule instead.
+    #[test]
+    fn the_properties_no_label_gives_are_the_ones_the_diff_holds_a_dump_run_to() {
+        let unlabelled: BTreeSet<(&str, &str)> = STORED_PROPERTIES
+            .iter()
+            .map(|stored| (stored.interface, stored.property))
+            .filter(|pair| !crate::publish::catalog::LABELLED_ATTRIBUTES.contains(pair))
+            .collect();
+        let held: BTreeSet<(&str, &str)> = crate::publish::catalog::DUMP_STORED_ATTRIBUTES
+            .into_iter()
+            .collect();
+        assert_eq!(unlabelled, held);
+        for (interface, attribute) in held {
+            assert!(
+                crate::publish::catalog::excluded_attribute(interface, attribute).is_some(),
+                "{interface}.{attribute} is excused in a run without the dump"
+            );
+        }
+    }
+
+    /// The fourteen items of the fixture the dump flags are the fourteen
+    /// its reference flags, each stored `1`, `False`, in `T_ModelItem`, the
+    /// table every item type inherits the attribute from.
+    #[test]
+    fn every_item_states_whether_it_is_a_typical_from_its_model_item_row() {
+        let (drawing, _) = dwg_with_stored_values();
+        let flags: Vec<_> = drawing
+            .items
+            .iter()
+            .filter_map(|item| stated(&drawing, &item.uid, "IsTypical"))
+            .collect();
+        assert_eq!(flags.len(), 14);
+        for flag in flags {
+            assert_eq!(flag.interface, "IPIDTypical");
+            assert_eq!(flag.value, "False");
+            assert_eq!(flag.source, placed("T_ModelItem", "SP_IsTypical"));
+        }
+    }
+
+    /// A piping component and an inline instrument both read their flow
+    /// direction from their own row of `T_InlineComp`, through the
+    /// `InlineComp.FlowDirection` the map lists beside `IsFlowDirectional`.
+    #[test]
+    fn whether_a_component_is_flow_directional_is_read_from_its_inline_row() {
+        let (drawing, tables, map) = dwg();
+        for (class, item_type) in [
+            ("PIDPipingComponent", "PipingComp"),
+            ("PIDInlineInstrument", "Instrument"),
+        ] {
+            let (column, criteria) =
+                source_of(&map, &tables, class, "IsFlowDirectional", item_type)
+                    .unwrap_or_else(|| panic!("{class} is placed"));
+            assert_eq!(column.to_string(), "T_InlineComp.FlowDirection");
+            assert_eq!(criteria.as_deref(), Some(COMPONENT_FLOW_DIRECTION));
+        }
+        let mut drawing = drawing;
+        attach_stored_values(&mut drawing, &tables, &map);
+        let flags: Vec<_> = drawing
+            .items
+            .iter()
+            .filter_map(|item| stated(&drawing, &item.uid, "IsFlowDirectional"))
+            .collect();
+        assert_eq!(flags.len(), 2);
+        for flag in flags {
+            assert_eq!(flag.interface, "IInlineComponent");
+            assert_eq!(flag.value, "False");
+            assert_eq!(flag.source, placed("T_InlineComp", "FlowDirection"));
+        }
+    }
+
+    #[test]
+    fn a_flow_direction_is_spelled_as_whether_the_component_has_one() {
+        let criteria = Some(COMPONENT_FLOW_DIRECTION);
+        let spelled = |code| spell(criteria, &StoredCell::Integer(code));
+        assert_eq!(spelled(1).as_deref(), Some("False"));
+        assert_eq!(spelled(2).as_deref(), Some("True"));
+        assert_eq!(spelled(3).as_deref(), Some("True"));
+        assert_eq!(spelled(4), None);
+        assert_eq!(spelled(5), None);
+        assert_eq!(spell_null(criteria), Some("False"));
+        assert_eq!(spell_null(Some("EFAdapter.EnumToBoolConv")), None);
+        assert_eq!(spell_null(None), None);
     }
 
     #[test]
