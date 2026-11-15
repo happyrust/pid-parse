@@ -3365,8 +3365,15 @@ fn glyph_by_glyph(
 /// (`44.0 / (72 × 2048/2319)`). The reference's own cells (24 px and 34 px)
 /// bound the ratio to 0.685..0.702 em; 0.6923 is inside it.
 const UNSTATED_CAP_EM: f64 = 44.0 / (72.0 * 2048.0 / 2319.0);
+
+/// A path coordinate in points, to the fourth decimal place.
+///
+/// A ten-thousandth of a point is 0.035 µm on paper, far below any device's
+/// resolution, and is the precision `pdfcraft_content::num` writes; every
+/// further decimal of an `f64` is bytes in the content stream and nothing on
+/// the page.
 fn pt(mm: f64) -> Object {
-    Object::Real(mm * PT_PER_MM)
+    Object::Real((mm * PT_PER_MM * 10_000.0).round() / 10_000.0)
 }
 
 fn finite(point: [f64; 2]) -> bool {

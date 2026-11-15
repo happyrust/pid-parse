@@ -480,10 +480,12 @@ const SHEETS: [Sheet; 11] = [
             // (2026-11-11). The ink is the same; the comparison fits the two
             // pages on the strokes in the order it reads them, the fit moved
             // by 1.0e-5 in scale and 0.009 mm, and 0.036 mm of the border
-            // came to lie on reference ink.
+            // came to lie on reference ink. 3478.889 until path coordinates
+            // were written to a ten-thousandth of a point (2026-11-15), which
+            // moved no coordinate by more than 1.8e-5 mm.
             Defect {
                 field: Field::WholeExtra,
-                reads: 3478.889,
+                reads: 3478.888,
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
@@ -536,9 +538,12 @@ const SHEETS: [Sheet; 11] = [
         sheet_edges: 0,
         wipes: 2,
         defects: &[
+            // 3478.683 until path coordinates were written to a ten-thousandth
+            // of a point (2026-11-15), which moved no coordinate by more than
+            // 1.8e-5 mm.
             Defect {
                 field: Field::WholeExtra,
-                reads: 3478.683,
+                reads: 3478.682,
                 cause: Cause::Undetermined,
                 what: BARE_BORDER,
             },
