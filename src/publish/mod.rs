@@ -75,10 +75,10 @@
 //!
 //! * two of the properties stored as they are (S7): `IObject.Name` and
 //!   `IObject.Description`, which [`stored_values`] does not write yet;
-//! * the hierarchical levels of enumerations (`PipingComponentType1`–`3`,
-//!   `EqType0`–`5`, `ProcessEqCompType1`, `InstrumentType`), which follow
-//!   a schema-side hierarchy the map does not hold (S8), and the
-//!   interfaces an equipment type decides;
+//! * the hierarchical levels of an enumeration whose leaf no reference
+//!   drawing shows: the map holds no levels, and
+//!   [`codelist_values::LEAF_LEVELS`] holds those the references state
+//!   (S8); and the interfaces an equipment type decides;
 //! * a few scattered values (instrument tag parts,
 //!   `LongMaterialDescription3`, `EquipPrefix`, `ReliefPressure`,
 //!   `EquipmentTrimSpec`) and the interfaces stated only beside them;

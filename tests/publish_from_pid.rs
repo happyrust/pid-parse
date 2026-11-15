@@ -1001,7 +1001,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_179);
-    assert_eq!(index["values"], 160_855);
+    assert_eq!(index["values"], 172_427);
     assert_eq!(index["relationships"], 106_812);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
@@ -1618,6 +1618,16 @@ const DWG_UNIT_VALUES: [&str; 4] = [
     "IProcessVessel.ProcessVessel_VesselVolumetricCapacity:",
 ];
 
+/// The levels above the leaf of the piping component `6CC683FA...`, which
+/// only a dump run is held to: no acceptance reference shows its leaf, so
+/// `LEAF_LEVELS` gives it none, while the run states the other piping
+/// component's levels, whose leaf they do show.
+const DWG_LEVELS_NOT_STATED: [&str; 3] = [
+    r#"missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPipingComponent.PipingComponentType1: "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}" not in generated, and the run states IPipingComponent.PipingComponentType1 from the dump on other objects"#,
+    r#"missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPipingComponent.PipingComponentType2: "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}" not in generated, and the run states IPipingComponent.PipingComponentType2 from the dump on other objects"#,
+    r#"missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPipingComponent.PipingComponentType3: "@{81CD9440-BC07-11D6-BDBC-00104BCC2B69}" not in generated, and the run states IPipingComponent.PipingComponentType3 from the dump on other objects"#,
+];
+
 // What `--oracle-exp` prints beyond those values.
 //
 // Six pipelines with their six `PipingConnectors` relations are extra and
@@ -1696,7 +1706,7 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     );
     assert!(
         stdout.lines().any(|line| line
-            == "pid export diff: objects 108 (extra 6, wrong class 0), values 191 \
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 197 \
                 (different 0, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
@@ -1715,14 +1725,18 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
             .count(),
         9
     );
+    let mut values: Vec<&str> = DWG_VALUES_NOT_STATED
+        .iter()
+        .filter(|line| !unit_value(line))
+        .chain(&DWG_LEVELS_NOT_STATED)
+        .copied()
+        .collect();
+    // The diff lists the values object by object.
+    values.sort_by_key(|line| line.split(' ').nth(3));
     let expected: Vec<&str> = DWG_EXP_OBJECT_AND_REL_FINDINGS
         .iter()
-        .chain(
-            DWG_VALUES_NOT_STATED
-                .iter()
-                .filter(|line| !unit_value(line)),
-        )
         .copied()
+        .chain(values)
         .collect();
     assert_eq!(finding_lines(&stdout), expected, "{stdout}");
     assert_eq!(code, Some(1), "{stdout}\n{stderr}");
@@ -1803,16 +1817,16 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
         stated,
         [
             ("001", 1, 1, 0),
-            ("002", 3, 8, 2),
-            ("222", 3, 8, 2),
-            ("DWG-0201GP01-01", 492, 790, 688),
-            ("DWG-0201GP06-01", 170, 340, 233),
-            ("DWG-0202GP06-01", 113, 219, 141),
+            ("002", 3, 9, 2),
+            ("222", 3, 9, 2),
+            ("DWG-0201GP01-01", 492, 878, 688),
+            ("DWG-0201GP06-01", 170, 356, 233),
+            ("DWG-0202GP06-01", 113, 226, 141),
             ("DWG-0104GP01-08", 5, 14, 4),
         ]
     );
     assert_eq!(index["objects"], 786);
-    assert_eq!(index["values"], 1_379);
+    assert_eq!(index["values"], 1_492);
     assert_eq!(index["relationships"], 1_070);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

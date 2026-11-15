@@ -295,8 +295,8 @@ fn a_pid_export_accounts_for_classes_it_does_not_publish_and_fails_a_wrong_value
 
 // A codelist value is excused for a run that states it nowhere, as from a
 // `.pid` alone; a run that states it on one object had the dump, and leaving
-// it out on another is a finding. A level above the leaf stays excused
-// either way, under the reason it cannot be stated.
+// it out on another is a finding. A level above the leaf is held the same
+// way; this run states none, so it stays excused under its own reason.
 #[test]
 fn a_run_that_states_a_codelist_value_somewhere_is_held_to_it_everywhere() {
     let reference = r#"<Container>

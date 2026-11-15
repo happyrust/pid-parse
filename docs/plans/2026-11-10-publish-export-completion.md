@@ -3,7 +3,7 @@
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
 > 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。2026-11-12 把 `main`（`7f71586`）并进了分支（`7de1ef1`）。
-> 状态（2026-11-15）：本计划的分支已并入 `main`，之后各片直接并进 `main`。Q1、Q3、Q5 按 (a) 做；S0–S6、S9、S11 已在 `main`，S7 做了 9 个属性里的 7 个，S8 做了不分层级的枚举；交付重发为 `publish-v6`，7 张同版图非空值 35 519 / 39 171，见 §5 第六阶段。S10、S12、S17 与 Q4、Q6 等现场数据（GitHub #71），Q7 维持 (a)。主检出的 stash（Q2）已逐块比对并存成分支 `publish-stash-20261108`。此前：§5 的四片、S0、独立审查之后的收紧与 S6；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查；第五阶段（同日）复核 GitHub #70 并给入库的 DWG 包补库一级的用例。
+> 状态（2026-11-15）：本计划的分支已并入 `main`，之后各片直接并进 `main`。Q1、Q3、Q5 按 (a) 做；S0–S6、S9、S11 已在 `main`，S7 做了 9 个属性里的 7 个，S8 做了不分层级的枚举；交付重发为 `publish-v6`，7 张同版图非空值 35 519 / 39 171，见 §5 第六阶段。之后 S8 的层级按参考图读出的表（`codelist_values::LEAF_LEVELS`）写出，就是 §5 第六阶段量出的那 2 392 个，非空值到 37 911 / 39 171（未重发交付）；表里没有的叶子仍不写。S10、S12、S17 与 Q4、Q6 等现场数据（GitHub #71），Q7 维持 (a)。主检出的 stash（Q2）已逐块比对并存成分支 `publish-stash-20261108`。此前：§5 的四片、S0、独立审查之后的收紧与 S6；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查；第五阶段（同日）复核 GitHub #70 并给入库的 DWG 包补库一级的用例。
 
 ## 一句话
 

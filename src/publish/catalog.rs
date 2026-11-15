@@ -1167,7 +1167,8 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
         reason: "the schema levels above an enumerated value's leaf: the dump stores the \
                  leaf's codelist index and SPPIDDataMap.xml publishes the leaf's own enum, but \
                  neither holds the levels the schema hangs above it, so only a reference \
-                 document could supply them.",
+                 document could supply them (an --oracle-exp run states them for the leaves \
+                 the reference drawings show, from a table read off those drawings).",
         members: &[
             (
                 "IEquipment",
@@ -1290,16 +1291,25 @@ pub(crate) const LABELLED_ATTRIBUTES: [(&str, &str); 7] = [
 ];
 
 /// Excluded attributes an `--oracle-exp` run states from the dump's
-/// codelist cells (`codelist_values`): a run that states one on some object
-/// had the dump, so a reference value it leaves out on another object is a
-/// finding; a run that states it nowhere is excused as before.
-pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 14] = [
+/// codelist cells (`codelist_values`, the levels of a leaf through its
+/// `LEAF_LEVELS`): a run that states one on some object had the dump, so a
+/// reference value it leaves out on another object is a finding; a run that
+/// states it nowhere is excused as before.
+pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 25] = [
     ("IConnector", "FlowDirection"),
     ("IDocument", "DocCategory"),
     ("IDocument", "DocType"),
+    ("IEquipment", "EqType0"),
+    ("IEquipment", "EqType1"),
+    ("IEquipment", "EqType2"),
+    ("IEquipment", "EqType3"),
+    ("IEquipment", "EqType4"),
+    ("IEquipment", "EqType5"),
     ("IEquipment", "EqTypeDescription"),
     ("IEquipmentComponent", "ProcEqpCompTypeDescription"),
+    ("IEquipmentComponent", "ProcessEqCompType1"),
     ("IEquipmentComponent", "ProcessEqCompType2"),
+    ("IInstrument", "InstrumentType"),
     ("IInstrument", "InstrumentType3"),
     ("IInstrument", "ProcFunc"),
     ("IInstrumentOcc", "InstrumentLocation"),
@@ -1307,6 +1317,9 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 14] = [
     ("IPBSItem", "ConstructionStatus2"),
     ("IPipingComponent", "CommoditySpecialtyType"),
     ("IPipingComponent", "PipModelCode"),
+    ("IPipingComponent", "PipingComponentType1"),
+    ("IPipingComponent", "PipingComponentType2"),
+    ("IPipingComponent", "PipingComponentType3"),
     ("IPipingConnector", "PipingConnectorType"),
 ];
 
