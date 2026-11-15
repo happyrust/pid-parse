@@ -3,7 +3,7 @@
 > 依据：`docs/analysis/2026-11-10-publish-clean-is-nothing-wrong-not-everything-stated.md`（现状、对照矩阵、完整度普查与归因都在那里，本文不重复数字的出处）。
 > 承接：`docs/plans/2026-10-13-publish-progress-and-next-steps.md`（N9–N12）与 `docs/analysis/2026-11-05-seven-reference-publish-diff.md`（七张参考图）。
 > 基线 `main` = `803984a`；工作在 worktree `D:\work\plant-code\cad\pid-parse-wt\publish-export`、分支 `publish-export-20261110`，不 push、不动 `main`。2026-11-12 把 `main`（`7f71586`）并进了分支（`7de1ef1`）。
-> 状态：§5 的四片、S0、独立审查之后的收紧与 S6 已提交；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查；第五阶段（同日）复核 GitHub #70 并给入库的 DWG 包补库一级的用例，见 §5；§2 的 Q1–Q7 等批复；§3 其余切片未开工。
+> 状态（2026-11-15）：本计划的分支已并入 `main`，之后各片直接并进 `main`。Q1、Q3、Q5 按 (a) 做；S0–S6、S9、S11 已在 `main`，S7 做了 9 个属性里的 7 个，S8 做了不分层级的枚举；交付重发为 `publish-v6`，7 张同版图非空值 35 519 / 39 171，见 §5 第六阶段。S10、S12、S17 与 Q4、Q6 等现场数据（GitHub #71），Q7 维持 (a)。主检出的 stash（Q2）已逐块比对并存成分支 `publish-stash-20261108`。此前：§5 的四片、S0、独立审查之后的收紧与 S6；第四阶段（2026-11-12）并入 `main`、重发 `publish-v4`、对库普查；第五阶段（同日）复核 GitHub #70 并给入库的 DWG 包补库一级的用例。
 
 ## 一句话
 
@@ -295,3 +295,37 @@ Q1–Q6 仍未答复。这一阶段做三件不依赖答复的事。
 根 crate 的测试与 clippy 是**分片**跑的——库的单测、47 个集成测试文件各一条命令、全部示例一条命令，每条 2 个 job——不是一条 `--all-targets`：这段时间机器的内存提交余量一直在 1.5–12.9 GB，到不了大构建要的 16 GB，而且多数时候机器上一个编译器都没有在跑。分片合起来就是 `cargo test -p pid-parse --all-targets` 与 `cargo clippy -p pid-parse --all-targets` 的全部目标。`cargo build --workspace --all-targets` 没有重跑：它是大构建，这一阶段的改动又只在根 crate 的测试里，`pid-plot` 不编它们。
 
 **这一阶段没做的。** Q7（没有改拒收的粒度）；把 `SP_INSULTHICKSI` / `SP_SLOPESI` 的值发出来（S9；读法要先学会读双精度，那两条单测钉的「留作没读的列」届时跟着改）；workspace 构建。工单在 `main` 上要等这条分支合回去才不成立。
+
+### 第六阶段（2026-11-15）：S4、S5、S7、S8、S9、S11 进 `main`，重发 `publish-v6`
+
+Q1、Q3、Q5 按推荐的 (a) 做；Q2 的 stash 里的 publish 改动由 `c0f191c` 落到 `main`；Q4、Q6 等现场数据（GitHub #71）；Q7 维持 (a)。这一阶段在 `main` 上直接并入，每片一个合并提交（括号里是被并入的提交）：
+
+| 片 | 提交 | 做了什么 |
+|---|---|---|
+| — | `1b5e443`（`d10c529`） | 本计划的分支（第一至第五阶段）并入 `main` |
+| S4 | `c0f191c`、`81920d4` | 门禁看接口元素、`<Container>` 与重复 UID（stash 里的那份）；A01 那次运行钉住这三项 |
+| S11 | `8d7cfe7`（`c51b750`） | 数据库线的命令行门禁改走 `diff_pid_export` |
+| — | `18d3f90`（`f15ece6`） | exp 的 NUMBER 列读法（S9 要读的双精度） |
+| S5 | `aa3fa99`（`5db7684`） | 类的固定接口表 |
+| S9 | `9f94aa3`（`46ecb18`） | 带单位的值 |
+| S8 | `11487b3`（`331b664`） | 代码表的枚举值，不分层级的那部分 |
+| S7 | `1317c0b`（`73cf1b2`） | `RepresentationsAreAllZeroLength`、`PipingMaterialsClass`、`InsulSpec`、`PipingConnectorSeqNo`、`NominalDiameter` |
+| S7 | `2681ccd`（`858fe49`） | `IsTypical`、`IsFlowDirectional` |
+
+**读数。** 7 张同版图、整包、带 dump（`publish-v6`，探针是 `2681ccd` 的发布构建）：对象 18 197 / 18 197、关系 24 143 / 24 143、接口元素 134 827 / 134 983（99.9 %）、非空值 35 519 / 39 171（90.7 %）、空值属性 15 643 / 16 680，写得与参考不同的值 0，参考对象没有的接口元素 0。`tests/publish_completeness.rs` 的钉与这些数相同。与 `publish-v5`（`aa3fa99`，只有 S5：接口元素 133 445、非空值 19 734）比，§3 里 S7 那一批的 7 667 个写出 6 567 个，S8 的 11 610 个写出 9 218 个，合起来正好是增加的 15 785 个；S9 的属性在这 7 张参考里没有（样本只在 DWG 与 A01）。
+
+**还没写出的 3 652 个非空值**（数据地图探针 `--ours publish-v6` 逐行列来源，合计对得上）：
+
+- S8 的层级枚举 2 392：`PipingComponentType1–3` 2 021、`EqType0–5` 190、`ProcessEqCompType1` 45、`InstrumentType` 136。其中 1 511 个（`PipingComponentType2/3`、`EqType1–5`、`InstrumentType`）映射里指不到来源，就是第三阶段「层级」一条说的 schema 一侧的层级。
+- S7 的 `IObject.Name` / `IObject.Description` 1 100：名称是管段 631、管件 395、在线仪表 43、仪表 8，描述是设备 17、机械设备 6。
+- §3 S8 一行列的 160 个零散值，一个没动：仪表位号 102、`LongMaterialDescription3` 34、`EquipPrefix` 17、`ReliefPressure` 6、`EquipmentTrimSpec` 1。
+
+前两类做完就是 §3 末尾算的 39 011 / 39 171。还没写出的 156 个接口元素：105 个由设备类型码决定（泵、电机、低压罐、空冷器几类，跟着 `EqType` 那条链），51 个是只在有值时才写的 `ISpecifiedMatlItem` 34 与 `INamedEquipment` 17，跟着上面的 `LongMaterialDescription3` 与 `EquipPrefix`。
+
+**`publish-v6`。** `D:\work\cad\pid-test-data\publish-v6`，`2681ccd` 的发布构建：53 张、0 失败，同一命令重跑 160 / 160 逐字节相同。与 `publish-v5` 比 57 个文件相同，不同的是 51 个 `_Data.xml`、51 个 `_Coverage.json` 与 `_Index.json`；`_Meta.xml` 全同，D03、D04 没有 dump 段，两张不变。53 张的对象 80 181、关系 106 812 与 v5 相同，非空值 87 600 → 160 857。覆盖报告的 `oracle_exp` 段多一项 `placed_column_values`。整包门禁 7 张 clean、0 张有发现项、4 张另一版、42 张没有参考。细节在交付目录的 `BUILD.txt`。
+
+**门禁（S7 的后两个属性）。** `858fe49` 在游离的工作树里过 AGENTS.md 的全套：build、test（2 518 过 / 0 败 / 3 ignored，skip 提示 21 条，与 `1317c0b` 相同）、`clippy -D warnings`、fmt、`missing documentation` 0 = 基线 0、字节审计基线、`--no-default-features --lib` 985 过、wasm32。`main` 自分支起没有动过，合并提交的树就是 `858fe49` 的树。
+
+**主检出的 stash（Q2）。** 逐块比过：116 块里 81 块已在 `main`，30 块 `main` 改成了别的写法。真正只在 stash 里的是三处：`attach_dump_only_components` 的去重（带一条测试）；端口投影跳过非端口行（`main` 保持报错，见 §2 Q2）；一行帮助文字。stash 存成本地分支 `publish-stash-20261108`（`9b4d60b`，要看用 `git stash apply publish-stash-20261108`）后删掉。
+
+**这一阶段没做的。** S7 的 `IObject.Name` / `IObject.Description`；S8 的层级枚举（规则要从参考量，或读 schema / `EFAdapter.dll`）；160 个零散值；S10、S12、S17 等 Q4 / Q6 的数据（#71）；S13、S14；Q7 不改。`src/publish/mod.rs` 模块文档里的 Outstanding 一节还是 `048a842` 时的样子，没有跟着改。
