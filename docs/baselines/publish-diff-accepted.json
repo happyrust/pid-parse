@@ -318,9 +318,9 @@
       ]
     },
     "I井场": {
-      "what": "The single-`.pid` publish of the I井场 drawing against the vendor reference. Path-sensitive: the drawing name is derived from the file's own name, so the two registered items appear only when the file itself is named by the short stem.",
-      "path_sensitive": true,
-      "why": "IB031 appears nowhere in the 3,997,696 bytes of the fixture; the drawing name is derived from the file name. Pass the long Chinese name — or its 8.3 alias IB031~1.PID, which now resolves to the stored long name — and the run is clean. Run a copy actually named IB031~1.pid and the drawing's IObject.Name and the container's DocName both read IB031~1. Both outcomes are legitimate observations of the same product, so the assertion is a disjunction and this entry is listed either way.",
+      "what": "The single-`.pid` publish of the I井场 drawing against the vendor reference. The drawing name is the file's stored name, so the two registered items appear only when the file itself is named by the short stem.",
+      "path_sensitive": false,
+      "why": "IB031 appears nowhere in the 3,997,696 bytes of the fixture; the drawing name is the stored name of the file. Pass the long Chinese name — or its 8.3 alias IB031~1.PID, another path to the same file, which the reader resolves to the stored long name — and the run is clean; the test asserts that for both paths in both modes. Run a copy actually named IB031~1.pid, in either mode, and the drawing's IObject.Name and the container's DocName both read IB031~1: those are the two items registered here, and the test asserts them in both modes. Until 2026-11-16 the command line took the name the path spelled, so the alias produced the second outcome and the assertion was a disjunction; it no longer is.",
       "differences": {
         "value_different": {
           "count": 1,
@@ -369,10 +369,11 @@
         }
       },
       "allowed_outcomes": [
-        "Exit 0 with no difference line at all: the long name reached the process.",
-        "Exit 1 with exactly two difference lines, byte-identical to the two registered items above: a file named by the short stem reached the process."
+        "Exit 0 with no difference line at all: the file is stored under the long name, whether the long name or its 8.3 alias reached the process.",
+        "Exit 1 with exactly two difference lines, byte-identical to the two registered items above: a copy stored under the short stem reached the process."
       ],
       "forbidden_outcomes": [
+        "Exit 1 for the file stored under the long name, by whichever path it is reached.",
         "Exit 1 with a difference line other than the registered ones.",
         "Exit 0 while a difference line was printed.",
         "A clean branch that printed anything matching difference_line_kinds.",

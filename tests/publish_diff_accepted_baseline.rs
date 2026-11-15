@@ -787,6 +787,31 @@ fn a_deleted_object_is_unregistered_in_the_database_and_package_runs() {
     );
 }
 
+/// The I井场 command line for `input` in `mode`, or `None` (with a
+/// `skipping:` line) when the mode's dump or datamap is absent.
+fn ij_args(input: &Path, reference: &Path, mode: &str) -> Option<Vec<OsString>> {
+    let mut args: Vec<OsString> = vec![
+        input.into(),
+        "--diff-against".into(),
+        reference.into(),
+        "--plant".into(),
+        "P01".into(),
+    ];
+    if mode == "oracle-exp" {
+        let dump = package_dir().join("Export.dmp");
+        let datamap = package_dir().join("RefData~4~804.zip");
+        if !dump.is_file() || !datamap.is_file() {
+            eprintln!("skipping: I井场 {mode} needs the exp dump and the datamap");
+            return None;
+        }
+        args.push("--oracle-exp".into());
+        args.push(dump.into_os_string());
+        args.push("--datamap".into());
+        args.push(datamap.into_os_string());
+    }
+    Some(args)
+}
+
 #[test]
 fn the_ijingchang_run_never_leaves_the_registered_item() {
     let pid = ij_pid();
@@ -798,67 +823,53 @@ fn the_ijingchang_run_never_leaves_the_registered_item() {
 
     let baseline = baseline();
     let figure = &baseline["figures"]["I井场"];
-    let dump = package_dir().join("Export.dmp");
-    let datamap = package_dir().join("RefData~4~804.zip");
 
-    for mode in ["pid-alone", "oracle-exp"] {
-        let mut args: Vec<OsString> = vec![pid.clone().into_os_string()];
-        args.push("--diff-against".into());
-        args.push(reference.clone().into_os_string());
-        args.push("--plant".into());
-        args.push("P01".into());
-        if mode == "oracle-exp" {
-            if !dump.is_file() || !datamap.is_file() {
-                eprintln!("skipping: I井场 {mode} needs the exp dump and the datamap");
+    // The drawing is named by the file's stored name, so the long name and
+    // the 8.3 alias the volume keeps for it are one input, and each has to
+    // run clean in each mode. The two registered lines belong to a file
+    // that is itself named by the short stem, which the next test runs.
+    let mut inputs = vec![("its long name", pid.clone())];
+    if let Some(alias) = common::short_path_of(&pid) {
+        inputs.push(("its 8.3 alias", alias));
+    }
+
+    for (by, input) in &inputs {
+        for mode in ["pid-alone", "oracle-exp"] {
+            let Some(args) = ij_args(input, &reference, mode) else {
                 continue;
-            }
-            args.push("--oracle-exp".into());
-            args.push(dump.clone().into_os_string());
-            args.push("--datamap".into());
-            args.push(datamap.clone().into_os_string());
-        }
+            };
+            let run = run_cli(args);
+            eprintln!(
+                "I井场 {mode} by {by} ({}): exit {}, {}",
+                input.display(),
+                run.code,
+                run.summary()
+            );
+            let classification = Classification::of(figure, &run);
+            let recorded = figure["modes"]
+                .get(mode)
+                .unwrap_or_else(|| panic!("the baseline records no {mode} mode"));
 
-        let run = run_cli(args);
-        let classification = Classification::of(figure, &run);
-        let recorded = figure["modes"]
-            .get(mode)
-            .unwrap_or_else(|| panic!("the baseline records no {mode} mode"));
-
-        // The drawing name is derived from the path, so both outcomes are
-        // legitimate. Anything else is a finding.
-        match run.code {
-            0 => {
-                assert_eq!(
-                    run.summary(),
-                    recorded["clean_summary"].as_str().unwrap_or_default(),
-                    "I井场 {mode}: clean-branch summary"
-                );
-                assert!(
-                    classification.registered.is_empty(),
-                    "I井场 {mode} exited 0 while printing a difference: {:#?}",
-                    classification.registered
-                );
-                assert!(
-                    classification.unregistered.is_empty(),
-                    "I井场 {mode} exited 0 while printing an unregistered difference: {:#?}",
-                    classification.unregistered
-                );
-            }
-            1 => {
-                assert_eq!(
-                    run.summary(),
-                    recorded["alias_summary"].as_str().unwrap_or_default(),
-                    "I井场 {mode}: alias-branch summary"
-                );
-                assert_eq!(
-                    classification.registered.len(),
-                    2,
-                    "I井场 {mode} must print exactly the two registered items: {:#?}",
-                    classification.registered
-                );
-                classification.assert_complete(&format!("I井场 {mode}"));
-            }
-            other => panic!("I井场 {mode} exited {other}; the contract allows only 0 or 1"),
+            assert_eq!(
+                run.code, 0,
+                "I井场 {mode} by {by} must run clean; it printed:\n{}",
+                run.stdout
+            );
+            assert_eq!(
+                run.summary(),
+                recorded["clean_summary"].as_str().unwrap_or_default(),
+                "I井场 {mode} by {by}: summary"
+            );
+            assert!(
+                classification.registered.is_empty(),
+                "I井场 {mode} by {by} exited 0 while printing a difference: {:#?}",
+                classification.registered
+            );
+            assert!(
+                classification.unregistered.is_empty(),
+                "I井场 {mode} by {by} exited 0 while printing an unregistered difference: {:#?}",
+                classification.unregistered
+            );
         }
     }
 }
@@ -879,40 +890,46 @@ fn the_ijingchang_alias_stem_reproduces_the_registered_item() {
     let alias = scratch.path().join("IB031~1.pid");
     std::fs::copy(&pid, &alias).expect("copy the I井场 fixture to the 8.3 alias stem");
 
-    let run = run_cli([
-        alias.as_os_str(),
-        OsStr::new("--diff-against"),
-        reference.as_os_str(),
-        OsStr::new("--plant"),
-        OsStr::new("P01"),
-    ]);
-
-    assert_eq!(
-        run.code, 1,
-        "the 8.3 alias stem must produce the registered difference"
-    );
-    assert_eq!(
-        run.summary(),
-        figure["modes"]["pid-alone"]["alias_summary"]
-            .as_str()
-            .unwrap_or_default()
-    );
-
-    let classification = Classification::of(figure, &run);
-    classification.assert_complete("I井场 alias stem");
-    assert_eq!(classification.registered.len(), 2);
-    for needle in [
-        "IObject.Name: \"IB031~1\"",
-        "container DocName: \"IB031~1\"",
-    ] {
-        assert!(
-            classification
-                .registered
-                .iter()
-                .any(|item| item.contains(needle)),
-            "no registered item carries {needle}: {:#?}",
-            classification.registered
+    // This file is stored under the short stem, so the stem is its name in
+    // each mode: the dump is read by the drawing's UID, not by its name.
+    for mode in ["pid-alone", "oracle-exp"] {
+        let Some(args) = ij_args(&alias, &reference, mode) else {
+            continue;
+        };
+        let run = run_cli(args);
+        eprintln!(
+            "I井场 {mode} by a copy stored as IB031~1.pid: exit {}, {}",
+            run.code,
+            run.summary()
         );
+        let recorded = &figure["modes"][mode];
+
+        assert_eq!(
+            run.code, 1,
+            "I井场 {mode}: the 8.3 alias stem must produce the registered difference"
+        );
+        assert_eq!(
+            run.summary(),
+            recorded["alias_summary"].as_str().unwrap_or_default(),
+            "I井场 {mode}: alias-stem summary"
+        );
+
+        let classification = Classification::of(figure, &run);
+        classification.assert_complete(&format!("I井场 alias stem, {mode}"));
+        assert_eq!(classification.registered.len(), 2);
+        for needle in [
+            "IObject.Name: \"IB031~1\"",
+            "container DocName: \"IB031~1\"",
+        ] {
+            assert!(
+                classification
+                    .registered
+                    .iter()
+                    .any(|item| item.contains(needle)),
+                "no registered item carries {needle}: {:#?}",
+                classification.registered
+            );
+        }
     }
 }
 
