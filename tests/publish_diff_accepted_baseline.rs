@@ -1072,3 +1072,141 @@ fn the_package_entry_records_the_registered_allowance() {
     assert!(source.contains("src/publish/diff.rs"));
     assert!(source.contains("FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCES"));
 }
+
+// ------------------------------------------------------- DWG-0202GP06-01 ----
+
+const DWG_DIR: &str = "test-file/export-test/publish-data/DWG-0202GP06-01";
+const DWG_NAME: &str = "DWG-0202GP06-01";
+const DWG_FIGURE: &str = "DWG-0202GP06-01 · .pid";
+
+fn dwg_pid() -> PathBuf {
+    manifest_dir().join(DWG_DIR).join(format!("{DWG_NAME}.pid"))
+}
+
+fn dwg_reference() -> PathBuf {
+    manifest_dir()
+        .join(DWG_DIR)
+        .join(format!("{DWG_NAME}_Data.xml"))
+}
+
+fn dwg_run() -> Run {
+    run_cli([
+        dwg_pid().as_os_str(),
+        OsStr::new("--diff-against"),
+        dwg_reference().as_os_str(),
+        OsStr::new("--plant"),
+        OsStr::new("P01"),
+    ])
+}
+
+/// The committed DWG-0202GP06-01 fixture's `.pid` against its own reference,
+/// which is the same revision as the sheet: the 17 values only the plant
+/// database holds are recorded, and nothing else is.
+#[test]
+fn the_dwg_pid_run_prints_exactly_the_registered_differences() {
+    let baseline = baseline();
+    let figure = &baseline["figures"][DWG_FIGURE];
+    let run = dwg_run();
+
+    assert_eq!(
+        run.code,
+        figure["exit_code"].as_i64().expect("DWG exit_code") as i32,
+        "the DWG .pid figure exits 1 by design: the baseline records the differences, it does \
+         not suppress them"
+    );
+    assert_eq!(
+        run.summary(),
+        figure["summary"].as_str().unwrap_or_default()
+    );
+    Classification::of(figure, &run).assert_complete(DWG_FIGURE);
+
+    let listed: usize = figure["category_counts"]
+        .as_object()
+        .expect("DWG category_counts")
+        .values()
+        .filter_map(Value::as_u64)
+        .map(|count| count as usize)
+        .sum();
+    assert_eq!(listed, 17, "the DWG .pid figure lists 17 values");
+}
+
+/// The figure's count agrees with the completeness pin the same drawing has
+/// with its package's dump: the `.pid` alone states 71 of the reference's
+/// 236 values, so the 17 above are the difference between what the dump
+/// adds and what both modes already state.
+#[test]
+fn the_dwg_pid_figure_states_what_the_completeness_pin_counts() {
+    let baseline = baseline();
+    let figure = &baseline["figures"][DWG_FIGURE];
+    let summary = figure["summary"].as_str().expect("summary");
+    assert!(
+        summary.contains("values 71 (different 0, not in reference 0)"),
+        "the .pid alone states the reference's 71 values: {summary}"
+    );
+    let items = figure["differences"]["missing_object"]["items"]
+        .as_array()
+        .expect("missing_object items");
+    assert_eq!(items.len(), 17);
+    for item in items {
+        assert!(
+            item["line"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("missing value "),
+            "every line here is a reference value the .pid cannot state: {item}"
+        );
+        assert!(item["interface_attribute"].as_str().is_some());
+        assert!(item["reference"].as_str().is_some());
+    }
+}
+
+/// The gate is real in both directions: a line the baseline stops listing is
+/// an unregistered finding, and a line it lists that the run stops printing
+/// is a disappeared one.
+#[test]
+fn the_dwg_pid_figure_fails_when_a_registered_line_is_removed_or_one_is_invented() {
+    let baseline = baseline();
+    let mut figure = baseline["figures"][DWG_FIGURE].clone();
+    let run = dwg_run();
+    Classification::of(&figure, &run).assert_complete(DWG_FIGURE);
+
+    // Dropping one entry: the run still prints that line, and nothing
+    // registers it any more.
+    let dropped = {
+        let items = figure["differences"]["missing_object"]["items"]
+            .as_array_mut()
+            .expect("missing_object items");
+        let line = items[0]["line"].as_str().expect("line").to_string();
+        items.remove(0);
+        figure["differences"]["missing_object"]["count"] = Value::from(items.len());
+        line
+    };
+    let classification = Classification::of(&figure, &run);
+    assert_eq!(
+        classification.unregistered,
+        [format!("missing_object\t{dropped}")].into_iter().collect(),
+        "the dropped line is the one unregistered finding: {:#?}",
+        classification.unregistered
+    );
+
+    // Adding one entry the run never prints: a disappeared line.
+    let mut invented = baseline["figures"][DWG_FIGURE].clone();
+    let items = invented["differences"]["missing_object"]["items"]
+        .as_array_mut()
+        .expect("missing_object items");
+    items.push(serde_json::json!({
+        "line": "missing value PIDProcessVessel NOSUCHUID IObject.Description: \"x\" not in generated",
+        "class_name": "PIDProcessVessel",
+        "uid": "NOSUCHUID",
+        "interface_attribute": "IObject.Description",
+        "reference": "x",
+    }));
+    invented["differences"]["missing_object"]["count"] = Value::from(items.len());
+    let classification = Classification::of(&invented, &run);
+    assert_eq!(
+        classification.disappeared.len(),
+        1,
+        "the invented line is the one disappeared finding: {:#?}",
+        classification.disappeared
+    );
+}
