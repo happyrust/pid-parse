@@ -87,6 +87,63 @@ impl Drop for Scratch {
 }
 
 // -----------------------------------------------------------------
+// 8.3 aliases
+// -----------------------------------------------------------------
+
+/// The 8.3 alias the file system keeps for the file at `long`, as a path,
+/// or `None` when there is none to reach the file by: off Windows, on a
+/// volume that keeps no short names, and for a name that is its own short
+/// name. A `skipping:` line then says so.
+///
+/// The alias is what `cmd` expands `%~sI` to; the standard library has no
+/// call that gives it.
+#[cfg(windows)]
+pub fn short_path_of(long: &Path) -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::os::windows::process::CommandExt;
+
+    // The line goes to `cmd` as it stands: `cmd` does not undo the quoting
+    // `Command::arg` would add. `/u` has `echo` answer in UTF-16, so the
+    // path comes back whole whatever the console code page is.
+    let line = format!("/d /u /c for %I in (\"{}\") do @echo %~sI", long.display());
+    let output = match std::process::Command::new("cmd").raw_arg(line).output() {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("skipping: cmd did not start, so no 8.3 alias can be asked for: {error}");
+            return None;
+        }
+    };
+    let units: Vec<u16> = output
+        .stdout
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
+        .collect();
+    let short = PathBuf::from(String::from_utf16_lossy(&units).trim());
+    let same_name = short.file_name().map(OsStr::to_ascii_lowercase)
+        == long.file_name().map(OsStr::to_ascii_lowercase);
+    if same_name || !short.is_file() {
+        eprintln!(
+            "skipping: {} has no 8.3 alias to be reached by (cmd answered {short:?})",
+            long.display()
+        );
+        return None;
+    }
+    Some(short)
+}
+
+/// See the Windows definition: only a Windows volume keeps 8.3 aliases.
+#[cfg(not(windows))]
+pub fn short_path_of(long: &Path) -> Option<PathBuf> {
+    eprintln!(
+        "skipping: only a Windows volume keeps an 8.3 alias, so {} has none",
+        long.display()
+    );
+    None
+}
+
+// -----------------------------------------------------------------
 // Fixture paths and identifiers — A01 plant (TEST02)
 // -----------------------------------------------------------------
 

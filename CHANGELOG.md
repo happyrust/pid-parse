@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：`.pid` 按文件存的名字发布，不管路径怎么写（审核整改 T1，2026-11-16）
+
+**`pid_publish_xml` 拿到的路径写的不是文件存的名字时，写出的图名变了：从路径上写的名字改成文件存的名字。** 两种情形：8.3 短路径（`IB031~1.PID`，以前发布成 `IB031~1`），以及在不区分大小写的文件系统上大小写写得不一样的路径（`dwg-0202gp06-01.PID`，以前发布成 `dwg-0202gp06-01`）。路径照文件存的名字写的，输出逐字节不变；数据库线与整包不受影响。
+
+- **现象。** `pid_publish_xml D:\work\cad\PID~1\IB031~1.PID` 打开的就是 `I井场 注采阀组工艺及自控流程图.pid`，却把图发布成 `IB031~1`：`<Container>` 的 `DocName`、`PIDDrawing` 的 `IObject.Name`、`--out-dir` 写出的三个文件名都是短名，带 `--diff-against` 时对自己的参考退出 1（`different 1`）。
+- **原因与改法。** 「图名取文件存的名字」这一步（先 `canonicalize` 再去掉 `.pid`）只加在了 `load_publish_from_pid` 上，命令行读的是 `read_publish_from_pid`。现在推导只留在 `read_publish_from_pid` 一处，`load_publish_from_pid` 改为调它再丢掉断链清单。解析会跟随符号链接：通过链接调用时，图名取链接指向的文件名；路径解析不了时仍用路径上写的名字。
+- **用例。** `tests/publish_xml_cli.rs` 新增两条，都把入库的 `test-file/DWG-0202GP06-01.pid` 拷到临时目录再调命令行：`cli_pid_given_by_its_8_3_alias_is_published_under_its_long_name` 拷成长名，用 `cmd` 的 `%~sI` 取它的 8.3 短路径（`tests/common` 的 `short_path_of`），断言 `DocName`、图的 `IObject.Name` 与 `--out-dir` 的三个文件名都是长名；`cli_pid_given_in_another_letter_case_is_published_under_its_stored_name` 用全大写的路径调，断言 `DocName` 照文件存的大小写。改前两条都红（`DocName="ADRAWI~1"`、`DocName="A DRAWING STORED IN MIXED CASE"`），改后都绿。没有这种路径的地方（不在 Windows 上、卷不留短名、文件系统区分大小写）打印 `skipping:` 后返回。
+- **读数。** 发布构建改前改后各跑一遍对照矩阵（59 次运行、703 个文件，逐个比 SHA-256）：695 个文件相同，变的都在用短路径调 I井场 的两次运行里。带 `--diff-against` 的那次退出码 1 → 0，stdout 17 812 → 134 字节，与长路径那次的同一行逐字节相同；`--out-dir` 的那次写出的三个文件从 `IB031~1_*` 变成长名，`_Data.xml`（1 025 389 字节）与 `_Meta.xml` 同长路径发布这份文件的输出逐字节相同，`_Coverage.json` 只差记调用路径的 `source` 一行。
+
 ### publish：枚举的层级按参考图读出的表写出（S8 后一半，2026-11-15）
 
 **`--oracle-exp` 与整包两种模式下，管件、设备、管嘴、仪表多写出枚举叶子上面的各层（`PipingComponentType1`–`3`、`EqType0`–`5`、`ProcessEqCompType1`、`InstrumentType`）。** `.pid` 单独发布不变。库只存叶子的下标，映射只发布叶子本身，两者都没有上面的层级；这一轮把层级从参考图上读出来做成常量表，代码里写明它是读出来的，不是厂商的规则。

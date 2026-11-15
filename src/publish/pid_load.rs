@@ -826,15 +826,12 @@ fn labelled_item<'a>(
 
 /// Read a drawing's publish data from its `.pid`.
 ///
-/// The drawing name is the file's stored name without `.pid`: an 8.3 alias
-/// (`IB031~1.PID`) opens the same file, so it is resolved to the long name.
+/// The drawing name is the file's stored name without `.pid`, as
+/// [`read_publish_from_pid`] takes it. This is that function less the
+/// chain faults it met: a caller that delivers the XML reads through that
+/// one and says them.
 pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadError> {
-    let stored = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let name = stored
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    load_publish_from_reader(std::fs::File::open(path)?, &name)
+    read_publish_from_pid(path)?.drawing
 }
 
 /// Read a drawing's publish data from a `.pid` compound file.
@@ -983,14 +980,23 @@ pub fn read_publish_from_reader<R: Read + Seek>(
     })
 }
 
-/// [`read_publish_from_reader`] for a `.pid` on disk. The drawing name is
-/// the file name without `.pid`.
+/// [`read_publish_from_reader`] for a `.pid` on disk.
+///
+/// The drawing name is the file's stored name without `.pid`, not the name
+/// the path spells: an 8.3 alias (`IB031~1.PID`) opens the same file as its
+/// long name does, so the path is resolved first and the alias publishes
+/// the drawing under the long name. For the same reason a path typed in
+/// another letter case, where the file system ignores case, publishes the
+/// name in the case the file is stored in. Resolving follows a symbolic
+/// link too, so a drawing reached through one is named by the file the
+/// link points to. A path that does not resolve keeps the stem it spells.
 ///
 /// # Errors
 ///
 /// As [`read_publish_from_reader`], and when the file cannot be opened.
 pub fn read_publish_from_pid(path: &Path) -> Result<PidPublishRead, PidLoadError> {
-    let name = path
+    let stored = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let name = stored
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();

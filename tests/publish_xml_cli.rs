@@ -21,6 +21,9 @@ const A01_MDF_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf"
 const LEGACY_SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
+/// A committed `.pid`, which the `.pid` line publishes with no plant
+/// database beside it.
+const DWG_PID_PATH: &str = "test-file/DWG-0202GP06-01.pid";
 
 /// A sub-directory of this test's own under the OS temp dir, so two
 /// concurrent test runs do not collide. The directory lasts as long as
@@ -1062,5 +1065,133 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports() {
     assert!(
         report.contains("pid export diff: objects 12 "),
         "report on stdout should carry the pid export diff summary; got:\n{report}"
+    );
+}
+
+#[test]
+fn cli_pid_given_by_its_8_3_alias_is_published_under_its_long_name() {
+    // An 8.3 alias is another path to the same file. The drawing is named
+    // by the file's stored name, so the alias publishes what the long name
+    // does: `DocName`, the drawing's `IObject.Name`, and the names of the
+    // three files `--out-dir` writes.
+    if !std::path::Path::new(DWG_PID_PATH).is_file() {
+        eprintln!("skipping: fixture {DWG_PID_PATH} not found");
+        return;
+    }
+    let dir = unique_tmp_dir("pid-8-3-alias");
+    let long_stem = "a drawing reached by its short name";
+    let long = dir.join(format!("{long_stem}.pid"));
+    std::fs::copy(DWG_PID_PATH, &long).expect("copy the fixture under a long name");
+    let Some(alias) = common::short_path_of(&long) else {
+        return;
+    };
+    eprintln!("8.3 alias under test: {}", alias.display());
+
+    let out = Command::new(binary_path())
+        .arg(&alias)
+        .arg("--stdout")
+        .output()
+        .expect("spawn pid_publish_xml <8.3 alias> --stdout");
+    assert!(
+        out.status.success(),
+        "publishing a .pid by its 8.3 alias should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let xml = String::from_utf8_lossy(&out.stdout);
+    let mut lines = xml.lines().map(str::trim);
+    let container = lines
+        .by_ref()
+        .find(|line| line.starts_with("<Container "))
+        .expect("the document opens a <Container>");
+    assert!(
+        container.contains(&format!(" DocName=\"{long_stem}\"")),
+        "DocName should be the file's stored name, not the alias; got:\n{container}"
+    );
+    let drawing_object = lines
+        .by_ref()
+        .skip_while(|line| *line != "<PIDDrawing>")
+        .nth(1)
+        .expect("the document carries a <PIDDrawing>");
+    assert!(
+        drawing_object.starts_with("<IObject ")
+            && drawing_object.contains(&format!(" Name=\"{long_stem}\"")),
+        "the drawing's IObject.Name should be the file's stored name; got:\n{drawing_object}"
+    );
+
+    let out_dir = dir.join("out");
+    let out = Command::new(binary_path())
+        .arg(&alias)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("spawn pid_publish_xml <8.3 alias> --out-dir");
+    assert!(
+        out.status.success(),
+        "--out-dir by the 8.3 alias should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut written: Vec<String> = std::fs::read_dir(&out_dir)
+        .expect("--out-dir was created")
+        .map(|entry| {
+            entry
+                .expect("a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            format!("{long_stem}_Coverage.json"),
+            format!("{long_stem}_Data.xml"),
+            format!("{long_stem}_Meta.xml"),
+        ],
+        "--out-dir should name its files by the file's stored name"
+    );
+}
+
+#[test]
+fn cli_pid_given_in_another_letter_case_is_published_under_its_stored_name() {
+    // Where the file system ignores case, a path typed in another case is
+    // one more path to the same file, and names the drawing as little as an
+    // 8.3 alias does.
+    if !std::path::Path::new(DWG_PID_PATH).is_file() {
+        eprintln!("skipping: fixture {DWG_PID_PATH} not found");
+        return;
+    }
+    let dir = unique_tmp_dir("pid-letter-case");
+    let stored_stem = "A Drawing Stored In Mixed Case";
+    std::fs::copy(DWG_PID_PATH, dir.join(format!("{stored_stem}.pid")))
+        .expect("copy the fixture under a mixed-case name");
+    let typed = dir.join(format!("{}.PID", stored_stem.to_uppercase()));
+    if !typed.is_file() {
+        eprintln!(
+            "skipping: this file system tells letter case apart, so {} is not the copy",
+            typed.display()
+        );
+        return;
+    }
+
+    let out = Command::new(binary_path())
+        .arg(&typed)
+        .arg("--stdout")
+        .output()
+        .expect("spawn pid_publish_xml <path in upper case> --stdout");
+    assert!(
+        out.status.success(),
+        "publishing a .pid by a path in another case should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let xml = String::from_utf8_lossy(&out.stdout);
+    let container = xml
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("<Container "))
+        .expect("the document opens a <Container>");
+    assert!(
+        container.contains(&format!(" DocName=\"{stored_stem}\"")),
+        "DocName should be spelled as the file is stored; got:\n{container}"
     );
 }
