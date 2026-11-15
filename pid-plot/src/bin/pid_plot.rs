@@ -29,9 +29,13 @@
 //! symbol files, and the path of `pid_plot-batch.json` in the
 //! out-directory, which holds all of it drawing by drawing with each one's
 //! warnings and ledger summary. A batch exits `0` when every page was
-//! written and `1` when one or more was not, or a directory under it could
-//! not be listed; `2` is too few arguments, a directory or `[corpus]` that
-//! is not a directory, or a directory with no `.pid` under it.
+//! written, every directory under the batch directory was listed and every
+//! page's account balanced; `1` when one or more was not written, a
+//! directory under it could not be listed, or a page left a remainder
+//! nothing accounts for — such a page is named by a `drawing <path>
+//! unattributed <n>` line after the totals; `2` is too few arguments, a
+//! directory or `[corpus]` that is not a directory, or a directory with no
+//! `.pid` under it.
 
 use std::collections::hash_map::{self, HashMap};
 use std::env;
@@ -159,11 +163,7 @@ fn batch(mut args: impl Iterator<Item = String>) -> ExitCode {
         return ExitCode::from(1);
     }
     println!("summary {}", path.display());
-    if summary.failed == 0 && summary.unlisted.is_empty() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    }
+    ExitCode::from(summary.exit_code())
 }
 
 /// The corpus to lay drawings out against, or `None` when the one named is
@@ -505,7 +505,12 @@ struct BatchSummary {
     other_warnings: usize,
     /// Summed over the pages written.
     suspect: u64,
-    /// Summed over the pages written. Has to be zero.
+    /// Summed over the pages written, and forced to zero by the exit code:
+    /// a batch whose `unattributed` is not zero exits 1 and names each page
+    /// that leaves one (see [`BatchSummary::unattributed_lines`]). It is the
+    /// one number of a page's account that no reason covers — something was
+    /// dropped and nothing said what — so a page that carries one is not a
+    /// page to hand on, however complete it looks.
     unattributed: u64,
     unlisted: Vec<Unlisted>,
     pages: Vec<BatchPage>,
@@ -597,6 +602,45 @@ impl BatchSummary {
                 );
             }
         }
+        // A page whose account does not balance is named last, after every
+        // page's own line: it is the reason the batch will exit 1.
+        for line in self.unattributed_lines() {
+            println!("{line}");
+        }
+    }
+
+    /// The exit code the batch ends on: `0` only when every page was written,
+    /// every directory was listed and every page's account balanced.
+    ///
+    /// `unattributed` is a page's remainder — what the export dropped with no
+    /// reason to cover it — so a batch that leaves one has not exported what
+    /// it claims to, whatever its pages look like. It is held to zero here
+    /// rather than left to a reader of the totals, and the page that carries
+    /// one is named by [`Self::unattributed_lines`].
+    fn exit_code(&self) -> u8 {
+        if self.failed == 0 && self.unlisted.is_empty() && self.unattributed == 0 {
+            0
+        } else {
+            1
+        }
+    }
+
+    /// One line for each page whose account does not balance.
+    ///
+    /// Said in the shape of the other per-drawing lines (`drawing <path> …`)
+    /// rather than appended to the `drawing` line of gaps above it: that line
+    /// is printed only when a page lacks a template, a symbol or a place, and
+    /// a page can carry a remainder with none of those, so an appended field
+    /// would go unsaid exactly when it is the only thing wrong.
+    fn unattributed_lines(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .filter_map(|entry| {
+                let remainder = entry.page.ledger?.unattributed;
+                (remainder > 0)
+                    .then(|| format!("drawing {} unattributed {remainder}", entry.path.display()))
+            })
+            .collect()
     }
 
     /// Write the account to `path` in `out_directory`, as JSON.
@@ -664,4 +708,93 @@ fn default_corpus() -> PathBuf {
         || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
         PathBuf::from,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One drawing whose page leaves a remainder nothing accounts for.
+    ///
+    /// Built rather than exported: every `.pid` in reach — the seven fixtures
+    /// and the acceptance corpus — balances, so a real page that does not is
+    /// a ledger bug, and the case that has to hold is what the batch does
+    /// when one shows up. The summary is the one a batch of that page builds:
+    /// one drawing, one page written, the page's account carrying the
+    /// remainder.
+    fn a_page_whose_account_does_not_balance() -> BatchSummary {
+        BatchSummary {
+            directory: "in".to_string(),
+            out_directory: "out".to_string(),
+            corpus: "corpus".to_string(),
+            drawings: 1,
+            exported: 1,
+            failed: 0,
+            missing_templates: 0,
+            missing_symbols: 0,
+            chain_breaks: 0,
+            other_warnings: 0,
+            suspect: 0,
+            unattributed: 1,
+            unlisted: Vec::new(),
+            pages: vec![BatchPage {
+                path: PathBuf::from("in").join("D06.pid"),
+                drawing: "D06.pid".to_string(),
+                pdf: Some(PathBuf::from("out").join("D06.pdf").display().to_string()),
+                page: Page {
+                    ledger: Some(LedgerSummary {
+                        entities: 251,
+                        on_page: 89,
+                        intentional: 285,
+                        suspect: 0,
+                        unattributed: 1,
+                    }),
+                    ..Page::default()
+                },
+            }],
+        }
+    }
+
+    /// A page whose account does not balance fails the batch and is named.
+    ///
+    /// `unattributed` is the one number of a page's account that no reason
+    /// covers: the export dropped something and did not say what. The file it
+    /// wrote is not one to hand on, so the batch exits 1 as it does for a
+    /// drawing that could not be read, and the line that names the drawing
+    /// says how much is left over. A page that balances says nothing.
+    #[test]
+    fn a_page_whose_account_does_not_balance_fails_the_batch() {
+        let summary = a_page_whose_account_does_not_balance();
+        assert_eq!(
+            summary.exit_code(),
+            1,
+            "a batch of a page with a remainder nothing accounts for passed"
+        );
+        assert_eq!(
+            summary.unattributed_lines(),
+            [format!(
+                "drawing {} unattributed 1",
+                PathBuf::from("in").join("D06.pid").display()
+            )],
+            "the batch did not name the drawing whose account does not balance"
+        );
+    }
+
+    /// A batch of pages that all balance exits 0 and names none of them.
+    #[test]
+    fn a_balanced_batch_exits_0_and_names_no_page() {
+        let mut summary = a_page_whose_account_does_not_balance();
+        summary.unattributed = 0;
+        if let Some(page) = summary.pages.first_mut()
+            && let Some(ledger) = page.page.ledger.as_mut()
+        {
+            ledger.unattributed = 0;
+            ledger.intentional = 286;
+        }
+        assert_eq!(summary.exit_code(), 0, "a balanced batch failed");
+        assert!(
+            summary.unattributed_lines().is_empty(),
+            "a balanced batch named a page"
+        );
+    }
 }

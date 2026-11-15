@@ -105,7 +105,11 @@
 //! what the single exports say, each page's account its own, a drawing that
 //! cannot be read failing alone with exit 1, and a batch with nothing it can
 //! export — too few arguments, no directory, a corpus that is not one, no
-//! `.pid` under the directory — exit 2 with nothing written.
+//! `.pid` under the directory — exit 2 with nothing written. A page whose
+//! account does not balance is a fifth: exit 1 and a `drawing <path>
+//! unattributed <n>` line. No drawing in reach leaves a remainder, so that
+//! verdict is held in `pid_plot`'s own unit tests, and the case here holds a
+//! balanced batch to exit 0 and to name no page.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -6024,4 +6028,71 @@ fn two_drawings_that_would_have_one_page_are_not_both_written() {
         )),
         "{batch}"
     );
+}
+
+/// A page's account that does not balance fails the batch, and the line that
+/// says so names the drawing.
+///
+/// `unattributed` is the one number of a page's account no reason covers: the
+/// export dropped something and nothing said what. A page that carries one is
+/// not a page to hand on, so `--batch` exits 1 for it as it does for a
+/// drawing it could not read, and says which drawing and how much is left
+/// over in a `drawing <path> unattributed <n>` line.
+///
+/// No drawing in reach leaves a remainder — the seven fixtures and the
+/// acceptance corpus all read `unattributed 0` — so the input that produces
+/// one cannot be made by damaging a drawing here. The verdict is therefore
+/// held at the unit that decides it: `pid_plot`'s own `#[cfg(test)]` cases
+/// (`a_page_whose_account_does_not_balance_fails_the_batch` and
+/// `a_balanced_batch_exits_0_and_names_no_page`) build the summary a batch of
+/// such a page comes to and assert the exit code and the line. This case
+/// holds the other half of it at the process level: a batch whose pages do
+/// balance exits 0 and prints no such line, so the line cannot be always
+/// present and the rule cannot be always-on.
+#[test]
+fn a_batch_whose_pages_balance_says_no_page_is_unattributed() {
+    let dir = scratch("batch-balanced");
+    let input = fresh(&dir.join("in"));
+    let out = gone(&dir.join("out"));
+    let drawing = input.join("D06.pid");
+    copy_to(&d06(), &drawing);
+    let fonts = fonts_for_a_child();
+    let batch = run(batch_child(&fonts)
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    assert!(
+        !batch.stdout.contains("unattributed ")
+            || batch.stdout.contains("suspect 0 unattributed 0"),
+        "a batch printed a remainder line\n{batch}"
+    );
+    let said: Vec<&str> = batch
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("drawing ") && line.contains(" unattributed "))
+        .collect();
+    assert!(
+        said.is_empty(),
+        "a batch named a page as unattributed although every page balanced: {said:?}\n{batch}"
+    );
+    let account = batch_account(&out, &batch);
+    assert_eq!(account["unattributed"], 0, "{account:#}");
+    match fonts {
+        Ok(_) => {
+            assert_eq!(batch.code, Some(0), "{batch}");
+            assert_eq!(account["exported"], 1, "{account:#}");
+            assert!(
+                batch.stdout.contains("suspect 0 unattributed 0"),
+                "the totals line does not state a balanced remainder\n{batch}"
+            );
+        }
+        Err(searched) => {
+            eprintln!(
+                "batch-balanced: no font directory is present (searched {searched}), so the \
+                 run can only get as far as the first missing face"
+            );
+            assert_eq!(batch.code, Some(1), "{batch}");
+        }
+    }
 }
