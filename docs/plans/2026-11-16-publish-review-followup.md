@@ -198,9 +198,9 @@ Recommended: 两处都做
 
 #### 检查点 1
 
-- [ ] 全套门禁通过
-- [ ] 对照矩阵逐字节不变
-- [ ] 红与绿的输出记进 §9，结果发给你
+- [x] 全套门禁通过
+- [x] 对照矩阵逐字节不变（用短路径调 I井场 的两项除外，那正是改对的地方；见 §9）
+- [x] 红与绿的输出记进 §9，结果发给你
 
 ### 阶段 2：数据库线的降级看得见（审核第 2 条）
 
@@ -436,3 +436,80 @@ Recommended: 两处都做
 最后一行不在 §5 的清单里：它是 CI（`.github/workflows/ci.yml`）在那五条之后的一步，`AGENTS.md` 的清单没有列，上一次并入 `main`（`2681ccd`）的门禁也跑了它。它比的是解析一侧的字节审计基线，与导出无关；为了和 CI 一致，以后每个检查点都带上它（`gates.ps1` 的第八道；这一次是单独补跑的，日志在 `gates/base-08/`）。
 
 第一轮是在工作区还叫 `pub-review`、还没有符号库联接时跑的（日志在 `gates/base-first-round/`），只在上面两处失败：测试退出 101，失败的只有 `every_backup_drawing_exports_a_readable_page` 一条（2 495 通过、1 失败；`cargo test` 停在第一个失败的测试程序上，后面的没有跑，所以只用了 808 s）；`cargo fmt` 退出 1，`os error 206`。其余五道当时也是 0。
+
+### T0.2 审核结论入库（2026-11-16，`192f7fe`）
+
+审核结论存成 `docs/analysis/2026-11-16-publish-export-review.md`，行号以 `a4b490e` 为准；本文头部的「依据」指向它。本文自己是 `493b3b7`。
+
+### T1.1 两个入口合一（2026-11-16，`d65dc74`）
+
+**红。** 先加两条用例（`tests/publish_xml_cli.rs`），在没改的代码上跑（`runs/t11-red-both.log`）：
+
+```text
+test cli_pid_given_by_its_8_3_alias_is_published_under_its_long_name ... FAILED
+  DocName should be the file's stored name, not the alias; got: … DocName="ADRAWI~1"
+test cli_pid_given_in_another_letter_case_is_published_under_its_stored_name ... FAILED
+  DocName should be spelled as the file is stored; got: … DocName="A DRAWING STORED IN MIXED CASE"
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 25 filtered out
+```
+
+两条都把 `test-file/DWG-0202GP06-01.pid` 拷进临时目录，起一个超出 8.3 的长名。第一条用 `cmd` 的 `%~sI` 取它的短路径交给命令行（辅助函数 `short_path_of` 在 `tests/common/mod.rs`；不是 Windows、或卷上没有短名时打印 `skipping:` 后跳过）。第二条把同一个路径换一种大小写交给命令行。
+
+**改。** `read_publish_from_pid` 先 `std::fs::canonicalize`，图名取它给出的文件名主干；`load_publish_from_pid` 变成 `read_publish_from_pid(path)?.drawing`。图名的推导只剩这一处。`canonicalize` 也跟随符号链接，所以经符号链接给的路径，图名取的是链接指向的那个文件的名字；这是标准库写明的行为，没有单独的用例，`CHANGELOG.md` 里写了。解析不了的路径照原来的取法，取路径上写的文件名主干。
+
+**绿。** 同两条用例（`runs/t11-clippy-2.log`）：`2 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out`。`publish_xml_cli` 整个文件 27 条、`publish_diff_accepted_baseline` 19 条都过。
+
+**超出计划原文的一处。** 计划只说了 8.3 短名。`canonicalize` 给的是文件存的名字，大小写也照存的来，所以路径换一种大小写写时，图名也归到存的那个写法（第二条用例）。改之前图名跟着命令行的写法走，同一个文件能发布出两个名字。这一点 2026-11-16 问过，按推荐做。
+
+**对照矩阵。** T1.1 改完之后的发布构建（`target/publish-audit/bin/pid_publish_xml-t11-release.exe`，4 598 784 字节，SHA-256 `6912dc7b…fabf752e`）跑了一遍矩阵（`target/publish-audit/review/t11/`）。`compare.ps1 -A base -B t11`：703 个文件，695 个逐字节相同；内容不同的 5 个，只在一边有的各 3 个，全出在用短路径调 I井场 的两项上（第 5 个是汇总各项退出码和大小的 `summary.txt`，跟着这两项变）：
+
+| 项 | 基线 | T1.1 之后 |
+|---|---|---|
+| `ij-short-diff`（短路径加 `--diff-against`） | 退出 1；stdout 17 812 字节，摘要里 `different 1`，后面是整份差异报告；stderr 报的图名是 `IB031~1` | 退出 0；stdout 134 字节，只有摘要一行，`different 0`；stderr 报的图名是长名，结论是 `is clean in .pid mode (1735 objects, 1530 values, 1971 rels)` |
+| `ij-short-outdir`（短路径加 `--out-dir`） | 写出 `IB031~1_Data.xml`、`IB031~1_Meta.xml`、`IB031~1_Coverage.json` | 三个文件改叫 `I井场 注采阀组工艺及自控流程图_*` |
+
+`--out-dir` 写出的三个文件除了图名没有别的变化：长名在 `_Data.xml` 里出现 2 次、`_Meta.xml` 里 4 次、`_Coverage.json` 里 3 次，把这 9 处换回 `IB031~1` 之后，三个文件与基线逐字节相同。其余 57 项的写出文件、stdout、stderr、退出码一个字节不差。
+
+### T1.2 说明与用例对齐（2026-11-16，`acc3f09`）
+
+**用例（Q2 收紧）。** `the_ijingchang_run_never_leaves_the_registered_item` 原来接受退出 0 或退出 1 两种结果。现在用长名和它的 8.3 短路径各跑两种模式，四次都必须退出 0，摘要等于基线里记的 `clean_summary`，没有登记项也没有未登记项。
+
+**超出计划原文的一处。** 去掉退出 1 那一支之后，基线里 `modes.oracle-exp.alias_summary` 这个字段就没有用例读了。实测文件真名叫 `IB031~1.pid` 的拷贝在 `--oracle-exp` 模式下退出 1，摘要正是这个字段记的值，于是把 `the_ijingchang_alias_stem_reproduces_the_registered_item` 从只跑 `.pid` 单发扩成两种模式都跑，两种模式都要求恰好那两行登记的差异。
+
+**输出**（`runs/t12-baseline-2.log`：`cargo test --locked -p pid-parse --test publish_diff_accepted_baseline -- --nocapture`，19 过）：
+
+```text
+I井场 pid-alone by its long name (…\I井场 注采阀组工艺及自控流程图.pid): exit 0, pid export diff: objects 1735 (extra 0, wrong class 0), values 1530 (different 0, not in reference 0), rels 1971 (not in reference 0)
+I井场 oracle-exp by its long name (…\I井场 注采阀组工艺及自控流程图.pid): exit 0, pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 0, not in reference 0), rels 4107 (not in reference 0)
+I井场 pid-alone by its 8.3 alias (D:\work\cad\PID~1\IB031~1.PID): exit 0, pid export diff: objects 1735 (extra 0, wrong class 0), values 1530 (different 0, not in reference 0), rels 1971 (not in reference 0)
+I井场 oracle-exp by its 8.3 alias (D:\work\cad\PID~1\IB031~1.PID): exit 0, pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 0, not in reference 0), rels 4107 (not in reference 0)
+I井场 pid-alone by a copy stored as IB031~1.pid: exit 1, pid export diff: objects 1735 (extra 0, wrong class 0), values 1530 (different 1, not in reference 0), rels 1971 (not in reference 0)
+I井场 oracle-exp by a copy stored as IB031~1.pid: exit 1, pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 1, not in reference 0), rels 4107 (not in reference 0)
+```
+
+第三行就是 §1 的第二条命令：审核时它退出 1、`different 1`，现在退出 0、`different 0`。
+
+**说明。** `docs/baselines/README.md`、`docs/baselines/publish-diff-accepted.json`（`what`、`why`、`path_sensitive: false`、`allowed_outcomes`、`forbidden_outcomes`）、`AGENTS.md` 的用例表、`CHANGELOG.md` 改成同一个说法：图名是文件存的名字；长名或它的短路径退出 0；只有文件真名就是短名的拷贝退出 1，而且恰好两行。README 原来写的「恰好一处差异」不准，实际是两行（`IObject.Name` 和容器的 `DocName`），一并改了。登记的差异项本身没有动。
+
+### 检查点 1（2026-11-16）
+
+**门禁。** `gates.ps1 -Label cp1`，在 `acc3f09` 上跑，工作区没有未提交的改动；日志在 `target/publish-audit/review/gates/cp1/`：
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 73 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 703 s | 474 个测试程序；2 521 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 1 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 7 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 2 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 1 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 11 s | 3 份基线都比了，跳过 0 |
+
+与基线比，通过的测试多 2 条（2 519 → 2 521），是 T1.1 加的那两条；忽略数、`skipping: ` 行数、缺文档数、不带默认特性的 985 条都没变。第 3、6、7 道只用了一两秒：日志里没有 `Compiling` 或 `Checking` 行，这份源码的编译产物是现成的，cargo 没有重编；第 6 道的 985 条测试是真跑了的。
+
+**对照矩阵。** `acc3f09` 的发布构建（`target/publish-audit/bin/pid_publish_xml-acc3f09-release.exe`，4 598 784 字节，SHA-256 `fba71594…2d9f3dd8`）跑了一遍矩阵（`target/publish-audit/review/cp1/`，59 项，157 s）。它和 T1.1 那个可执行文件大小相同，只差 5 个字节（3 处，其中一处是 PE 头里的链接时间戳）：两次构建之间只有用例和说明的改动。`compare.ps1 -A t11 -B cp1`：703 个文件逐字节相同。`compare.ps1 -A base -B cp1`：703 个文件，695 个相同，内容不同的 5 个、只在一边有的各 3 个，就是 T1.1 一节列的那一批。
+
+计划里 T1.1 的验收写的是「对照矩阵逐字节不变」。实际是：除了用短路径调 I井场 的两项，其余逐字节不变；那两项正是要改对的地方。
+
+**顺带记下的。** `AGENTS.md` 里 `cargo fmt` 命令行长度的那组读数已经过时（见 T0.1），放在阶段 6 的文档收口里一起改。阶段 2 的细化计划另成一份，等评审。
