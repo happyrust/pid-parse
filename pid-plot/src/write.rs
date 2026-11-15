@@ -367,6 +367,17 @@ pub fn write_plot_audited(
     model: &PaperModel,
     fonts: &[PlotFont<'_>],
 ) -> Result<WrittenPlot, PlotWriteError> {
+    write_plot_titled(model, fonts, None)
+}
+
+/// [`write_plot_audited`], with `title` as the page's document title: the
+/// name a viewer shows for the file in place of its file name. `pid_plot`
+/// titles a page with its drawing's file name.
+pub fn write_plot_titled(
+    model: &PaperModel,
+    fonts: &[PlotFont<'_>],
+    title: Option<&str>,
+) -> Result<WrittenPlot, PlotWriteError> {
     // A drawing can hold no lettering at all: `D03` in the plant backup is a
     // template with zero primitives, so `prepare_fonts` loads nothing. The
     // page still writes; only a run that needs a face without one is fatal.
@@ -415,6 +426,11 @@ pub fn write_plot_audited(
         );
         props.set(b"D".to_vec(), Object::Dict(default));
         catalog.set(b"OCProperties".to_vec(), Object::Dict(props));
+        if title.is_some() {
+            let mut preferences = Dict::new();
+            preferences.set(b"DisplayDocTitle".to_vec(), Object::Bool(true));
+            catalog.set(b"ViewerPreferences".to_vec(), Object::Dict(preferences));
+        }
     })
     .map_err(|error| PlotWriteError::Save(error.to_string()))?;
 
@@ -491,6 +507,8 @@ pub fn write_plot_audited(
     })
     .map_err(|error| PlotWriteError::Save(error.to_string()))?;
 
+    let info = doc.add(Object::Dict(document_info(title)));
+    doc.trailer_mut().set(b"Info".to_vec(), Object::Ref(info));
     compress_plain_streams(&mut doc);
     let pdf = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default())
         .map_err(|error| PlotWriteError::Save(error.to_string()))?;
@@ -617,6 +635,27 @@ fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
     ocg.set(b"Type".to_vec(), Object::name("OCG"));
     ocg.set(b"Name".to_vec(), Object::String(PdfString::text(name)));
     doc.add(Object::Dict(ocg))
+}
+
+/// The file's document information: the program that wrote it and, when the
+/// caller names one, the page's title.
+///
+/// No date is written. Two exports of one drawing by one build have to be
+/// the same bytes: the gates hold the page they verify to the one `pid_plot`
+/// writes, byte for byte.
+fn document_info(title: Option<&str>) -> Dict {
+    let mut info = Dict::new();
+    if let Some(title) = title {
+        info.set(b"Title".to_vec(), Object::String(PdfString::text(title)));
+    }
+    info.set(
+        b"Producer".to_vec(),
+        Object::String(PdfString::text(concat!(
+            "pid-plot ",
+            env!("CARGO_PKG_VERSION")
+        ))),
+    );
+    info
 }
 
 /// Flate-compress every stream still stored as plain bytes.
@@ -8332,6 +8371,68 @@ mod tests {
             }
         }
         assert_eq!(programs, 1);
+    }
+
+    /// The document information of a written page and its catalog's viewer
+    /// preferences.
+    fn described(pdf: Vec<u8>) -> (Dict, Option<Dict>) {
+        let doc = Document::open(std::sync::Arc::new(pdf)).expect("open");
+        let info = doc
+            .dict(doc.trailer().get(b"Info").expect("an /Info"))
+            .expect("/Info is a dictionary");
+        let catalog = doc
+            .dict(&super::Object::Ref(doc.root().expect("a catalog")))
+            .expect("the catalog is a dictionary");
+        let preferences = catalog
+            .get(b"ViewerPreferences")
+            .and_then(|preferences| doc.dict(preferences));
+        (info, preferences)
+    }
+
+    fn text_entry(dict: &Dict, key: &[u8]) -> Option<String> {
+        match dict.get(key) {
+            Some(super::Object::String(string)) => Some(string.to_text()),
+            _ => None,
+        }
+    }
+
+    /// A titled page carries its title, asks a viewer to show it, and says
+    /// what wrote it; nothing in it is dated.
+    #[test]
+    fn a_titled_page_names_its_drawing() {
+        let title = "I井场 注采阀组工艺及自控流程图";
+        let written = super::write_plot_titled(
+            &lettered_sheet(&[("SP:", "Arial")]),
+            &inter_font(),
+            Some(title),
+        )
+        .expect("write");
+        let (info, preferences) = described(written.pdf);
+        assert_eq!(text_entry(&info, b"Title").as_deref(), Some(title));
+        assert_eq!(
+            text_entry(&info, b"Producer"),
+            Some(format!("pid-plot {}", env!("CARGO_PKG_VERSION")))
+        );
+        assert!(info.get(b"CreationDate").is_none() && info.get(b"ModDate").is_none());
+        assert_eq!(
+            preferences
+                .expect("viewer preferences")
+                .get(b"DisplayDocTitle"),
+            Some(&super::Object::Bool(true))
+        );
+    }
+
+    /// An untitled page says only what wrote it, and writing it again
+    /// writes the same bytes.
+    #[test]
+    fn an_untitled_page_says_only_what_wrote_it() {
+        let sheet = lettered_sheet(&[("SP:", "Arial")]);
+        let pdf = write_plot(&sheet, &inter_font()).expect("write");
+        assert!(pdf == write_plot(&sheet, &inter_font()).expect("write again"));
+        let (info, preferences) = described(pdf);
+        assert_eq!(text_entry(&info, b"Title"), None);
+        assert!(text_entry(&info, b"Producer").is_some());
+        assert!(preferences.is_none());
     }
 
     /// Feature: pdf-export-ledger, Property 5: 判定与真实写出一致

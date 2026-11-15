@@ -73,7 +73,7 @@ use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ink::{PageInk, ends_apart, label_colours, sheet_edges, stroke_colours, wipe_order};
 use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::read::{SheetEdge, read_plot_sequence};
-use pid_plot::write::{PlotFont, write_plot};
+use pid_plot::write::{PlotFont, write_plot_titled};
 
 #[path = "support/exported_page.rs"]
 mod exported_page;
@@ -1197,7 +1197,9 @@ fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them
         .collect();
     let reference = PageInk::read(&std::fs::read(&reference_path).expect("the reference"))
         .unwrap_or_else(|error| panic!("{name}: {error}"));
-    let our_pdf = write_plot(&model, &fonts).expect("write");
+    let our_pdf = write_plot_titled(&model, &fonts, Some(name))
+        .expect("write")
+        .pdf;
     // The page read here is the page `pid_plot` writes for the drawing.
     let exports = scratch::ScratchDir::new("ink-boxed-labels-pid-plot");
     let exported = exported_page::pid_plot_page(&drawing, &corpus, &dirs, &exports.join("a2.pdf"));
@@ -1273,8 +1275,9 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
                 subset: face.subset,
             })
             .collect();
-        let our_pdf = write_plot(model, &fonts)
-            .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name));
+        let our_pdf = write_plot_titled(model, &fonts, Some(sheet.name))
+            .unwrap_or_else(|error| panic!("{}: write: {error}", sheet.name))
+            .pdf;
         // What is read below is the page `pid_plot` writes for this drawing,
         // byte for byte: the page the acceptance gate verifies and delivers.
         let exported = exported_page::pid_plot_page(

@@ -156,7 +156,7 @@ use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
 use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
-use pid_plot::write::{PlotFont, write_plot};
+use pid_plot::write::{PlotFont, write_plot_titled};
 
 #[path = "../src/scratch.rs"]
 mod scratch;
@@ -952,7 +952,9 @@ fn eleven_reference_plots_hold_their_readings() {
                 subset: face.subset,
             })
             .collect();
-        let our_bytes = write_plot(model, &fonts).expect("write ours");
+        let our_bytes = write_plot_titled(model, &fonts, Some(name))
+            .expect("write ours")
+            .pdf;
         // What is verified below, and delivered after it, is the page
         // `pid_plot` writes for this drawing, byte for byte.
         let exported = pid_plot_page(&corpus, name, &dirs, &exports.join(format!("{index}.pdf")));

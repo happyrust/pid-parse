@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::ledger::ExportLedger;
 use pid_plot::model::{PaperModel, TemplatePlaces, border_template_places, lay_out_drawing};
-use pid_plot::write::{PlotFont, write_plot_audited};
+use pid_plot::write::{PlotFont, write_plot_titled};
 
 /// What a command line has to look like; printed with every argument error.
 const USAGE: &str = "usage: pid_plot <drawing.pid> <out.pdf> [corpus]";
@@ -170,7 +170,12 @@ fn main() -> ExitCode {
             subset: face.subset,
         })
         .collect();
-    let written = match write_plot_audited(&model, &fonts) {
+    // The page is titled with the drawing's file name. The gates that hold
+    // their page to this one byte for byte title theirs the same way.
+    let title = Path::new(&pid)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy());
+    let written = match write_plot_titled(&model, &fonts, title.as_deref()) {
         Ok(written) => written,
         Err(error) => {
             eprintln!("{pid}: {error}");
