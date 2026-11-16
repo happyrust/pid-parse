@@ -25,6 +25,7 @@
 //! drawing ID to scope every downstream query so the loader only
 //! returns rows relevant to the requested drawing.
 
+use log::info;
 use rusqlite::{params, Connection, OpenFlags};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -325,6 +326,10 @@ pub fn load_objects_by_uids(
 /// so callers can soft-skip missing tables (common in partial
 /// fixtures). Any other preparation error is bubbled up as a
 /// [`PublishError::Sqlite`].
+///
+/// The skip is logged at info level, which `pid_publish_xml -v` prints. A
+/// table skipped here reads as empty, and without the line nothing would
+/// say why its columns are missing from what is written.
 fn prepare_optional<'conn>(
     conn: &'conn Connection,
     sql: &str,
@@ -332,10 +337,19 @@ fn prepare_optional<'conn>(
     match conn.prepare(sql) {
         Ok(s) => Ok(Some(s)),
         Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            info!("  {}: not in the database, skipped", absent_table(&msg));
             Ok(None)
         }
         Err(e) => Err(PublishError::from(e)),
     }
+}
+
+/// The table an `SQLite` "no such table: NAME" message names, or the whole
+/// message when it has another shape.
+fn absent_table(message: &str) -> &str {
+    message
+        .split_once("no such table: ")
+        .map_or(message, |(_, table)| table)
 }
 
 /// Load the `SmartPlant` codelist + attribute-codelist metadata out
@@ -422,11 +436,14 @@ pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishEr
 ///
 /// Empty strings are treated as "no value" and omitted to keep
 /// the map tight; NULL comes through as absent.
+///
+/// Returns whether the database holds `table_name`: `Ok(false)` is a table
+/// [`prepare_optional`] skipped, with nothing attached.
 fn attach_business_columns(
     conn: &Connection,
     table_name: &str,
     obj: &mut super::model::PublishObject,
-) -> Result<(), PublishError> {
+) -> Result<bool, PublishError> {
     // The table might not exist for every object type; `prepare_optional`
     // returns `Ok(None)` in that case so fixtures with partial schemas
     // do not fail the whole load.
@@ -435,7 +452,7 @@ fn attach_business_columns(
         table_name.replace('"', "\"\"")
     );
     let Some(mut stmt) = prepare_optional(conn, &sql)? else {
-        return Ok(());
+        return Ok(false);
     };
 
     // rusqlite 0.41 hands back `column_names()` as an iterator over `&str`
@@ -460,7 +477,7 @@ fn attach_business_columns(
             }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Return the list of SPPID subtables that carry business
@@ -653,10 +670,17 @@ pub fn load_drawing_graph(
     // Vessels / Nozzles / PipeRuns that reach this point gain
     // their `fields` populated; unknown item types get an empty
     // fields map, which the XML writer handles gracefully.
+    //
+    // A subtable one object found the database without is not asked
+    // for again for the next: the answer would be the same, and
+    // `prepare_optional` would log the skip once more for every
+    // object that reads the table.
+    let mut absent: BTreeSet<&str> = BTreeSet::new();
     for obj in &mut drawing.objects {
-        let tables = subtables_for_item_type(&obj.item_type_name);
-        for table in tables {
-            attach_business_columns(conn, table, obj)?;
+        for &table in subtables_for_item_type(&obj.item_type_name) {
+            if !absent.contains(table) && !attach_business_columns(conn, table, obj)? {
+                absent.insert(table);
+            }
         }
     }
 
@@ -686,6 +710,8 @@ pub fn load_drawing_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::publish::catalog::publish_item_catalog;
+    use crate::publish::mdf_load::PUBLISH_TABLES;
 
     /// Create an in-memory `SQLite` database, populate it with a
     /// minimal `T_Drawing` schema, and return the connection plus
@@ -1547,5 +1573,298 @@ mod tests {
         assert_eq!(obj.fields.get("ItemStatus").map(String::as_str), Some("1"));
         assert!(!obj.fields.contains_key("IsUnchecked"));
         assert!(!obj.fields.contains_key("ModelItemType"));
+    }
+
+    // -------------------------------------------------------------
+    // The tables the loader asks for and the tables staging stages
+    // -------------------------------------------------------------
+
+    /// The logger of the unit tests. It keeps what a thread logs while
+    /// [`logged`] runs on that thread and drops everything else, so a test
+    /// sees its own lines and none of another test's.
+    struct ThreadLog;
+
+    thread_local! {
+        static LOGGED: std::cell::RefCell<Option<Vec<(log::Level, String)>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    impl log::Log for ThreadLog {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            LOGGED.with(|logged| {
+                if let Some(lines) = logged.borrow_mut().as_mut() {
+                    lines.push((record.level(), record.args().to_string()));
+                }
+            });
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Run `load` and return what it returned beside what it logged: the
+    /// level and the message of each line.
+    fn logged<T>(load: impl FnOnce() -> T) -> (T, Vec<(log::Level, String)>) {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            log::set_logger(&ThreadLog).expect("the unit tests install no other logger");
+            log::set_max_level(log::LevelFilter::Info);
+        });
+        LOGGED.with(|logged| *logged.borrow_mut() = Some(Vec::new()));
+        let returned = load();
+        let lines = LOGGED.with(|logged| logged.borrow_mut().take());
+        (returned, lines.unwrap_or_default())
+    }
+
+    /// The tables `lines` say the database does not hold, in the order they
+    /// were said.
+    fn tables_said_absent(lines: &[(log::Level, String)]) -> Vec<&str> {
+        lines
+            .iter()
+            .filter_map(|(_, line)| line.strip_suffix(": not in the database, skipped"))
+            .map(str::trim_start)
+            .collect()
+    }
+
+    /// The four tables a drawing cannot be read without. The loader fails on
+    /// a database that lacks one of them, and skips any other table.
+    const REQUIRED_TABLES: [&str; 4] = [
+        "T_Drawing",
+        "T_Representation",
+        "T_Relationship",
+        "T_ModelItem",
+    ];
+
+    /// The drawing of every [`database_of`].
+    const STAGED_DRAWING: &str = "DWG-STAGED";
+
+    /// The columns the loader's own statements ask of `table`. Any other
+    /// table is a subtable of the catalog, read as whole rows by `SP_ID`.
+    fn columns_asked_of(table: &str) -> &'static str {
+        match table {
+            "T_Drawing" => {
+                "SP_ID, Name, DocumentCategory, DocumentType, Template, Path, DateCreated"
+            }
+            "T_Representation" => {
+                "SP_ID, SP_ModelItemID, SP_DrawingID, GraphicOID, FileName, RepresentationType"
+            }
+            "T_Relationship" => {
+                "SP_ID, SP_DrawingID, SP_Item1ID, SP_Item2ID, GraphicOID, Item1Location, \
+                 Item2Location, IsBinary"
+            }
+            "T_ModelItem" => {
+                "SP_ID, ItemTypeName, Description, SP_IsTypical, IsUnchecked, ModelItemType, \
+                 UpdateCount, ItemStatus"
+            }
+            "T_PipingPoint" => {
+                "SP_ID, SP_PlantItemID, NominalDiameter, FlowDirection, EndPrep, \
+                 PipingPointUsage, PipingPointNumber"
+            }
+            "T_Connector" => "SP_ID, SP_ConnectItem1ID, SP_ConnectItem2ID",
+            "codelists" => "codelist_number, codelist_index, codelist_text",
+            "attributes" => "attribute_name, attribute_codelisted, attribute_datatype",
+            _ => "SP_ID",
+        }
+    }
+
+    /// An in-memory database of `tables`, each with the columns the loader
+    /// asks of it, holding one drawing with an item of each of `item_types`
+    /// on it. The items are `ITEM-00`, `ITEM-01` and so on.
+    fn database_of(tables: &[&str], item_types: &[&str]) -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        for table in tables {
+            let columns = columns_asked_of(table);
+            conn.execute(&format!("CREATE TABLE \"{table}\" ({columns})"), [])
+                .unwrap_or_else(|error| panic!("create {table}: {error}"));
+        }
+        // A table that is not among `tables` gets no row: a test that leaves
+        // one out is about what the loader makes of that, not the fixture.
+        let fill = |table: &str, sql: &str, values: &[&str]| {
+            if tables.contains(&table) {
+                conn.execute(sql, rusqlite::params_from_iter(values))
+                    .unwrap_or_else(|error| panic!("fill {table}: {error}"));
+            }
+        };
+        fill(
+            "T_Drawing",
+            "INSERT INTO T_Drawing (SP_ID, Name) VALUES (?1, 'STAGED')",
+            &[STAGED_DRAWING],
+        );
+        for (at, &item_type) in item_types.iter().enumerate() {
+            let (item, representation) = (format!("ITEM-{at:02}"), format!("REP-{at:02}"));
+            fill(
+                "T_ModelItem",
+                "INSERT INTO T_ModelItem (SP_ID, ItemTypeName) VALUES (?1, ?2)",
+                &[item.as_str(), item_type],
+            );
+            fill(
+                "T_Representation",
+                "INSERT INTO T_Representation (SP_ID, SP_ModelItemID, SP_DrawingID) \
+                 VALUES (?1, ?2, ?3)",
+                &[representation.as_str(), item.as_str(), STAGED_DRAWING],
+            );
+        }
+        conn
+    }
+
+    /// The item types the catalog gives subtables to, one of each.
+    fn item_types_with_subtables() -> Vec<&'static str> {
+        publish_item_catalog()
+            .iter()
+            .filter(|row| row.db_subtables.is_some())
+            .map(|row| row.item_type)
+            .collect()
+    }
+
+    /// Everything this module reads for a drawing: its graph, and the piping
+    /// points of its items, which the graph leaves out.
+    fn read_everything(
+        conn: &Connection,
+    ) -> Result<(PublishDrawing, Vec<PublishObject>), PublishError> {
+        let drawing = load_drawing_graph(conn, STAGED_DRAWING)?;
+        let owners: BTreeSet<String> = drawing
+            .objects
+            .iter()
+            .map(|object| object.uid.clone())
+            .collect();
+        let points = load_piping_points_for_objects(conn, &owners)?;
+        Ok((drawing, points))
+    }
+
+    /// A table the loader can do without is skipped when the database does
+    /// not hold it, and the skip is logged at info level, which is what
+    /// `pid_publish_xml -v` prints. A subtable is named once, however many
+    /// items would have read it, and a subtable that is there is still read
+    /// for every item.
+    #[test]
+    fn a_skipped_table_is_logged_once_for_all_the_items_that_read_it() {
+        // Two vessels. Of the four subtables of a vessel the database holds
+        // the last one only.
+        let conn = database_of(&REQUIRED_TABLES, &["Vessel", "Vessel"]);
+        conn.execute_batch(
+            "CREATE TABLE T_Vessel (SP_ID, Volume);
+             INSERT INTO T_Vessel VALUES ('ITEM-00', '10'), ('ITEM-01', '20');",
+        )
+        .expect("add T_Vessel");
+
+        let (drawing, lines) = logged(|| load_drawing_graph(&conn, STAGED_DRAWING));
+        let drawing = drawing.expect("the tables the database lacks are optional");
+
+        assert!(
+            lines.iter().all(|(level, _)| *level == log::Level::Info),
+            "a skipped table is said at info level; got {lines:?}"
+        );
+        let said: Vec<&str> = lines.iter().map(|(_, line)| line.as_str()).collect();
+        assert_eq!(
+            said,
+            [
+                "  codelists: not in the database, skipped",
+                "  attributes: not in the database, skipped",
+                "  T_PlantItem: not in the database, skipped",
+                "  T_Equipment: not in the database, skipped",
+                "  T_ProcessEquipment: not in the database, skipped",
+                "  T_Connector: not in the database, skipped",
+            ]
+        );
+        let volumes: Vec<Option<&str>> = drawing
+            .objects
+            .iter()
+            .map(|object| object.fields.get("Volume").map(String::as_str))
+            .collect();
+        assert_eq!(volumes, [Some("10"), Some("20")]);
+    }
+
+    /// Review item 9: the tables staging stages and the subtables of the
+    /// catalog were two lists written by hand, with nothing to hold one to
+    /// the other. A subtable that staging leaves out reads as empty for
+    /// every item of its type.
+    #[test]
+    fn every_subtable_the_catalog_names_is_staged() {
+        for row in publish_item_catalog() {
+            for table in row.db_subtables.unwrap_or(&[]) {
+                assert!(
+                    PUBLISH_TABLES.contains(table),
+                    "the catalog reads {table} for {}, and `PUBLISH_TABLES` does not stage it",
+                    row.item_type
+                );
+            }
+        }
+    }
+
+    /// A database that holds the staged tables and no other has every table
+    /// the loader asks for: with an item of every type on the drawing, the
+    /// load fails on no table and skips none.
+    #[test]
+    fn the_loader_asks_for_no_table_that_is_not_staged() {
+        let item_types = item_types_with_subtables();
+        let conn = database_of(PUBLISH_TABLES, &item_types);
+
+        let (read, lines) = logged(|| read_everything(&conn));
+        let (drawing, _) = read.unwrap_or_else(|error| {
+            panic!("a database of `PUBLISH_TABLES` does not load: {error}")
+        });
+
+        assert_eq!(
+            tables_said_absent(&lines),
+            Vec::<&str>::new(),
+            "the loader asks for tables that `PUBLISH_TABLES` does not stage"
+        );
+        let loaded: Vec<&str> = drawing
+            .objects
+            .iter()
+            .map(|object| object.item_type_name.as_str())
+            .collect();
+        assert_eq!(
+            loaded, item_types,
+            "the drawing should carry an item of every type, so that every subtable is asked for"
+        );
+    }
+
+    /// Every staged table has a statement that asks for it. Without one of
+    /// the four a drawing cannot be read without, the load fails and names
+    /// the table; without any other it goes on and says which table it
+    /// skipped. A table nothing asks for would be missed in neither way.
+    #[test]
+    fn every_staged_table_is_asked_for() {
+        let item_types = item_types_with_subtables();
+        for &table in PUBLISH_TABLES {
+            let conn = database_of(PUBLISH_TABLES, &item_types);
+            conn.execute(&format!("DROP TABLE \"{table}\""), [])
+                .unwrap_or_else(|error| panic!("drop {table}: {error}"));
+
+            let (read, lines) = logged(|| read_everything(&conn));
+            match read {
+                Err(error) => {
+                    assert!(
+                        REQUIRED_TABLES.contains(&table),
+                        "without {table} the load should go on; it fails: {error}"
+                    );
+                    assert!(
+                        error
+                            .to_string()
+                            .ends_with(&format!("no such table: {table}")),
+                        "without {table} the load should fail on that table; it fails: {error}"
+                    );
+                }
+                Ok(_) => {
+                    assert!(
+                        !REQUIRED_TABLES.contains(&table),
+                        "without {table} there is no drawing to read, and the load went on"
+                    );
+                    // Two readers of one table say it twice.
+                    let mut said = tables_said_absent(&lines);
+                    said.dedup();
+                    assert_eq!(
+                        said,
+                        [table],
+                        "without {table} the load should say it skipped that table and no \
+                         other; it logs {lines:?}"
+                    );
+                }
+            }
+        }
     }
 }

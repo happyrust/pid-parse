@@ -1598,3 +1598,77 @@ fn cli_help_documents_strict_and_drops_the_unreachable_feature_note() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// `-v`: the tables the database does not hold
+// ---------------------------------------------------------------------
+
+#[test]
+fn cli_verbose_names_each_table_the_database_lacks_and_changes_nothing_else() {
+    // The shortfalls database holds the four tables a drawing cannot be
+    // read without and none of those the loader can do without, so a load
+    // skips every one of the latter that it asks for. With -v stderr names
+    // each of them once, in the order the load comes to them; without -v
+    // it names none. The exit code, the two files and the rest of stderr
+    // are the same either way.
+    let dir = unique_tmp_dir("shortfalls-verbose");
+    let database = shortfalls_database(&dir);
+    let written = |name: &str| {
+        std::fs::read(dir.join(name)).unwrap_or_else(|e| panic!("the run should write {name}: {e}"))
+    };
+
+    let plain = publish_shortfalls_drawing(&database, &dir, &[]);
+    let plain_stderr = String::from_utf8_lossy(&plain.stderr);
+    assert_eq!(plain.status.code(), Some(0), "stderr:\n{plain_stderr}");
+    let plain_files = [written("SHORT-01_Data.xml"), written("SHORT-01_Meta.xml")];
+
+    let verbose = publish_shortfalls_drawing(&database, &dir, &["-v"]);
+    let verbose_stderr = String::from_utf8_lossy(&verbose.stderr);
+    assert_eq!(verbose.status.code(), Some(0), "stderr:\n{verbose_stderr}");
+    let verbose_files = [written("SHORT-01_Data.xml"), written("SHORT-01_Meta.xml")];
+
+    let notice = ": not in the database, skipped";
+    let skipped: Vec<&str> = verbose_stderr
+        .lines()
+        .filter_map(|line| line.strip_suffix(notice))
+        .filter_map(|line| line.rsplit(' ').next())
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            "codelists",
+            "attributes",
+            // EX-1, the exchanger.
+            "T_PlantItem",
+            "T_Equipment",
+            "T_Exchanger",
+            // N-1, the nozzle: `T_PlantItem` was said for EX-1.
+            "T_EquipComponent",
+            "T_Nozzle",
+            // V-1, the vessel.
+            "T_ProcessEquipment",
+            "T_Vessel",
+            // The pipe ends.
+            "T_Connector",
+        ],
+        "-v should name each table the load skipped, once; stderr:\n{verbose_stderr}"
+    );
+    assert!(
+        !plain_stderr.contains(notice),
+        "without -v nothing should be said of a skipped table; stderr:\n{plain_stderr}"
+    );
+    // What -v adds are the logger's lines, which open with `[`.
+    let beside_the_log: Vec<&str> = verbose_stderr
+        .lines()
+        .filter(|line| !line.starts_with('['))
+        .collect();
+    assert_eq!(
+        beside_the_log,
+        plain_stderr.lines().collect::<Vec<_>>(),
+        "-v should add the logger's lines to stderr and change no other"
+    );
+    assert!(
+        verbose_files == plain_files,
+        "-v should change nothing in the files written"
+    );
+}

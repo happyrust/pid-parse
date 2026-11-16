@@ -19,6 +19,12 @@ use super::sqlite_load;
 
 /// The tables [`open_mdf_as_sqlite`] stages, in the order it reads them. A
 /// table the `.mdf` does not hold is skipped.
+///
+/// These are the tables [`sqlite_load`] asks for: the subtables the publish
+/// item catalog gives its item types, and the ones the loader's own
+/// statements name. A table left out here reads as empty there, and one
+/// added here that nothing asks for is staged for nothing; the tests of
+/// [`sqlite_load`] hold the two to each other.
 pub const PUBLISH_TABLES: &[&str] = &[
     "T_Drawing",
     "T_Representation",
