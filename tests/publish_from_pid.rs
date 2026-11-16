@@ -1742,6 +1742,393 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     assert_eq!(code, Some(1), "{stdout}\n{stderr}");
 }
 
+// ---------------------------------------------------------------------
+// What a `--oracle-exp` run says while the dump is attached
+// (plan `2026-11-16-publish-review-followup.md` T5.1).
+//
+// The dump is attached to the drawing in stages and the run reports them
+// on stderr: how many piping components the dump added, when it added
+// any; the unit values; and, once every stage has run, the codelists, the
+// pipelines, the stored values (with a data map), the connectivity, the
+// compositions and the off-page connectors. A stage that refuses the dump
+// ends the run with exit code 1 and nothing on stdout, after the lines of
+// the stages before it. `--datamap` is read when the first stage that
+// takes it is reached: a data map that cannot be read is reported there,
+// and a stage before it that refuses the dump is reported instead.
+//
+// The pins below are whole stderr streams.
+// ---------------------------------------------------------------------
+
+/// `<pid> --stdout --plant P01 --oracle-exp <dump>`, with `--datamap` when
+/// one is given: `(exit code, stdout, stderr)`.
+fn pid_with_dump(pid: &Path, dump: &Path, datamap: Option<&Path>) -> (Option<i32>, String, String) {
+    let mut command = Command::new(CLI);
+    command
+        .arg(pid)
+        .args(["--stdout", "--plant", "P01", "--oracle-exp"])
+        .arg(dump);
+    if let Some(datamap) = datamap {
+        command.arg("--datamap").arg(datamap);
+    }
+    let output = command.output().expect("spawn pid_publish_xml");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// [`pid_with_dump`] for the committed drawing.
+fn dwg_with_dump(dump: &Path, datamap: Option<&Path>) -> (Option<i32>, String, String) {
+    pid_with_dump(
+        &repo_path(DWG_DIR).join("DWG-0202GP06-01.pid"),
+        dump,
+        datamap,
+    )
+}
+
+/// Give one column of a table another name in the column list of the
+/// table's first `INSERT`. The new name is as long as the old one, so no
+/// byte moves and the table still frames: the dump is read, and the stage
+/// that takes the column refuses it.
+fn rename_dump_column(dump: &mut [u8], table: &str, column: &str, becomes: &str) {
+    assert_eq!(column.len(), becomes.len(), "{table}.{column}");
+    let find = |bytes: &[u8], wanted: &[u8]| {
+        bytes
+            .windows(wanted.len())
+            .position(|window| window == wanted)
+    };
+    let insert = find(dump, format!("INSERT INTO \"{table}\" (").as_bytes())
+        .unwrap_or_else(|| panic!("no INSERT of {table}"));
+    let list = find(&dump[insert..], b")").expect("the end of the column list");
+    let quoted = format!("\"{column}\"");
+    let name = insert
+        + find(&dump[insert..insert + list], quoted.as_bytes())
+            .unwrap_or_else(|| panic!("{table} has no column {column}"))
+        + 1;
+    dump[name..name + becomes.len()].copy_from_slice(becomes.as_bytes());
+}
+
+/// The unit values line of a run that wrote `written` of them.
+fn unit_values_line(written: usize) -> String {
+    format!(
+        "oracle-exp unit values: {written} written, 0 left out because the item's class \
+         carries no element for them"
+    )
+}
+
+/// What the committed drawing's run says of its package's dump once every
+/// stage has run, with the package's data map.
+const DWG_EXP_SAYS: [&str; 7] = [
+    "oracle-exp unit values: 9 written, 0 left out because the item's class carries no \
+     element for them",
+    "oracle-exp codelists: 61 enumerated values",
+    "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, 5 fluid codes \
+     missing, 0 fluid systems unmapped",
+    "oracle-exp stored values: 28 written, 17 labels confirmed, 2 labels kept where the dump \
+     says otherwise, 0 left out unspelled",
+    "oracle-exp connectivity: 20 pairs, 19 written as <Rel>, 1 left out because an end is not \
+     a published object",
+    "oracle-exp compositions: 10 nozzle pairs, 3 EquipmentComponentComposition written; 2 note \
+     pairs, 0 PBSItemNotes written",
+    "oracle-exp opc: 4 PIDBranchPoint written",
+];
+
+#[test]
+fn a_dump_run_says_every_stage_once_and_in_one_order() {
+    let dump = repo_path(DWG_PACKAGE).join("Export.dmp");
+    let datamap = repo_path(DWG_PACKAGE).join("RefData~4~804.zip");
+
+    let (code, _, stderr) = dwg_with_dump(&dump, Some(&datamap));
+    assert_eq!(code, Some(0), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    // The last line is the drawing as the `.pid` alone reads it.
+    let (read, said) = lines.split_last().expect("a line");
+    assert!(
+        read.starts_with("Read drawing `DWG-0202GP06-01` ("),
+        "{stderr}"
+    );
+    assert_eq!(said, DWG_EXP_SAYS, "{stderr}");
+
+    // Without a data map no stored value is read, the codelist stage
+    // spells the four values it has its own words for, and no pipeline is
+    // given a fluid system.
+    let (code, _, stderr) = dwg_with_dump(&dump, None);
+    assert_eq!(code, Some(0), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    let (read, said) = lines.split_last().expect("a line");
+    assert!(
+        read.starts_with("Read drawing `DWG-0202GP06-01` ("),
+        "{stderr}"
+    );
+    assert_eq!(
+        said,
+        [
+            DWG_EXP_SAYS[0],
+            "oracle-exp codelists: 4 enumerated values",
+            "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 0 FluidSystem, 5 fluid \
+             codes missing, 0 fluid systems unmapped",
+            DWG_EXP_SAYS[4],
+            DWG_EXP_SAYS[5],
+            DWG_EXP_SAYS[6],
+        ],
+        "{stderr}"
+    );
+}
+
+/// A dump one stage of the attach refuses.
+struct Stop {
+    /// The stage, by the function that runs it.
+    stage: &'static str,
+    /// The table, its column, and the name the column is given.
+    rename: [&'static str; 3],
+    /// The stage's refusal.
+    refusal: &'static str,
+    /// The unit values the run has reported by then, when that stage has
+    /// run.
+    unit_values: Option<usize>,
+    /// Whether the stage takes the data map, which is read before it runs.
+    takes_data_map: bool,
+}
+
+/// One dump for each stage that can refuse, in the order the stages run.
+///
+/// A stage refuses a table that lacks a column it requires. The codelist
+/// stage requires none, so for it `T_EQUIPMENT.SP_ID` takes the name of
+/// the `CLASS` column after it: the first `CLASS` the stage finds is then
+/// text where it reads codelist indexes. The unit values stage, which
+/// runs before it, finds no `SP_ID` in that table and passes the equipment
+/// by: eight values, not nine.
+const STOPS: [Stop; 8] = [
+    Stop {
+        stage: "attach_dump_only_components",
+        rename: ["T_REPRESENTATION", "GRAPHICOID", "GXAPHICOID"],
+        refusal: "T_REPRESENTATION: column GRAPHICOID is missing",
+        unit_values: None,
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "port_tables",
+        rename: ["T_PIPINGPOINT", "PIPINGPOINTNUMBER", "PXPINGPOINTNUMBER"],
+        refusal: "T_PIPINGPOINT: column PIPINGPOINTNUMBER is missing",
+        unit_values: None,
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "connectivity_ends",
+        rename: ["T_CONNECTOR", "SP_CONNECTITEM1ID", "SX_CONNECTITEM1ID"],
+        refusal: "T_CONNECTOR: column SP_CONNECTITEM1ID is missing",
+        unit_values: None,
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "composition_relations",
+        rename: ["T_NOZZLE", "SP_EQUIPMENTID", "SX_EQUIPMENTID"],
+        refusal: "T_NOZZLE: column SP_EQUIPMENTID is missing",
+        unit_values: None,
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "attach_unit_values",
+        rename: ["T_PIPERUN", "TAGSEQUENCENO", "TXGSEQUENCENO"],
+        refusal: "T_PIPERUN: column TAGSEQUENCENO is missing",
+        unit_values: None,
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "opc_points",
+        rename: ["T_OPC", "OPCTAG", "OXCTAG"],
+        refusal: "T_OPC: column OPCTAG is missing",
+        unit_values: Some(9),
+        takes_data_map: false,
+    },
+    Stop {
+        stage: "attach_pipelines",
+        rename: ["CODELISTS", "CODELIST_SHORT_TEXT", "CXDELIST_SHORT_TEXT"],
+        refusal: "CODELISTS: column CODELIST_SHORT_TEXT is missing",
+        unit_values: Some(9),
+        takes_data_map: true,
+    },
+    Stop {
+        stage: "attach_codelist_values",
+        rename: ["T_EQUIPMENT", "SP_ID", "CLASS"],
+        refusal: "T_EQUIPMENT: column CLASS is declared national text, not NUMBER",
+        unit_values: Some(8),
+        takes_data_map: true,
+    },
+];
+
+impl Stop {
+    /// The committed dump as this stage refuses it, written under
+    /// `scratch`.
+    fn dump(&self, committed: &[u8], scratch: &Path) -> PathBuf {
+        let mut dump = committed.to_vec();
+        let [table, column, becomes] = self.rename;
+        rename_dump_column(&mut dump, table, column, becomes);
+        let path = scratch.join(format!("{}.dmp", self.stage));
+        std::fs::write(&path, dump).expect("the dump");
+        path
+    }
+
+    /// The stderr of a run this stage ends: the unit values when that
+    /// stage has run, then the refusal as an error of reading `dump`.
+    fn stderr(&self, dump: &Path) -> String {
+        let said = self
+            .unit_values
+            .map(|written| unit_values_line(written) + "\n")
+            .unwrap_or_default();
+        format!("{said}error: read {}: {}\n", dump.display(), self.refusal)
+    }
+}
+
+/// A run ended by a data map that could not be read says the unit values,
+/// then the data map by its path.
+fn assert_ended_by_the_data_map(stderr: &str, unit_values: usize, datamap: &Path, run: &str) {
+    let lines: Vec<&str> = stderr.lines().collect();
+    let [said, error] = lines.as_slice() else {
+        panic!("{run}: two lines: {stderr}");
+    };
+    assert_eq!(*said, unit_values_line(unit_values), "{run}");
+    assert!(
+        error.starts_with(&format!("error: read {}: ", datamap.display())),
+        "{run}: {stderr}"
+    );
+}
+
+#[test]
+fn a_stage_that_refuses_the_dump_ends_the_run_after_what_the_stages_before_it_said() {
+    let scratch = Scratch::new("exp-stage-refuses");
+    let committed =
+        std::fs::read(repo_path(DWG_PACKAGE).join("Export.dmp")).expect("the committed dump");
+    let datamap = repo_path(DWG_PACKAGE).join("RefData~4~804.zip");
+    for stop in &STOPS {
+        let dump = stop.dump(&committed, &scratch);
+        let (code, stdout, stderr) = dwg_with_dump(&dump, Some(&datamap));
+        assert_eq!(stderr, stop.stderr(&dump), "{}", stop.stage);
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{}", stop.stage);
+        std::fs::remove_file(&dump).expect("remove the dump");
+    }
+}
+
+#[test]
+fn the_data_map_is_read_when_the_first_stage_that_takes_it_is_reached() {
+    let scratch = Scratch::new("exp-data-map-order");
+    let committed_dump = repo_path(DWG_PACKAGE).join("Export.dmp");
+    let missing = scratch.join("no-such-data-map.zip");
+
+    // The committed dump attaches as far as the data map.
+    let (code, stdout, stderr) = dwg_with_dump(&committed_dump, Some(&missing));
+    assert_ended_by_the_data_map(&stderr, 9, &missing, "the committed dump");
+    assert_eq!((code, stdout.as_str()), (Some(1), ""));
+
+    let committed = std::fs::read(&committed_dump).expect("the committed dump");
+    for stop in &STOPS {
+        let dump = stop.dump(&committed, &scratch);
+        let (code, stdout, stderr) = dwg_with_dump(&dump, Some(&missing));
+        match stop.unit_values {
+            // The stage does not run: the data map it takes was not read.
+            Some(unit_values) if stop.takes_data_map => {
+                assert_ended_by_the_data_map(&stderr, unit_values, &missing, stop.stage);
+            }
+            // The stage refuses the dump before the data map is asked for.
+            _ => assert_eq!(stderr, stop.stderr(&dump), "{}", stop.stage),
+        }
+        assert_eq!((code, stdout.as_str()), (Some(1), ""), "{}", stop.stage);
+        std::fs::remove_file(&dump).expect("remove the dump");
+    }
+}
+
+/// The delivered dump places three piping components on `J K井场` that its
+/// `.pid` does not draw, and the run says so first. Ended at the off-page
+/// connectors, it has said that and the unit values.
+#[test]
+fn a_dump_run_that_ends_early_has_said_what_the_dump_added() {
+    let pid =
+        PathBuf::from(r"D:\work\cad\pid-test-data\验收数据\J K井场 注采阀组工艺及自控流程图.pid");
+    let delivered = PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+    if !pid.is_file() || !delivered.is_file() {
+        eprintln!("skipping: the acceptance drawing J K井场 or the delivered dump is missing");
+        return;
+    }
+    let scratch = Scratch::new("exp-ends-after-components");
+    let mut bytes = std::fs::read(&delivered).expect("the delivered dump");
+    rename_dump_column(&mut bytes, "T_OPC", "OPCTAG", "OXCTAG");
+    let dump = scratch.join("opc_points.dmp");
+    std::fs::write(&dump, bytes).expect("the dump");
+
+    let (code, stdout, stderr) = pid_with_dump(&pid, &dump, None);
+    assert_eq!(
+        stderr,
+        format!(
+            "oracle-exp: 3 PIDPipingComponent from the dump, not drawn in the .pid\n\
+             {}\n\
+             error: read {}: T_OPC: column OPCTAG is missing\n",
+            unit_values_line(0),
+            dump.display()
+        )
+    );
+    assert_eq!((code, stdout.as_str()), (Some(1), ""));
+}
+
+/// A column the stored values stage is sent to and the dump does not hold
+/// ends nothing: the document is written without that column's values, and
+/// the run says one line for each such column after the stored values
+/// line, in the order of their names. The dump's own dictionary places a
+/// pipe run's `SP_ConnectorsZeroLength` and an inline component's
+/// `FlowDirection`; here the `INSERT`s of the two tables name neither, and
+/// nine of the drawing's 28 stored values are not written.
+#[test]
+fn a_dump_run_says_each_stored_column_it_could_not_read() {
+    let scratch = Scratch::new("exp-stored-column-not-read");
+    let mut bytes =
+        std::fs::read(repo_path(DWG_PACKAGE).join("Export.dmp")).expect("the committed dump");
+    rename_dump_column(
+        &mut bytes,
+        "T_PIPERUN",
+        "SP_CONNECTORSZEROLENGTH",
+        "SX_CONNECTORSZEROLENGTH",
+    );
+    rename_dump_column(&mut bytes, "T_INLINECOMP", "FLOWDIRECTION", "FXOWDIRECTION");
+    let dump = scratch.join("stored-columns.dmp");
+    std::fs::write(&dump, bytes).expect("the dump");
+    let datamap = repo_path(DWG_PACKAGE).join("RefData~4~804.zip");
+
+    let (code, stdout, stderr) = dwg_with_dump(&dump, Some(&datamap));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stdout.contains("<Container"), "the document is written");
+    let lines: Vec<&str> = stderr.lines().collect();
+    let (read, said) = lines.split_last().expect("a line");
+    assert!(
+        read.starts_with("Read drawing `DWG-0202GP06-01` ("),
+        "{stderr}"
+    );
+    let stored = DWG_EXP_SAYS[3].replace("28 written", "19 written");
+    assert_ne!(stored, DWG_EXP_SAYS[3]);
+    assert_eq!(
+        said,
+        [
+            DWG_EXP_SAYS[0],
+            DWG_EXP_SAYS[1],
+            DWG_EXP_SAYS[2],
+            stored.as_str(),
+            "oracle-exp stored values: not read: T_InlineComp.FlowDirection: the dump holds no \
+             such column",
+            "oracle-exp stored values: not read: T_PipeRun.SP_ConnectorsZeroLength: the dump \
+             holds no such column",
+            DWG_EXP_SAYS[4],
+            DWG_EXP_SAYS[5],
+            DWG_EXP_SAYS[6],
+        ],
+        "{stderr}"
+    );
+
+    // Without a data map the stage does not run, and the run says nothing
+    // of the columns.
+    let (code, _, stderr) = dwg_with_dump(&dump, None);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(!stderr.contains("stored values"), "{stderr}");
+}
+
 #[test]
 fn the_dwg_package_publishes_every_drawing_it_lists() {
     let out_dir = Scratch::unmade("dwg-package");

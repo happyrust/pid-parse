@@ -53,8 +53,8 @@ use serde_json::{json, Value};
 use super::diff::pid_publish_census;
 use super::model::DatabaseShortfalls;
 use super::oracle_exp::{
-    attach_oracle_ports, backup_path_key, backup_uid_key, plant_group_path, read_plant_groups,
-    BackupDrawing, ExpTables, PlantGroup,
+    attach_dump, backup_path_key, backup_uid_key, plant_group_path, read_plant_groups,
+    BackupDrawing, DumpAttachment, ExpTables, PlantGroup,
 };
 use super::pid_load::{
     read_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats, PublishChainFault,
@@ -877,32 +877,22 @@ fn publish_one(
         notes.push(note);
     }
     if let Some(loaded) = loaded.filter(|_| dump_in_run) {
-        let attached = attach_exp(&mut drawing, loaded)
-            .and_then(|()| {
-                super::pipeline::attach_pipelines(
-                    &mut drawing,
-                    &loaded.tables,
-                    plant_name,
-                    loaded.datamap.as_ref(),
-                )
-            })
-            .and_then(|()| {
-                super::codelist_values::attach_codelist_values(
-                    &mut drawing,
-                    &loaded.tables,
-                    loaded.datamap.as_ref(),
-                )
-                .map(|_| ())
-            });
-        if let (Ok(()), Some(map)) = (&attached, loaded.datamap.as_ref()) {
-            let stored =
-                super::stored_values::attach_stored_values(&mut drawing, &loaded.tables, map);
+        let mut done = DumpAttachment::default();
+        let attached = attach_dump(
+            &mut drawing,
+            &loaded.tables,
+            &loaded.path,
+            plant_name,
+            || Ok::<_, std::convert::Infallible>(loaded.datamap.as_ref()),
+            &mut done,
+        );
+        if let Err(error) = attached {
+            return Err(error.to_string());
+        }
+        if let Some(stored) = done.stored_values {
             for reason in stored.unread {
                 notes.push(format!("a stored value column was not read: {reason}"));
             }
-        }
-        if let Err(error) = attached {
-            return Err(error.to_string());
         }
     }
 
@@ -1103,27 +1093,6 @@ fn row_by_id<'a>(loaded: &'a LoadedDump, drawing_uid: &str) -> Option<&'a Backup
 fn row_by_path<'a>(loaded: &'a LoadedDump, zip_entry: &str) -> Option<&'a BackupDrawing> {
     let index = *loaded.by_path.get(&backup_path_key(zip_entry))?;
     loaded.drawings.get(index)
-}
-
-fn attach_exp(
-    drawing: &mut PidPublishDrawing,
-    loaded: &LoadedDump,
-) -> Result<(), super::oracle_exp::ExpError> {
-    super::oracle_exp::attach_dump_only_components(drawing, &loaded.tables)?;
-    let ports = loaded.tables.port_tables()?;
-    attach_oracle_ports(drawing, &ports, &loaded.path);
-    drawing.connectivity_ends = loaded.tables.connectivity_ends(&drawing.drawing_uid)?;
-    drawing.exp_relations = loaded.tables.composition_relations()?;
-    super::unit_values::attach_unit_values(drawing, &loaded.tables)?;
-    let mut opc_points = loaded.tables.opc_points(&drawing.drawing_uid)?;
-    let representations: std::collections::HashSet<&str> = drawing
-        .representations
-        .iter()
-        .map(|representation| representation.uid.as_str())
-        .collect();
-    opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
-    drawing.opc_points = opc_points;
-    Ok(())
 }
 
 fn shell_drawing(uid: String, name: String) -> PidPublishDrawing {
@@ -3269,6 +3238,166 @@ mod tests {
                 "_Index.json"
             ]
         );
+    }
+
+    /// A column the stored values stage is sent to and the dump does not
+    /// hold is noted on the row of each drawing the stage looked in it
+    /// for, and every drawing is written. The package is the manifest, the
+    /// `PlantData` zip, the data map's zip and the dump of the committed
+    /// one, with two bytes of the dump changed: the `INSERT`s of
+    /// `T_PIPERUN` and `T_INLINECOMP` no longer name the columns the dump's
+    /// own dictionary places a pipe run's `SP_ConnectorsZeroLength` and an
+    /// inline component's `FlowDirection` in. No stage refuses such a
+    /// dump. The shell attaches nothing; two drawings hold neither a pipe
+    /// run nor an inline component; three hold both, and the last a pipe
+    /// run alone.
+    #[test]
+    fn a_stored_column_the_dump_does_not_hold_is_noted_on_the_drawings_it_was_read_for() {
+        const PIPE_RUN: &str = "a stored value column was not read: \
+                                T_PipeRun.SP_ConnectorsZeroLength: the dump holds no such column";
+        const INLINE: &str = "a stored value column was not read: \
+                              T_InlineComp.FlowDirection: the dump holds no such column";
+        let noted: [(&str, &[&str]); 7] = [
+            ("zcgc/A3jqz/001.pid", &[]),
+            ("zcgc/A3jqz/002.pid", &[]),
+            ("zcgc/A3jqz/222.pid", &[]),
+            ("zcgc/A3jqz/DWG-0201GP01-01.pid", &[INLINE, PIPE_RUN]),
+            ("zcgc/A3jqz/DWG-0201GP06-01.pid", &[INLINE, PIPE_RUN]),
+            ("zcgc/A3jqz/DWG-0202GP06-01.pid", &[INLINE, PIPE_RUN]),
+            ("zcgc/A4jqz/DWG-0104GP01-08.pid", &[PIPE_RUN]),
+        ];
+        let committed =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/DWG-0202GP06-01_p");
+        let mut dump = fs::read(committed.join("Export.dmp")).expect("the committed dump");
+        // One letter of each column's name, in the column list of its
+        // table's one `INSERT`: no byte moves, and the tables still frame.
+        let find = |bytes: &[u8], wanted: &[u8]| {
+            bytes
+                .windows(wanted.len())
+                .position(|window| window == wanted)
+        };
+        for (table, column) in [
+            ("T_PIPERUN", "SP_CONNECTORSZEROLENGTH"),
+            ("T_INLINECOMP", "FLOWDIRECTION"),
+        ] {
+            let insert =
+                find(&dump, format!("INSERT INTO \"{table}\" (").as_bytes()).expect("the INSERT");
+            let list = find(&dump[insert..], b")").expect("the end of the column list");
+            let name = find(
+                &dump[insert..insert + list],
+                format!("\"{column}\"").as_bytes(),
+            )
+            .expect("the column, in the list");
+            dump[insert + name + 2] = b'X';
+        }
+
+        let scratch = WriteScratch::new("stored-column-not-read");
+        let package = scratch.0.join("package");
+        fs::create_dir_all(&package).expect("the package directory");
+        for name in ["Manifest.txt", "PlantData~2~711.zip", "RefData~4~804.zip"] {
+            fs::copy(committed.join(name), package.join(name)).expect("a file of the package");
+        }
+        fs::write(package.join("Export.dmp"), &dump).expect("the dump");
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, _) = index_and_problems(&out);
+        assert_eq!((report.written, report.failed), (7, 0), "{index}");
+        let drawings = index["drawings"].as_array().expect("drawings");
+        assert_eq!(drawings.len(), noted.len(), "{index}");
+        for (drawing, (entry, notes)) in drawings.iter().zip(noted) {
+            assert_eq!(drawing["zip_entry"], entry, "{drawing}");
+            assert_eq!(drawing["problems"], json!(notes), "{entry}");
+            assert_eq!(
+                drawing["files"].as_array().map(Vec::len),
+                Some(3),
+                "{entry}"
+            );
+        }
+    }
+
+    /// The UID and the name of every `<PIDPipeline>` a `_Data.xml` states,
+    /// in document order: the two attributes of the `<IObject>` the element
+    /// opens with, as they are written. A name with a character XML
+    /// escapes would be read here in its escaped spelling.
+    fn pipelines_stated(data_xml: &str) -> Vec<(String, String)> {
+        let attribute = |object: &str, name: &str| {
+            let (_, rest) = object.split_once(&format!(" {name}=\""))?;
+            let (value, _) = rest.split_once('"')?;
+            Some(value.to_string())
+        };
+        let mut lines = data_xml.lines();
+        let mut stated = Vec::new();
+        while let Some(line) = lines.next() {
+            if line.trim() != "<PIDPipeline>" {
+                continue;
+            }
+            let object = lines.next().expect("the <IObject> of a pipeline");
+            stated.push((
+                attribute(object, "UID").expect("the UID of a pipeline"),
+                attribute(object, "Name").expect("the name of a pipeline"),
+            ));
+        }
+        stated
+    }
+
+    /// What a package run hands the attach of its dump, seen in the files
+    /// it writes. The package is the committed one, published under two
+    /// plants. A drawing found by the `SP_ID` of its row has the dump on
+    /// it: its coverage report names the package's `Export.dmp` as the
+    /// dump it was read from, and each pipeline its `_Data.xml` states has
+    /// the UID `pipeline_uid` makes of the run's plant and the pipeline's
+    /// name. Three of the six publish pipelines, twelve between them. The
+    /// shell attaches nothing: its report has no dump, and it states no
+    /// pipeline.
+    #[test]
+    fn a_package_drawing_names_the_packages_dump_and_its_pipelines_take_the_runs_plant() {
+        // The drawing's name, whether the dump is on it, and how many
+        // pipelines it publishes.
+        const DRAWINGS: [(&str, bool, usize); 7] = [
+            ("001", false, 0),
+            ("002", true, 0),
+            ("222", true, 0),
+            ("DWG-0201GP01-01", true, 0),
+            ("DWG-0201GP06-01", true, 5),
+            ("DWG-0202GP06-01", true, 6),
+            ("DWG-0104GP01-08", true, 1),
+        ];
+        let package =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/DWG-0202GP06-01_p");
+        let dump = package.join("Export.dmp").display().to_string();
+        let scratch = WriteScratch::new("plant-and-dump");
+
+        for plant in ["P01", "Unit 7"] {
+            let out = scratch.0.join(plant);
+            let report =
+                publish_backup_package(&package, &out, plant, None).expect("the package publishes");
+            assert_eq!((report.written, report.failed), (7, 0), "{plant}");
+            for (name, attached, pipelines) in DRAWINGS {
+                let read = |suffix: &str| {
+                    let path = out.join(format!("{name}{suffix}"));
+                    fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+                };
+                let coverage: Value =
+                    serde_json::from_str(&read("_Coverage.json")).expect("a coverage report");
+                let named = coverage
+                    .get("oracle_exp")
+                    .map(|section| section["dump"].clone());
+                assert_eq!(named, attached.then(|| json!(dump)), "{plant}: {name}");
+
+                let stated = pipelines_stated(&read("_Data.xml"));
+                assert_eq!(stated.len(), pipelines, "{plant}: {name}");
+                for (uid, pipeline) in stated {
+                    assert_eq!(
+                        uid,
+                        super::super::pipeline::pipeline_uid(plant, &pipeline),
+                        "{plant}: {name}: {pipeline}"
+                    );
+                }
+            }
+        }
     }
 
     /// A drawing written with a UID on more than one block is one of the

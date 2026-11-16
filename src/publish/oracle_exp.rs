@@ -13,15 +13,25 @@
 //! `SmartPlant PID`, `SPPID`. If it is not, the port tables are not read.
 //! This module does not run `imp`, does not connect to Oracle, and does
 //! not write XML.
+//!
+//! [`attach_dump`] is the one place a dump is put on a drawing. It runs the
+//! stages of this module and of [`super::unit_values`], [`super::pipeline`],
+//! [`super::codelist_values`] and [`super::stored_values`] in one order, for
+//! the single-drawing command and the package run alike.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use super::codelist_values::attach_codelist_values;
 use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
 };
+use super::pipeline::attach_pipelines;
 use super::placement::{DumpColumn, DumpDictionary};
+use super::stored_values::{attach_stored_values, StoredValues};
+use super::unit_values::{attach_unit_values, UnitValueCounts};
+use crate::backup::DataMap;
 
 const CHARSET_AL16UTF16: u16 = 2000;
 const CHARSET_FORM: u16 = 2;
@@ -1446,6 +1456,126 @@ pub fn attach_oracle_ports(
         dump_path: dump.display().to_string(),
         nominal_diameter_unspelled: unspelled,
     });
+}
+
+/// What [`attach_dump`] has done to a drawing so far.
+///
+/// A field is `None` until the stage it reports has finished, so after a
+/// refusal it still says what the stages before the refusal did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DumpAttachment {
+    /// How many piping components the dump places on the drawing that its
+    /// `.pid` does not draw ([`attach_dump_only_components`]).
+    pub dump_only_components: Option<usize>,
+    /// The unit-bearing values written and left out
+    /// ([`attach_unit_values`]).
+    pub unit_values: Option<UnitValueCounts>,
+    /// How many enumerated values were added
+    /// ([`attach_codelist_values`]).
+    pub codelist_values: Option<usize>,
+    /// What [`attach_stored_values`] did. `None` as well in a run without
+    /// a data map, which has no such stage.
+    pub stored_values: Option<StoredValues>,
+}
+
+/// Why [`attach_dump`] stopped before its last stage.
+///
+/// It displays as the error inside, with nothing added: which file that
+/// error is about is the caller's to say.
+#[derive(Debug)]
+pub enum DumpAttachError<E> {
+    /// A stage refused the dump.
+    Dump(ExpError),
+    /// The data map could not be had: the error the caller's `datamap`
+    /// returned.
+    DataMap(E),
+}
+
+impl<E> From<ExpError> for DumpAttachError<E> {
+    fn from(error: ExpError) -> Self {
+        Self::Dump(error)
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for DumpAttachError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dump(error) => write!(f, "{error}"),
+            Self::DataMap(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl<E: fmt::Debug + fmt::Display> std::error::Error for DumpAttachError<E> {}
+
+/// Put on `drawing` everything the dump behind `tables` holds for it.
+///
+/// The single-drawing command and the package run both attach a dump
+/// through this function, so the stages and the order they run in are
+/// stated once:
+///
+/// 1. [`attach_dump_only_components`], before the ports so that the ports
+///    of the components it adds hang on them;
+/// 2. [`ExpTables::port_tables`] and [`attach_oracle_ports`], which records
+///    `dump` as the path the dump was read from;
+/// 3. [`ExpTables::connectivity_ends`];
+/// 4. [`ExpTables::composition_relations`];
+/// 5. [`attach_unit_values`];
+/// 6. [`ExpTables::opc_points`], of which only the points whose
+///    representation the drawing publishes are kept;
+/// 7. [`attach_pipelines`], which makes a pipeline's UID from `plant` and
+///    the pipeline's name;
+/// 8. [`attach_codelist_values`];
+/// 9. [`attach_stored_values`], in a run with a data map.
+///
+/// `datamap` hands over the data map the last three stages read, or
+/// `Ok(None)` in a run without one. It is called when stage 6 has
+/// finished and not before, so a caller that reads its map from a file
+/// does not read it for a dump an earlier stage refuses.
+///
+/// `done` is filled in as the stages finish.
+///
+/// # Errors
+///
+/// Returns [`DumpAttachError::Dump`] with the refusal of the first stage
+/// that refuses the dump, and [`DumpAttachError::DataMap`] with the error
+/// `datamap` returned. Either way `drawing` keeps what the stages before
+/// the error put on it: a part of the dump, which is not a state to
+/// publish.
+pub fn attach_dump<M, E>(
+    drawing: &mut PidPublishDrawing,
+    tables: &ExpTables,
+    dump: &std::path::Path,
+    plant: &str,
+    datamap: impl FnOnce() -> Result<Option<M>, E>,
+    done: &mut DumpAttachment,
+) -> Result<(), DumpAttachError<E>>
+where
+    M: std::borrow::Borrow<DataMap>,
+{
+    done.dump_only_components = Some(attach_dump_only_components(drawing, tables)?);
+    let ports = tables.port_tables()?;
+    attach_oracle_ports(drawing, &ports, dump);
+    drawing.connectivity_ends = tables.connectivity_ends(&drawing.drawing_uid)?;
+    drawing.exp_relations = tables.composition_relations()?;
+    done.unit_values = Some(attach_unit_values(drawing, tables)?);
+    let mut opc_points = tables.opc_points(&drawing.drawing_uid)?;
+    let representations: HashSet<&str> = drawing
+        .representations
+        .iter()
+        .map(|representation| representation.uid.as_str())
+        .collect();
+    opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
+    drawing.opc_points = opc_points;
+
+    let datamap = datamap().map_err(DumpAttachError::DataMap)?;
+    let datamap: Option<&DataMap> = datamap.as_ref().map(std::borrow::Borrow::borrow);
+    attach_pipelines(drawing, tables, plant, datamap)?;
+    done.codelist_values = Some(attach_codelist_values(drawing, tables, datamap)?);
+    if let Some(map) = datamap {
+        done.stored_values = Some(attach_stored_values(drawing, tables, map));
+    }
+    Ok(())
 }
 
 fn backup(table: &'static str, column: &'static str) -> PidValueSource {
@@ -5790,5 +5920,405 @@ mod tests {
         blank(&without("T_INLINECOMP").inlinecomp, "T_INLINECOMP");
         blank(&without("T_EQUIPMENT").equipment, "T_EQUIPMENT");
         blank(&without("T_VESSEL").vessel, "T_VESSEL");
+    }
+
+    // -----------------------------------------------------------------
+    // `attach_dump`, on drawing `D` of `followed_fixture`. The fixture is
+    // small enough to say what each stage leaves on the drawing, and one
+    // change to it makes one stage refuse it.
+    // -----------------------------------------------------------------
+
+    /// Drawing `D` as read from a `.pid` that draws `representations` and
+    /// publishes no item of its own.
+    fn fixture_drawing(representations: &[&str]) -> PidPublishDrawing {
+        PidPublishDrawing {
+            drawing_uid: "D".to_string(),
+            drawing_name: "One".to_string(),
+            drawing_attributes: Vec::new(),
+            items: Vec::new(),
+            process_points: Vec::new(),
+            branch_points: Vec::new(),
+            ports: Vec::new(),
+            connectivity_ends: Vec::new(),
+            exp_relations: Vec::new(),
+            opc_points: Vec::new(),
+            exp: None,
+            pipelines: Vec::new(),
+            pipelines_attempted: false,
+            pipeline_synthesis: Default::default(),
+            representations: representations
+                .iter()
+                .map(|uid| PidPublishRepresentation {
+                    uid: (*uid).to_string(),
+                    item_uid: None,
+                    graphic_oid: 0,
+                })
+                .collect(),
+            stats: Default::default(),
+        }
+    }
+
+    /// The data map of the committed package
+    /// `test-file/backup-test/DWG-0202GP06-01_p`.
+    fn committed_data_map() -> DataMap {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip");
+        crate::backup::read_datamap(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    /// What one [`attach_dump`] left behind.
+    struct Attached {
+        result: Result<(), DumpAttachError<&'static str>>,
+        drawing: PidPublishDrawing,
+        done: DumpAttachment,
+        /// How many times the data map was asked for.
+        asked: usize,
+    }
+
+    /// Attach a fixture to [`fixture_drawing`], handing over `datamap` when
+    /// it is asked for.
+    fn attach_fixture(
+        fixture: &[FixtureTable],
+        representations: &[&str],
+        datamap: Result<Option<&DataMap>, &'static str>,
+    ) -> Attached {
+        let dump = dump_of(fixture);
+        let tables = ExpTables::read(&dump).expect("the fixture reads");
+        let mut drawing = fixture_drawing(representations);
+        let mut done = DumpAttachment::default();
+        let mut asked = 0;
+        let result = attach_dump(
+            &mut drawing,
+            &tables,
+            std::path::Path::new("backup/Export.dmp"),
+            "P01",
+            || {
+                asked += 1;
+                datamap
+            },
+            &mut done,
+        );
+        Attached {
+            result,
+            drawing,
+            done,
+            asked,
+        }
+    }
+
+    /// The table of a fixture by its name.
+    fn fixture_table<'a>(fixture: &'a mut [FixtureTable], name: &str) -> &'a mut FixtureTable {
+        fixture
+            .iter_mut()
+            .find(|(stated, _, _)| *stated == name)
+            .expect("a fixture table")
+    }
+
+    /// Take one column out of a fixture table.
+    fn take_column(fixture: &mut [FixtureTable], table: &str, column: &str) {
+        let (_, columns, rows) = fixture_table(fixture, table);
+        let index = columns
+            .iter()
+            .position(|stated| stated.name == column)
+            .expect("a fixture column");
+        columns.remove(index);
+        for row in rows.iter_mut() {
+            row.remove(index);
+        }
+    }
+
+    /// Give a fixture table one more column, of text.
+    fn add_text_column(fixture: &mut [FixtureTable], table: &str, column: &'static str) {
+        let (_, columns, rows) = fixture_table(fixture, table);
+        columns.push(ch(column));
+        for row in rows.iter_mut() {
+            row.push(Some(utf16("a word")));
+        }
+    }
+
+    /// A stage of [`attach_dump`] that can refuse a dump.
+    struct Refusing {
+        /// The stage, by the function that runs it.
+        stage: &'static str,
+        /// What makes this stage, and none before it, refuse the fixture.
+        breaks: fn(&mut [FixtureTable]),
+        /// Its refusal.
+        refusal: &'static str,
+    }
+
+    /// The stages that can refuse, in the order they run. Each refuses a
+    /// table without a column it requires. The codelist stage requires
+    /// none, and refuses a column it follows that holds text.
+    const REFUSING: [Refusing; 8] = [
+        Refusing {
+            stage: "attach_dump_only_components",
+            breaks: |fixture| take_column(fixture, "T_REPRESENTATION", "GRAPHICOID"),
+            refusal: "T_REPRESENTATION: column GRAPHICOID is missing",
+        },
+        Refusing {
+            stage: "port_tables",
+            breaks: |fixture| take_column(fixture, "T_PIPINGPOINT", "PIPINGPOINTNUMBER"),
+            refusal: "T_PIPINGPOINT: column PIPINGPOINTNUMBER is missing",
+        },
+        Refusing {
+            stage: "connectivity_ends",
+            breaks: |fixture| take_column(fixture, "T_CONNECTOR", "SP_CONNECTITEM1ID"),
+            refusal: "T_CONNECTOR: column SP_CONNECTITEM1ID is missing",
+        },
+        Refusing {
+            stage: "composition_relations",
+            breaks: |fixture| take_column(fixture, "T_NOZZLE", "SP_EQUIPMENTID"),
+            refusal: "T_NOZZLE: column SP_EQUIPMENTID is missing",
+        },
+        Refusing {
+            stage: "attach_unit_values",
+            breaks: |fixture| take_column(fixture, "T_PIPERUN", "TAGSEQUENCENO"),
+            refusal: "T_PIPERUN: column TAGSEQUENCENO is missing",
+        },
+        Refusing {
+            stage: "opc_points",
+            breaks: |fixture| take_column(fixture, "T_OPC", "OPCTAG"),
+            refusal: "T_OPC: column OPCTAG is missing",
+        },
+        Refusing {
+            stage: "attach_pipelines",
+            breaks: |fixture| take_column(fixture, "CODELISTS", "CODELIST_SHORT_TEXT"),
+            refusal: "CODELISTS: column CODELIST_SHORT_TEXT is missing",
+        },
+        Refusing {
+            stage: "attach_codelist_values",
+            breaks: |fixture| add_text_column(fixture, "T_EQUIPMENT", "CLASS"),
+            refusal: "T_EQUIPMENT: column CLASS is declared national text, not NUMBER",
+        },
+    ];
+
+    /// What `done` holds once the component only the dump places is on the
+    /// drawing.
+    fn done_after_components() -> DumpAttachment {
+        DumpAttachment {
+            dump_only_components: Some(1),
+            ..DumpAttachment::default()
+        }
+    }
+
+    /// What `done` holds once the unit values have been looked for: the
+    /// drawing publishes no item that takes one.
+    fn done_after_unit_values() -> DumpAttachment {
+        DumpAttachment {
+            unit_values: Some(UnitValueCounts::default()),
+            ..done_after_components()
+        }
+    }
+
+    /// What the stages leave on the drawing itself, in the order they run.
+    /// The pipeline stage leaves its mark as it starts, before it reads a
+    /// table; the others when they have finished.
+    const LEFT_ON_THE_DRAWING: [&str; 6] = [
+        "the component only the dump places",
+        "the dump's path, with the ports",
+        "the connectivity ends",
+        "the composition relations",
+        "the off-page connector",
+        "that pipelines were attempted",
+    ];
+
+    /// Which of [`LEFT_ON_THE_DRAWING`] a drawing carries.
+    fn left_on(drawing: &PidPublishDrawing) -> Vec<&'static str> {
+        let carried = [
+            !drawing.items.is_empty(),
+            drawing.exp.is_some(),
+            !drawing.connectivity_ends.is_empty(),
+            !drawing.exp_relations.is_empty(),
+            !drawing.opc_points.is_empty(),
+            drawing.pipelines_attempted,
+        ];
+        LEFT_ON_THE_DRAWING
+            .into_iter()
+            .zip(carried)
+            .filter_map(|(left, carried)| carried.then_some(left))
+            .collect()
+    }
+
+    // Every stage leaves its mark. The fixture's piping point hangs on its
+    // equipment; here it hangs on the component only the dump places, so
+    // the port shows that the component was on the drawing when the ports
+    // were attached. The two enumerated values are the drawing's constants.
+    #[test]
+    fn attach_dump_runs_every_stage() {
+        let mut fixture = followed_fixture();
+        let (_, _, piping_points) = fixture_table(&mut fixture, "T_PIPINGPOINT");
+        piping_points[0][0] = Some(utf16("P"));
+        let map = committed_data_map();
+
+        let attached = attach_fixture(&fixture, &["RO"], Ok(Some(&map)));
+        attached.result.expect("every stage takes the fixture");
+        assert_eq!(attached.asked, 1);
+        assert_eq!(
+            attached.done,
+            DumpAttachment {
+                codelist_values: Some(2),
+                stored_values: Some(StoredValues::default()),
+                ..done_after_unit_values()
+            }
+        );
+        let drawing = attached.drawing;
+        let items: Vec<&str> = drawing.items.iter().map(|item| item.uid.as_str()).collect();
+        assert_eq!(items, ["P"]);
+        let ports: Vec<(&str, &str)> = drawing
+            .ports
+            .iter()
+            .map(|port| (port.parent_uid.as_str(), port.class))
+            .collect();
+        assert_eq!(ports, [("P", "PIDPipingPort")]);
+        assert_eq!(
+            drawing.exp.as_ref().map(|exp| exp.dump_path.as_str()),
+            Some("backup/Export.dmp")
+        );
+        assert_eq!(drawing.connectivity_ends.len(), 1);
+        assert_eq!(drawing.exp_relations.len(), 2);
+        let off_page: Vec<&str> = drawing
+            .opc_points
+            .iter()
+            .map(|point| point.representation_uid.as_str())
+            .collect();
+        assert_eq!(off_page, ["RO"]);
+        assert!(drawing.pipelines_attempted);
+
+        // Without a data map the stored values stage does not run.
+        let attached = attach_fixture(&fixture, &["RO"], Ok(None));
+        attached.result.expect("every stage takes the fixture");
+        assert_eq!(attached.asked, 1);
+        assert_eq!(
+            attached.done,
+            DumpAttachment {
+                codelist_values: Some(2),
+                ..done_after_unit_values()
+            }
+        );
+    }
+
+    // The dump's one off-page connector is on the drawing only when the
+    // drawing publishes the representation it is drawn as.
+    #[test]
+    fn attach_dump_keeps_an_off_page_connector_only_when_its_representation_is_published() {
+        let fixture = followed_fixture();
+        let dump = dump_of(&fixture);
+        let tables = ExpTables::read(&dump).expect("the fixture reads");
+        assert_eq!(
+            tables.opc_points("D").expect("off-page connectors").len(),
+            1
+        );
+
+        let kept = |representations: &[&str]| {
+            let attached = attach_fixture(&fixture, representations, Ok(None));
+            attached.result.expect("every stage takes the fixture");
+            attached.drawing.opc_points.len()
+        };
+        assert_eq!(kept(&["RO"]), 1);
+        assert_eq!(kept(&["C", "RE", "RO"]), 1);
+        assert_eq!(kept(&["C", "RE"]), 0);
+        assert_eq!(kept(&[]), 0);
+    }
+
+    // A stage that refuses the dump ends the attach with its refusal:
+    // `done` holds what the stages before it did, the drawing carries what
+    // they left on it and nothing of a later stage, the data map has been
+    // asked for only when the stage is one that takes it, and a dump the
+    // next stage would refuse as well is refused by this one, which is the
+    // order the stages run in. What the drawing carries tells two stages
+    // apart that the refusals do not: the connectivity stage projects the
+    // two point tables as the port stage does, so a dump the port stage
+    // refuses is refused in the same words whichever of the two runs
+    // first.
+    #[test]
+    fn attach_dump_ends_at_the_first_stage_that_refuses_the_dump() {
+        let map = committed_data_map();
+        // What `done` holds, how many times the data map has been asked
+        // for, and how many of `LEFT_ON_THE_DRAWING` the drawing carries.
+        let by_then = [
+            (DumpAttachment::default(), 0, 0),
+            (done_after_components(), 0, 1),
+            (done_after_components(), 0, 2),
+            (done_after_components(), 0, 3),
+            (done_after_components(), 0, 4),
+            (done_after_unit_values(), 0, 4),
+            (done_after_unit_values(), 1, 6),
+            (done_after_unit_values(), 1, 6),
+        ];
+        for (index, (stop, (done, asked, left))) in REFUSING.iter().zip(by_then).enumerate() {
+            let mut fixture = followed_fixture();
+            (stop.breaks)(&mut fixture);
+            let attached = attach_fixture(&fixture, &["RO"], Ok(Some(&map)));
+            let error = attached.result.expect_err(stop.stage);
+            assert!(matches!(error, DumpAttachError::Dump(_)), "{}", stop.stage);
+            assert_eq!(error.to_string(), stop.refusal, "{}", stop.stage);
+            assert_eq!(
+                (attached.done, attached.asked),
+                (done, asked),
+                "{}",
+                stop.stage
+            );
+            assert_eq!(
+                left_on(&attached.drawing),
+                LEFT_ON_THE_DRAWING[..left],
+                "{}",
+                stop.stage
+            );
+
+            let Some(next) = REFUSING.get(index + 1) else {
+                continue;
+            };
+            (next.breaks)(&mut fixture);
+            let attached = attach_fixture(&fixture, &["RO"], Ok(Some(&map)));
+            assert_eq!(
+                attached.result.expect_err(stop.stage).to_string(),
+                stop.refusal,
+                "{} runs before {}",
+                stop.stage,
+                next.stage
+            );
+        }
+    }
+
+    // The data map is asked for when the off-page connectors are on the
+    // drawing and no pipeline has been attempted. A caller that cannot
+    // hand it over ends the attach there with its own error: after a stage
+    // before that point that refuses the dump, which is not asked, and
+    // before a stage after it that would.
+    #[test]
+    fn attach_dump_asks_for_the_data_map_between_the_off_page_connectors_and_the_pipelines() {
+        let attached = attach_fixture(&followed_fixture(), &["RO"], Err("no data map"));
+        let error = attached.result.expect_err("no data map");
+        assert!(matches!(error, DumpAttachError::DataMap("no data map")));
+        assert_eq!(error.to_string(), "no data map");
+        assert_eq!(
+            (attached.done, attached.asked),
+            (done_after_unit_values(), 1)
+        );
+        assert_eq!(attached.drawing.opc_points.len(), 1);
+        assert!(!attached.drawing.pipelines_attempted);
+
+        let [.., off_page, pipelines, _] = &REFUSING;
+        assert_eq!(
+            (off_page.stage, pipelines.stage),
+            ("opc_points", "attach_pipelines")
+        );
+        let mut fixture = followed_fixture();
+        (pipelines.breaks)(&mut fixture);
+        let attached = attach_fixture(&fixture, &["RO"], Err("no data map"));
+        assert!(matches!(
+            attached.result,
+            Err(DumpAttachError::DataMap("no data map"))
+        ));
+        assert_eq!(attached.asked, 1);
+
+        (off_page.breaks)(&mut fixture);
+        let attached = attach_fixture(&fixture, &["RO"], Err("no data map"));
+        assert_eq!(
+            attached.result.expect_err("refused").to_string(),
+            off_page.refusal
+        );
+        assert_eq!(attached.asked, 0);
     }
 }

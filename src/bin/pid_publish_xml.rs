@@ -35,6 +35,7 @@ use pid_parse::publish::backup_package::{
     PackageDuplicateUids,
 };
 use pid_parse::publish::diff::diff_meta_xml;
+use pid_parse::publish::oracle_exp::{attach_dump, DumpAttachError, DumpAttachment};
 use pid_parse::publish::pid_writer::{
     composition_rel_counts, connectivity_rel_counts, derived_by_native_rule_count,
 };
@@ -822,62 +823,44 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             );
             return Ok(2);
         }
-        let dump_only =
-            pid_parse::publish::oracle_exp::attach_dump_only_components(&mut drawing, &exp_tables)
-                .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        // The library attaches the dump, and reads `--datamap` when it comes
+        // to the first stage that takes one. A stage that finished has its
+        // say here even when a later one refuses: the run ends in that
+        // refusal having said how far the dump got.
+        let mut attached = DumpAttachment::default();
+        let outcome = attach_dump(
+            &mut drawing,
+            &exp_tables,
+            dump_path,
+            &options.plant_name,
+            || match &options.datamap {
+                Some(path) => pid_parse::backup::read_datamap(path)
+                    .map(Some)
+                    .map_err(|error| format!("read {}: {error}", path.display())),
+                None => Ok(None),
+            },
+            &mut attached,
+        );
+        let dump_only = attached.dump_only_components.unwrap_or(0);
         if dump_only > 0 {
             eprintln!(
                 "oracle-exp: {dump_only} PIDPipingComponent from the dump, not drawn in the .pid"
             );
         }
-        let tables = exp_tables
-            .port_tables()
-            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, dump_path);
-        drawing.connectivity_ends = exp_tables
-            .connectivity_ends(&drawing.drawing_uid)
-            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        drawing.exp_relations = exp_tables
-            .composition_relations()
-            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        let units = pid_parse::publish::unit_values::attach_unit_values(&mut drawing, &exp_tables)
-            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        eprintln!(
-            "oracle-exp unit values: {} written, {} left out because the item's class \
-             carries no element for them",
-            units.written, units.left_out
-        );
-        let mut opc_points = exp_tables
-            .opc_points(&drawing.drawing_uid)
-            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        let representations: std::collections::HashSet<&str> = drawing
-            .representations
-            .iter()
-            .map(|representation| representation.uid.as_str())
-            .collect();
-        opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
-        drawing.opc_points = opc_points;
-        let datamap = match &options.datamap {
-            Some(path) => Some(
-                pid_parse::backup::read_datamap(path)
-                    .map_err(|error| format!("read {}: {error}", path.display()))?,
-            ),
-            None => None,
-        };
-        pid_parse::publish::pipeline::attach_pipelines(
-            &mut drawing,
-            &exp_tables,
-            &options.plant_name,
-            datamap.as_ref(),
-        )
-        .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
-        let codelist_values = pid_parse::publish::codelist_values::attach_codelist_values(
-            &mut drawing,
-            &exp_tables,
-            datamap.as_ref(),
-        )
-        .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
-        eprintln!("oracle-exp codelists: {codelist_values} enumerated values");
+        if let Some(units) = attached.unit_values {
+            eprintln!(
+                "oracle-exp unit values: {} written, {} left out because the item's class \
+                 carries no element for them",
+                units.written, units.left_out
+            );
+        }
+        outcome.map_err(|error| match error {
+            DumpAttachError::Dump(error) => format!("read {}: {error}", dump_path.display()),
+            DumpAttachError::DataMap(message) => message,
+        })?;
+        if let Some(codelist_values) = attached.codelist_values {
+            eprintln!("oracle-exp codelists: {codelist_values} enumerated values");
+        }
         eprintln!(
             "oracle-exp pipelines: {} PIDPipeline, {} PipingConnectors, {} FluidSystem, \
              {} fluid codes missing, {} fluid systems unmapped",
@@ -895,12 +878,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             drawing.pipeline_synthesis.fluid_code_missing,
             drawing.pipeline_synthesis.fluid_system_unmapped,
         );
-        if let Some(map) = &datamap {
-            let stored = pid_parse::publish::stored_values::attach_stored_values(
-                &mut drawing,
-                &exp_tables,
-                map,
-            );
+        if let Some(stored) = &attached.stored_values {
             eprintln!(
                 "oracle-exp stored values: {} written, {} labels confirmed, {} labels kept \
                  where the dump says otherwise, {} left out unspelled",
