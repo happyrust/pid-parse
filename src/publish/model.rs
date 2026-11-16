@@ -110,7 +110,9 @@ impl CodelistIndex {
 /// enum for every SQL failure mode.
 #[derive(Debug)]
 pub enum PublishError {
-    /// Generic `SQLite` / rusqlite failure.
+    /// Generic `SQLite` / rusqlite failure. Also what the XML writer makes
+    /// of a `std::fmt::Error`, worded `format: …`, for want of a variant of
+    /// its own: that one is no database failure.
     Sqlite(String),
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),

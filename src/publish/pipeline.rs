@@ -31,10 +31,6 @@ use super::oracle_exp::{ExpError, ExpTables, PipeRunRow};
 use super::pid_load::{PidPipeline, PidPublishDrawing, PipelineSynthesis};
 use crate::backup::{fluid_code_guid, fluid_system_guid, DataMap};
 
-/// DNS namespace UUID from RFC 4122. The pipeline root is version 5 of
-/// this namespace over the name `pid-parse/pipeline`.
-const DNS_NAMESPACE: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
-
 /// Hang synthesized pipelines on connectors this drawing already publishes.
 ///
 /// `datamap` supplies `FluidSystem` and `FluidCode`. Without it the
@@ -198,10 +194,16 @@ fn gcd(mut a: i64, mut b: i64) -> i64 {
 }
 
 /// 32 uppercase hex digits. Stable for one plant and one pipeline name.
+///
+/// A version 5 UUID of `name` in the namespace of the plant. That
+/// namespace is version 5 of `plant` in the pipeline root, and the root is
+/// version 5 of `pid-parse/pipeline` in the DNS namespace of RFC 4122.
+/// The DNS namespace is [`Uuid::NAMESPACE_DNS`], a constant: no text is
+/// parsed for it, so there is no other namespace a UID could be made in
+/// without a word.
 #[must_use]
 pub fn pipeline_uid(plant: &str, name: &str) -> String {
-    let dns = Uuid::parse_str(DNS_NAMESPACE).unwrap_or_else(|_| Uuid::nil());
-    let root = Uuid::new_v5(&dns, b"pid-parse/pipeline");
+    let root = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"pid-parse/pipeline");
     let plant_namespace = Uuid::new_v5(&root, plant.as_bytes());
     let id = Uuid::new_v5(&plant_namespace, name.as_bytes());
     let mut buffer = [0u8; 32];
@@ -302,5 +304,25 @@ mod tests {
         assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_eq!(first, first.to_uppercase());
         assert_ne!(first, pipeline_uid("SQPlant", "25 mm-CI-1901201-B9"));
+    }
+
+    #[test]
+    fn the_uid_is_the_version_5_chain_from_the_dns_namespace() {
+        // Worked out apart from this crate, by SHA-1 as RFC 4122 has a
+        // version 5 UUID: of `pid-parse/pipeline` in the DNS namespace
+        // 6ba7b810-9dad-11d1-80b4-00c04fd430c8, of the plant in that, and
+        // of the name in that.
+        assert_eq!(
+            pipeline_uid("P01", "25 mm-CI-1901201-B9"),
+            "2E52F1CC1D5954A1A405B479A958B3D1"
+        );
+        assert_eq!(
+            pipeline_uid("SQPlant", "25 mm-CI-1901201-B9"),
+            "784526020BD05F2FAF49B683513899FD"
+        );
+        assert_eq!(
+            pipeline_uid("P01", "-PG-1001105-F9"),
+            "85E8B7EE98D55F28B9EC507861703DF2"
+        );
     }
 }

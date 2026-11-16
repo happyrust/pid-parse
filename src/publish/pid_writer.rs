@@ -500,6 +500,8 @@ fn document_block_count(drawing: &PidPublishDrawing, class: &str) -> usize {
 }
 
 /// What a `.pid`-only export never carries, for the reader of the report.
+/// For a drawing published with an Oracle `exp` the first sentence is
+/// another: [`left_out_by_design`].
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "ports: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
     "off-page connector items: the ModelID on an OPC's row is not always the item SmartPlant publishes",
@@ -507,6 +509,29 @@ const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "codelist attributes and concatenated pipeline / component names: they come from the plant database",
     "an attribute two labels on one item disagree about",
 ];
+
+/// The `left_out_by_design` of the coverage report of `drawing`: the
+/// sentences of [`LEFT_OUT_BY_DESIGN`], the first of them as the sources
+/// of the drawing have it. A drawing with an Oracle `exp` attached has
+/// its ports from the dump, and its pipelines too when their synthesis
+/// was attempted. One with no dump attached gets the sentence of a `.pid`
+/// alone, whatever it says of its pipelines: the command line and the
+/// package publisher both attach the dump before they synthesize
+/// pipelines from it. The four sentences after the first are the same
+/// with a dump as without.
+fn left_out_by_design(drawing: &PidPublishDrawing) -> Vec<&'static str> {
+    let [without_a_dump, rest @ ..] = LEFT_OUT_BY_DESIGN;
+    let ports_and_pipelines = match (&drawing.exp, drawing.pipelines_attempted) {
+        (None, _) => without_a_dump,
+        (Some(_), true) => {
+            "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines: synthesized from T_PIPERUN by the PipeLinePublisher name rule; the UID is a UUID v5 of the plant and the name"
+        }
+        (Some(_), false) => {
+            "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines are still not stated"
+        }
+    };
+    std::iter::once(ports_and_pipelines).chain(rest).collect()
+}
 
 /// Render the coverage report that goes beside a `.pid`-only export: the
 /// drawing, the counts of what the file named and what was written, the
@@ -652,19 +677,9 @@ pub(crate) fn pid_coverage_json(
         "classes": classes,
         "classes_total": classes_total,
         "left_out": left_out,
-        "left_out_by_design": LEFT_OUT_BY_DESIGN,
+        "left_out_by_design": left_out_by_design(drawing),
     });
     if let Some(exp) = &drawing.exp {
-        if let Some(list) = report
-            .get_mut("left_out_by_design")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            list[0] = json!(if drawing.pipelines_attempted {
-                "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines: synthesized from T_PIPERUN by the PipeLinePublisher name rule; the UID is a UUID v5 of the plant and the name"
-            } else {
-                "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines are still not stated"
-            });
-        }
         let piping = drawing
             .ports
             .iter()
@@ -1288,6 +1303,58 @@ mod tests {
             Some(LEFT_OUT_BY_DESIGN.len())
         );
         assert!(text.ends_with("}\n"));
+    }
+
+    #[test]
+    fn left_out_by_design_says_what_a_dump_adds_and_keeps_the_rest() {
+        use crate::publish::pid_load::ExpPublish;
+        let listed = |drawing: &PidPublishDrawing| -> Vec<String> {
+            let text = write_pid_coverage_json(drawing, Path::new("a.pid"));
+            let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+            report["left_out_by_design"]
+                .as_array()
+                .expect("a list")
+                .iter()
+                .map(|sentence| sentence.as_str().expect("a sentence").to_string())
+                .collect()
+        };
+        let with_a_dump = |pipelines_attempted| {
+            let mut drawing = drawing();
+            drawing.exp = Some(ExpPublish {
+                dump_path: "Export.dmp".to_string(),
+                nominal_diameter_unspelled: 0,
+            });
+            drawing.pipelines_attempted = pipelines_attempted;
+            drawing
+        };
+
+        // A `.pid` alone: the five sentences as they stand.
+        let alone = listed(&drawing());
+        assert_eq!(alone, LEFT_OUT_BY_DESIGN);
+        assert_eq!(
+            alone[0],
+            "ports: a .pid does not state the point number, so they are not emitted; pipelines are not stated either"
+        );
+        // Without a dump no pipeline is synthesized, whatever the drawing
+        // says was attempted.
+        let mut attempted_alone = drawing();
+        attempted_alone.pipelines_attempted = true;
+        assert_eq!(listed(&attempted_alone), LEFT_OUT_BY_DESIGN);
+
+        // With a dump the first sentence is another, and the four after it
+        // are the same.
+        let ports = listed(&with_a_dump(false));
+        assert_eq!(
+            ports[0],
+            "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines are still not stated"
+        );
+        assert_eq!(ports[1..], LEFT_OUT_BY_DESIGN[1..]);
+        let pipelines = listed(&with_a_dump(true));
+        assert_eq!(
+            pipelines[0],
+            "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines: synthesized from T_PIPERUN by the PipeLinePublisher name rule; the UID is a UUID v5 of the plant and the name"
+        );
+        assert_eq!(pipelines[1..], LEFT_OUT_BY_DESIGN[1..]);
     }
 
     #[test]

@@ -14,10 +14,21 @@
 //! `.pid` files alone.
 //!
 //! One drawing that fails is recorded and the rest are still written. The
-//! index is `_Index.json` in the output directory; every `.pid` entry is
-//! accounted in it exactly once — paired to a model row, classified as a
-//! template under a `Template Files` folder, or listed under
-//! `unmatched_pid_entries`.
+//! index is `_Index.json` in the output directory; every `.pid` entry the
+//! run could list is accounted in it exactly once — paired to a model row,
+//! classified as a template under a `Template Files` folder, or listed
+//! under `unmatched_pid_entries`.
+//!
+//! `failed` in the index counts more than drawings. It is one for each
+//! drawing that was not written, which has a row of `drawings` whose
+//! `files` is empty, and one for each `PlantData` zip that could not be
+//! opened and each entry of a zip whose header could not be read. Those
+//! two have no row and are in none of the `.pid` counts: a sentence of
+//! `problems` is all that says them. A zip that cannot be opened counts
+//! one however many drawings it holds, and an entry that cannot be read
+//! counts one whether it is a `.pid` or not. For a SQL Server package the
+//! zips are only listed, so `failed` can be above 0 with every drawing
+//! written.
 //!
 //! A `.pid` entry is unpacked into memory. One that would unpack to more
 //! than 512 MiB is not unpacked: it is a drawing that fails, by name.
@@ -73,7 +84,16 @@ impl std::fmt::Display for BackupPublishError {
 /// What [`publish_backup_package`] wrote.
 #[derive(Debug)]
 pub struct BackupPublishReport {
-    /// Drawings that were not written.
+    /// What the run could not do, counted: the `failed` of `_Index.json`.
+    /// One for each drawing that was not written, which has a row of the
+    /// index's `drawings` whose `files` is empty, and one for each
+    /// `PlantData` zip that could not be opened and each entry of a zip
+    /// whose header could not be read. Those two have no row: a sentence
+    /// of the index's `problems` is all that says them. So this is not a
+    /// number of drawings. A zip that cannot be opened counts one however
+    /// many drawings it holds, and an entry that cannot be read counts one
+    /// whether it is a `.pid` or not. For a SQL Server package, whose zips
+    /// are only listed, it can be above 0 with every drawing written.
     pub failed: usize,
     /// Drawings successfully written (all three output files —
     /// `_Data.xml`, `_Meta.xml`, `_Coverage.json` — in both modes).
@@ -290,12 +310,16 @@ impl PackageGateReport {
 ///
 /// # Errors
 ///
-/// Returns [`BackupPublishError::Usage`] when `Export.dmp` has an
-/// unrecognised header — or is a SQL Server MTF tape while this build
-/// lacks the `backup-mdf` feature. Returns [`BackupPublishError::Io`]
-/// when the directory, the dump, or a `PlantData` zip cannot be opened.
-/// A single drawing's failure is counted on the report and does not
-/// return an error.
+/// Returns [`BackupPublishError::Usage`] when the directory holds no
+/// `Manifest.txt`, when `Export.dmp` has an unrecognised header, or when
+/// it is a SQL Server MTF tape while this build lacks the `backup-mdf`
+/// feature. Returns [`BackupPublishError::Io`] when the directory, the
+/// dump or the data map of the package cannot be read, or when the output
+/// directory or `_Index.json` cannot be written. A drawing that fails
+/// returns no error, and neither does a `PlantData` zip or an entry of
+/// one that cannot be opened: each is counted in
+/// [`BackupPublishReport::failed`] and said among the `problems` of
+/// `_Index.json`.
 ///
 /// `reference_dir` 给定时，每个写出的图都会与 `<reference_dir>/<图名>_Data.xml` 打分。
 pub fn publish_backup_package(

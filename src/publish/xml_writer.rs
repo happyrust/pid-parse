@@ -2067,9 +2067,15 @@ fn map_bool(value: &str) -> &'static str {
     }
 }
 
-/// Convert a `std::fmt::Error` into a [`PublishError`] so the
-/// writer's `?`-operator chain stays uniform with the `SQLite`
-/// loader's.
+/// A `std::fmt::Error` as a [`PublishError`], so that a `writeln!` here
+/// can be followed by `?`.
+///
+/// It goes out as [`PublishError::Sqlite`], worded `format: …`, and that
+/// is the wrong name for it: no database is in it. [`PublishError`] has no
+/// variant of its own for it, and giving it one would break the callers
+/// that match on the enum, which is not `#[non_exhaustive]`. Every use
+/// writes into a `String`, which takes whatever it is given, so the error
+/// could only come from the `Display` of a value written.
 fn fmt_err(err: std::fmt::Error) -> PublishError {
     PublishError::Sqlite(format!("format: {err}"))
 }
