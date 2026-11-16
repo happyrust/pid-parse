@@ -3164,6 +3164,113 @@ mod tests {
         }
     }
 
+    /// A drawing the dump lists and cannot be attached to fails by name
+    /// and reason, and the rest of the package is still published. The
+    /// package is the manifest, the `PlantData` zip and the dump of the
+    /// committed one, with one byte of the dump changed: the `INSERT` of
+    /// `T_PIPINGPOINT` no longer names the column the port projection
+    /// reads a point's number from. The dump is still read, so the
+    /// package publishes. The port tables are refused, so the attach
+    /// fails, in the words of that refusal, for each of the six drawings
+    /// found by the `SP_ID` of their row. The first entry is the shell: it
+    /// is found by `PATH`, attaches nothing, and is written.
+    #[test]
+    fn a_drawing_the_dump_cannot_be_attached_to_fails_by_name_and_reason() {
+        const SHELL: &str = "zcgc/A3jqz/001.pid";
+        const ATTACHED: [&str; 6] = [
+            "zcgc/A3jqz/002.pid",
+            "zcgc/A3jqz/222.pid",
+            "zcgc/A3jqz/DWG-0201GP01-01.pid",
+            "zcgc/A3jqz/DWG-0201GP06-01.pid",
+            "zcgc/A3jqz/DWG-0202GP06-01.pid",
+            "zcgc/A4jqz/DWG-0104GP01-08.pid",
+        ];
+        let committed =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/DWG-0202GP06-01_p");
+        let mut dump = fs::read(committed.join("Export.dmp")).expect("the committed dump");
+        // One letter of the column's name, in the column list of the
+        // table's one `INSERT`: no byte moves, and the table still frames.
+        let find = |bytes: &[u8], wanted: &[u8]| {
+            bytes
+                .windows(wanted.len())
+                .position(|window| window == wanted)
+        };
+        let insert = find(&dump, br#"INSERT INTO "T_PIPINGPOINT" ("#).expect("the INSERT");
+        let list = find(&dump[insert..], b")").expect("the end of the column list");
+        let column = find(&dump[insert..insert + list], br#""PIPINGPOINTNUMBER""#)
+            .expect("the column, in the list");
+        dump[insert + column + 1] = b'X';
+        let tables = ExpTables::read(&dump).expect("the dump is still read");
+        let Err(refusal) = tables.port_tables() else {
+            panic!("the port tables were read");
+        };
+        let refusal = refusal.to_string();
+        assert!(refusal.starts_with("T_PIPINGPOINT: "), "{refusal}");
+
+        let scratch = WriteScratch::new("attach-fails");
+        let package = scratch.0.join("package");
+        fs::create_dir_all(&package).expect("the package directory");
+        for name in ["Manifest.txt", "PlantData~2~711.zip"] {
+            fs::copy(committed.join(name), package.join(name)).expect("a file of the package");
+        }
+        fs::write(package.join("Export.dmp"), &dump).expect("the dump");
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!(
+            (
+                report.written,
+                report.failed,
+                report.pid_entries,
+                report.shells
+            ),
+            (1, 6, 7, 1),
+            "{index}"
+        );
+        for (key, count) in [
+            ("pid_entries", 7),
+            ("drawing_rows", 7),
+            ("paired", 1),
+            ("failed", 6),
+            ("shells", 1),
+        ] {
+            assert_eq!(index[key], count, "{key}: {index}");
+        }
+        // One sentence for each drawing that fails, by its zip and entry.
+        let sentences: Vec<String> = ATTACHED
+            .iter()
+            .map(|entry| format!("PlantData~2~711.zip {entry}: {refusal}"))
+            .collect();
+        assert_eq!(problems, sentences, "{index}");
+
+        let drawings = index["drawings"].as_array().expect("drawings");
+        let [shell, failed @ ..] = drawings.as_slice() else {
+            panic!("the shell and the six: {index}");
+        };
+        assert_eq!(shell["zip_entry"], SHELL, "{shell}");
+        assert_eq!(shell["uid_from"], "T_DRAWING.PATH", "{shell}");
+        assert_eq!(shell["files"].as_array().map(Vec::len), Some(3), "{shell}");
+        assert_eq!(failed.len(), ATTACHED.len(), "{index}");
+        for (drawing, entry) in failed.iter().zip(ATTACHED) {
+            assert_eq!(drawing["zip_entry"], entry, "{drawing}");
+            // The row says the reason alone.
+            assert_eq!(drawing["problems"], json!([refusal]), "{drawing}");
+            assert_eq!(drawing["files"], json!([]), "{drawing}");
+        }
+        // Nothing of a drawing that failed is in the output directory.
+        assert_eq!(
+            names_in(&out),
+            [
+                "001_Coverage.json",
+                "001_Data.xml",
+                "001_Meta.xml",
+                "_Index.json"
+            ]
+        );
+    }
+
     /// A drawing written with a UID on more than one block is one of the
     /// index's `problems`, as `describe` words it, and one for the report.
     /// Nothing else moves: the drawing is counted where it is written. No
