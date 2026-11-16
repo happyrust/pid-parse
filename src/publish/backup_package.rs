@@ -19,12 +19,15 @@
 //! template under a `Template Files` folder, or listed under
 //! `unmatched_pid_entries`.
 //!
-//! A drawing's three files are written all of them or none, and they and
-//! the index each take their name only once written whole
-//! ([`write_atomic`]), so a run that is stopped leaves no part of a
-//! document under a document's name. The output directory is not emptied
-//! first: files an earlier run left there are not removed, and
-//! `_Index.json` is what says which files this run wrote.
+//! A drawing's three files and the index each take their name only once
+//! written whole ([`write_atomic`]), so a run that is stopped leaves no
+//! part of a document under a document's name; it can leave temporary
+//! files, and a drawing with only some of its three files. When one of
+//! the three cannot be written, those already in place are removed again:
+//! a drawing the index lists without files has none from this run. The
+//! output directory is not emptied first: files an earlier run left there
+//! are not removed, and `_Index.json` is what says which files this run
+//! wrote.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -1077,6 +1080,11 @@ fn shell_drawing(uid: String, name: String) -> PidPublishDrawing {
 /// earlier run left under them are replaced one by one, so when a later
 /// name cannot be taken, the earlier run's files under the names already
 /// taken are gone with this run's, and those under the others stay.
+///
+/// This is all or none against a write that fails, not against a run that
+/// is stopped: stopped between two of the renames, it leaves the files
+/// that took their names, each whole, and the others under their
+/// temporary names.
 fn write_three(dir: &Path, stem: &str, xml: &str, meta: &str, report: &str) -> Result<(), String> {
     let parts = [
         ("_Data.xml", xml),

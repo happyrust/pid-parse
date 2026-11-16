@@ -146,8 +146,9 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          again.\n\n\
          Every file is first written under a temporary name beside its own,\n\
          <name>.<process id>.tmp, and renamed once it is whole. An interrupted\n\
-         run therefore leaves no partly written document, at most a file\n\
-         whose name ends in .tmp, which can be deleted.\n\n\
+         run therefore leaves no partly written document. It may leave files\n\
+         whose names end in .tmp, which can be deleted, and a drawing with\n\
+         only some of its three files.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
