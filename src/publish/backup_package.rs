@@ -379,83 +379,32 @@ fn publish_package(
         BackupPublishError::Io(format!("create {}: {error}", out_dir.display()))
     })?;
 
-    let mut failed = 0usize;
-    let mut written = 0usize;
-    let mut shells = 0usize;
-    let mut pid_entries = 0usize;
-    let mut paired = 0usize;
-    let mut objects = 0usize;
-    let mut values = 0usize;
-    let mut relationships = 0usize;
-    let mut piping_ports = 0usize;
-    let mut signal_ports = 0usize;
-    let mut connectivity_rels = 0usize;
-    let mut opc_branch_points = 0usize;
-    let mut equipment_composition_rels = 0usize;
-    let mut item_note_rels = 0usize;
-    let mut pipelines = 0usize;
-    let mut piping_connectors = 0usize;
-    let mut template_pid_entries = 0usize;
-    let mut entry_names: Vec<String> = Vec::new();
-    let mut paired_entries: HashSet<String> = HashSet::new();
-    let mut written_names = HashSet::new();
-    let mut drawings = Vec::new();
-    let mut problems: Vec<String> = scan
-        .problems
-        .iter()
-        .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
-        .collect();
-    let mut chain_faults: Vec<PackageChainFault> = Vec::new();
-    let mut duplicate_uids: Vec<PackageDuplicateUids> = Vec::new();
-    let mut gate = reference_dir.map(PackageGate::new);
+    let mut tally = PublishTally {
+        problems: scan
+            .problems
+            .iter()
+            .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
+            .collect(),
+        gate: reference_dir.map(PackageGate::new),
+        ..PublishTally::default()
+    };
 
     for plant in &scan.plant_data {
         if !matches!(plant.format, crate::backup::RefDataFormat::Zip) {
             continue;
         }
-        match publish_zip(
+        if let Err(problem) = publish_zip(
             plant,
             out_dir,
             plant_name,
             loaded.as_ref(),
             max_pid_entry_bytes,
-            &mut PublishTally {
-                failed: &mut failed,
-                written: &mut written,
-                shells: &mut shells,
-                pid_entries: &mut pid_entries,
-                paired: &mut paired,
-                objects: &mut objects,
-                values: &mut values,
-                relationships: &mut relationships,
-                piping_ports: &mut piping_ports,
-                signal_ports: &mut signal_ports,
-                connectivity_rels: &mut connectivity_rels,
-                opc_branch_points: &mut opc_branch_points,
-                equipment_composition_rels: &mut equipment_composition_rels,
-                item_note_rels: &mut item_note_rels,
-                pipelines: &mut pipelines,
-                piping_connectors: &mut piping_connectors,
-                template_pid_entries: &mut template_pid_entries,
-                entry_names: &mut entry_names,
-                paired_entries: &mut paired_entries,
-                written_names: &mut written_names,
-                drawings: &mut drawings,
-                problems: &mut problems,
-                chain_faults: &mut chain_faults,
-                duplicate_uids: &mut duplicate_uids,
-                gate: gate.as_mut(),
-            },
+            &mut tally,
         ) {
-            Ok(()) => {}
-            Err(detail) => {
-                problems.push(detail);
-                failed += 1;
-            }
+            tally.fail_unlisted(problem);
         }
     }
 
-    let gate = gate.map(|gate| gate.report);
     let export_kind = if dump_path.is_some() {
         "OracleExp"
     } else {
@@ -465,48 +414,49 @@ fn publish_package(
         Some(loaded) => loaded.drawings.len(),
         None => 0,
     };
-    let excluded_from_totals = excluded_from_totals(&drawings);
+    let excluded_from_totals = excluded_from_totals(&tally.drawings);
     // Every `.pid` entry is counted exactly once — paired to a model row
     // (`paired`), classified as a template (`template_pid_entries`), or
     // listed here: the package shipped the `.pid`, but the dump's
     // `T_DRAWING` does not hold it. With no dump at all every entry lands
     // in `unmatched_pid_entries`; that is the intended, machine-checkable
     // accounting for a `.pid`-only package.
-    let mut unmatched_pid_entries: Vec<String> = entry_names
+    let mut unmatched_pid_entries: Vec<String> = tally
+        .entry_names
         .iter()
-        .filter(|entry| !paired_entries.contains(*entry))
+        .filter(|entry| !tally.paired_entries.contains(*entry))
         .cloned()
         .collect();
     unmatched_pid_entries.sort();
     let index = json!({
         "package": package_dir.display().to_string(),
         "export": export_kind,
-        "pid_entries": pid_entries,
+        "pid_entries": tally.pid_entries,
         "drawing_rows": drawing_rows,
-        "paired": paired,
-        "failed": failed,
-        "shells": shells,
-        "objects": objects,
-        "values": values,
-        "relationships": relationships,
+        "paired": tally.paired,
+        "failed": tally.failed,
+        "shells": tally.shells,
+        "objects": tally.objects,
+        "values": tally.values,
+        "relationships": tally.relationships,
         "excluded_from_totals": excluded_from_totals,
-        "piping_ports": piping_ports,
-        "signal_ports": signal_ports,
-        "connectivity_rels": connectivity_rels,
-        "opc_branch_points": opc_branch_points,
-        "equipment_composition_rels": equipment_composition_rels,
-        "item_note_rels": item_note_rels,
-        "pipelines": pipelines,
-        "piping_connectors": piping_connectors,
+        "piping_ports": tally.piping_ports,
+        "signal_ports": tally.signal_ports,
+        "connectivity_rels": tally.connectivity_rels,
+        "opc_branch_points": tally.opc_branch_points,
+        "equipment_composition_rels": tally.equipment_composition_rels,
+        "item_note_rels": tally.item_note_rels,
+        "pipelines": tally.pipelines,
+        "piping_connectors": tally.piping_connectors,
         "pipeline_uids": if dump_path.is_some() {
             "synthesized"
         } else {
             "not synthesized"
         },
-        "template_pid_entries": template_pid_entries,
+        "template_pid_entries": tally.template_pid_entries,
         "unmatched_pid_entries": unmatched_pid_entries,
-        "drawings": drawings,
-        "problems": problems,
+        "drawings": tally.drawings,
+        "problems": tally.problems,
     });
     let index_path = out_dir.join("_Index.json");
     let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
@@ -515,16 +465,16 @@ fn publish_package(
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
     })?;
     Ok(BackupPublishReport {
-        failed,
-        written,
+        failed: tally.failed,
+        written: tally.written,
         index_path,
-        pid_entries,
-        shells,
-        gate,
-        chain_faults,
+        pid_entries: tally.pid_entries,
+        shells: tally.shells,
+        gate: tally.gate.map(|gate| gate.report),
+        chain_faults: tally.chain_faults,
         // No drawing of this branch goes through the database line.
         shortfalls: Vec::new(),
-        duplicate_uids,
+        duplicate_uids: tally.duplicate_uids,
     })
 }
 
@@ -567,37 +517,163 @@ fn load_dump(path: &Path) -> Result<LoadedDump, BackupPublishError> {
     })
 }
 
-struct PublishTally<'a> {
-    failed: &'a mut usize,
-    written: &'a mut usize,
-    shells: &'a mut usize,
-    pid_entries: &'a mut usize,
-    paired: &'a mut usize,
-    objects: &'a mut usize,
-    values: &'a mut usize,
-    relationships: &'a mut usize,
-    piping_ports: &'a mut usize,
-    signal_ports: &'a mut usize,
-    connectivity_rels: &'a mut usize,
-    opc_branch_points: &'a mut usize,
-    equipment_composition_rels: &'a mut usize,
-    item_note_rels: &'a mut usize,
-    pipelines: &'a mut usize,
-    piping_connectors: &'a mut usize,
-    template_pid_entries: &'a mut usize,
-    entry_names: &'a mut Vec<String>,
-    paired_entries: &'a mut HashSet<String>,
-    written_names: &'a mut HashSet<String>,
-    drawings: &'a mut Vec<Value>,
+/// Where the UID of a drawing listed in `_Index.json` came from: the
+/// drawing's `uid_from`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UidFrom {
+    /// The `DrawingNo` the `.pid` states. No row of a dump holds the
+    /// drawing: the package has no dump, or the dump is another revision's.
+    DrawingNo,
+    /// The `DrawingNo` the `.pid` states, and it is the `SP_ID` of a
+    /// `T_DRAWING` row of the dump.
+    DumpSpId,
+    /// The `SP_ID` of the `T_DRAWING` row whose `PATH` is the zip entry.
+    /// The `.pid` states no `DrawingNo`, and the drawing is a shell.
+    DumpPath,
+    /// The `SP_ID` of a `T_Drawing` row of the SQL Server branch, which
+    /// publishes every drawing from its row.
+    #[cfg(feature = "backup-mdf")]
+    DatabaseSpId,
+}
+
+impl UidFrom {
+    /// What `_Index.json` states, letter for letter as it always has. The
+    /// Oracle branch spells the table `T_DRAWING` and the SQL Server branch
+    /// `T_Drawing`, and a reader of the index may match on either.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::DrawingNo => "DrawingNo",
+            Self::DumpSpId => "T_DRAWING.SP_ID",
+            Self::DumpPath => "T_DRAWING.PATH",
+            #[cfg(feature = "backup-mdf")]
+            Self::DatabaseSpId => "T_Drawing.SP_ID",
+        }
+    }
+}
+
+/// What a run over a package's `PlantData` zips has counted and listed so
+/// far: the totals and the lists of `_Index.json` and of the report.
+#[derive(Default)]
+struct PublishTally {
+    failed: usize,
+    written: usize,
+    shells: usize,
+    pid_entries: usize,
+    paired: usize,
+    objects: usize,
+    values: usize,
+    relationships: usize,
+    piping_ports: usize,
+    signal_ports: usize,
+    connectivity_rels: usize,
+    opc_branch_points: usize,
+    equipment_composition_rels: usize,
+    item_note_rels: usize,
+    pipelines: usize,
+    piping_connectors: usize,
+    template_pid_entries: usize,
+    entry_names: Vec<String>,
+    paired_entries: HashSet<String>,
+    written_names: HashSet<String>,
+    drawings: Vec<Value>,
     /// The sentences `_Index.json` lists as `problems`.
-    problems: &'a mut Vec<String>,
+    problems: Vec<String>,
     /// The chain faults of the drawings read, for the report. Each is also
     /// one of `problems`.
-    chain_faults: &'a mut Vec<PackageChainFault>,
+    chain_faults: Vec<PackageChainFault>,
     /// The drawings written with a UID on more than one block, for the
     /// report. Each is also one of `problems`.
-    duplicate_uids: &'a mut Vec<PackageDuplicateUids>,
-    gate: Option<&'a mut PackageGate>,
+    duplicate_uids: Vec<PackageDuplicateUids>,
+    gate: Option<PackageGate>,
+}
+
+impl PublishTally {
+    /// One of `problems`, under the name of the `.pid` entry it is about.
+    fn problem(&mut self, zip_file: &str, zip_entry: &str, detail: &str) {
+        self.problems
+            .push(format!("{zip_file} {zip_entry}: {detail}"));
+    }
+
+    /// The `.pid` entry `zip_entry` of `zip_file` fails for `detail`. That
+    /// is one failure, one of `problems` under the entry's name, and a row
+    /// of `drawings` that holds the entry's name and `detail` and nothing
+    /// else.
+    fn fail(&mut self, zip_file: &str, zip_entry: &str, detail: &str) {
+        self.fail_listed_as(zip_file, zip_entry, detail, detail);
+    }
+
+    /// [`Self::fail`], where the drawing's row words the reason as
+    /// `listed` and not as `detail`.
+    fn fail_listed_as(&mut self, zip_file: &str, zip_entry: &str, detail: &str, listed: &str) {
+        self.problem(zip_file, zip_entry, detail);
+        self.failed += 1;
+        self.drawings
+            .push(failed_drawing(zip_file, zip_entry, listed));
+    }
+
+    /// A failure that has no `.pid` entry to be listed under: a zip that
+    /// cannot be opened, or an entry of one whose header cannot be read.
+    /// That is one failure and one of `problems`, `problem` being the whole
+    /// sentence, and no row of `drawings`.
+    fn fail_unlisted(&mut self, problem: String) {
+        self.problems.push(problem);
+        self.failed += 1;
+    }
+
+    /// A chain stream of a drawing that does not hold: one for the report
+    /// and one of `problems`. The index says it too because the drawing may
+    /// well be written and counted as written, and a reader of the index
+    /// alone would not know its delivery is short.
+    fn chain_fault(&mut self, fault: PackageChainFault) {
+        self.problems.push(fault.describe());
+        self.chain_faults.push(fault);
+    }
+
+    /// A drawing written with a UID on more than one block: one for the
+    /// report and one of `problems`. The drawing still counts as written.
+    fn duplicates(&mut self, duplicates: PackageDuplicateUids) {
+        self.problems.push(duplicates.describe());
+        self.duplicate_uids.push(duplicates);
+    }
+
+    /// A drawing whose three files are written, counted. It is paired when
+    /// a row of the dump holds it. When that row was found by the entry's
+    /// path the drawing is a shell, and its objects, values and
+    /// relationships (`counts`) stay out of the totals:
+    /// [`excluded_from_totals`] declares them. `oracle` is the `oracle_exp`
+    /// of the drawing's coverage report, whose counts add to the totals of
+    /// the same names.
+    fn count_written(
+        &mut self,
+        zip_file: &str,
+        zip_entry: &str,
+        uid_from: UidFrom,
+        counts: (usize, usize, usize),
+        oracle: Option<&Value>,
+    ) {
+        self.written += 1;
+        if matches!(uid_from, UidFrom::DumpSpId | UidFrom::DumpPath) {
+            self.paired += 1;
+            self.paired_entries.insert(entry_key(zip_file, zip_entry));
+        }
+        if uid_from == UidFrom::DumpPath {
+            self.shells += 1;
+        } else {
+            self.objects += counts.0;
+            self.values += counts.1;
+            self.relationships += counts.2;
+        }
+        if let Some(oracle) = oracle {
+            self.piping_ports += json_usize(oracle, "piping_ports");
+            self.signal_ports += json_usize(oracle, "signal_ports");
+            self.connectivity_rels += json_usize(oracle, "connectivity_rels");
+            self.opc_branch_points += json_usize(oracle, "opc_branch_points");
+            self.equipment_composition_rels += json_usize(oracle, "equipment_composition_rels");
+            self.item_note_rels += json_usize(oracle, "item_note_rels");
+            self.pipelines += json_usize(oracle, "pipelines");
+            self.piping_connectors += json_usize(oracle, "piping_connectors");
+        }
+    }
 }
 
 /// The most bytes a `.pid` entry of a `PlantData` zip may unpack to.
@@ -636,13 +712,16 @@ fn read_entry_within(entry: &mut impl Read, stated: u64, limit: u64) -> Result<V
     Ok(bytes)
 }
 
+/// Publish the `.pid` entries of one `PlantData` zip, counting and listing
+/// each in `tally`. The error is that the zip could not be opened, as the
+/// sentence for the index's `problems`; counting it is the caller's.
 fn publish_zip(
     plant: &PlantDataFile,
     out_dir: &Path,
     plant_name: &str,
     loaded: Option<&LoadedDump>,
     max_pid_entry_bytes: u64,
-    tally: &mut PublishTally<'_>,
+    tally: &mut PublishTally,
 ) -> Result<(), String> {
     let file = fs::File::open(&plant.full_path)
         .map_err(|error| format!("open {}: {error}", plant.full_path.display()))?;
@@ -652,10 +731,7 @@ fn publish_zip(
         let mut entry = match archive.by_index(index) {
             Ok(entry) => entry,
             Err(error) => {
-                tally
-                    .problems
-                    .push(format!("{} entry {index}: {error}", plant.file_name));
-                *tally.failed += 1;
+                tally.fail_unlisted(format!("{} entry {index}: {error}", plant.file_name));
                 continue;
             }
         };
@@ -667,12 +743,12 @@ fn publish_zip(
         if !zip_entry.to_ascii_lowercase().ends_with(".pid") {
             continue;
         }
-        *tally.pid_entries += 1;
+        tally.pid_entries += 1;
         if is_template_pid_entry(&zip_entry) {
             // A template ships in the reference-data tree: it is not a
             // drawing, so it is neither published nor reported as a `.pid`
             // the model store lost.
-            *tally.template_pid_entries += 1;
+            tally.template_pid_entries += 1;
             continue;
         }
         tally
@@ -682,26 +758,31 @@ fn publish_zip(
         let bytes = match read_entry_within(&mut entry, stated, max_pid_entry_bytes) {
             Ok(bytes) => bytes,
             Err(detail) => {
-                tally
-                    .problems
-                    .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-                *tally.failed += 1;
-                tally.drawings.push(failed_drawing(
+                // The drawing's row says `read: ` before the reason, and
+                // the index's `problems` does not.
+                tally.fail_listed_as(
                     &plant.file_name,
                     &zip_entry,
+                    &detail,
                     &format!("read: {detail}"),
-                ));
+                );
                 continue;
             }
         };
         drop(entry);
-        publish_one(
+        if let Err(detail) = publish_one(
             plant, &zip_entry, &bytes, out_dir, plant_name, loaded, tally,
-        );
+        ) {
+            tally.fail(&plant.file_name, &zip_entry, &detail);
+        }
     }
     Ok(())
 }
 
+/// Publish one `.pid` entry of a `PlantData` zip: write the drawing's three
+/// files, and count and list it in `tally`. The error is why the entry
+/// fails, as the sentence for its `problems`; counting and listing the
+/// failure is the caller's.
 fn publish_one(
     plant: &PlantDataFile,
     zip_entry: &str,
@@ -709,8 +790,8 @@ fn publish_one(
     out_dir: &Path,
     plant_name: &str,
     loaded: Option<&LoadedDump>,
-    tally: &mut PublishTally<'_>,
-) {
+    tally: &mut PublishTally,
+) -> Result<(), String> {
     let stem = entry_stem(zip_entry);
     // One read: the drawing, and the chain streams of it that do not hold.
     // Those are kept whatever becomes of the drawing below — a stream that
@@ -718,75 +799,57 @@ fn publish_one(
     let loaded_drawing = match read_publish_from_reader(std::io::Cursor::new(bytes), &stem) {
         Ok(read) => {
             for fault in read.chain_faults {
-                let fault = PackageChainFault {
+                tally.chain_fault(PackageChainFault {
                     zip_file: plant.file_name.clone(),
                     zip_entry: zip_entry.to_string(),
                     fault,
-                };
-                // The index says it too: the drawing below may well be
-                // written and counted as written, and a reader of the
-                // index alone would not know its delivery is short.
-                tally.problems.push(fault.describe());
-                tally.chain_faults.push(fault);
+                });
             }
             read.drawing
         }
         Err(error) => Err(error),
     };
-    let mut uid_from = "DrawingNo";
-    let mut drawing = match loaded_drawing {
+    // The drawing, where its UID came from, and the row of the dump that
+    // holds it when one does.
+    let (mut drawing, uid_from, row) = match loaded_drawing {
         Ok(mut drawing) => {
             if let Some(row) = loaded.and_then(|loaded| row_by_id(loaded, &drawing.drawing_uid)) {
                 if !row.name.is_empty() {
                     drawing.drawing_name = row.name.clone();
                 }
-                uid_from = "T_DRAWING.SP_ID";
+                (drawing, UidFrom::DumpSpId, Some(row))
+            } else {
+                (drawing, UidFrom::DrawingNo, None)
             }
-            drawing
         }
         Err(PidLoadError::NoDrawing) => {
             let Some(row) = loaded.and_then(|loaded| row_by_path(loaded, zip_entry)) else {
-                let detail =
-                    "no P&IDAttributes row carries a DrawingNo, and T_DRAWING.PATH does not match";
-                tally
-                    .problems
-                    .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-                *tally.failed += 1;
-                tally
-                    .drawings
-                    .push(failed_drawing(&plant.file_name, zip_entry, detail));
-                return;
+                return Err(
+                    "no P&IDAttributes row carries a DrawingNo, and T_DRAWING.PATH does not match"
+                        .to_string(),
+                );
             };
-            uid_from = "T_DRAWING.PATH";
-            shell_drawing(row.id.clone(), row.name.clone())
+            (
+                shell_drawing(row.id.clone(), row.name.clone()),
+                UidFrom::DumpPath,
+                Some(row),
+            )
         }
-        Err(error) => {
-            let detail = error.to_string();
-            tally
-                .problems
-                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-            *tally.failed += 1;
-            tally
-                .drawings
-                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-            return;
-        }
+        Err(error) => return Err(error.to_string()),
     };
 
     // Only a sheet the dump lists is this dump's revision: another revision
     // could share model item UIDs with it and pick up ports, compositions or
     // pipelines that are not its own, so it is published from the `.pid` alone.
-    let dump_in_run = loaded.is_some() && uid_from == "T_DRAWING.SP_ID";
+    let dump_in_run = loaded.is_some() && uid_from == UidFrom::DumpSpId;
     let mut notes = Vec::new();
-    if loaded.is_some() && uid_from == "DrawingNo" {
+    if loaded.is_some() && uid_from == UidFrom::DrawingNo {
         let note = format!(
             "DocUID {} has no T_DRAWING row: the dump is another revision of this sheet, \
              so it was published from the .pid alone",
             drawing.drawing_uid
         );
-        tally
-            .problems
-            .push(format!("{} {zip_entry}: {note}", plant.file_name));
+        tally.problem(&plant.file_name, zip_entry, &note);
         notes.push(note);
     }
     if let Some(loaded) = loaded.filter(|_| dump_in_run) {
@@ -815,23 +878,10 @@ fn publish_one(
             }
         }
         if let Err(error) = attached {
-            let detail = error.to_string();
-            tally
-                .problems
-                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-            *tally.failed += 1;
-            tally
-                .drawings
-                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-            return;
+            return Err(error.to_string());
         }
     }
 
-    let row = loaded.and_then(|loaded| match uid_from {
-        "T_DRAWING.PATH" => row_by_path(loaded, zip_entry),
-        "T_DRAWING.SP_ID" => row_by_id(loaded, &drawing.drawing_uid),
-        _ => None,
-    });
     if drawing.drawing_name.is_empty() {
         drawing.drawing_name = if drawing.drawing_uid.is_empty() {
             stem
@@ -841,60 +891,16 @@ fn publish_one(
     }
     let file_stem = output_stem(&drawing.drawing_name);
     if !tally.written_names.insert(file_stem.to_lowercase()) {
-        let detail = format!("output name {file_stem} is already used");
-        tally
-            .problems
-            .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-        *tally.failed += 1;
-        tally
-            .drawings
-            .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-        return;
+        return Err(format!("output name {file_stem} is already used"));
     }
     let xml = write_pid_data_xml(&drawing, plant_name);
-    let meta = match write_pid_meta_xml(&drawing, plant_name) {
-        Ok(meta) => meta,
-        Err(error) => {
-            let detail = error.to_string();
-            tally
-                .problems
-                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-            *tally.failed += 1;
-            tally
-                .drawings
-                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-            return;
-        }
-    };
+    let meta = write_pid_meta_xml(&drawing, plant_name).map_err(|error| error.to_string())?;
     let source = PathBuf::from(format!("{}:{zip_entry}", plant.file_name));
     let report = pid_coverage_json(&drawing, &source, &file_stem);
-    let census = match pid_publish_census(&xml) {
-        Ok(census) => census,
-        Err(error) => {
-            let detail = error.to_string();
-            tally
-                .problems
-                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
-            *tally.failed += 1;
-            tally
-                .drawings
-                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
-            return;
-        }
-    };
+    let census = pid_publish_census(&xml).map_err(|error| error.to_string())?;
     let (object_count, value_count, rel_count) = census.counts();
-    if let Err(error) = write_three(out_dir, &file_stem, &xml, &meta, &report) {
-        tally
-            .problems
-            .push(format!("{} {zip_entry}: {error}", plant.file_name));
-        *tally.failed += 1;
-        tally
-            .drawings
-            .push(failed_drawing(&plant.file_name, zip_entry, &error));
-        return;
-    }
-    *tally.written += 1;
-    if let Some(gate) = tally.gate.as_deref_mut() {
+    write_three(out_dir, &file_stem, &xml, &meta, &report)?;
+    if let Some(gate) = tally.gate.as_mut() {
         gate.score(&file_stem, &xml, dump_in_run);
     }
     // What the document states on more than one block. The drawing is
@@ -905,35 +911,17 @@ fn publish_one(
         &drawing.drawing_name,
         &census.duplicate_uids,
     ) {
-        tally.problems.push(duplicates.describe());
         notes.push(duplicates.sentence());
-        tally.duplicate_uids.push(duplicates);
-    }
-    if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
-        *tally.paired += 1;
-        tally
-            .paired_entries
-            .insert(entry_key(&plant.file_name, zip_entry));
-    }
-    if uid_from == "T_DRAWING.PATH" {
-        *tally.shells += 1;
-    }
-    if uid_from != "T_DRAWING.PATH" {
-        *tally.objects += object_count;
-        *tally.values += value_count;
-        *tally.relationships += rel_count;
+        tally.duplicates(duplicates);
     }
     let oracle = coverage_oracle(&report);
-    if let Some(oracle) = &oracle {
-        *tally.piping_ports += json_usize(oracle, "piping_ports");
-        *tally.signal_ports += json_usize(oracle, "signal_ports");
-        *tally.connectivity_rels += json_usize(oracle, "connectivity_rels");
-        *tally.opc_branch_points += json_usize(oracle, "opc_branch_points");
-        *tally.equipment_composition_rels += json_usize(oracle, "equipment_composition_rels");
-        *tally.item_note_rels += json_usize(oracle, "item_note_rels");
-        *tally.pipelines += json_usize(oracle, "pipelines");
-        *tally.piping_connectors += json_usize(oracle, "piping_connectors");
-    }
+    tally.count_written(
+        &plant.file_name,
+        zip_entry,
+        uid_from,
+        (object_count, value_count, rel_count),
+        oracle.as_ref(),
+    );
     let groups = if let Some(loaded) = loaded {
         loaded.groups.as_slice()
     } else {
@@ -951,7 +939,7 @@ fn publish_one(
         "path": row.map(|row| row.path.clone()).unwrap_or_default(),
         "template": row.map(|row| row.template.clone()).unwrap_or_default(),
         "plant_group": plant_group,
-        "uid_from": uid_from,
+        "uid_from": uid_from.as_str(),
         "objects": object_count,
         "values": value_count,
         "relationships": rel_count,
@@ -963,6 +951,7 @@ fn publish_one(
         "oracle_exp": oracle,
         "problems": notes,
     }));
+    Ok(())
 }
 
 /// 把一次整包发布写出的每张图与一个 `<图名>_Data.xml` 参考目录打分。
@@ -1315,9 +1304,10 @@ fn json_usize(value: &Value, key: &str) -> usize {
 /// aggregates and to Σ `drawings[]` alike, so it is never a silent
 /// exclusion channel.
 fn excluded_from_totals(drawings: &[Value]) -> Value {
+    let shell = UidFrom::DumpPath.as_str();
     let rows: Vec<Value> = drawings
         .iter()
-        .filter(|row| row["uid_from"] == "T_DRAWING.PATH")
+        .filter(|row| row["uid_from"] == shell)
         .map(|row| {
             json!({
                 "name": row["name"].clone(),
@@ -1343,7 +1333,7 @@ fn excluded_from_totals(drawings: &[Value]) -> Value {
         .map(|row| json_usize(row, "relationships"))
         .sum::<usize>();
     json!({
-        "rule": "uid_from == \"T_DRAWING.PATH\"",
+        "rule": format!("uid_from == \"{shell}\""),
         "reason": "these drawings carry no P&IDAttributes row, so the publish wrote only the PIDDrawing container shell; their counts stay out of the top-level aggregates",
         "drawings": rows,
         "objects": objects,
@@ -1848,7 +1838,7 @@ fn mtf_drawing_entry(
         "path": row.path,
         "template": template,
         "plant_group": "",
-        "uid_from": "T_Drawing.SP_ID",
+        "uid_from": UidFrom::DatabaseSpId.as_str(),
         "objects": counts.0,
         "values": counts.1,
         "relationships": counts.2,
@@ -2791,6 +2781,386 @@ mod tests {
             problems.iter().skip(1).all(|said| !said.contains("limit")),
             "{problems:?}"
         );
+    }
+
+    /// An entry of a committed `PlantData` zip, by the zip's path in the
+    /// repository and the entry's name.
+    fn committed_zip_entry(archive_path: &str, name: &str) -> Vec<u8> {
+        let file = fs::File::open(Path::new(env!("CARGO_MANIFEST_DIR")).join(archive_path))
+            .unwrap_or_else(|error| panic!("{archive_path}: {error}"));
+        let mut archive =
+            zip::ZipArchive::new(file).unwrap_or_else(|error| panic!("{archive_path}: {error}"));
+        let mut entry = archive
+            .by_name(name)
+            .unwrap_or_else(|error| panic!("{archive_path} {name}: {error}"));
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).expect("the entry's bytes");
+        bytes
+    }
+
+    /// What `_Index.json` lists for the `.pid` entry `entry` of
+    /// `PlantData~2~1.zip` when it fails: the entry, the name it has in
+    /// the zip, and the reason.
+    fn row_of_a_failed_entry(entry: &str, name: &str, reason: &str) -> Value {
+        json!({
+            "doc_uid": "",
+            "name": name,
+            "zip_file": "PlantData~2~1.zip",
+            "zip_entry": entry,
+            "drawing_number": "",
+            "path": "",
+            "template": "",
+            "plant_group": "",
+            "uid_from": "",
+            "objects": 0,
+            "values": 0,
+            "relationships": 0,
+            "files": [],
+            "oracle_exp": null,
+            "problems": [reason],
+        })
+    }
+
+    /// A `.pid` entry that cannot be published is a drawing that fails:
+    /// the index counts it, says why under the entry's name, and lists it
+    /// with its name and the reason and nothing else. The entries after it
+    /// are still published. The package here has no dump, so a drawing is
+    /// named after its entry. The second entry is no compound file; the
+    /// third has the first's name in another folder, and the first has
+    /// taken the output name; the fourth states no `DrawingNo`, and without
+    /// a dump there is no `T_DRAWING` row to place it by its path. The
+    /// first and the last are written, each under the `DrawingNo` its
+    /// `.pid` states, and no row of a dump holds either.
+    #[test]
+    fn a_pid_entry_that_cannot_be_published_fails_by_name_and_reason() {
+        const ZIP: &str = "PlantData~2~1.zip";
+        const ENTRIES: [&str; 5] = [
+            "U01/FIRST.pid",
+            "U01/NO-COMPOUND-FILE.pid",
+            "U02/FIRST.pid",
+            "U02/NO-DRAWING-NO.pid",
+            "U03/LAST.pid",
+        ];
+        const WRITTEN: [usize; 2] = [0, 4];
+        let first = committed_pid("test-file/D06.pid");
+        let no_drawing_no = committed_zip_entry(
+            "test-file/backup-test/DWG-0202GP06-01_p/PlantData~2~711.zip",
+            "zcgc/A3jqz/001.pid",
+        );
+        let last = committed_pid("test-file/DWG-0202GP06-01.pid");
+        let zip = zip_of(&[
+            (ENTRIES[0], &first),
+            (ENTRIES[1], b"no compound file"),
+            (ENTRIES[2], &first),
+            (ENTRIES[3], &no_drawing_no),
+            (ENTRIES[4], &last),
+        ]);
+        let scratch = WriteScratch::new("entries-that-fail");
+        let package = package_of_one_zip(&scratch, &zip);
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!(
+            (
+                report.written,
+                report.failed,
+                report.pid_entries,
+                report.shells
+            ),
+            (2, 3, 5, 0),
+            "{index}"
+        );
+        for (key, count) in [
+            ("pid_entries", 5),
+            ("failed", 3),
+            ("paired", 0),
+            ("shells", 0),
+        ] {
+            assert_eq!(index[key], count, "{key}: {index}");
+        }
+        let drawings = index["drawings"].as_array().expect("drawings");
+        assert_eq!(drawings.len(), 5, "{index}");
+
+        // The two that are written, and what the index adds up of them.
+        let mut held = vec!["_Index.json".to_string()];
+        for at in WRITTEN {
+            let drawing = &drawings[at];
+            assert_eq!(drawing["zip_entry"], ENTRIES[at], "{drawing}");
+            assert_eq!(drawing["uid_from"], "DrawingNo", "{drawing}");
+            assert_eq!(drawing["problems"], json!([]), "{drawing}");
+            let files = drawing["files"].as_array().expect("files");
+            assert_eq!(files.len(), 3, "{drawing}");
+            held.extend(
+                files
+                    .iter()
+                    .map(|file| file.as_str().expect("a file name").to_string()),
+            );
+        }
+        held.sort();
+        assert_eq!(names_in(&out), held, "{index}");
+        for key in ["objects", "values", "relationships"] {
+            let sum: u64 = WRITTEN
+                .iter()
+                .map(|&at| drawings[at][key].as_u64().expect("a count"))
+                .sum();
+            assert!(sum > 0, "{key}: {index}");
+            assert_eq!(index[key], sum, "{key}: {index}");
+        }
+        // No row of a dump holds any of the five.
+        let mut unmatched: Vec<String> = ENTRIES
+            .iter()
+            .map(|entry| format!("{ZIP}:{entry}"))
+            .collect();
+        unmatched.sort();
+        assert_eq!(index["unmatched_pid_entries"], json!(unmatched), "{index}");
+
+        // The three that fail, in the order of the entries.
+        let [no_compound_file, name_taken, no_drawing_no] = problems.as_slice() else {
+            panic!("three problems: {problems:?}");
+        };
+        // Why the second is no compound file is the reader's to word. The
+        // index says it under the entry's name, and the drawing's own row
+        // says the same.
+        let reason = no_compound_file
+            .strip_prefix(&format!("{ZIP} {}: ", ENTRIES[1]))
+            .unwrap_or_else(|| panic!("the entry is named: {no_compound_file}"));
+        assert!(!reason.is_empty(), "{no_compound_file}");
+        assert_eq!(
+            drawings[1],
+            row_of_a_failed_entry(ENTRIES[1], "NO-COMPOUND-FILE", reason)
+        );
+        let first_stem = drawings[0]["files"][0]
+            .as_str()
+            .and_then(|file| file.strip_suffix("_Data.xml"))
+            .expect("the first drawing's _Data.xml");
+        let reason = format!("output name {first_stem} is already used");
+        assert_eq!(*name_taken, format!("{ZIP} {}: {reason}", ENTRIES[2]));
+        assert_eq!(
+            drawings[2],
+            row_of_a_failed_entry(ENTRIES[2], "FIRST", &reason)
+        );
+        let reason = "no P&IDAttributes row carries a DrawingNo, and T_DRAWING.PATH does not match";
+        assert_eq!(*no_drawing_no, format!("{ZIP} {}: {reason}", ENTRIES[3]));
+        assert_eq!(
+            drawings[3],
+            row_of_a_failed_entry(ENTRIES[3], "NO-DRAWING-NO", reason)
+        );
+    }
+
+    /// Where the local header of the entry `name` starts in `zip`.
+    fn local_header_of(zip: &[u8], name: &str) -> usize {
+        (0..zip.len())
+            .find(|&at| {
+                zip[at..].starts_with(b"PK\x03\x04")
+                    && zip.get(at + 30..at + 30 + name.len()) == Some(name.as_bytes())
+            })
+            .unwrap_or_else(|| panic!("a local header of {name}"))
+    }
+
+    /// A zip that cannot be opened and an entry whose header cannot be
+    /// read are each one failure, said among the index's `problems`, and
+    /// no drawing: there is no name to list either under. What can be read
+    /// is still published.
+    #[test]
+    fn a_zip_or_an_entry_that_cannot_be_opened_is_a_failure_and_no_drawing() {
+        let pid = committed_pid("test-file/D06.pid");
+        // The second entry's header no longer starts as one. The first is
+        // left as it is: a file is taken for a zip by its first four bytes.
+        let mut zip = zip_of(&[("U01/READ.pid", &pid), ("U01/HEADER-GONE.pid", &pid)]);
+        let header = local_header_of(&zip, "U01/HEADER-GONE.pid");
+        zip[header..header + 4].copy_from_slice(b"GONE");
+        let scratch = WriteScratch::new("unopened");
+        let package = package_of_one_zip(&scratch, &zip);
+        // A second zip that starts as one and holds nothing of one.
+        let unopened = package.join("PlantData~2~2.zip");
+        fs::write(&unopened, b"PK\x03\x04 and no zip after that").expect("the second zip");
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!(
+            (report.written, report.failed, report.pid_entries),
+            (1, 2, 1),
+            "{index}"
+        );
+        assert_eq!(index["failed"], 2, "{index}");
+        assert_eq!(index["pid_entries"], 1, "{index}");
+        let drawings = index["drawings"].as_array().expect("drawings");
+        let [read] = drawings.as_slice() else {
+            panic!("one drawing: {index}");
+        };
+        assert_eq!(read["zip_entry"], "U01/READ.pid", "{read}");
+        assert_eq!(read["files"].as_array().map(Vec::len), Some(3), "{read}");
+
+        // The scan of the package says first that it could list neither
+        // zip. Then the run says the entry it could not open, by its place
+        // in the first zip, and the zip it could not open.
+        let [first_unlisted, second_unlisted, entry, zip_unopened] = problems.as_slice() else {
+            panic!("four problems: {problems:?}");
+        };
+        assert!(
+            first_unlisted.starts_with(&format!(
+                "{}: ",
+                package.join("PlantData~2~1.zip").display()
+            )),
+            "{first_unlisted}"
+        );
+        assert!(
+            second_unlisted.starts_with(&format!("{}: ", unopened.display())),
+            "{second_unlisted}"
+        );
+        assert!(entry.starts_with("PlantData~2~1.zip entry 1: "), "{entry}");
+        assert!(
+            zip_unopened.starts_with(&format!("open {}: ", unopened.display())),
+            "{zip_unopened}"
+        );
+    }
+
+    /// What the index lists for a drawing a dump holds. The package is the
+    /// committed one: seven `.pid` entries, and an Oracle `exp` whose
+    /// `T_DRAWING` has a row for each. Six state a `DrawingNo` that is the
+    /// `SP_ID` of their row. The first states none and is found by the
+    /// `PATH` of its row: a shell. Either way the drawing's row of
+    /// `drawings` says which it was, and carries what the row of the dump
+    /// says of the drawing: its name, its number, its path, its template,
+    /// and the plant group it is filed under. The sixth is numbered
+    /// otherwise than it is named, in the dump itself.
+    #[test]
+    fn a_drawing_a_dump_holds_is_listed_with_what_its_row_says() {
+        // The entry of `PlantData~2~711.zip`, the UID, the name, the
+        // number, the template, and where the UID came from.
+        const ROWS: [[&str; 6]; 7] = [
+            [
+                "zcgc/A3jqz/001.pid",
+                "33A297A41D2D404B9B306BB4750BEBD6",
+                "001",
+                "001",
+                "CPECCHBA2-new.pid",
+                "T_DRAWING.PATH",
+            ],
+            [
+                "zcgc/A3jqz/002.pid",
+                "A4E1825567814FDF99165927A022A4BE",
+                "002",
+                "002",
+                "qsmcqtaz13A2.pid",
+                "T_DRAWING.SP_ID",
+            ],
+            [
+                "zcgc/A3jqz/222.pid",
+                "5B0BBC7189D64D039196DDC82A22B8D2",
+                "222",
+                "222",
+                "qsmcqtaz13A2.pid",
+                "T_DRAWING.SP_ID",
+            ],
+            [
+                "zcgc/A3jqz/DWG-0201GP01-01.pid",
+                "6D7C349C77894315BA5AF07D9428F216",
+                "DWG-0201GP01-01",
+                "DWG-0201GP01-01",
+                "CPECCHBA2-new.pid",
+                "T_DRAWING.SP_ID",
+            ],
+            [
+                "zcgc/A3jqz/DWG-0201GP06-01.pid",
+                "0F7B8ABD0C4E493FA3C7F06FD03AD6AA",
+                "DWG-0201GP06-01",
+                "DWG-0201GP06-01",
+                "XIONGANA2.pid",
+                "T_DRAWING.SP_ID",
+            ],
+            [
+                "zcgc/A3jqz/DWG-0202GP06-01.pid",
+                "9D1F3F232C47409D8C54EFB22FC3682A",
+                "DWG-0202GP06-01",
+                "DWG-0202GP06-02",
+                "CPECCHBA2-new.pid",
+                "T_DRAWING.SP_ID",
+            ],
+            [
+                "zcgc/A4jqz/DWG-0104GP01-08.pid",
+                "3F0E92BA81334AEDBC3B83BA05920C73",
+                "DWG-0104GP01-08",
+                "DWG-0104GP01-08",
+                "CPECCHBA2-new.pid",
+                "T_DRAWING.SP_ID",
+            ],
+        ];
+        let package =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/DWG-0202GP06-01_p");
+        let scratch = WriteScratch::new("dump-rows");
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!(problems, Vec::<String>::new(), "{index}");
+        assert_eq!(
+            (
+                report.written,
+                report.failed,
+                report.pid_entries,
+                report.shells
+            ),
+            (7, 0, 7, 1),
+            "{index}"
+        );
+        for (key, count) in [
+            ("pid_entries", 7),
+            ("drawing_rows", 7),
+            ("paired", 7),
+            ("failed", 0),
+            ("shells", 1),
+        ] {
+            assert_eq!(index[key], count, "{key}: {index}");
+        }
+        assert_eq!(index["unmatched_pid_entries"], json!([]), "{index}");
+        let drawings = index["drawings"].as_array().expect("drawings");
+        assert_eq!(drawings.len(), ROWS.len(), "{index}");
+        for (drawing, [entry, uid, name, number, template, uid_from]) in drawings.iter().zip(ROWS) {
+            // The dump files `zcgc/<unit>/<name>.pid` of the zip as
+            // `\zcgc\<unit>\<name>.pid`, under the unit of that name.
+            let unit = entry.split('/').nth(1).expect("the folder of a unit");
+            let listed = json!({
+                "doc_uid": uid,
+                "name": name,
+                "zip_file": "PlantData~2~711.zip",
+                "zip_entry": entry,
+                "drawing_number": number,
+                "path": format!("\\{}", entry.replace('/', "\\")),
+                "template": template,
+                "plant_group": format!("QSMCQTAZ13_PLANT \\ zcgc \\ {unit}"),
+                "uid_from": uid_from,
+            });
+            for (key, value) in listed.as_object().expect("an object") {
+                assert_eq!(&drawing[key], value, "{key}: {drawing}");
+            }
+        }
+    }
+
+    /// A drawing written with a UID on more than one block is one of the
+    /// index's `problems`, as `describe` words it, and one for the report.
+    /// Nothing else moves: the drawing is counted where it is written. No
+    /// committed `.pid` publishes such a document, so this is seen at the
+    /// tally and not through a package; that `publish_one` hands the
+    /// finding to the tally is seen by no test.
+    #[test]
+    fn the_tally_says_a_drawing_that_states_a_uid_twice() {
+        let duplicates = PackageDuplicateUids {
+            drawing_uid: "DWG-1".to_string(),
+            drawing_name: "D1".to_string(),
+            uids: vec![("V-1".to_string(), 2)],
+        };
+        let mut tally = PublishTally::default();
+        tally.duplicates(duplicates.clone());
+        assert_eq!(tally.problems, ["D1: 1 UID written more than once: V-1 ×2"]);
+        assert_eq!(tally.duplicate_uids, [duplicates]);
+        assert_eq!((tally.failed, tally.written), (0, 0));
+        assert!(tally.drawings.is_empty());
     }
 
     /// A reader that counts the bytes it has handed out.
