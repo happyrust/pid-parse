@@ -763,9 +763,7 @@ pub(crate) fn pid_coverage_json(
             "item_tag_not_a_name": drawing.pipeline_synthesis.item_tag_not_a_name,
         });
     }
-    let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
-    text.push('\n');
-    text
+    json_file_text(&report)
 }
 
 /// Render the coverage report that goes beside a database-line export —
@@ -814,9 +812,20 @@ pub fn write_database_coverage_json(
         },
         "shortfalls": database_shortfalls_json(&database_shortfalls(drawing)),
     });
-    let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
-    text.push('\n');
-    text
+    json_file_text(&report)
+}
+
+/// The text of a JSON file the publisher writes, a coverage report or the
+/// index of a package: `value` laid out as `serde_json::to_string_pretty`
+/// lays it out, and a line feed.
+///
+/// It returns the text and no `Result`: there is no error to hand on, and
+/// so no stand-in document to write for one. A [`serde_json::Value`]
+/// serializes whatever it holds: its keys are strings and its numbers are
+/// finite, and the text goes to memory. `{:#}` on a `Value` runs the
+/// serializer `to_string_pretty` runs.
+pub(crate) fn json_file_text(value: &serde_json::Value) -> String {
+    format!("{value:#}\n")
 }
 
 /// The `shortfalls` section of the database-line coverage report: both
@@ -1191,6 +1200,39 @@ mod tests {
             "no DrawingItems for a representation whose item is not stated"
         );
         assert!(xml.ends_with("  </Container>\n"));
+    }
+
+    /// The text of a JSON file is the pretty layout of `serde_json`, two
+    /// spaces a level and a key with its value on one line, and one line
+    /// feed after it. A literal pins the layout; then the text is what
+    /// `to_string_pretty` gives for a value of every kind JSON has, and for
+    /// a document that is no object.
+    #[test]
+    fn the_text_of_a_json_file_is_the_pretty_layout_and_a_line_feed() {
+        assert_eq!(
+            json_file_text(&json!({ "a": [1, { "b": null }], "c": "d" })),
+            "{\n  \"a\": [\n    1,\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": \"d\"\n}\n"
+        );
+        let every_kind = json!({
+            "null": null,
+            "bools": [true, false],
+            "integers": [0, -1, u64::MAX, i64::MIN],
+            "floats": [0.5, -1.25e-7, 1e300],
+            "text": "a \"quoted\" \\ / \t \n \u{1} \u{7f} é 管线 \u{2028} 😀",
+            "empty": [[], {}, ""],
+            "nested": { "list": [{ "deep": [1, [2, [3]]] }] },
+        });
+        for value in [
+            every_kind,
+            json!(null),
+            json!(7),
+            json!("x"),
+            json!([]),
+            json!({}),
+        ] {
+            let pretty = serde_json::to_string_pretty(&value).expect("a Value serializes");
+            assert_eq!(json_file_text(&value), format!("{pretty}\n"), "{value}");
+        }
     }
 
     #[test]

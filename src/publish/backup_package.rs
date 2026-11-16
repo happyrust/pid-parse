@@ -48,7 +48,9 @@ use super::oracle_exp::{
 use super::pid_load::{
     read_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats, PublishChainFault,
 };
-use super::pid_writer::{pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
+use super::pid_writer::{
+    json_file_text, pid_coverage_json, write_pid_data_xml, write_pid_meta_xml,
+};
 use crate::backup::{scan_backup_folder, BackupFolderScan, ExportDumpFormat, PlantDataFile};
 
 /// Why a backup directory was not published.
@@ -459,9 +461,7 @@ fn publish_package(
         "problems": tally.problems,
     });
     let index_path = out_dir.join("_Index.json");
-    let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
-    text.push('\n');
-    write_atomic(&index_path, text.as_bytes()).map_err(|error| {
+    write_atomic(&index_path, json_file_text(&index).as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
     })?;
     Ok(BackupPublishReport {
@@ -1722,9 +1722,7 @@ fn publish_staged_database(
         "problems": problems,
     });
     let index_path = out_dir.join("_Index.json");
-    let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
-    text.push('\n');
-    write_atomic(&index_path, text.as_bytes()).map_err(|error| {
+    write_atomic(&index_path, json_file_text(&index).as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
     })?;
     Ok(BackupPublishReport {
