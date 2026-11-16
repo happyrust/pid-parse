@@ -1377,7 +1377,8 @@ pub fn nominal_spelling(code: i64) -> Option<String> {
 /// not draw ([`ExpTables::dump_only_piping_components`]), keeping
 /// [`PidPublishDrawing::items`] and [`PidPublishDrawing::representations`]
 /// ordered by UID. Run it before [`attach_oracle_ports`] so their ports
-/// hang on them. Returns how many were added.
+/// hang on them. A component placed more than once is added once, with
+/// each of its representations. Returns how many were added.
 ///
 /// # Errors
 ///
@@ -1392,7 +1393,7 @@ pub fn attach_dump_only_components(
         .iter()
         .map(|representation| norm_uid(&representation.uid))
         .collect();
-    let known: HashSet<String> = drawing
+    let mut known: HashSet<String> = drawing
         .items
         .iter()
         .map(|item| norm_uid(&item.uid))
@@ -1400,7 +1401,7 @@ pub fn attach_dump_only_components(
     let found = tables.dump_only_piping_components(&drawing.drawing_uid, &drawn)?;
     let mut added = 0;
     for (item, representation) in found {
-        if !known.contains(&item.uid) {
+        if known.insert(item.uid.clone()) {
             drawing.items.push(item);
             added += 1;
         }
@@ -4623,6 +4624,77 @@ mod tests {
         assert_eq!(representation.uid, "REP1");
         assert_eq!(representation.item_uid.as_deref(), Some("COMP1"));
         assert_eq!(representation.graphic_oid, 44116);
+    }
+
+    // A component the dump places twice on one drawing has two
+    // representations and is one object: both representations are
+    // published, the item once.
+    #[test]
+    fn a_component_placed_twice_is_published_once() {
+        let mut dump = pinned();
+        let thirteen = vec![0xc1, 0x0e];
+        dump.extend(table(
+            "T_REPRESENTATION",
+            &[
+                ch("SP_ID"),
+                num("REPRESENTATIONTYPE"),
+                num("GRAPHICOID"),
+                ch("SP_DRAWINGID"),
+                ch("SP_MODELITEMID"),
+            ],
+            &[
+                row(&[
+                    Some(utf16("REPA")),
+                    Some(thirteen.clone()),
+                    Some(one()),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("COMP1")),
+                ]),
+                row(&[
+                    Some(utf16("REPB")),
+                    Some(thirteen),
+                    Some(vec![0xc1, 0x03]),
+                    Some(utf16("DRAW1")),
+                    Some(utf16("COMP1")),
+                ]),
+            ],
+        ));
+        dump.extend(table(
+            "T_MODELITEM",
+            &[ch("SP_ID"), ch("ITEMTYPENAME")],
+            &[row(&[Some(utf16("COMP1")), Some(utf16("PipingComp"))])],
+        ));
+        let tables = ExpTables::load_components(&dump).unwrap();
+        let mut drawing = PidPublishDrawing {
+            drawing_uid: "DRAW1".to_string(),
+            drawing_name: "D".to_string(),
+            drawing_attributes: Vec::new(),
+            items: Vec::new(),
+            process_points: Vec::new(),
+            branch_points: Vec::new(),
+            ports: Vec::new(),
+            connectivity_ends: Vec::new(),
+            exp_relations: Vec::new(),
+            opc_points: Vec::new(),
+            exp: None,
+            pipelines: Vec::new(),
+            pipelines_attempted: false,
+            pipeline_synthesis: Default::default(),
+            representations: Vec::new(),
+            stats: Default::default(),
+        };
+        assert_eq!(
+            attach_dump_only_components(&mut drawing, &tables).unwrap(),
+            1
+        );
+        let items: Vec<&str> = drawing.items.iter().map(|item| item.uid.as_str()).collect();
+        assert_eq!(items, ["COMP1"]);
+        let representations: Vec<&str> = drawing
+            .representations
+            .iter()
+            .map(|representation| representation.uid.as_str())
+            .collect();
+        assert_eq!(representations, ["REPA", "REPB"]);
     }
 
     #[test]
