@@ -3,7 +3,7 @@
 //!
 //! * a SQL Server `Export.mdf` (or a legacy `Export_v2.sqlite` mirror)
 //!   and the `T_Drawing.SP_ID` of one drawing — the database line, with
-//!   `--style a01|dwg` and `--list-drawings`;
+//!   `--style a01|dwg`, `--strict` and `--list-drawings`;
 //! * a `.pid` alone, written with `--out-dir` beside a `_Coverage.json`;
 //! * a `.pid` plus the backup's Oracle `exp` dump (`--oracle-exp`,
 //!   optionally `--datamap`), which adds ports, connectivity,
@@ -23,8 +23,9 @@
 //! ```
 //!
 //! Exit codes: 0 = written (and, with `--diff-against`, clean);
-//! 1 = an I/O or format error, a `--diff-against` finding, or a package
-//! drawing that failed; 2 = a usage error, including an `--oracle-exp`
+//! 1 = an I/O or format error, a `--diff-against` finding, a package
+//! drawing that failed, or, with `--strict`, a database drawing that was
+//! not written in full; 2 = a usage error, including an `--oracle-exp`
 //! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
 
 use pid_parse::publish::diff::diff_meta_xml;
@@ -33,9 +34,9 @@ use pid_parse::publish::pid_writer::{
 };
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_pid_export, load_drawing_graph, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
-    write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml, MalformedPublishDocument,
-    PublishError, PublishStyle,
+    database_shortfalls, diff_pid_export, load_drawing_graph, open_mdf_as_sqlite, write_data_xml,
+    write_meta_xml, write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml,
+    MalformedPublishDocument, PublishError, PublishStyle,
 };
 use std::path::{Path, PathBuf};
 
@@ -72,6 +73,12 @@ struct CliOptions {
     /// blocks. Defaults to A01 to keep every pre-A29b CLI
     /// invocation byte-identical.
     style: PublishStyle,
+    /// `--strict`: exit 1 when the database line did not write the drawing
+    /// in full — an item written as a `<PIDItem>` placeholder, or a
+    /// relationship row defined from the item types of its ends alone
+    /// (`DatabaseShortfalls`). The files and the warnings are the same
+    /// with and without it. Database input only.
+    strict: bool,
     /// A30 — when true, the CLI prints every `T_Drawing` row in
     /// the input table set and exits 0 without rendering anything.
     /// Mutually exclusive with `--drawing` / `--out` / `--stdout`
@@ -101,7 +108,7 @@ fn print_usage<W: std::io::Write>(mut out: W) {
         out,
         "Usage: pid_publish_xml <mdf> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
-         \x20               [--style a01|dwg]\n\
+         \x20               [--style a01|dwg] [--strict]\n\
          \x20  pid_publish_xml <mdf> --list-drawings\n\
          \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
@@ -117,8 +124,7 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          --list-drawings / --style / --oracle-exp / --datamap do not apply.\n\
          Export.dmp is read once when it is an Oracle exp. A\n\
          SQL Server MTF dump is stripped to its MDF and every T_Drawing\n\
-         row publishes through the database path (backup-mdf feature;\n\
-         without it the input still exits 2). --diff-against DIR compares\n\
+         row publishes through the database path. --diff-against DIR compares\n\
          every written drawing against <DIR>/<Name>_Data.xml and prints one\n\
          clean / dirty / unpaired / revision-mismatch verdict per drawing; a\n\
          drawing that is dirty, of another revision than its reference, or has\n\
@@ -178,6 +184,17 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20                   PIDProcessVessel) to match the DWG export shape.\n\
          \x20                   Database input only: a .pid input and a backup\n\
          \x20                   directory reject it instead of ignoring it.\n\
+         --strict            Database input only: exit 1 when the drawing is\n\
+         \x20                   not written in full. An item whose type has no\n\
+         \x20                   writer of its own is written as a <PIDItem>\n\
+         \x20                   placeholder, without its class and attributes,\n\
+         \x20                   and a T_Relationship row with an end that is not\n\
+         \x20                   a representation gets its definition from the\n\
+         \x20                   item types of its ends alone. Each is a warning\n\
+         \x20                   on stderr with or without --strict, and the\n\
+         \x20                   files are written either way. A .pid input, a\n\
+         \x20                   backup directory and --list-drawings reject\n\
+         \x20                   --strict instead of ignoring it.\n\
          --list-drawings     Print every T_Drawing row in the input table set\n\
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
@@ -210,6 +227,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut plant_name: Option<String> = None;
     let mut style: Option<PublishStyle> = None;
     let mut list_drawings = false;
+    let mut strict = false;
     let mut verbose = false;
     let mut oracle_exp: Option<PathBuf> = None;
     let mut datamap: Option<PathBuf> = None;
@@ -283,6 +301,10 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 list_drawings = true;
                 i += 1;
             }
+            "--strict" => {
+                strict = true;
+                i += 1;
+            }
             "--verbose" | "-v" => {
                 verbose = true;
                 i += 1;
@@ -331,6 +353,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         if style.is_some() {
             return Err("a backup directory publishes every .pid; --style does not apply".into());
         }
+        // The package line does not report what it wrote short, so there is
+        // nothing for `--strict` to gate on: refused, not accepted and ignored.
+        if strict {
+            return Err(
+                "a backup directory does not report what it wrote short; --strict does not apply"
+                    .into(),
+            );
+        }
         if datamap.is_some() {
             return Err(
                 "a backup directory reads RefData~4~804.zip itself; --datamap does not apply"
@@ -370,6 +400,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     if pid_input && style.is_some() {
         return Err("a .pid input is one drawing: --style does not apply".into());
     }
+    // What `--strict` gates on is the database line's: a `.pid` is read
+    // without a plant database, and says what it leaves out in its own
+    // coverage report.
+    if pid_input && strict {
+        return Err(
+            "a .pid input is read without a plant database: --strict does not apply".into(),
+        );
+    }
     if out_dir.is_some() {
         if !pid_input && !package_input {
             return Err("--out-dir applies to a .pid input only".into());
@@ -403,6 +441,9 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         if meta_out_path.is_some() {
             return Err("--list-drawings is mutually exclusive with --meta-out".into());
         }
+        if strict {
+            return Err("--list-drawings is mutually exclusive with --strict".into());
+        }
     } else {
         if drawing_uid.is_none() && !pid_input && !package_input {
             return Err("--drawing UID is required (or use --list-drawings)".into());
@@ -429,6 +470,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
         style: style.unwrap_or_default(),
+        strict,
         list_drawings,
         verbose,
         oracle_exp,
@@ -468,8 +510,9 @@ fn main() {
 /// - `0` — success and (when `--diff-against` is set) the diff
 ///   surfaced no actionable findings.
 /// - `1` — the generated XML differs from the reference (used as a CI
-///   gate), or a package drawing failed. Real I/O / `SQLite` errors
-///   short-circuit through `Err(String)` instead.
+///   gate), a package drawing failed, or `--strict` was given and the
+///   database line did not write the drawing in full. Real I/O / `SQLite`
+///   errors short-circuit through `Err(String)` instead.
 /// - `2` — the input cannot be published as asked: a package with an
 ///   unusable `Export.dmp`, or an `--oracle-exp` dump of another revision.
 fn run(options: CliOptions) -> Result<i32, String> {
@@ -536,16 +579,29 @@ fn run(options: CliOptions) -> Result<i32, String> {
         None => None,
     };
 
-    match &options.diff_against {
+    // What the writer could not write in full is said once the files are on
+    // disk: the run delivers them either way, and without `--strict` these
+    // lines are the only place that says the delivery is short.
+    let shortfalls = database_shortfalls(&graph);
+    for sentence in shortfalls.describe() {
+        eprintln!("warning: {sentence}");
+    }
+
+    let diff_exit = match &options.diff_against {
         Some(ref_path) => {
             let meta_exit = match &meta_xml {
                 Some(meta_xml) => report_meta_diff(ref_path, &xml, meta_xml)?,
                 None => 0,
             };
-            report_pid_diff(ref_path, &xml, DiffMode::Database, meta_exit != 0)
+            report_pid_diff(ref_path, &xml, DiffMode::Database, meta_exit != 0)?
         }
-        None => Ok(0),
+        None => 0,
+    };
+    if options.strict && !shortfalls.is_empty() {
+        eprintln!("--strict: the drawing is not written in full (see the warnings above); exit 1.");
+        return Ok(1);
     }
+    Ok(diff_exit)
 }
 
 /// Backup directory: publish every `.pid` in the `PlantData` zips.

@@ -1195,3 +1195,340 @@ fn cli_pid_given_in_another_letter_case_is_published_under_its_stored_name() {
         "DocName should be spelled as the file is stored; got:\n{container}"
     );
 }
+
+// ---------------------------------------------------------------------
+// What the database line writes short: the warnings and `--strict`
+// ---------------------------------------------------------------------
+
+/// A plant database of one drawing that the database line cannot write in
+/// full: an exchanger, whose type has no writer of its own, and a
+/// relationship row with an item at each end. No real database in the
+/// repository holds either, so this one is made on the spot.
+const SHORTFALLS_SQL: &str = include_str!("fixtures/publish-shortfalls.sql");
+const SHORTFALLS_DRAWING_UID: &str = "DWG-SHORT-01";
+const PLACEHOLDER_WARNING: &str = "warning: 1 object written as a <PIDItem> placeholder, \
+                                   class and attributes left out: Exchanger 1";
+const RELATIONSHIP_WARNING: &str = "warning: 1 relationship row defined from the item types of \
+                                    its ends alone: Nozzle -> Exchanger as Relationship 1";
+
+/// Build the fixture database as `<dir>/shortfalls.sqlite`.
+fn shortfalls_database(dir: &Scratch) -> std::path::PathBuf {
+    let path = dir.join("shortfalls.sqlite");
+    let conn = rusqlite::Connection::open(&path).expect("create the fixture database");
+    conn.execute_batch(SHORTFALLS_SQL)
+        .expect("run tests/fixtures/publish-shortfalls.sql");
+    path
+}
+
+/// The `warning:` lines of a run's stderr, apart from the notice every
+/// `.sqlite` input prints.
+fn warnings_in(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("warning: "))
+        .filter(|line| !line.contains("`.sqlite` input is deprecated"))
+        .collect()
+}
+
+/// Publish the fixture drawing into `<out>/SHORT-01_Data.xml` and
+/// `<out>/SHORT-01_Meta.xml`, with `extra` flags, and return the run.
+fn publish_shortfalls_drawing(
+    database: &std::path::Path,
+    out: &std::path::Path,
+    extra: &[&str],
+) -> std::process::Output {
+    Command::new(binary_path())
+        .arg(database)
+        .args(["--drawing", SHORTFALLS_DRAWING_UID])
+        .args(extra)
+        .arg("--out")
+        .arg(out.join("SHORT-01_Data.xml"))
+        .arg("--meta-out")
+        .arg(out.join("SHORT-01_Meta.xml"))
+        .output()
+        .expect("spawn pid_publish_xml on the shortfalls database")
+}
+
+#[test]
+fn cli_database_input_warns_of_what_it_wrote_short_and_exits_zero() {
+    // The exchanger is written as a placeholder and the relationship row
+    // gets its definition from the two item types alone. Both are written,
+    // the exit code stays 0, and stderr says one line for each kind.
+    let dir = unique_tmp_dir("shortfalls-warned");
+    let database = shortfalls_database(&dir);
+
+    let out = publish_shortfalls_drawing(&database, &dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a shortfall without --strict should leave the exit code at 0; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        warnings_in(&stderr),
+        [PLACEHOLDER_WARNING, RELATIONSHIP_WARNING],
+        "stderr should say each kind of shortfall once; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("--strict"),
+        "nothing should speak of --strict when it was not given; stderr:\n{stderr}"
+    );
+    let xml = std::fs::read_to_string(dir.join("SHORT-01_Data.xml"))
+        .expect("--out should have written the _Data.xml");
+    assert_eq!(
+        xml.matches("<PIDItem>").count(),
+        1,
+        "the exchanger is the one placeholder the warning counts; xml:\n{xml}"
+    );
+    assert_eq!(
+        xml.matches(r#"DefUID="Relationship""#).count(),
+        1,
+        "the nozzle-to-exchanger row is the one Rel the warning counts; xml:\n{xml}"
+    );
+}
+
+#[test]
+fn cli_strict_turns_a_shortfall_into_exit_one_and_changes_no_file() {
+    // `--strict` changes the exit code and nothing in the delivery: both
+    // documents are written, byte for byte what the run without it writes,
+    // the warnings are the same, and the last line on stderr says the flag
+    // is why the run exits 1.
+    let dir = unique_tmp_dir("shortfalls-strict");
+    let database = shortfalls_database(&dir);
+    let (plain_dir, strict_dir) = (dir.join("plain"), dir.join("strict"));
+
+    let plain = publish_shortfalls_drawing(&database, &plain_dir, &[]);
+    assert_eq!(
+        plain.status.code(),
+        Some(0),
+        "the run without --strict should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+
+    let strict = publish_shortfalls_drawing(&database, &strict_dir, &["--strict"]);
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert_eq!(
+        strict.status.code(),
+        Some(1),
+        "--strict should exit 1 on a shortfall; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        warnings_in(&stderr),
+        [PLACEHOLDER_WARNING, RELATIONSHIP_WARNING],
+        "--strict should not change the warnings; stderr:\n{stderr}"
+    );
+    let last = stderr.lines().last().unwrap_or_default();
+    assert!(
+        last.starts_with("--strict: ") && last.ends_with("exit 1."),
+        "the last stderr line should name --strict as the reason for exit 1; stderr:\n{stderr}"
+    );
+    for name in ["SHORT-01_Data.xml", "SHORT-01_Meta.xml"] {
+        let written = std::fs::read(strict_dir.join(name))
+            .unwrap_or_else(|e| panic!("--strict should still write {name}: {e}"));
+        let expected = std::fs::read(plain_dir.join(name))
+            .unwrap_or_else(|e| panic!("the run without --strict should write {name}: {e}"));
+        assert!(!written.is_empty(), "{name} should not be empty");
+        assert!(
+            written == expected,
+            "{name} should be the same bytes with and without --strict"
+        );
+    }
+}
+
+#[test]
+fn cli_strict_is_decided_after_the_diff_report_not_instead_of_it() {
+    // Against the run's own output the --diff-against report is clean. It
+    // is still printed, and then --strict exits 1 for the shortfalls.
+    let dir = unique_tmp_dir("shortfalls-strict-diff");
+    let database = shortfalls_database(&dir);
+    let plain = publish_shortfalls_drawing(&database, &dir, &[]);
+    assert_eq!(
+        plain.status.code(),
+        Some(0),
+        "the run that writes the reference should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+
+    let out = Command::new(binary_path())
+        .arg(&database)
+        .args(["--drawing", SHORTFALLS_DRAWING_UID, "--strict"])
+        .arg("--diff-against")
+        .arg(dir.join("SHORT-01_Data.xml"))
+        .output()
+        .expect("spawn pid_publish_xml --strict --diff-against");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a clean diff should not undo --strict; stderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("pid export diff: objects 7 "),
+        "the diff report should still be on stdout; got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("is clean in database mode"),
+        "the diff verdict should still be on stderr; got:\n{stderr}"
+    );
+    let last = stderr.lines().last().unwrap_or_default();
+    assert!(
+        last.starts_with("--strict: ") && last.ends_with("exit 1."),
+        "the last stderr line should name --strict as the reason for exit 1; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_strict_on_a_drawing_written_in_full_exits_zero() {
+    // A01 has no item without a writer of its own and no relationship row
+    // between items, so --strict finds nothing to object to.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("strict-a01");
+    let data_path = dir.join("A01_Data.xml");
+
+    let out = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--strict",
+            "--out",
+        ])
+        .arg(&data_path)
+        .output()
+        .expect("spawn pid_publish_xml --strict on A01");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "A01 is written in full, so --strict should exit 0; stderr:\n{stderr}"
+    );
+    for phrase in [
+        "<PIDItem> placeholder",
+        "defined from the item types",
+        "--strict",
+    ] {
+        assert!(
+            !stderr.contains(phrase),
+            "A01 should print nothing about `{phrase}`; stderr:\n{stderr}"
+        );
+    }
+    assert!(
+        data_path.is_file(),
+        "--strict should not keep the _Data.xml from being written"
+    );
+    eprintln!("A01 with --strict: exit 0, stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_strict_with_a_pid_input_is_an_argument_error() {
+    // A `.pid` is read without a plant database, so what --strict gates on
+    // cannot arise there. Like --style, the flag is refused rather than
+    // accepted and ignored.
+    let out = Command::new(binary_path())
+        .args(["irrelevant.pid", "--stdout", "--strict"])
+        .output()
+        .expect("spawn pid_publish_xml <file.pid> --strict");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "--strict with a .pid input should exit 2; got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "argument error: a .pid input is read without a plant database: \
+             --strict does not apply"
+        ),
+        "the error should say why --strict does not apply; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_strict_with_list_drawings_is_an_argument_error() {
+    // --list-drawings writes no drawing, so there is nothing for --strict
+    // to gate on.
+    let out = Command::new(binary_path())
+        .args(["irrelevant.sqlite", "--list-drawings", "--strict"])
+        .output()
+        .expect("spawn pid_publish_xml --list-drawings --strict");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "--strict with --list-drawings should exit 2; got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("argument error: --list-drawings is mutually exclusive with --strict"),
+        "the error should name the two flags; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_strict_with_a_backup_directory_is_an_argument_error() {
+    // The package line does not report what it wrote short, so --strict
+    // would be accepted there and then ignored. It is refused before
+    // anything is read or written.
+    let dir = unique_tmp_dir("strict-package");
+    let package = dir.join("package");
+    std::fs::create_dir_all(&package).expect("create the package directory");
+    std::fs::write(package.join("Manifest.txt"), "").expect("write Manifest.txt");
+    let out_dir = dir.join("out");
+
+    let out = Command::new(binary_path())
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--strict")
+        .output()
+        .expect("spawn pid_publish_xml <backup dir> --strict");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "--strict with a backup directory should exit 2; got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "argument error: a backup directory does not report what it wrote short; \
+             --strict does not apply"
+        ),
+        "the error should say why --strict does not apply; stderr:\n{stderr}"
+    );
+    assert!(
+        !out_dir.exists(),
+        "a refused run should write nothing; found {}",
+        out_dir.display()
+    );
+}
+
+#[test]
+fn cli_help_documents_strict_and_drops_the_unreachable_feature_note() {
+    let out = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    assert!(out.status.success(), "--help should exit 0; got {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[--strict]"),
+        "the synopsis should list --strict; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\n--strict  "),
+        "--help should describe what --strict does; stdout:\n{stdout}"
+    );
+    // The binary is built with the `backup` feature only, and that includes
+    // `backup-mdf`: there is no build of it in which a SQL Server package
+    // "still exits 2".
+    for unreachable in ["still exits 2", "backup-mdf feature"] {
+        assert!(
+            !stdout.contains(unreachable),
+            "--help should not say `{unreachable}`; stdout:\n{stdout}"
+        );
+    }
+}
