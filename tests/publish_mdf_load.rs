@@ -135,3 +135,37 @@ fn a01_codelist_resolves_an_attribute_through_its_datatype() {
     );
     assert_eq!(index.lookup_by_attribute("EquipmentType", "241"), None);
 }
+
+/// The one real drawing the database line can be fed is written in full:
+/// every item has a writer of its own, and no `T_Relationship` row ends on
+/// an item. The account says so, and the document agrees with it.
+#[test]
+fn a01_is_written_in_full_and_the_account_says_so() {
+    if !Path::new(A01_MDF_PATH).exists() {
+        eprintln!("skipping: MDF fixture {A01_MDF_PATH} not found");
+        return;
+    }
+    let drawing = pid_parse::publish::load_drawing_graph_from_mdf(
+        Path::new(A01_MDF_PATH),
+        "D9635C3C898840D1990B7E8BEE1D55DA",
+    )
+    .expect("load A01 through the Rust MDF loader");
+    assert!(!drawing.objects.is_empty(), "A01 should carry items");
+    assert!(
+        !drawing.relationships.is_empty(),
+        "A01 should carry relationship rows"
+    );
+
+    let shortfalls = pid_parse::publish::database_shortfalls(&drawing);
+    assert!(shortfalls.is_empty(), "A01 has shortfalls: {shortfalls:?}");
+    assert!(shortfalls.describe().is_empty());
+
+    let xml = pid_parse::publish::write_data_xml(&drawing, "TEST02").expect("write A01");
+    assert_eq!(xml.matches("<PIDItem>").count(), 0);
+    assert_eq!(xml.matches(r#"DefUID="Relationship""#).count(), 0);
+    eprintln!(
+        "A01: {} items, {} relationship rows, no shortfalls",
+        drawing.objects.len(),
+        drawing.relationships.len()
+    );
+}

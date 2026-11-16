@@ -357,6 +357,207 @@ impl PublishDrawing {
     }
 }
 
+/// What the database line wrote of one drawing in less than full form.
+///
+/// The database line (`.mdf`, `.sqlite`, a SQL Server backup package)
+/// never refuses a drawing. Where it cannot write something in full it
+/// writes less, and the document alone does not say so:
+///
+/// * an item whose type has no writer of its own is written as a
+///   `<PIDItem>` that holds the item's UID and nothing else, so its
+///   class and every attribute are left out;
+/// * a `T_Relationship` row with an item at either end is written as a
+///   `<Rel>` whose definition is decided from the item types of the two
+///   ends alone.
+///
+/// [`database_shortfalls`](crate::publish::database_shortfalls) takes
+/// this account by the same tests the writer dispatches on, so the
+/// counts are the counts of what
+/// [`write_data_xml`](crate::publish::write_data_xml) writes. The `.pid`
+/// line states what it leaves out in its own coverage report and does
+/// not use this type.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::{database_shortfalls, PublishDrawing, PublishObject};
+///
+/// let mut drawing = PublishDrawing::new("UID-D", "DEMO");
+/// drawing.objects.push(PublishObject {
+///     uid: "EX-1".into(),
+///     item_type_name: "Exchanger".into(),
+///     ..PublishObject::default()
+/// });
+///
+/// let shortfalls = database_shortfalls(&drawing);
+/// assert_eq!(shortfalls.placeholder_objects["Exchanger"], 1);
+/// assert_eq!(
+///     shortfalls.describe(),
+///     ["1 object written as a <PIDItem> placeholder, \
+///       class and attributes left out: Exchanger 1"]
+/// );
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DatabaseShortfalls {
+    /// Items written as `<PIDItem>` placeholders: item type → how many.
+    /// An item whose `ItemTypeName` is empty is counted under
+    /// [`Self::NO_ITEM_TYPE`].
+    pub placeholder_objects: BTreeMap<String, usize>,
+    /// `T_Relationship` rows written as a `<Rel>` whose definition was
+    /// decided from the item types of the two ends alone: (type of
+    /// `SP_Item1ID`, type of `SP_Item2ID`, the `DefUID` written) → how
+    /// many rows. An end is typed by its item's `ItemTypeName`, as
+    /// `Representation` when it is one of the drawing's representations,
+    /// and as [`Self::NOT_IN_THE_DRAWING`] when the drawing holds no such
+    /// UID.
+    pub relationship_rows_by_item_type: BTreeMap<(String, String, String), usize>,
+}
+
+impl DatabaseShortfalls {
+    /// The type an item with an empty `ItemTypeName` is counted under.
+    pub const NO_ITEM_TYPE: &'static str = "(no item type)";
+    /// The type of a relationship end whose UID the drawing does not hold.
+    pub const NOT_IN_THE_DRAWING: &'static str = "(not in the drawing)";
+
+    /// `true` when the drawing was written in full: no placeholder, and
+    /// no relationship row defined by item type.
+    pub fn is_empty(&self) -> bool {
+        self.placeholder_objects.is_empty() && self.relationship_rows_by_item_type.is_empty()
+    }
+
+    /// How many items were written as `<PIDItem>` placeholders.
+    pub fn placeholder_object_count(&self) -> usize {
+        self.placeholder_objects.values().sum()
+    }
+
+    /// How many `T_Relationship` rows were defined from the item types of
+    /// their ends alone.
+    pub fn relationship_row_count(&self) -> usize {
+        self.relationship_rows_by_item_type.values().sum()
+    }
+
+    /// One English sentence for each kind of shortfall the drawing has,
+    /// placeholders first, and nothing when [`Self::is_empty`].
+    ///
+    /// The command line prints these as warnings and the package reports
+    /// carry them as problems, so every entry point words a shortfall the
+    /// same way.
+    pub fn describe(&self) -> Vec<String> {
+        let mut sentences = Vec::new();
+        let objects = self.placeholder_object_count();
+        if objects > 0 {
+            let by_type = self
+                .placeholder_objects
+                .iter()
+                .map(|(item_type, count)| format!("{item_type} {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sentences.push(if objects == 1 {
+                format!(
+                    "1 object written as a <PIDItem> placeholder, \
+                     class and attributes left out: {by_type}"
+                )
+            } else {
+                format!(
+                    "{objects} objects written as <PIDItem> placeholders, \
+                     class and attributes left out: {by_type}"
+                )
+            });
+        }
+        let rows = self.relationship_row_count();
+        if rows > 0 {
+            let by_ends = self
+                .relationship_rows_by_item_type
+                .iter()
+                .map(|((end1, end2, def_uid), count)| {
+                    format!("{end1} -> {end2} as {def_uid} {count}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            sentences.push(if rows == 1 {
+                format!(
+                    "1 relationship row defined from the item types of its ends alone: \
+                     {by_ends}"
+                )
+            } else {
+                format!(
+                    "{rows} relationship rows defined from the item types of their ends alone: \
+                     {by_ends}"
+                )
+            });
+        }
+        sentences
+    }
+}
+
+#[cfg(test)]
+mod database_shortfalls_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_written_short_says_nothing() {
+        let shortfalls = DatabaseShortfalls::default();
+        assert!(shortfalls.is_empty());
+        assert_eq!(shortfalls.placeholder_object_count(), 0);
+        assert_eq!(shortfalls.relationship_row_count(), 0);
+        assert!(shortfalls.describe().is_empty());
+    }
+
+    #[test]
+    fn each_kind_of_shortfall_gets_one_sentence_with_its_breakdown() {
+        let mut shortfalls = DatabaseShortfalls::default();
+        shortfalls
+            .placeholder_objects
+            .insert("Mechanical".into(), 1);
+        shortfalls.placeholder_objects.insert("Exchanger".into(), 2);
+        shortfalls.relationship_rows_by_item_type.insert(
+            ("Nozzle".into(), "Exchanger".into(), "Relationship".into()),
+            2,
+        );
+        assert!(!shortfalls.is_empty());
+        assert_eq!(shortfalls.placeholder_object_count(), 3);
+        assert_eq!(shortfalls.relationship_row_count(), 2);
+        assert_eq!(
+            shortfalls.describe(),
+            [
+                "3 objects written as <PIDItem> placeholders, \
+                 class and attributes left out: Exchanger 2, Mechanical 1",
+                "2 relationship rows defined from the item types of their ends alone: \
+                 Nozzle -> Exchanger as Relationship 2",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_single_object_or_row_is_worded_in_the_singular() {
+        let mut shortfalls = DatabaseShortfalls::default();
+        shortfalls.placeholder_objects.insert("OPC".into(), 1);
+        assert_eq!(
+            shortfalls.describe(),
+            ["1 object written as a <PIDItem> placeholder, \
+              class and attributes left out: OPC 1"]
+        );
+
+        let mut shortfalls = DatabaseShortfalls::default();
+        shortfalls.relationship_rows_by_item_type.insert(
+            (
+                "Nozzle".into(),
+                DatabaseShortfalls::NOT_IN_THE_DRAWING.into(),
+                "Relationship".into(),
+            ),
+            1,
+        );
+        assert_eq!(
+            shortfalls.describe(),
+            [
+                "1 relationship row defined from the item types of its ends alone: \
+                 Nozzle -> (not in the drawing) as Relationship 1"
+            ]
+        );
+    }
+}
+
 #[cfg(test)]
 mod codelist_tests {
     use super::*;

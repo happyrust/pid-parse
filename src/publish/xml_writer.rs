@@ -40,8 +40,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use super::model::{
-    PublishDrawing, PublishError, PublishObject, PublishRelationship, PublishRepresentation,
-    PublishStyle,
+    DatabaseShortfalls, PublishDrawing, PublishError, PublishObject, PublishRelationship,
+    PublishRepresentation, PublishStyle,
 };
 
 /// Software-version / schema-version / tooling constants that the
@@ -154,19 +154,72 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     Ok(buf)
 }
 
+/// Take the account of what [`write_data_xml`] writes of `drawing` in
+/// less than full form: the items it writes as `<PIDItem>` placeholders,
+/// and the `T_Relationship` rows it defines from the item types of their
+/// ends alone. [`DatabaseShortfalls`] says what each count means.
+///
+/// The writer and the account decide by the same code — which item types
+/// have a writer of their own, which relationship rows become a `<Rel>`
+/// and under which definition — so the counts are the counts of the tags
+/// in the document. An account that is
+/// [empty](DatabaseShortfalls::is_empty) means the drawing was written in
+/// full. The drawing is only read, and the document is not changed by
+/// asking.
+pub fn database_shortfalls(drawing: &PublishDrawing) -> DatabaseShortfalls {
+    let mut shortfalls = DatabaseShortfalls::default();
+    for obj in ordered_business_objects(drawing) {
+        let item_type = obj.item_type_name.as_str();
+        if super::catalog::dedicated_db_writer(item_type).is_some() {
+            continue;
+        }
+        let heading = if item_type.is_empty() {
+            DatabaseShortfalls::NO_ITEM_TYPE
+        } else {
+            item_type
+        };
+        *shortfalls
+            .placeholder_objects
+            .entry(heading.to_string())
+            .or_default() += 1;
+    }
+    let type_by_uid = relationship_end_types(drawing);
+    for row in published_relationship_rows(drawing, &type_by_uid) {
+        let ends = (
+            shortfall_end_type(row.end1_type).to_string(),
+            shortfall_end_type(row.end2_type).to_string(),
+            row.def_uid,
+        );
+        *shortfalls
+            .relationship_rows_by_item_type
+            .entry(ends)
+            .or_default() += 1;
+    }
+    shortfalls
+}
+
+/// The type [`DatabaseShortfalls`] states for one end of a relationship
+/// row, from what `relationship_end_types` has for its UID.
+fn shortfall_end_type(end_type: Option<&str>) -> &str {
+    match end_type {
+        None => DatabaseShortfalls::NOT_IN_THE_DRAWING,
+        Some("") => DatabaseShortfalls::NO_ITEM_TYPE,
+        Some(item_type) => item_type,
+    }
+}
+
 /// Emit every `PublishObject` as the corresponding `SmartPlant` XML
 /// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Dispatch resolves
 /// through the publish item catalog (A3): a row's `db_writer` runs for
 /// its `item_type` and `aliases`; rows without a DB writer
 /// (`Exchanger` / `Mechanical`, TODO A12+) and unlisted types fall
 /// through to the `"*"` row's generic `<PIDItem>` wrapper so the
-/// writer stays total.
+/// writer stays total. [`database_shortfalls`] counts those
+/// placeholders by the same `dedicated_db_writer` test.
 fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
     for obj in ordered_business_objects(drawing) {
-        let writer = super::catalog::catalog_row(obj.item_type_name.as_str())
-            .and_then(|row| row.db_writer)
-            .or_else(|| super::catalog::catalog_row("*").and_then(|row| row.db_writer))
-            .expect("catalog \"*\" row always carries the generic writer");
+        let writer = super::catalog::dedicated_db_writer(obj.item_type_name.as_str())
+            .unwrap_or_else(super::catalog::placeholder_db_writer);
         writer(buf, obj, drawing)?;
     }
     Ok(())
@@ -2302,19 +2355,6 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // classified). That ordering matches the reference
     // DWG-0202GP06-01_Data.xml layout.
 
-    // Build a lookup from UID → ItemTypeName so we can infer
-    // DefUID for T_Relationship rows. Covers both model items
-    // and representations (representations do not carry a SPPID
-    // item type, but surfacing them as "Representation" lets
-    // the classifier still pick a reasonable DefUID).
-    let mut type_by_uid: HashMap<&str, &str> = HashMap::new();
-    for obj in &drawing.objects {
-        type_by_uid.insert(obj.uid.as_str(), obj.item_type_name.as_str());
-    }
-    for rep in &drawing.representations {
-        type_by_uid.insert(rep.uid.as_str(), "Representation");
-    }
-
     let ordered_reps = ordered_publishable_representations(drawing);
     let dwg = matches!(drawing.style, PublishStyle::Dwg);
     if dwg {
@@ -2503,42 +2543,92 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         )?;
     }
 
-    // --- From T_Relationship, classified by endpoint item types
-    //
-    // A36b — skip rows whose source or target UID is NULL / empty.
-    // SmartPlant's exporter never emits an `<IRel UID2=""/>` for
-    // a half-wired relationship; shipping one produces a dangling
-    // reference that validators reject. The A36b soundness gate
-    // surfaced this when T_Relationship carried a row with an
-    // unpaired endpoint on A01.
-    //
-    // A40 — also skip rows where BOTH endpoints resolve to
-    // Representations. Investigation on the A01 fixture
-    // revealed SmartPlant's exporter does not emit these as
-    // their own `<Rel>` entries — every Rep↔Rep relationship
-    // is already covered by the ModelItem → Rep derived
-    // emits in `write_derived_*`, so re-emitting them here
-    // classifies as DwgRepresentationComposition a second
-    // time and produces an over-count. The A40 Rel DefUID
-    // diff against the A01 reference surfaced this as a
-    // DELTA row (writer 6, reference 4, +2 extras).
-    for rel in &drawing.relationships {
+    // --- From T_Relationship, classified by endpoint item types.
+    // Which rows are written, and under which definition, is decided
+    // in `published_relationship_rows`.
+    let type_by_uid = relationship_end_types(drawing);
+    for row in published_relationship_rows(drawing, &type_by_uid) {
+        let prefix = defuid_prefix(&row.def_uid);
+        let rel_uid = format!("{prefix}-{}-{}", row.uid1, row.uid2);
+        write_rel(buf, &rel_uid, row.uid1, row.uid2, &row.def_uid)?;
+    }
+    Ok(())
+}
+
+/// A lookup from UID → `ItemTypeName` so the `DefUID` of a
+/// `T_Relationship` row can be inferred. Covers both model items and
+/// representations (representations do not carry a SPPID item type,
+/// but surfacing them as `"Representation"` lets the classifier still
+/// pick a reasonable `DefUID`).
+fn relationship_end_types(drawing: &PublishDrawing) -> HashMap<&str, &str> {
+    let mut type_by_uid: HashMap<&str, &str> = HashMap::new();
+    for obj in &drawing.objects {
+        type_by_uid.insert(obj.uid.as_str(), obj.item_type_name.as_str());
+    }
+    for rep in &drawing.representations {
+        type_by_uid.insert(rep.uid.as_str(), "Representation");
+    }
+    type_by_uid
+}
+
+/// One `T_Relationship` row as `write_relationships` writes it.
+struct PublishedRelationshipRow<'a> {
+    /// `SP_Item1ID`, written as `UID1`.
+    uid1: &'a str,
+    /// `SP_Item2ID`, written as `UID2`.
+    uid2: &'a str,
+    /// What `relationship_end_types` has for `uid1`; `None` when the
+    /// drawing holds no such UID.
+    end1_type: Option<&'a str>,
+    /// The same for `uid2`.
+    end2_type: Option<&'a str>,
+    /// The `DefUID` `classify_relationship` picks from the two types.
+    def_uid: String,
+}
+
+/// The `T_Relationship` rows that become a `<Rel>`, each with the
+/// definition it is written under. `write_relationships` writes from
+/// this and [`database_shortfalls`] counts from it, so neither can skip
+/// or classify a row in a way the other does not.
+fn published_relationship_rows<'a>(
+    drawing: &'a PublishDrawing,
+    type_by_uid: &'a HashMap<&'a str, &'a str>,
+) -> impl Iterator<Item = PublishedRelationshipRow<'a>> + 'a {
+    drawing.relationships.iter().filter_map(move |rel| {
+        // A36b — skip rows whose source or target UID is NULL / empty.
+        // SmartPlant's exporter never emits an `<IRel UID2=""/>` for
+        // a half-wired relationship; shipping one produces a dangling
+        // reference that validators reject. The A36b soundness gate
+        // surfaced this when T_Relationship carried a row with an
+        // unpaired endpoint on A01.
         let uid1 = rel.source_uid.as_deref().unwrap_or("");
         let uid2 = rel.target_uid.as_deref().unwrap_or("");
         if uid1.is_empty() || uid2.is_empty() {
-            continue;
+            return None;
         }
-        let t1 = type_by_uid.get(uid1).copied().unwrap_or("");
-        let t2 = type_by_uid.get(uid2).copied().unwrap_or("");
-        if t1 == "Representation" && t2 == "Representation" {
-            continue;
+        // A40 — also skip rows where BOTH endpoints resolve to
+        // Representations. Investigation on the A01 fixture
+        // revealed SmartPlant's exporter does not emit these as
+        // their own `<Rel>` entries — every Rep↔Rep relationship
+        // is already covered by the ModelItem → Rep derived
+        // emits in `write_derived_*`, so re-emitting them here
+        // classifies as DwgRepresentationComposition a second
+        // time and produces an over-count. The A40 Rel DefUID
+        // diff against the A01 reference surfaced this as a
+        // DELTA row (writer 6, reference 4, +2 extras).
+        let end1_type = type_by_uid.get(uid1).copied();
+        let end2_type = type_by_uid.get(uid2).copied();
+        if end1_type == Some("Representation") && end2_type == Some("Representation") {
+            return None;
         }
-        let def_uid = classify_relationship(rel, &type_by_uid);
-        let prefix = defuid_prefix(&def_uid);
-        let rel_uid = format!("{prefix}-{uid1}-{uid2}");
-        write_rel(buf, &rel_uid, uid1, uid2, &def_uid)?;
-    }
-    Ok(())
+        Some(PublishedRelationshipRow {
+            uid1,
+            uid2,
+            end1_type,
+            end2_type,
+            def_uid: classify_relationship(rel, type_by_uid),
+        })
+    })
 }
 
 /// Emit a single `<Rel>` node. `rel_uid` is the current writer-side
@@ -4157,6 +4247,243 @@ mod tests {
             out.contains("`Exchanger`"),
             "the generic comment should name the unsupported type; out:\n{out}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Review follow-up T2.1 — the account of what is written short
+    // -----------------------------------------------------------------
+
+    fn bare_item(uid: &str, item_type_name: &str) -> PublishObject {
+        PublishObject {
+            uid: uid.into(),
+            item_type_name: item_type_name.into(),
+            ..PublishObject::default()
+        }
+    }
+
+    fn rep_of(uid: &str, model_item_uid: &str) -> PublishRepresentation {
+        PublishRepresentation {
+            uid: uid.into(),
+            model_item_uid: Some(model_item_uid.into()),
+            drawing_uid: "UID-D".into(),
+            ..PublishRepresentation::default()
+        }
+    }
+
+    fn relationship_row(
+        uid: &str,
+        item1: Option<&str>,
+        item2: Option<&str>,
+    ) -> PublishRelationship {
+        PublishRelationship {
+            uid: uid.into(),
+            drawing_uid: "UID-D".into(),
+            source_uid: item1.map(str::to_string),
+            target_uid: item2.map(str::to_string),
+            ..PublishRelationship::default()
+        }
+    }
+
+    #[test]
+    fn shortfalls_count_the_placeholders_the_writer_emits() {
+        assert!(
+            crate::publish::catalog::catalog_row("SomethingNew").is_none(),
+            "this test needs an item type the catalog does not list"
+        );
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![
+            bare_item("EX-1", "Exchanger"),
+            bare_item("EX-2", "Exchanger"),
+            bare_item("ME-1", "Mechanical"),
+            bare_item("EO-1", "EquipmentOther"),
+            bare_item("OPC-1", "OPC"),
+            bare_item("NEW-1", "SomethingNew"),
+            bare_item("V-1", "Vessel"),
+            bare_item("N-1", "Nozzle"),
+        ];
+
+        let shortfalls = database_shortfalls(&d);
+        let expected: std::collections::BTreeMap<String, usize> = [
+            ("EquipmentOther", 1),
+            ("Exchanger", 2),
+            ("Mechanical", 1),
+            ("OPC", 1),
+            ("SomethingNew", 1),
+        ]
+        .into_iter()
+        .map(|(item_type, count)| (item_type.to_string(), count))
+        .collect();
+        assert_eq!(shortfalls.placeholder_objects, expected);
+        assert!(shortfalls.relationship_rows_by_item_type.is_empty());
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            shortfalls.placeholder_object_count(),
+            out.matches("<PIDItem>").count(),
+            "the account must be the number of placeholders in the document; out:\n{out}"
+        );
+        assert_eq!(shortfalls.placeholder_object_count(), 6);
+    }
+
+    #[test]
+    fn shortfalls_count_the_relationship_rows_defined_by_item_type() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![
+            bare_item("N-1", "Nozzle"),
+            bare_item("EX-1", "Exchanger"),
+            bare_item("V-1", "Vessel"),
+            bare_item("PR-1", "PipeRun"),
+        ];
+        d.representations = vec![rep_of("REP-N", "N-1"), rep_of("REP-V", "V-1")];
+        let without_rows = write_data_xml(&d, "TEST02").expect("write");
+
+        d.relationships = vec![
+            relationship_row("R-1", Some("N-1"), Some("EX-1")),
+            relationship_row("R-2", Some("N-1"), Some("ELSEWHERE-1")),
+            relationship_row("R-3", Some("N-1"), Some("V-1")),
+            relationship_row("R-4", Some("PR-1"), Some("N-1")),
+            // Not written: both ends are representations.
+            relationship_row("R-5", Some("REP-N"), Some("REP-V")),
+            // Not written: one end is empty.
+            relationship_row("R-6", Some("N-1"), None),
+        ];
+
+        let shortfalls = database_shortfalls(&d);
+        let one_row = |end1: &str, end2: &str, def_uid: &str| {
+            (
+                (end1.to_string(), end2.to_string(), def_uid.to_string()),
+                1_usize,
+            )
+        };
+        let expected: std::collections::BTreeMap<(String, String, String), usize> = [
+            one_row("Nozzle", "Exchanger", "Relationship"),
+            one_row(
+                "Nozzle",
+                DatabaseShortfalls::NOT_IN_THE_DRAWING,
+                "Relationship",
+            ),
+            one_row("Nozzle", "Vessel", "EquipmentComponentComposition"),
+            one_row("PipeRun", "Nozzle", "PipingEnd1Conn"),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(shortfalls.relationship_rows_by_item_type, expected);
+
+        let with_rows = write_data_xml(&d, "TEST02").expect("write");
+        for written in [
+            r#"<IRel UID1="N-1" UID2="EX-1" DefUID="Relationship"/>"#,
+            r#"<IRel UID1="N-1" UID2="ELSEWHERE-1" DefUID="Relationship"/>"#,
+            r#"<IRel UID1="N-1" UID2="V-1" DefUID="EquipmentComponentComposition"/>"#,
+            r#"<IRel UID1="PR-1" UID2="N-1" DefUID="PipingEnd1Conn"/>"#,
+        ] {
+            assert!(
+                with_rows.contains(written),
+                "the document should carry {written}; out:\n{with_rows}"
+            );
+        }
+        assert_eq!(
+            shortfalls.relationship_row_count(),
+            with_rows.matches("<Rel>").count() - without_rows.matches("<Rel>").count(),
+            "the account must be the number of <Rel> the six rows add; out:\n{with_rows}"
+        );
+        assert_eq!(shortfalls.relationship_row_count(), 4);
+    }
+
+    #[test]
+    fn shortfalls_report_every_catalog_type_without_a_writer_of_its_own() {
+        // Walks the catalog instead of listing the types, so a row added
+        // without a writer is caught here, and a row given one needs no
+        // edit here.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        let mut without_writer: Vec<&str> = Vec::new();
+        for row in crate::publish::catalog::PUBLISH_ITEM_CATALOG {
+            // `"*"`, `"$document"` and `"$derived"` are not item types.
+            if row.item_type.starts_with(['*', '$']) {
+                continue;
+            }
+            for name in std::iter::once(row.item_type).chain(row.aliases.iter().copied()) {
+                d.objects.push(bare_item(&format!("UID-{name}"), name));
+                if row.db_writer.is_none() {
+                    without_writer.push(name);
+                }
+            }
+        }
+        without_writer.sort_unstable();
+
+        let shortfalls = database_shortfalls(&d);
+        let reported: Vec<&str> = shortfalls
+            .placeholder_objects
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            reported, without_writer,
+            "the account must name exactly the catalog types that have no writer of their own"
+        );
+        assert!(shortfalls
+            .placeholder_objects
+            .values()
+            .all(|count| *count == 1));
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            shortfalls.placeholder_object_count(),
+            out.matches("<PIDItem>").count(),
+            "the account must be the number of placeholders in the document; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn shortfalls_name_an_item_without_a_type_and_a_representation_end() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![bare_item("X-1", ""), bare_item("N-1", "Nozzle")];
+        d.representations = vec![rep_of("REP-N", "N-1")];
+        d.relationships = vec![
+            relationship_row("R-1", Some("X-1"), Some("N-1")),
+            relationship_row("R-2", Some("REP-N"), Some("N-1")),
+        ];
+
+        let shortfalls = database_shortfalls(&d);
+        assert_eq!(
+            shortfalls
+                .placeholder_objects
+                .get(DatabaseShortfalls::NO_ITEM_TYPE),
+            Some(&1),
+            "{shortfalls:?}"
+        );
+        let row = |end1: &str, end2: &str| {
+            shortfalls
+                .relationship_rows_by_item_type
+                .get(&(
+                    end1.to_string(),
+                    end2.to_string(),
+                    "Relationship".to_string(),
+                ))
+                .copied()
+        };
+        assert_eq!(
+            row(DatabaseShortfalls::NO_ITEM_TYPE, "Nozzle"),
+            Some(1),
+            "{shortfalls:?}"
+        );
+        assert_eq!(row("Representation", "Nozzle"), Some(1), "{shortfalls:?}");
+        assert_eq!(shortfalls.relationship_row_count(), 2);
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(out.matches("<PIDItem>").count(), 1);
+        assert_eq!(out.matches(r#"DefUID="Relationship""#).count(), 2);
+    }
+
+    #[test]
+    fn a_drawing_written_in_full_has_no_shortfalls() {
+        // `Vessel`, `Nozzle` and `PipeRun` each have a writer of their
+        // own, and the one relationship row joins two representations.
+        let d = example_drawing();
+        let shortfalls = database_shortfalls(&d);
+        assert!(shortfalls.is_empty(), "{shortfalls:?}");
+        assert!(shortfalls.describe().is_empty());
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(!out.contains("<PIDItem>"), "out:\n{out}");
     }
 
     // -----------------------------------------------------------------

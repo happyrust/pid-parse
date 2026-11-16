@@ -134,8 +134,8 @@ pub use mdf_load::{
     open_mtf_dump_as_sqlite,
 };
 pub use model::{
-    CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
-    PublishRepresentation, PublishStyle,
+    CodelistIndex, DatabaseShortfalls, PublishDrawing, PublishError, PublishObject,
+    PublishRelationship, PublishRepresentation, PublishStyle,
 };
 pub use pid_load::{
     load_publish_from_pid, load_publish_from_reader, PidLoadError, PidPublishAttribute,
@@ -150,4 +150,4 @@ pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
     load_objects_by_uids, load_piping_points_for_objects, load_relationships, load_representations,
 };
-pub use xml_writer::{write_data_xml, write_meta_xml};
+pub use xml_writer::{database_shortfalls, write_data_xml, write_meta_xml};

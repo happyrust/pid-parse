@@ -8,7 +8,10 @@
 //! its subtable chains through [`catalog_row`], `super::xml_writer`
 //! dispatches `write_business_objects` through [`PublishItemRow::db_writer`]
 //! and reads [`PublishItemRow::a01_rank`] (A1 seeded the table in
-//! `60f1b25`, A2 `7c79749`, A3 `4735be9`, A4 `6881c18`).
+//! `60f1b25`, A2 `7c79749`, A3 `4735be9`, A4 `6881c18`). The dispatch goes
+//! through [`dedicated_db_writer`], which `xml_writer::database_shortfalls`
+//! reads as well: an item is counted as a placeholder by the test that
+//! writes it as one.
 //!
 //! Both lines also share one tag inventory: `super::diff::supported_pid_tags`
 //! is the union of [`supported_db_tags`] and [`supported_pid_line_tags`],
@@ -472,6 +475,27 @@ pub(crate) fn catalog_row(item_type_name: &str) -> Option<&'static PublishItemRo
     PUBLISH_ITEM_CATALOG
         .iter()
         .find(|row| row.item_type == item_type_name || row.aliases.contains(&item_type_name))
+}
+
+/// The DB-line writer an item type has of its own: the `db_writer` of the
+/// row its `ItemTypeName` or alias names. `None` for a row that has none
+/// (`Exchanger`, `Mechanical`, the `.pid`-line-only types), for a type the
+/// catalog does not list, and for `"*"` itself — that row's writer is the
+/// placeholder, which is nobody's own.
+///
+/// `xml_writer::write_business_objects` dispatches on this and
+/// `xml_writer::database_shortfalls` counts by it.
+pub(crate) fn dedicated_db_writer(item_type_name: &str) -> Option<DbWriterFn> {
+    catalog_row(item_type_name)
+        .filter(|row| row.item_type != "*")
+        .and_then(|row| row.db_writer)
+}
+
+/// The writer of every item without a [`dedicated_db_writer`]: the `"*"`
+/// row's `<PIDItem>` placeholder, which carries the item's UID and
+/// nothing else.
+pub(crate) fn placeholder_db_writer() -> DbWriterFn {
+    run_generic
 }
 
 /// The catalog-derived source of `diff::supported_pid_tags`: the union of
@@ -1487,6 +1511,47 @@ mod tests {
                 row.item_type
             );
         }
+    }
+
+    #[test]
+    fn dedicated_db_writer_is_a_rows_own_writer_and_never_the_placeholder() {
+        for row in PUBLISH_ITEM_CATALOG {
+            let own = row.item_type != "*" && row.db_writer.is_some();
+            for name in std::iter::once(row.item_type).chain(row.aliases.iter().copied()) {
+                assert_eq!(
+                    dedicated_db_writer(name).is_some(),
+                    own,
+                    "`{name}` (row `{}`)",
+                    row.item_type
+                );
+            }
+        }
+        assert!(dedicated_db_writer("Vessel").is_some());
+        assert!(dedicated_db_writer("InstrFunction").is_some());
+        assert!(dedicated_db_writer("Exchanger").is_none());
+        assert!(dedicated_db_writer("SomethingNew").is_none());
+        assert!(dedicated_db_writer("").is_none());
+    }
+
+    #[test]
+    fn the_star_row_declares_the_placeholder_writer() {
+        // The dispatch takes the placeholder from `placeholder_db_writer`,
+        // not from the table; the `"*"` row must still describe it.
+        let obj = PublishObject {
+            uid: "EX-1".into(),
+            item_type_name: "Exchanger".into(),
+            ..PublishObject::default()
+        };
+        let drawing = PublishDrawing::new("UID-D", "DWG");
+        let declared = catalog_row("*")
+            .and_then(|row| row.db_writer)
+            .expect("the `*` row declares a writer");
+        let mut by_row = String::new();
+        declared(&mut by_row, &obj, &drawing).expect("write through the row");
+        let mut by_dispatch = String::new();
+        placeholder_db_writer()(&mut by_dispatch, &obj, &drawing).expect("write");
+        assert_eq!(by_row, by_dispatch);
+        assert!(by_row.contains("<PIDItem>"), "{by_row}");
     }
 
     #[test]
