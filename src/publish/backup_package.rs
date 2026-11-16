@@ -2205,17 +2205,7 @@ mod tests {
                 .expect("a directory under the coverage report's name");
         });
         let out = root.join("out");
-        let mut held: Vec<String> = fs::read_dir(&out)
-            .expect("the output directory")
-            .map(|entry| {
-                entry
-                    .expect("a directory entry")
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
-        held.sort();
+        let held = names_in(&out);
         let in_the_way = fs::read_dir(out.join("SHORT-01_Coverage.json"))
             .map(Iterator::count)
             .ok();
@@ -2275,6 +2265,68 @@ mod tests {
         assert!(report.shortfalls.is_empty());
     }
 
+    /// A staged package published into a directory that holds an earlier
+    /// run's files writes into none of them: the drawing's three files and
+    /// the index each take their name as a new file. Each earlier file has
+    /// a second name here, outside the output directory, and reads under it
+    /// as it did, so whoever was reading it never sees a part of the new
+    /// one.
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_package_written_again_takes_each_name_as_a_new_file() {
+        const NAMES: [&str; 4] = [
+            "SHORT-01_Coverage.json",
+            "SHORT-01_Data.xml",
+            "SHORT-01_Meta.xml",
+            "_Index.json",
+        ];
+        const EARLIER: &str = "an earlier run's";
+        let (root, report) = publish_staged_into("again", SHORTFALLS_SQL, |out| {
+            let kept = out.with_file_name("earlier");
+            fs::create_dir_all(out).expect("the output directory");
+            fs::create_dir_all(&kept).expect("a directory for the second names");
+            for name in NAMES {
+                fs::write(out.join(name), EARLIER).expect("an earlier file");
+                fs::hard_link(out.join(name), kept.join(name)).expect("its second name");
+            }
+        });
+        let read = |dir: &str| -> Vec<String> {
+            NAMES
+                .iter()
+                .map(|name| {
+                    fs::read_to_string(root.join(dir).join(name))
+                        .unwrap_or_else(|error| panic!("{dir}/{name}: {error}"))
+                })
+                .collect()
+        };
+        let (earlier, written) = (read("earlier"), read("out"));
+        let held = names_in(&root.join("out"));
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!((report.written, report.failed), (1, 0));
+        assert_eq!(earlier, [EARLIER; 4], "no earlier file is written into");
+        for (name, text) in NAMES.iter().zip(&written) {
+            assert_ne!(text, EARLIER, "{name} is this run's");
+        }
+        assert_eq!(held, NAMES, "nothing is left beside them");
+    }
+
+    /// The names `dir` holds, sorted.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("a directory that can be listed")
+            .map(|entry| {
+                entry
+                    .expect("a directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     /// A directory of one test's own under the system temp dir, removed
     /// again when the value drops.
     struct WriteScratch(PathBuf);
@@ -2290,18 +2342,7 @@ mod tests {
 
         /// The names the directory holds, sorted.
         fn names(&self) -> Vec<String> {
-            let mut names: Vec<String> = fs::read_dir(&self.0)
-                .expect("scratch directory")
-                .map(|entry| {
-                    entry
-                        .expect("a directory entry")
-                        .file_name()
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect();
-            names.sort();
-            names
+            names_in(&self.0)
         }
     }
 
@@ -2347,21 +2388,33 @@ mod tests {
         assert_eq!(scratch.names(), Vec::<String>::new());
     }
 
+    /// The name goes to a new file: the file that held it is not written
+    /// into, so whoever still reads that one, here under a second name it
+    /// has, sees it whole.
     #[test]
-    fn write_atomic_puts_the_whole_contents_in_the_place_of_a_file() {
+    fn write_atomic_gives_the_name_to_a_new_file() {
         let scratch = WriteScratch::new("atomic");
         let path = scratch.0.join("_Index.json");
         write_atomic(&path, b"first").expect("nothing is there yet");
         assert_eq!(fs::read(&path).expect("the file"), b"first");
-        write_atomic(&path, b"second, and longer").expect("a file is there");
-        assert_eq!(fs::read(&path).expect("the file"), b"second, and longer");
-        write_atomic(&path, b"3").expect("a file is there");
-        assert_eq!(fs::read(&path).expect("the file"), b"3");
         assert_eq!(
             scratch.names(),
             ["_Index.json"],
             "nothing is left beside it"
         );
+
+        let earlier = scratch.0.join("earlier");
+        fs::hard_link(&path, &earlier).expect("a second name for the file");
+        write_atomic(&path, b"second, and longer").expect("a file is there");
+        assert_eq!(fs::read(&path).expect("the file"), b"second, and longer");
+        assert_eq!(
+            fs::read(&earlier).expect("the file that held the name"),
+            b"first",
+            "it is not written into"
+        );
+        write_atomic(&path, b"3").expect("a file is there");
+        assert_eq!(fs::read(&path).expect("the file"), b"3");
+        assert_eq!(scratch.names(), ["_Index.json", "earlier"]);
     }
 
     #[test]

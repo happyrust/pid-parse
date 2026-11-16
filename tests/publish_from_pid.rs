@@ -1899,18 +1899,7 @@ fn a_package_drawing_one_of_whose_files_cannot_be_written_leaves_none_of_them() 
     ])
     .collect();
     expected.sort();
-    let mut held: Vec<String> = std::fs::read_dir(out_dir.path())
-        .expect("the output directory")
-        .map(|entry| {
-            entry
-                .expect("a directory entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    held.sort();
-    assert_eq!(held, expected, "{stderr}");
+    assert_eq!(names_in(out_dir.path()), expected, "{stderr}");
     assert!(taken.is_dir());
     assert_eq!(
         std::fs::read_dir(&taken)
@@ -1957,4 +1946,111 @@ fn a_package_drawing_one_of_whose_files_cannot_be_written_leaves_none_of_them() 
             assert_eq!(drawing["problems"], serde_json::json!([]), "{drawing}");
         }
     }
+}
+
+/// The names `dir` holds, sorted.
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("a directory that can be listed")
+        .map(|entry| {
+            entry
+                .expect("a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// What [`earlier_file`] writes.
+const EARLIER: &str = "an earlier run's";
+
+/// Put a file as an earlier run left it under `path`, and give it a second
+/// name, `kept`. A run that writes into the file changes what `kept` reads;
+/// a run that gives the name `path` to a new file leaves `kept` as it was,
+/// which is what whoever was reading the earlier file is owed.
+fn earlier_file(path: &Path, kept: &Path) {
+    std::fs::write(path, EARLIER).expect("an earlier file");
+    std::fs::hard_link(path, kept).expect("a second name for the earlier file");
+}
+
+/// A document written over one an earlier run left takes the name as a new
+/// file: the earlier file is not written into. `--out` and `--meta-out`
+/// both do, and nothing is left beside the two documents.
+#[test]
+fn a_document_written_over_an_earlier_one_takes_its_name_as_a_new_file() {
+    let out_dir = Scratch::new("pid-over-earlier");
+    let kept = Scratch::new("pid-over-earlier-kept");
+    let names = ["DWG_Data.xml", "DWG_Meta.xml"];
+    for name in names {
+        earlier_file(&out_dir.join(name), &kept.join(name));
+    }
+    let output = Command::new(CLI)
+        .arg(repo_path(DWG_DIR).join("DWG-0202GP06-01.pid"))
+        .arg("--out")
+        .arg(out_dir.join(names[0]))
+        .arg("--meta-out")
+        .arg(out_dir.join(names[1]))
+        .output()
+        .expect("spawn pid_publish_xml <DWG .pid>");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    for name in names {
+        let written = std::fs::read_to_string(out_dir.join(name)).expect("the document");
+        assert!(written.contains("<Container"), "{name} is this run's");
+        assert_eq!(
+            std::fs::read_to_string(kept.join(name)).expect("the earlier file"),
+            EARLIER,
+            "the earlier {name} is not written into"
+        );
+    }
+    assert_eq!(names_in(out_dir.path()), names, "{stderr}");
+}
+
+/// The package published into a directory that holds an earlier run's files
+/// writes into none of them either: a drawing's three files and the index
+/// each take their name as a new file, and the run leaves the directory
+/// with its 22 files and nothing beside them.
+#[test]
+fn a_package_written_over_an_earlier_one_takes_each_name_as_a_new_file() {
+    let out_dir = Scratch::new("dwg-package-over-earlier");
+    let kept = Scratch::new("dwg-package-over-earlier-kept");
+    let names = [
+        "DWG-0202GP06-01_Data.xml",
+        "DWG-0202GP06-01_Meta.xml",
+        "DWG-0202GP06-01_Coverage.json",
+        "_Index.json",
+    ];
+    for name in names {
+        earlier_file(&out_dir.join(name), &kept.join(name));
+    }
+    let output = Command::new(CLI)
+        .arg(repo_path(DWG_PACKAGE))
+        .arg("--out-dir")
+        .arg(out_dir.path())
+        .output()
+        .expect("spawn pid_publish_xml <DWG package>");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    for name in names {
+        let written = std::fs::read_to_string(out_dir.join(name)).expect("a written file");
+        assert_ne!(written, EARLIER, "{name} is this run's");
+        assert_eq!(
+            std::fs::read_to_string(kept.join(name)).expect("the earlier file"),
+            EARLIER,
+            "the earlier {name} is not written into"
+        );
+    }
+    let held = names_in(out_dir.path());
+    assert_eq!(held.len(), 22, "{held:?}");
+    assert!(
+        held.iter().all(|name| {
+            ["_Data.xml", "_Meta.xml", "_Coverage.json", "_Index.json"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+        }),
+        "{held:?}"
+    );
 }
