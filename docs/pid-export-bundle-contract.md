@@ -429,6 +429,8 @@ only; C8 does not emit publish XML.
 - plant;
 - style (`a01` / `dwg`);
 - whether `data.xml` and `meta.xml` were written;
+- when they were written, what they hold in less than full form
+  (`shortfalls`);
 - whether reference comparison was run;
 - if skipped, the reason (for example missing DWG MDF fixture).
 
@@ -467,6 +469,26 @@ bundle, then calls `export_bundle_publish_xml(...)` to write
 When `--publish-diff-against` is supplied, the helper also writes
 `publish/publish_diff.json` with PID tag and Rel DefUID summary counts, then
 sets `reference_comparison.state` to `clean` or `findings`.
+
+Shortfalls note: the status that `export_bundle_publish_xml(...)` writes
+carries `shortfalls`, an array of sentences, one for each kind of thing the
+database line did not write in full: items written as `<PIDItem>`
+placeholders, without their class and attributes, and `T_Relationship` rows
+defined from the item types of their ends alone.
+
+```json
+"shortfalls": [
+  "1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1",
+  "1 relationship row defined from the item types of its ends alone: Nozzle -> Exchanger as Relationship 1"
+]
+```
+
+The drawing is written and `status.state` is `"written"` either way. The key
+is there whenever the XML was written, and `[]` says the drawing was written
+in full. The deferred status that `export_bundle(...)` writes has no
+`shortfalls` key: no XML was generated, so nothing was counted, and a reader
+must not take the missing key for an empty list. Nothing is printed for it;
+`pid_inspect --export-bundle` leaves the list in the file.
 
 Implementation boundary:
 

@@ -243,6 +243,17 @@ pub struct ExportBundlePublishStatus {
     pub data_xml_written: bool,
     /// Whether `publish/meta.xml` was written.
     pub meta_xml_written: bool,
+    /// What the written publish XML holds in less than full form: one
+    /// sentence for each kind of shortfall the database line counts
+    /// ([`crate::publish::DatabaseShortfalls::describe`]) — items written
+    /// as `<PIDItem>` placeholders, and `T_Relationship` rows defined from
+    /// the item types of their ends alone. `Some` whenever the XML was
+    /// written; an empty list says the drawing was written in full. `None`
+    /// when no XML was generated, and for a status file written before
+    /// this field existed: nothing was counted, which is not the same as
+    /// nothing being short. The file has no `shortfalls` key then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortfalls: Option<Vec<String>>,
     /// Whether publish reference comparison was run.
     pub reference_comparison: ExportBundlePublishComparisonStatus,
     /// Skipped/error reason for the current publish subtree state.
@@ -356,6 +367,12 @@ pub fn export_bundle(
 /// existing MDF-backed publish pipeline. It requires an explicit
 /// [`ExportBundlePublishPlan::drawing_uid`] and never derives publish XML from
 /// `.pid` raw streams.
+///
+/// A drawing the pipeline does not write in full is written all the same,
+/// with the state `written`. The status lists what is short of it under
+/// [`ExportBundlePublishStatus::shortfalls`], in the returned value and in
+/// the file: nothing is printed, so a caller that needs every item written
+/// in full reads that list.
 pub fn export_bundle_publish_xml(
     publish: &ExportBundlePublishPlan,
     publish_dir: impl AsRef<std::path::Path>,
@@ -384,6 +401,10 @@ pub fn export_bundle_publish_xml(
     fs::write(publish_dir.join("meta.xml"), &meta_xml)?;
 
     let comparison = write_publish_diff_if_requested(publish, publish_dir, &data_xml)?;
+    // What the writer could not write in full, counted from the drawing it
+    // was handed. An empty list is said as well: the XML was written, so
+    // the count was taken.
+    let shortfalls = crate::publish::database_shortfalls(&drawing).describe();
     let status = ExportBundlePublishStatus {
         requested_drawing_uid: Some(drawing_uid.to_string()),
         plant: Some(plant.to_string()),
@@ -394,6 +415,7 @@ pub fn export_bundle_publish_xml(
         )?),
         data_xml_written: true,
         meta_xml_written: true,
+        shortfalls: Some(shortfalls),
         reference_comparison: comparison,
         status: ExportBundlePublishRunStatus {
             state: "written".to_string(),
@@ -870,6 +892,10 @@ fn write_publish_status(
         input,
         data_xml_written: false,
         meta_xml_written: false,
+        // No XML is generated here, so nothing was counted: `None`, which
+        // leaves the key out. An empty list would say that nothing is
+        // short.
+        shortfalls: None,
         reference_comparison: ExportBundlePublishComparisonStatus {
             state: "not_run".to_string(),
             reason: Some(reference_reason.to_string()),
@@ -1641,6 +1667,11 @@ mod tests {
             .contains("publish XML generation is not implemented"));
         assert!(!out.join("publish/data.xml").exists());
         assert!(!out.join("publish/meta.xml").exists());
+        // No XML was generated, so nothing was counted: the status does not
+        // say that nothing is short, it does not speak of it.
+        assert_eq!(status.shortfalls, None);
+        let file: serde_json::Value = read_json(&out.join("publish/status.json"));
+        assert!(file.get("shortfalls").is_none(), "{file}");
 
         let ledger: ExportBundleConfidenceLedger =
             read_json(&out.join("audit/confidence_ledger.json"));
@@ -1704,11 +1735,96 @@ mod tests {
         assert!(status.meta_xml_written);
         assert_eq!(status.reference_comparison.state, "not_requested");
         assert_eq!(status.status.state, "written");
+        // A01 is written in full: the list is there, and empty.
+        assert_eq!(status.shortfalls, Some(Vec::new()));
 
+        let status_file: ExportBundlePublishStatus = read_json(&publish_dir.join("status.json"));
+        assert_eq!(status_file, status);
+        let file: serde_json::Value = read_json(&publish_dir.join("status.json"));
+        assert_eq!(file["shortfalls"], serde_json::json!([]), "{file}");
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    const PLACEHOLDER_SENTENCE: &str =
+        "1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1";
+
+    const RELATIONSHIP_SENTENCE: &str = "1 relationship row defined from the item types of its \
+                                         ends alone: Nozzle -> Exchanger as Relationship 1";
+
+    /// The drawing of `tests/fixtures/publish-shortfalls.sql` as a `.sqlite`
+    /// file under `root`: one the database line cannot write in full, with
+    /// an `Exchanger`, which has no writer of its own, and a
+    /// `T_Relationship` row from a nozzle to it.
+    fn shortfalls_sqlite(root: &Path) -> PathBuf {
+        std::fs::create_dir_all(root).expect("root dir");
+        let path = root.join("shortfalls.sqlite");
+        let conn = rusqlite::Connection::open(&path).expect("create the database");
+        conn.execute_batch(include_str!("../tests/fixtures/publish-shortfalls.sql"))
+            .expect("fixture sql");
+        path
+    }
+
+    #[test]
+    fn export_bundle_publish_xml_lists_what_was_written_short() {
+        let root = tmp_dir("publish-shortfalls");
+        let publish_dir = root.join("publish");
+        let publish =
+            ExportBundlePublishPlan::new(shortfalls_sqlite(&root)).with_drawing_uid("DWG-SHORT-01");
+
+        let status = export_bundle_publish_xml(&publish, &publish_dir).expect("publish xml");
+
+        // The drawing is written all the same, and the state says so.
+        assert!(status.data_xml_written && status.meta_xml_written);
+        assert_eq!(status.status.state, "written");
+        assert_eq!(
+            status.shortfalls,
+            Some(vec![
+                PLACEHOLDER_SENTENCE.to_string(),
+                RELATIONSHIP_SENTENCE.to_string()
+            ])
+        );
+        // The sentences count what the document beside the status holds.
+        let data_xml = std::fs::read_to_string(publish_dir.join("data.xml")).expect("data xml");
+        assert_eq!(data_xml.matches("<PIDItem>").count(), 1);
+        assert_eq!(data_xml.matches(r#"DefUID="Relationship""#).count(), 1);
+
+        let file: serde_json::Value = read_json(&publish_dir.join("status.json"));
+        assert_eq!(
+            file["shortfalls"],
+            serde_json::json!([PLACEHOLDER_SENTENCE, RELATIONSHIP_SENTENCE]),
+            "{file}"
+        );
         let status_file: ExportBundlePublishStatus = read_json(&publish_dir.join("status.json"));
         assert_eq!(status_file, status);
 
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_status_file_without_shortfalls_reads_as_not_counted() {
+        // What `export_bundle_publish_xml` wrote before the field existed.
+        let old = r#"{
+            "requested_drawing_uid": "D9635C3C898840D1990B7E8BEE1D55DA",
+            "plant": "TEST02",
+            "style": "a01",
+            "data_xml_written": true,
+            "meta_xml_written": true,
+            "reference_comparison": { "state": "not_requested" },
+            "status": {
+                "state": "written",
+                "reason": "publish XML written via MDF-backed publish pipeline"
+            }
+        }"#;
+        let status: ExportBundlePublishStatus = serde_json::from_str(old).expect("old status");
+        assert!(status.data_xml_written);
+        assert_eq!(
+            status.shortfalls, None,
+            "not counted, which is not the same as nothing short"
+        );
+        // Written back, the file still has no such key.
+        let again = serde_json::to_value(&status).expect("status json");
+        assert!(again.get("shortfalls").is_none(), "{again}");
     }
 
     #[test]
