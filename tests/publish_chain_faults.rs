@@ -929,4 +929,7 @@ fn a_package_names_the_drawing_whose_chain_stops() {
     )
     .expect("the package publishes");
     assert!(sound.chain_faults.is_empty());
+    // The drawings of both packages are read from the `.pid`: none goes
+    // through the database line, so none is listed as written short by it.
+    assert!(report.shortfalls.is_empty() && sound.shortfalls.is_empty());
 }

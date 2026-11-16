@@ -32,14 +32,16 @@ use std::path::Path;
 use serde_json::json;
 
 use super::catalog::{self, AttributeRule, InterfaceRule, PidTagRole};
-use super::model::{PublishDrawing, PublishError};
+use super::model::{DatabaseShortfalls, PublishDrawing, PublishError};
 use super::pid_load::{
     ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
     PidPublishItem, PidValueSource,
 };
 #[cfg(test)]
 use super::xml_writer::derive_meta_uid;
-use super::xml_writer::{defuid_prefix, escape_attr, write_data_container_open, write_meta_xml};
+use super::xml_writer::{
+    database_shortfalls, defuid_prefix, escape_attr, write_data_container_open, write_meta_xml,
+};
 
 /// Render the `_Data.xml` document of a `.pid`-only drawing.
 pub fn write_pid_data_xml(drawing: &PidPublishDrawing, plant_name: &str) -> String {
@@ -774,6 +776,13 @@ pub(crate) fn pid_coverage_json(
 /// row carries: top-level blocks that are not `<Rel>`, non-empty attribute
 /// values, and `<Rel>` blocks.
 ///
+/// Its `shortfalls` section says what the document holds in less than full
+/// form, as [`database_shortfalls`] counts it from `drawing`: the items
+/// written as `<PIDItem>` placeholders, by item type, and the
+/// `T_Relationship` rows defined from the item types of their ends alone,
+/// by the two types and the `DefUID` written. The section is always there;
+/// for a drawing written in full both totals are 0.
+///
 /// A `.pid`-only export goes through [`write_pid_coverage_json`] instead:
 /// a `.pid` file states neither a template nor an archive path, so that
 /// report omits both rather than inventing them.
@@ -803,10 +812,39 @@ pub fn write_database_coverage_json(
             "values": values,
             "relationships": relationships,
         },
+        "shortfalls": database_shortfalls_json(&database_shortfalls(drawing)),
     });
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
     text.push('\n');
     text
+}
+
+/// The `shortfalls` section of the database-line coverage report: both
+/// kinds of shortfall with their total and their breakdown, in the order
+/// [`DatabaseShortfalls`] keeps them.
+fn database_shortfalls_json(shortfalls: &DatabaseShortfalls) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = shortfalls
+        .relationship_rows_by_item_type
+        .iter()
+        .map(|((item1, item2, written_as), count)| {
+            json!({
+                "item1": item1,
+                "item2": item2,
+                "written_as": written_as,
+                "count": count,
+            })
+        })
+        .collect();
+    json!({
+        "placeholder_objects": {
+            "total": shortfalls.placeholder_object_count(),
+            "by_item_type": shortfalls.placeholder_objects,
+        },
+        "relationship_rows_defined_by_item_type": {
+            "total": shortfalls.relationship_row_count(),
+            "rows": rows,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -1248,6 +1286,90 @@ mod tests {
             report["files"]["data"], "UID-B_Data.xml",
             "the files are the ones written, under the stem the package chose"
         );
+    }
+
+    #[test]
+    fn the_database_coverage_report_states_what_was_written_short() {
+        use crate::publish::model::{PublishObject, PublishRelationship};
+
+        let item = |uid: &str, item_type: &str| PublishObject {
+            uid: uid.into(),
+            item_type_name: item_type.into(),
+            ..PublishObject::default()
+        };
+        let row = |uid: &str, item1: &str, item2: &str| PublishRelationship {
+            uid: uid.into(),
+            drawing_uid: "UID-D".into(),
+            source_uid: Some(item1.into()),
+            target_uid: Some(item2.into()),
+            ..PublishRelationship::default()
+        };
+        let mut drawing = PublishDrawing::new("UID-D", "DWG");
+        drawing.objects = vec![
+            item("ME-1", "Mechanical"),
+            item("EX-1", "Exchanger"),
+            item("EX-2", "Exchanger"),
+            item("N-1", "Nozzle"),
+            item("N-2", "Nozzle"),
+        ];
+        drawing.relationships = vec![
+            row("R-1", "N-1", "EX-1"),
+            row("R-2", "N-2", "EX-2"),
+            row("R-3", "N-1", "ELSEWHERE-1"),
+        ];
+        let text =
+            write_database_coverage_json(&drawing, Path::new("Export.dmp"), (6, 0, 3), "DWG");
+        let report: serde_json::Value = serde_json::from_str(&text).expect("report json");
+        assert_eq!(
+            report["shortfalls"],
+            json!({
+                "placeholder_objects": {
+                    "total": 3,
+                    "by_item_type": { "Exchanger": 2, "Mechanical": 1 },
+                },
+                "relationship_rows_defined_by_item_type": {
+                    "total": 3,
+                    "rows": [
+                        {
+                            "item1": "Nozzle",
+                            "item2": DatabaseShortfalls::NOT_IN_THE_DRAWING,
+                            "written_as": "Relationship",
+                            "count": 1,
+                        },
+                        {
+                            "item1": "Nozzle",
+                            "item2": "Exchanger",
+                            "written_as": "Relationship",
+                            "count": 2,
+                        },
+                    ],
+                },
+            }),
+            "{text}"
+        );
+
+        // A drawing written in full has the section all the same, with
+        // nothing in it, after everything the report held before.
+        let full = PublishDrawing::new("UID-B", "B");
+        let text = write_database_coverage_json(&full, Path::new("Export.dmp"), (1, 0, 0), "B");
+        let tail = r#"  "document_counts": {
+    "objects": 1,
+    "values": 0,
+    "relationships": 0
+  },
+  "shortfalls": {
+    "placeholder_objects": {
+      "total": 0,
+      "by_item_type": {}
+    },
+    "relationship_rows_defined_by_item_type": {
+      "total": 0,
+      "rows": []
+    }
+  }
+}
+"#;
+        assert!(text.ends_with(tail), "{text}");
     }
 
     #[test]

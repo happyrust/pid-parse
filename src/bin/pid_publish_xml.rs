@@ -9,7 +9,9 @@
 //!   optionally `--datamap`), which adds ports, connectivity,
 //!   compositions, off-page connectors and synthesized pipelines;
 //! * a backup-package directory (one containing `Manifest.txt`), which
-//!   publishes every drawing into `--out-dir` with an `_Index.json`.
+//!   publishes every drawing into `--out-dir` with an `_Index.json`;
+//!   `--strict` gates on the drawings of a SQL Server package, the ones
+//!   the database line writes.
 //!
 //! `--diff-against` scores the generated document against a reference
 //! `SmartPlant` export (or, for a backup directory, a directory of them).
@@ -19,7 +21,7 @@
 //! ```text
 //! pid_publish_xml <mdf> --drawing UID --out <file> [--meta-out FILE] [--plant NAME]
 //! pid_publish_xml <file.pid> --out-dir DIR [--oracle-exp DUMP [--datamap FILE]]
-//! pid_publish_xml <backup dir> --out-dir DIR [--diff-against DIR]
+//! pid_publish_xml <backup dir> --out-dir DIR [--diff-against DIR] [--strict]
 //! ```
 //!
 //! Exit codes: 0 = written (and, with `--diff-against`, clean);
@@ -28,6 +30,9 @@
 //! not written in full; 2 = a usage error, including an `--oracle-exp`
 //! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
 
+use pid_parse::publish::backup_package::{
+    BackupPublishReport, PackageChainFault, PackageDrawingShortfalls,
+};
 use pid_parse::publish::diff::diff_meta_xml;
 use pid_parse::publish::pid_writer::{
     composition_rel_counts, connectivity_rel_counts, derived_by_native_rule_count,
@@ -73,11 +78,13 @@ struct CliOptions {
     /// blocks. Defaults to A01 to keep every pre-A29b CLI
     /// invocation byte-identical.
     style: PublishStyle,
-    /// `--strict`: exit 1 when the database line did not write the drawing
+    /// `--strict`: exit 1 when the database line did not write a drawing
     /// in full — an item written as a `<PIDItem>` placeholder, or a
     /// relationship row defined from the item types of its ends alone
     /// (`DatabaseShortfalls`). The files and the warnings are the same
-    /// with and without it. Database input only.
+    /// with and without it. Database input, and a backup directory: there
+    /// it gates on the drawings of a SQL Server package, and changes
+    /// nothing for a package whose drawings are read from the `.pid`.
     strict: bool,
     /// A30 — when true, the CLI prints every `T_Drawing` row in
     /// the input table set and exits 0 without rendering anything.
@@ -113,7 +120,7 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--oracle-exp FILE] [--datamap FILE]\n\
-         \x20  pid_publish_xml <backup-dir> --out-dir DIR [--plant NAME]\n\n\
+         \x20  pid_publish_xml <backup-dir> --out-dir DIR [--plant NAME] [--strict]\n\n\
          A .pid input is read on its own, with no plant database: it is one\n\
          drawing, so --drawing / --style / --list-drawings do not apply, and\n\
          only what the file states is written (no derived ports, pipelines or\n\
@@ -184,16 +191,25 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20                   PIDProcessVessel) to match the DWG export shape.\n\
          \x20                   Database input only: a .pid input and a backup\n\
          \x20                   directory reject it instead of ignoring it.\n\
-         --strict            Database input only: exit 1 when the drawing is\n\
-         \x20                   not written in full. An item whose type has no\n\
+         --strict            Database input or backup directory: exit 1 when\n\
+         \x20                   a drawing the database line writes is not\n\
+         \x20                   written in full. An item whose type has no\n\
          \x20                   writer of its own is written as a <PIDItem>\n\
          \x20                   placeholder, without its class and attributes,\n\
          \x20                   and a T_Relationship row with an end that is not\n\
          \x20                   a representation gets its definition from the\n\
          \x20                   item types of its ends alone. Each is a warning\n\
          \x20                   on stderr with or without --strict, and the\n\
-         \x20                   files are written either way. A .pid input, a\n\
-         \x20                   backup directory and --list-drawings reject\n\
+         \x20                   files are written either way. In a backup\n\
+         \x20                   directory only a SQL Server package has such\n\
+         \x20                   drawings: each warning names its drawing and is\n\
+         \x20                   listed among the problems of _Index.json, and\n\
+         \x20                   <Name>_Coverage.json holds the counts under\n\
+         \x20                   shortfalls. With an Oracle exp, or no dump,\n\
+         \x20                   every drawing comes from its .pid and --strict\n\
+         \x20                   changes nothing; which kind a package is shows\n\
+         \x20                   only once it is read, so the flag is not refused\n\
+         \x20                   there. A .pid input and --list-drawings reject\n\
          \x20                   --strict instead of ignoring it.\n\
          --list-drawings     Print every T_Drawing row in the input table set\n\
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
@@ -353,14 +369,9 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         if style.is_some() {
             return Err("a backup directory publishes every .pid; --style does not apply".into());
         }
-        // The package line does not report what it wrote short, so there is
-        // nothing for `--strict` to gate on: refused, not accepted and ignored.
-        if strict {
-            return Err(
-                "a backup directory does not report what it wrote short; --strict does not apply"
-                    .into(),
-            );
-        }
+        // `--strict` is taken here, unlike the flags above: whether the
+        // package holds drawings of the database line — a SQL Server dump —
+        // shows only once it is read.
         if datamap.is_some() {
             return Err(
                 "a backup directory reads RefData~4~804.zip itself; --datamap does not apply"
@@ -511,7 +522,7 @@ fn main() {
 ///   surfaced no actionable findings.
 /// - `1` — the generated XML differs from the reference (used as a CI
 ///   gate), a package drawing failed, or `--strict` was given and the
-///   database line did not write the drawing in full. Real I/O / `SQLite`
+///   database line did not write a drawing in full. Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 /// - `2` — the input cannot be published as asked: a package with an
 ///   unusable `Export.dmp`, or an `--oracle-exp` dump of another revision.
@@ -611,6 +622,13 @@ fn run(options: CliOptions) -> Result<i32, String> {
 /// `.pid`, and `_Index.json` lists the same sentence among its `problems`;
 /// the exit code, the index's counts and the coverage reports are what
 /// they would be without it.
+///
+/// A drawing of a SQL Server package that the database line did not write
+/// in full gets one `warning:` line for each kind of shortfall, under its
+/// name, as [`run`] prints for a single database drawing; `_Index.json`
+/// lists the same sentences among its `problems`, and the drawing is
+/// written and counts as written. With `--strict` such a drawing turns the
+/// exit code to 1, and stderr ends with the line that says so.
 fn run_package(options: &CliOptions) -> Result<i32, String> {
     let out_dir = options
         .out_dir
@@ -623,19 +641,10 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         options.diff_against.as_deref(),
     ) {
         Ok(report) => {
-            // A drawing whose chain stops is written and counted as
-            // written, short of what that stream holds: the same line the
-            // single-`.pid` mode prints, naming the zip and the entry.
-            for fault in &report.chain_faults {
-                eprintln!("warning: {}", fault.describe());
+            for line in package_warnings(&report) {
+                eprintln!("warning: {line}");
             }
-            let exit = i32::from(
-                report.failed > 0
-                    || report
-                        .gate
-                        .as_ref()
-                        .is_some_and(|gate| gate.not_clean() > 0),
-            );
+            let exit = package_exit_code(&report, options.strict);
             if let Some(gate) = &report.gate {
                 for line in &gate.lines {
                     println!("{line}");
@@ -677,6 +686,9 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
                 report.shells,
                 report.index_path.display(),
             );
+            if let Some(verdict) = strict_package_verdict(&report, options.strict) {
+                eprintln!("{verdict}");
+            }
             Ok(exit)
         }
         Err(pid_parse::publish::backup_package::BackupPublishError::Usage(detail)) => {
@@ -685,6 +697,56 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         }
         Err(pid_parse::publish::backup_package::BackupPublishError::Io(detail)) => Err(detail),
     }
+}
+
+/// The exit code of a backup directory run that published: 1 when a
+/// drawing failed or the `--diff-against` gate did not find every drawing
+/// clean, and, with `--strict`, when a database drawing was not written in
+/// full; 0 otherwise.
+fn package_exit_code(report: &BackupPublishReport, strict: bool) -> i32 {
+    i32::from(
+        report.failed > 0
+            || report
+                .gate
+                .as_ref()
+                .is_some_and(|gate| gate.not_clean() > 0)
+            || strict_package_verdict(report, strict).is_some(),
+    )
+}
+
+/// The `warning:` lines of a backup directory run, in the order stderr
+/// carries them: a line for each chain stream whose record chain does not
+/// hold, naming the zip and the entry as the single-`.pid` mode's line
+/// does, then a line for each kind of shortfall of each drawing the
+/// database line did not write in full, under the drawing's name. Every
+/// drawing spoken of is written and counts as written, and `_Index.json`
+/// lists the same sentences among its `problems`.
+fn package_warnings(report: &BackupPublishReport) -> Vec<String> {
+    let chain_faults = report.chain_faults.iter().map(PackageChainFault::describe);
+    let shortfalls = report
+        .shortfalls
+        .iter()
+        .flat_map(PackageDrawingShortfalls::describe);
+    chain_faults.chain(shortfalls).collect()
+}
+
+/// The line a backup directory run ends stderr with when `--strict` turns
+/// its exit code to 1: how many of the written drawings the database line
+/// did not write in full. `None` without `--strict`, and when there is no
+/// such drawing — as in every Oracle or dump-less package, none of whose
+/// drawings the database line writes.
+fn strict_package_verdict(report: &BackupPublishReport, strict: bool) -> Option<String> {
+    let short = report.shortfalls.len();
+    (strict && short > 0).then(|| {
+        format!(
+            "--strict: {short} {} not written in full (see the warnings above); exit 1.",
+            if short == 1 {
+                "drawing is"
+            } else {
+                "drawings are"
+            }
+        )
+    })
 }
 
 /// `.pid` input: read the drawing from the file alone and write only what
@@ -1220,4 +1282,87 @@ fn write_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
         }
     }
     std::fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pid_parse::publish::backup_package::PackageGateReport;
+    use pid_parse::publish::DatabaseShortfalls;
+
+    /// What a backup directory run reports when `failed` drawings were not
+    /// written and `short` of the written ones were not written in full.
+    fn package_report(failed: usize, short: usize) -> BackupPublishReport {
+        let mut shortfalls = DatabaseShortfalls::default();
+        shortfalls.placeholder_objects.insert("Exchanger".into(), 1);
+        BackupPublishReport {
+            failed,
+            written: 2,
+            index_path: PathBuf::from("_Index.json"),
+            pid_entries: 0,
+            shells: 0,
+            gate: None,
+            chain_faults: Vec::new(),
+            shortfalls: (0..short)
+                .map(|n| PackageDrawingShortfalls {
+                    drawing_uid: format!("UID-{n}"),
+                    drawing_name: format!("D{n}"),
+                    shortfalls: shortfalls.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn strict_turns_a_package_drawing_written_short_into_exit_one() {
+        // Every drawing written in full: 0 with or without --strict.
+        assert_eq!(package_exit_code(&package_report(0, 0), false), 0);
+        assert_eq!(package_exit_code(&package_report(0, 0), true), 0);
+        // One written short: only a warning without --strict, exit 1 with it.
+        assert_eq!(package_exit_code(&package_report(0, 1), false), 0);
+        assert_eq!(package_exit_code(&package_report(0, 1), true), 1);
+    }
+
+    #[test]
+    fn a_package_drawing_written_short_is_warned_of_under_its_name() {
+        const SENTENCE: &str =
+            "1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1";
+        assert_eq!(
+            package_warnings(&package_report(0, 2)),
+            [format!("D0: {SENTENCE}"), format!("D1: {SENTENCE}")]
+        );
+        assert!(package_warnings(&package_report(0, 0)).is_empty());
+    }
+
+    #[test]
+    fn the_strict_verdict_counts_the_drawings_and_is_said_only_with_strict() {
+        assert_eq!(
+            strict_package_verdict(&package_report(0, 1), true).as_deref(),
+            Some("--strict: 1 drawing is not written in full (see the warnings above); exit 1.")
+        );
+        assert_eq!(
+            strict_package_verdict(&package_report(0, 2), true).as_deref(),
+            Some("--strict: 2 drawings are not written in full (see the warnings above); exit 1.")
+        );
+        assert_eq!(strict_package_verdict(&package_report(0, 2), false), None);
+        assert_eq!(strict_package_verdict(&package_report(0, 0), true), None);
+    }
+
+    #[test]
+    fn a_failed_drawing_or_an_unclean_gate_is_exit_one_whatever_strict_says() {
+        for strict in [false, true] {
+            assert_eq!(package_exit_code(&package_report(1, 0), strict), 1);
+            let mut gated = package_report(0, 0);
+            gated.gate = Some(PackageGateReport {
+                dirty: 1,
+                ..PackageGateReport::default()
+            });
+            assert_eq!(package_exit_code(&gated, strict), 1);
+            gated.gate = Some(PackageGateReport {
+                clean: 2,
+                ..PackageGateReport::default()
+            });
+            assert_eq!(package_exit_code(&gated, strict), 0);
+        }
+    }
 }

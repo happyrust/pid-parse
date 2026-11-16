@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use super::diff::pid_publish_counts;
+use super::model::DatabaseShortfalls;
 use super::oracle_exp::{
     attach_oracle_ports, backup_path_key, backup_uid_key, plant_group_path, read_plant_groups,
     BackupDrawing, ExpTables, PlantGroup,
@@ -83,6 +84,20 @@ pub struct BackupPublishReport {
     /// `pid_publish_xml` does. Always empty for a SQL Server package,
     /// whose drawings are read from the database and not from the `.pid`.
     pub chain_faults: Vec<PackageChainFault>,
+    /// Drawings of a SQL Server package that the database line did not
+    /// write in full, in the order they were written. Each is written and
+    /// counts as written, with an item left as a `<PIDItem>` placeholder
+    /// or a relationship row defined from the item types of its ends alone
+    /// ([`DatabaseShortfalls`]). `_Index.json` lists each sentence of
+    /// [`PackageDrawingShortfalls::describe`] among its `problems`, and the
+    /// same sentences without the drawing's name among that drawing's own;
+    /// the drawing's `_Coverage.json` holds the counts under `shortfalls`;
+    /// the `failed` count does not change. A caller that delivers the
+    /// package says them as well, as `pid_publish_xml` does, where
+    /// `--strict` turns them into exit 1. Always empty for an Oracle `exp`
+    /// package and for one with no dump: their drawings are read from the
+    /// `.pid`, and say what they leave out in their own coverage reports.
+    pub shortfalls: Vec<PackageDrawingShortfalls>,
 }
 
 /// A chain stream of one drawing of a backup package whose record chain
@@ -109,6 +124,35 @@ impl PackageChainFault {
             self.zip_entry,
             self.fault.describe()
         )
+    }
+}
+
+/// One drawing of a SQL Server backup package that the database line did
+/// not write in full.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageDrawingShortfalls {
+    /// `T_Drawing.SP_ID` of the drawing — `doc_uid` of its `_Index.json`
+    /// entry.
+    pub drawing_uid: String,
+    /// The drawing's name, as its `_Index.json` entry has it.
+    pub drawing_name: String,
+    /// What was written in less than full form. Never
+    /// [empty](DatabaseShortfalls::is_empty): a drawing written in full is
+    /// not listed.
+    pub shortfalls: DatabaseShortfalls,
+}
+
+impl PackageDrawingShortfalls {
+    /// One sentence for each kind of shortfall
+    /// ([`DatabaseShortfalls::describe`]), each under the drawing's name,
+    /// as `_Index.json` lists them among its `problems`.
+    #[must_use]
+    pub fn describe(&self) -> Vec<String> {
+        self.shortfalls
+            .describe()
+            .into_iter()
+            .map(|sentence| format!("{}: {sentence}", self.drawing_name))
+            .collect()
     }
 }
 
@@ -357,6 +401,8 @@ pub fn publish_backup_package(
         shells,
         gate,
         chain_faults,
+        // No drawing of this branch goes through the database line.
+        shortfalls: Vec::new(),
     })
 }
 
@@ -1094,6 +1140,12 @@ struct MtfDrawingRow {
 /// drawing with its `.pid` entry, `.pid` entries under `Template Files`
 /// are tallied under `template_pid_entries`, and entries with no model
 /// row surface under `unmatched_pid_entries`.
+///
+/// A drawing the database line does not write in full is written all the
+/// same and counts as written. Its `_Coverage.json` counts what is short
+/// under `shortfalls`, `_Index.json` says it among the drawing's
+/// `problems` and among its own, and the report lists the drawing under
+/// [`BackupPublishReport::shortfalls`].
 #[cfg(feature = "backup-mdf")]
 fn publish_mtf_package(
     package_dir: &Path,
@@ -1109,10 +1161,40 @@ fn publish_mtf_package(
     let conn = super::mdf_load::open_mtf_dump_as_sqlite(&dump).map_err(|error| {
         BackupPublishError::Io(format!("stage {}: {error}", dump_path.display()))
     })?;
+    publish_staged_database(
+        &conn,
+        dump_path,
+        package_dir,
+        out_dir,
+        plant_name,
+        scan,
+        reference_dir,
+    )
+}
+
+/// [`publish_mtf_package`] from the staged database on: every `T_Drawing`
+/// row of `conn` is published into `out_dir`, and `_Index.json` is written
+/// there. `dump_path` only names the database in an error and
+/// `package_dir` the package in the index; the `PlantData` zips `scan`
+/// found are listed to pair each drawing with its `.pid` entry.
+///
+/// Split from the reading of `Export.dmp` so that the tests can publish a
+/// database made on the spot: no SQL Server package in the repository
+/// holds a drawing the database line writes short.
+#[cfg(feature = "backup-mdf")]
+fn publish_staged_database(
+    conn: &rusqlite::Connection,
+    dump_path: &Path,
+    package_dir: &Path,
+    out_dir: &Path,
+    plant_name: &str,
+    scan: &BackupFolderScan,
+    reference_dir: Option<&Path>,
+) -> Result<BackupPublishReport, BackupPublishError> {
     fs::create_dir_all(out_dir).map_err(|error| {
         BackupPublishError::Io(format!("create {}: {error}", out_dir.display()))
     })?;
-    let rows = mtf_drawing_rows(&conn).map_err(|error| {
+    let rows = mtf_drawing_rows(conn).map_err(|error| {
         BackupPublishError::Io(format!(
             "read T_Drawing of {}: {error}",
             dump_path.display()
@@ -1190,6 +1272,7 @@ fn publish_mtf_package(
     let mut written_names = HashSet::new();
     let mut paired_keys = HashSet::new();
     let mut drawings: Vec<Value> = Vec::new();
+    let mut shortfalls: Vec<PackageDrawingShortfalls> = Vec::new();
     let mut gate = reference_dir.map(PackageGate::new);
 
     for row in &rows {
@@ -1198,7 +1281,7 @@ fn publish_mtf_package(
             .get(&path_key)
             .map(|(file, entry)| (file.clone(), entry.clone()))
             .unwrap_or_default();
-        let (graph, graph_name, xml, meta) = match mtf_render_drawing(&conn, &row.uid, plant_name) {
+        let (graph, graph_name, xml, meta) = match mtf_render_drawing(conn, &row.uid, plant_name) {
             Ok(parts) => parts,
             Err(detail) => {
                 problems.push(format!("{} {}: {detail}", row.name, row.uid));
@@ -1291,6 +1374,15 @@ fn publish_mtf_package(
             paired += 1;
             paired_keys.insert(path_key);
         }
+        // What the writer could not write of the drawing in full. It is
+        // written and counts as written; the index says what is short of
+        // it, in the sentences the caller is handed with the report.
+        let short = PackageDrawingShortfalls {
+            drawing_uid: row.uid.clone(),
+            drawing_name: name.clone(),
+            shortfalls: super::xml_writer::database_shortfalls(&graph),
+        };
+        problems.extend(short.describe());
         drawings.push(mtf_drawing_entry(
             row,
             &name,
@@ -1302,8 +1394,11 @@ fn publish_mtf_package(
                 format!("{file_stem}_Meta.xml"),
                 format!("{file_stem}_Coverage.json"),
             ],
-            Vec::new(),
+            short.shortfalls.describe(),
         ));
+        if !short.shortfalls.is_empty() {
+            shortfalls.push(short);
+        }
     }
 
     // `.pid` entries that never paired to a `T_Drawing` row: files the
@@ -1358,6 +1453,7 @@ fn publish_mtf_package(
         // The drawings of this branch come out of the database: no `.pid`
         // is inflated, so no chain is walked.
         chain_faults: Vec::new(),
+        shortfalls,
     })
 }
 
@@ -1575,5 +1671,196 @@ mod tests {
         assert_eq!(declaration["objects"], 1);
         assert_eq!(declaration["values"], 1);
         assert_eq!(declaration["relationships"], 0);
+    }
+
+    /// One drawing the database line cannot write in full: an `Exchanger`,
+    /// which has no writer of its own, and a `T_Relationship` row from a
+    /// nozzle to it. `tests/publish_xml_cli.rs` publishes the same file
+    /// through the command line.
+    #[cfg(feature = "backup-mdf")]
+    const SHORTFALLS_SQL: &str = include_str!("../../tests/fixtures/publish-shortfalls.sql");
+
+    #[cfg(feature = "backup-mdf")]
+    const PLACEHOLDER_SENTENCE: &str =
+        "1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1";
+
+    #[cfg(feature = "backup-mdf")]
+    const RELATIONSHIP_SENTENCE: &str = "1 relationship row defined from the item types of its \
+                                         ends alone: Nozzle -> Exchanger as Relationship 1";
+
+    /// What one [`publish_staged_database`] run left: the report, and the
+    /// files of the one drawing the fixture holds.
+    #[cfg(feature = "backup-mdf")]
+    struct StagedRun {
+        report: BackupPublishReport,
+        index: Value,
+        coverage: Value,
+        data_xml: String,
+    }
+
+    /// Publish a database made on the spot from `sql` the way the staged
+    /// database of a SQL Server package is published. The package
+    /// directory is empty, so no `.pid` entry pairs with the drawing.
+    #[cfg(feature = "backup-mdf")]
+    fn publish_staged(tag: &str, sql: &str) -> StagedRun {
+        let root =
+            std::env::temp_dir().join(format!("pid-parse-staged-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let package = root.join("package");
+        fs::create_dir_all(&package).expect("package dir");
+        let scan = scan_backup_folder(&package).expect("scan the empty package");
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(sql).expect("fixture sql");
+        let out = root.join("out");
+        let report = publish_staged_database(
+            &conn,
+            Path::new("Export.dmp"),
+            &package,
+            &out,
+            "P01",
+            &scan,
+            None,
+        )
+        .expect("the staged database publishes");
+        let read = |file: &str| {
+            fs::read_to_string(out.join(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
+        };
+        let json = |file: &str| -> Value {
+            serde_json::from_str(&read(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
+        };
+        let run = StagedRun {
+            report,
+            index: json("_Index.json"),
+            coverage: json("SHORT-01_Coverage.json"),
+            data_xml: read("SHORT-01_Data.xml"),
+        };
+        let _ = fs::remove_dir_all(&root);
+        run
+    }
+
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_written_short_says_so_in_its_coverage_report() {
+        let run = publish_staged("coverage", SHORTFALLS_SQL);
+        assert_eq!(
+            run.coverage["shortfalls"],
+            json!({
+                "placeholder_objects": { "total": 1, "by_item_type": { "Exchanger": 1 } },
+                "relationship_rows_defined_by_item_type": {
+                    "total": 1,
+                    "rows": [{
+                        "item1": "Nozzle",
+                        "item2": "Exchanger",
+                        "written_as": "Relationship",
+                        "count": 1,
+                    }],
+                },
+            }),
+            "{}",
+            run.coverage
+        );
+        // The counts are those of the tags in the document beside it.
+        assert_eq!(run.data_xml.matches("<PIDItem>").count(), 1);
+        assert_eq!(run.data_xml.matches(r#"DefUID="Relationship""#).count(), 1);
+        // The rest of the report stands.
+        assert_eq!(
+            run.coverage["document_counts"],
+            json!({ "objects": 7, "values": 15, "relationships": 7 }),
+            "{}",
+            run.coverage
+        );
+    }
+
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_written_short_is_written_and_listed_among_the_problems() {
+        let run = publish_staged("index", SHORTFALLS_SQL);
+        let index = &run.index;
+        assert_eq!(index["failed"], 0, "{index}");
+        assert_eq!(index["drawing_rows"], 1, "{index}");
+        assert_eq!(index["objects"], 7, "its counts are in the totals: {index}");
+        let drawing = &index["drawings"][0];
+        assert_eq!(drawing["name"], "SHORT-01", "{index}");
+        assert_eq!(
+            drawing["files"],
+            json!([
+                "SHORT-01_Data.xml",
+                "SHORT-01_Meta.xml",
+                "SHORT-01_Coverage.json"
+            ]),
+            "the drawing is written: {index}"
+        );
+        assert_eq!(
+            drawing["problems"],
+            json!([PLACEHOLDER_SENTENCE, RELATIONSHIP_SENTENCE]),
+            "{index}"
+        );
+        assert_eq!(
+            index["problems"],
+            json!([
+                format!("SHORT-01: {PLACEHOLDER_SENTENCE}"),
+                format!("SHORT-01: {RELATIONSHIP_SENTENCE}"),
+            ]),
+            "{index}"
+        );
+        assert_eq!((run.report.written, run.report.failed), (1, 0));
+    }
+
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_written_short_is_named_in_the_report() {
+        let run = publish_staged("report", SHORTFALLS_SQL);
+        let mut expected = DatabaseShortfalls::default();
+        expected.placeholder_objects.insert("Exchanger".into(), 1);
+        expected.relationship_rows_by_item_type.insert(
+            ("Nozzle".into(), "Exchanger".into(), "Relationship".into()),
+            1,
+        );
+        assert_eq!(
+            run.report.shortfalls,
+            vec![PackageDrawingShortfalls {
+                drawing_uid: "DWG-SHORT-01".into(),
+                drawing_name: "SHORT-01".into(),
+                shortfalls: expected,
+            }]
+        );
+        assert_eq!(
+            run.report.shortfalls[0].describe(),
+            [
+                format!("SHORT-01: {PLACEHOLDER_SENTENCE}"),
+                format!("SHORT-01: {RELATIONSHIP_SENTENCE}"),
+            ],
+            "the sentences `_Index.json` lists"
+        );
+        assert!(run.report.chain_faults.is_empty());
+    }
+
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_written_in_full_has_the_section_and_no_problem() {
+        // The fixture without the exchanger and the row that ends at it.
+        let sql = format!(
+            "{SHORTFALLS_SQL}\n\
+             DELETE FROM T_Relationship;\n\
+             DELETE FROM T_Representation WHERE SP_ModelItemID = 'EX-1';\n\
+             DELETE FROM T_ModelItem WHERE SP_ID = 'EX-1';\n"
+        );
+        let run = publish_staged("full", &sql);
+        assert_eq!(
+            run.coverage["shortfalls"],
+            json!({
+                "placeholder_objects": { "total": 0, "by_item_type": {} },
+                "relationship_rows_defined_by_item_type": { "total": 0, "rows": [] },
+            }),
+            "{}",
+            run.coverage
+        );
+        assert!(!run.data_xml.contains("<PIDItem>"), "{}", run.data_xml);
+        let index = &run.index;
+        assert_eq!(index["problems"], json!([]), "{index}");
+        assert_eq!(index["drawings"][0]["problems"], json!([]), "{index}");
+        assert_eq!(index["failed"], 0, "{index}");
+        assert!(run.report.shortfalls.is_empty());
+        assert_eq!((run.report.written, run.report.failed), (1, 0));
     }
 }

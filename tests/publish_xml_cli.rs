@@ -1469,41 +1469,98 @@ fn cli_strict_with_list_drawings_is_an_argument_error() {
 }
 
 #[test]
-fn cli_strict_with_a_backup_directory_is_an_argument_error() {
-    // The package line does not report what it wrote short, so --strict
-    // would be accepted there and then ignored. It is refused before
-    // anything is read or written.
+fn cli_strict_with_a_backup_directory_is_accepted() {
+    // Which kind a package is shows only once it is read, so --strict is
+    // not refused for a directory. This one has no dump and no drawing:
+    // nothing goes through the database line, and the run is the run
+    // without the flag.
     let dir = unique_tmp_dir("strict-package");
     let package = dir.join("package");
     std::fs::create_dir_all(&package).expect("create the package directory");
     std::fs::write(package.join("Manifest.txt"), "").expect("write Manifest.txt");
+
+    let publish = |out_name: &str, extra: &[&str]| {
+        let out_dir = dir.join(out_name);
+        let out = Command::new(binary_path())
+            .arg(&package)
+            .arg("--out-dir")
+            .arg(&out_dir)
+            .args(extra)
+            .output()
+            .expect("spawn pid_publish_xml <backup dir>");
+        // stderr names the output directory; nothing else may differ.
+        let stderr =
+            String::from_utf8_lossy(&out.stderr).replace(&out_dir.display().to_string(), "<out>");
+        (out.status.code(), stderr, out_dir)
+    };
+    let (plain_code, plain_stderr, plain_out) = publish("plain", &[]);
+    let (strict_code, strict_stderr, strict_out) = publish("strict", &["--strict"]);
+    assert_eq!(plain_code, Some(0), "stderr:\n{plain_stderr}");
+    assert_eq!(
+        strict_code,
+        Some(0),
+        "--strict with a backup directory should be accepted; stderr:\n{strict_stderr}"
+    );
+    assert_eq!(
+        strict_stderr, plain_stderr,
+        "with no database drawing --strict should change nothing on stderr"
+    );
+    let index = |out_dir: &std::path::Path| {
+        std::fs::read(out_dir.join("_Index.json")).expect("read _Index.json")
+    };
+    assert!(
+        index(&strict_out) == index(&plain_out),
+        "with no database drawing --strict should change nothing in _Index.json"
+    );
+}
+
+#[test]
+fn cli_strict_on_a_sql_server_package_written_in_full_exits_zero() {
+    // TEST02_p is a SQL Server package whose one drawing, A01, is written
+    // in full: its coverage report says so, and --strict has nothing to
+    // object to.
+    let package = std::path::Path::new("test-file/backup-test/TEST02_p");
+    if !package.join("Manifest.txt").is_file() || !package.join("Export.dmp").is_file() {
+        eprintln!("skipping: test-file/backup-test/TEST02_p is not a backup package");
+        return;
+    }
+    let dir = unique_tmp_dir("strict-test02");
     let out_dir = dir.join("out");
 
     let out = Command::new(binary_path())
-        .arg(&package)
+        .arg(package)
         .arg("--out-dir")
         .arg(&out_dir)
-        .arg("--strict")
+        .args(["--plant", "TEST02", "--strict"])
         .output()
-        .expect("spawn pid_publish_xml <backup dir> --strict");
+        .expect("spawn pid_publish_xml TEST02_p --strict");
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         out.status.code(),
-        Some(2),
-        "--strict with a backup directory should exit 2; got {out:?}"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "argument error: a backup directory does not report what it wrote short; \
-             --strict does not apply"
-        ),
-        "the error should say why --strict does not apply; stderr:\n{stderr}"
+        Some(0),
+        "TEST02_p is written in full, so --strict should exit 0; stderr:\n{stderr}"
     );
     assert!(
-        !out_dir.exists(),
-        "a refused run should write nothing; found {}",
-        out_dir.display()
+        warnings_in(&stderr).is_empty() && !stderr.contains("--strict"),
+        "TEST02_p should print no warning and nothing about --strict; stderr:\n{stderr}"
     );
+    let json = |file: &str| -> serde_json::Value {
+        let text = std::fs::read_to_string(out_dir.join(file))
+            .unwrap_or_else(|error| panic!("{file}: {error}"));
+        serde_json::from_str(&text).unwrap_or_else(|error| panic!("{file}: {error}"))
+    };
+    let coverage = json("A01_Coverage.json");
+    assert_eq!(
+        coverage["shortfalls"],
+        serde_json::json!({
+            "placeholder_objects": { "total": 0, "by_item_type": {} },
+            "relationship_rows_defined_by_item_type": { "total": 0, "rows": [] },
+        }),
+        "A01_Coverage.json should say that nothing was written short: {coverage}"
+    );
+    let index = json("_Index.json");
+    assert_eq!(index["failed"], 0, "{index}");
+    assert_eq!(index["problems"], serde_json::json!([]), "{index}");
 }
 
 #[test]
@@ -1521,6 +1578,15 @@ fn cli_help_documents_strict_and_drops_the_unreachable_feature_note() {
     assert!(
         stdout.contains("\n--strict  "),
         "--help should describe what --strict does; stdout:\n{stdout}"
+    );
+    // A backup directory takes the flag too.
+    assert!(
+        stdout.contains("<backup-dir> --out-dir DIR [--plant NAME] [--strict]"),
+        "the backup directory synopsis should list --strict; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--strict            Database input or backup directory: "),
+        "--help should say --strict applies to a backup directory; stdout:\n{stdout}"
     );
     // The binary is built with the `backup` feature only, and that includes
     // `backup-mdf`: there is no build of it in which a SQL Server package
