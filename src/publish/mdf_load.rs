@@ -17,7 +17,9 @@ use rusqlite::{params_from_iter, Connection};
 use super::model::{PublishDrawing, PublishError};
 use super::sqlite_load;
 
-const PUBLISH_TABLES: &[&str] = &[
+/// The tables [`open_mdf_as_sqlite`] stages, in the order it reads them. A
+/// table the `.mdf` does not hold is skipped.
+pub const PUBLISH_TABLES: &[&str] = &[
     "T_Drawing",
     "T_Representation",
     "T_Relationship",
