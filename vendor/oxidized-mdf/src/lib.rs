@@ -9,6 +9,10 @@
 //   - Changed read() to read_exact() for page integrity
 //   - Upgraded to edition 2021, uuid 1.x
 //   - Added #![warn(...)] lint set to mirror parent crate's quality gate
+// Modified: 2026-11-16 by happyrust
+//   - PageReader reads the page it is asked for from a Read + Seek source,
+//     not every page up to it; a page is parsed once; the page cache is capped
+//   - MdfDatabase::from_read takes a Read + Seek source
 
 #![allow(dead_code)]
 // Mirror the pedantic lint subset baked into the parent `pid-parse`
@@ -58,12 +62,15 @@ use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
 use log::{error, warn};
 use rust_decimal::Decimal;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use uuid::Uuid;
+
+/// The page of an `.mdf` that holds its boot record.
+const BOOT_PAGE_ID: u32 = 9;
 
 pub struct MdfDatabase {
     page_reader: PageReader,
@@ -80,17 +87,21 @@ impl MdfDatabase {
         path.push(p);
 
         let file = File::open(&path)?;
-        Self::from_read(Box::new(file))
+        Self::from_read(file)
     }
 
-    pub fn from_read(read: Box<dyn Read>) -> Result<Self, Error> {
-        let mut buffer = [0u8; 8192];
-        let mut page_reader = PageReader::new(read);
+    /// Reads a database out of `read`, which holds an `.mdf` from its first
+    /// byte on.
+    ///
+    /// Pages are read from where they lie in the file, so `read` has to seek.
+    pub fn from_read<R>(read: R) -> Result<Self, Error>
+    where
+        R: Read + Seek + 'static,
+    {
+        let mut page_reader = PageReader::new(Box::new(read));
 
-        for _i in 0u8..9u8 {
-            page_reader.read_next_page(&mut buffer)?;
-        }
-        page_reader.read_next_page(&mut buffer)?;
+        let mut buffer = [0u8; 8192];
+        page_reader.read_page_bytes(BOOT_PAGE_ID, &mut buffer)?;
 
         let boot_page = BootPage::try_from(buffer).map_err(Error::from)?;
         let base_table_data = BaseTableData::parse(&mut page_reader, &boot_page)?;
@@ -456,69 +467,54 @@ impl Row {
     }
 }
 
+/// What a [`PageReader`] reads its pages from.
+trait PageSource: Read + Seek {}
+
+impl<T: Read + Seek> PageSource for T {}
+
+/// How many pages a [`PageReader`] keeps, which is 2 MiB of page bytes.
+///
+/// This bounds what a reader holds however large the file is. A page that is
+/// asked for again after the reader let it go is read from the source again.
+const PAGE_CACHE_LIMIT: usize = 256;
+
 struct PageReader {
-    read: Box<dyn Read>,
-    page_index: u32,
-    page_cache: HashMap<PagePointer, Rc<Page>>,
+    read: Box<dyn PageSource>,
+    page_cache: PageCache,
 }
 
 impl PageReader {
-    fn new(read: Box<dyn Read>) -> Self {
+    fn new(read: Box<dyn PageSource>) -> Self {
         Self {
             read,
-            page_index: 0,
-            page_cache: HashMap::new(),
+            page_cache: PageCache::default(),
         }
     }
 
-    fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
-        let page_id = self.page_index;
+    /// Reads the bytes of page `page_id` from where they lie in the source.
+    fn read_page_bytes(&mut self, page_id: u32, buffer: &mut [u8; 8192]) -> Result<(), Error> {
+        self.read.seek(SeekFrom::Start(u64::from(page_id) * 8192))?;
         self.read.read_exact(&mut buffer[..])?;
-        if let Ok(page) = Page::try_from(*buffer) {
-            self.page_cache.insert(
-                PagePointer {
-                    page_id,
-                    file_id: 1,
-                },
-                Rc::new(page),
-            );
-        }
-        self.page_index += 1;
         Ok(())
     }
 
+    /// The page `page_pointer` names, read from the source unless the reader
+    /// still keeps it.
+    ///
+    /// Only the page id of the pointer is looked at: the reader has one file
+    /// to read from, whichever file the pointer names.
     fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
-        if let Some(page) = self.page_cache.get(page_pointer) {
-            return Ok(page.clone());
-        }
-        if let Some((_, page)) = self
-            .page_cache
-            .iter()
-            .find(|(pointer, _)| pointer.page_id == page_pointer.page_id)
-        {
-            return Ok(page.clone());
+        let page_id = page_pointer.page_id;
+        if let Some(page) = self.page_cache.get(page_id) {
+            return Ok(page);
         }
 
-        if self.page_index > page_pointer.page_id {
-            return Err(Error::ParseError(
-                "forward-only reader cannot re-read an earlier page",
-            ));
-        }
+        let mut buffer = [0u8; 8192];
+        self.read_page_bytes(page_id, &mut buffer)?;
+        let page = Rc::new(Page::try_from(buffer).map_err(Error::from)?);
 
-        for i in self.page_index..=page_pointer.page_id {
-            let mut buffer = [0u8; 8192];
-            self.read_next_page(&mut buffer)?;
-
-            let page = Page::try_from(buffer).map_err(Error::from)?;
-
-            self.page_cache
-                .insert(page_pointer.with_page_id(i), Rc::new(page));
-        }
-
-        self.page_cache
-            .get(page_pointer)
-            .cloned()
-            .ok_or(Error::ParseError("page not found in cache after read"))
+        self.page_cache.keep(page_id, page.clone());
+        Ok(page)
     }
 
     fn read_pages_of_pointers<'a, 'b: 'a>(
@@ -538,6 +534,39 @@ impl PageReader {
             page_reader: self,
             current_page: None,
         }
+    }
+}
+
+/// The pages a [`PageReader`] read last, [`PAGE_CACHE_LIMIT`] of them at most.
+#[derive(Default)]
+struct PageCache {
+    pages: HashMap<u32, Rc<Page>>,
+    /// The ids of `pages`, the one read longest ago first.
+    oldest_first: VecDeque<u32>,
+}
+
+impl PageCache {
+    fn get(&self, page_id: u32) -> Option<Rc<Page>> {
+        self.pages.get(&page_id).cloned()
+    }
+
+    /// Keeps `page`, and lets the page read longest ago go when that makes
+    /// one more than the limit.
+    fn keep(&mut self, page_id: u32, page: Rc<Page>) {
+        if self.pages.insert(page_id, page).is_some() {
+            return;
+        }
+
+        self.oldest_first.push_back(page_id);
+        if self.oldest_first.len() > PAGE_CACHE_LIMIT {
+            if let Some(oldest) = self.oldest_first.pop_front() {
+                self.pages.remove(&oldest);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.pages.len()
     }
 }
 
@@ -577,6 +606,8 @@ mod tests {
     use crate::sys::Column;
     use chrono::{Duration, TimeZone};
     use rust_decimal::Decimal;
+    use std::cell::Cell;
+    use std::io::Cursor;
 
     fn test_column(
         r#type: &'static str,
@@ -600,6 +631,66 @@ mod tests {
         bytes.extend_from_slice(fixed_bytes);
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes
+    }
+
+    /// A source that counts the bytes it hands out.
+    struct Counting {
+        image: Cursor<Vec<u8>>,
+        read: Rc<Cell<u64>>,
+    }
+
+    impl Read for Counting {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.image.read(buffer)?;
+            self.read.set(self.read.get() + count as u64);
+            Ok(count)
+        }
+    }
+
+    impl Seek for Counting {
+        fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+            self.image.seek(to)
+        }
+    }
+
+    /// An image of `pages` pages that link to nothing. A page's slot count is
+    /// its own page id, which is how [`id_of`] tells one from another.
+    fn image_of(pages: u32) -> Vec<u8> {
+        let mut image = vec![0u8; pages as usize * 8192];
+        for page_id in 0..pages {
+            let slot_count = page_id as usize * 8192 + 22;
+            let id = u16::try_from(page_id).expect("page id fits a slot count");
+            image[slot_count..slot_count + 2].copy_from_slice(&id.to_le_bytes());
+        }
+        image
+    }
+
+    /// Makes page `from` of `image` name page `to` as the next of its chain.
+    fn link(image: &mut [u8], from: u32, to: u32) {
+        let next_page = from as usize * 8192 + 16;
+        image[next_page..next_page + 4].copy_from_slice(&to.to_le_bytes());
+        image[next_page + 4..next_page + 6].copy_from_slice(&1u16.to_le_bytes());
+    }
+
+    /// A reader over `image`, and the count of the bytes it has read from it.
+    fn reader_over(image: Vec<u8>) -> (PageReader, Rc<Cell<u64>>) {
+        let read = Rc::new(Cell::new(0));
+        let source = Counting {
+            image: Cursor::new(image),
+            read: read.clone(),
+        };
+        (PageReader::new(Box::new(source)), read)
+    }
+
+    fn pointer_to(page_id: u32) -> PagePointer {
+        PagePointer {
+            page_id,
+            file_id: 1,
+        }
+    }
+
+    fn id_of(page: &Page) -> u32 {
+        u32::from(page.header().slot_count)
     }
 
     #[test]
@@ -693,5 +784,102 @@ mod tests {
                 source: "requested fixed-length bytes exceed record bounds"
             } if table == "T_Test" && column == "value"
         ));
+    }
+
+    #[test]
+    fn a_page_reads_without_the_pages_before_it() {
+        let (mut reader, read) = reader_over(image_of(16));
+
+        let page = reader.read_page(&pointer_to(12)).expect("read page 12");
+
+        assert_eq!(12, id_of(&page));
+        assert_eq!(8192, read.get());
+    }
+
+    #[test]
+    fn an_earlier_page_reads_after_a_later_one() {
+        let (mut reader, _read) = reader_over(image_of(16));
+
+        let later = reader.read_page(&pointer_to(12)).expect("read page 12");
+        let earlier = reader.read_page(&pointer_to(3)).expect("read page 3");
+
+        assert_eq!((12, 3), (id_of(&later), id_of(&earlier)));
+    }
+
+    #[test]
+    fn a_chain_is_followed_to_wherever_its_pages_lie() {
+        let mut image = image_of(16);
+        link(&mut image, 12, 3);
+        link(&mut image, 3, 7);
+        let (mut reader, read) = reader_over(image);
+
+        let chain: Vec<u32> = reader
+            .read_pages_of_pointer(pointer_to(12))
+            .map(|page| id_of(&page.expect("read page")))
+            .collect();
+
+        assert_eq!(vec![12, 3, 7], chain);
+        assert_eq!(3 * 8192, read.get());
+    }
+
+    #[test]
+    fn a_page_the_reader_keeps_is_not_read_again() {
+        let (mut reader, read) = reader_over(image_of(16));
+
+        let first = reader.read_page(&pointer_to(5)).expect("read page 5");
+        let again = reader.read_page(&pointer_to(5)).expect("read page 5 again");
+
+        assert!(Rc::ptr_eq(&first, &again));
+        assert_eq!(8192, read.get());
+    }
+
+    #[test]
+    fn the_reader_keeps_no_more_pages_than_its_limit() {
+        let pages = PAGE_CACHE_LIMIT as u32 + 8;
+        let (mut reader, _read) = reader_over(image_of(pages));
+
+        for page_id in 0..pages {
+            reader.read_page(&pointer_to(page_id)).expect("read page");
+        }
+
+        assert_eq!(PAGE_CACHE_LIMIT, reader.page_cache.len());
+    }
+
+    #[test]
+    fn a_page_the_reader_let_go_reads_again() {
+        let pages = PAGE_CACHE_LIMIT as u32 + 8;
+        let (mut reader, read) = reader_over(image_of(pages));
+        for page_id in 0..pages {
+            reader.read_page(&pointer_to(page_id)).expect("read page");
+        }
+        let read_so_far = read.get();
+
+        let first = reader.read_page(&pointer_to(0)).expect("read page 0 again");
+
+        assert_eq!(0, id_of(&first));
+        assert_eq!(8192, read.get() - read_so_far);
+    }
+
+    #[test]
+    fn a_page_past_the_end_is_an_io_error_and_the_ones_before_it_still_read() {
+        let (mut reader, _read) = reader_over(image_of(4));
+
+        match reader.read_page(&pointer_to(4)) {
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {}
+            _ => panic!("Unexpected result"),
+        }
+
+        let last = reader.read_page(&pointer_to(3)).expect("read page 3");
+        assert_eq!(3, id_of(&last));
+    }
+
+    #[test]
+    fn an_image_that_ends_before_its_boot_page_is_an_io_error() {
+        let image = Cursor::new(vec![0u8; 9 * 8192]);
+
+        match MdfDatabase::from_read(image) {
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {}
+            _ => panic!("Unexpected result"),
+        }
     }
 }

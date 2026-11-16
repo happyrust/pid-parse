@@ -9,10 +9,11 @@
 //! `--stage-only`, which does nothing but the staging.
 //!
 //! The byte count comes from walking the tables the way the loader does — one
-//! `MdfDatabase` per table, every row read — over a `Read` that counts what
-//! it hands out. The loader itself is then run and timed, and the rows it
-//! staged are counted against the rows the walk read: a walk that read other
-//! rows than the loader staged would be measuring something else.
+//! `MdfDatabase` per table, every row read — over a source that counts what
+//! is read from it, and how many of the page reads were of a page the same
+//! reader had read before. The loader itself is then run and timed, and the
+//! rows it staged are counted against the rows the walk read: a walk that
+//! read other rows than the loader staged would be measuring something else.
 //!
 //! ```powershell
 //! cargo run --release --example probe_what_staging_an_mdf_costs -- `
@@ -30,9 +31,10 @@
 //! not parse, or the walk and the loader disagree about the rows; a
 //! measurement, whatever it says, exits 0.
 
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -96,17 +98,42 @@ fn run(input: &Path, mtf: bool, stage_only: bool) -> Result<(), String> {
     }
 }
 
-/// A `Read` that adds every byte it hands out to a count its maker keeps.
+/// A source that adds what is read from it to a tally its maker keeps.
 struct Counting<R> {
     inner: R,
-    read: Rc<Cell<u64>>,
+    /// Where the next read begins.
+    at: u64,
+    tally: Rc<RefCell<Tally>>,
+}
+
+/// What has been read from a [`Counting`] source.
+#[derive(Default)]
+struct Tally {
+    bytes: u64,
+    /// The reads that began at the first byte of a page.
+    page_reads: u64,
+    /// The pages those reads began at, each once.
+    pages: BTreeSet<u64>,
 }
 
 impl<R: Read> Read for Counting<R> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         let count = self.inner.read(buffer)?;
-        self.read.set(self.read.get() + count as u64);
+        let mut tally = self.tally.borrow_mut();
+        if count > 0 && self.at.is_multiple_of(PAGE_BYTES) {
+            tally.page_reads += 1;
+            tally.pages.insert(self.at / PAGE_BYTES);
+        }
+        tally.bytes += count as u64;
+        self.at += count as u64;
         Ok(count)
+    }
+}
+
+impl<R: Seek> Seek for Counting<R> {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        self.at = self.inner.seek(to)?;
+        Ok(self.at)
     }
 }
 
@@ -118,6 +145,10 @@ struct TableCost {
     to_open: u64,
     /// The bytes read from there until the last row is out.
     for_the_rows: u64,
+    /// The page reads, and how many pages they were of: fewer when the
+    /// reader read a page it had read before.
+    page_reads: u64,
+    pages: u64,
     /// The rows read, or `None` for a table the loader skips: one the image
     /// does not hold, or holds without a column.
     rows: Option<usize>,
@@ -179,21 +210,27 @@ fn walk(image: &Path) -> Result<Vec<TableCost>, String> {
         "{} tables asked for, {skipped} of them not in the image (`-`): the loader skips those",
         costs.len()
     );
+    let page_reads: u64 = costs.iter().map(|cost| cost.page_reads).sum();
+    let pages: u64 = costs.iter().map(|cost| cost.pages).sum();
+    println!(
+        "{page_reads} page reads, {} of them of a page the same reader had read before",
+        page_reads - pages
+    );
     println!();
     Ok(costs)
 }
 
 fn walk_table(image: &Path, name: &'static str) -> Result<TableCost, String> {
     let started = Instant::now();
-    let read = Rc::new(Cell::new(0u64));
+    let tally = Rc::new(RefCell::new(Tally::default()));
     let file = File::open(image).map_err(|error| format!("open {}: {error}", image.display()))?;
     let counted = Counting {
         inner: file,
-        read: Rc::clone(&read),
+        at: 0,
+        tally: Rc::clone(&tally),
     };
-    let mut db =
-        MdfDatabase::from_read(Box::new(counted)).map_err(|error| format!("{name}: {error}"))?;
-    let to_open = read.get();
+    let mut db = MdfDatabase::from_read(counted).map_err(|error| format!("{name}: {error}"))?;
+    let to_open = tally.borrow().bytes;
     let staged = db
         .column_names(name)
         .is_some_and(|columns| !columns.is_empty());
@@ -202,10 +239,13 @@ fn walk_table(image: &Path, name: &'static str) -> Result<TableCost, String> {
     } else {
         None
     };
+    let tally = tally.borrow();
     Ok(TableCost {
         name,
         to_open,
-        for_the_rows: read.get() - to_open,
+        for_the_rows: tally.bytes - to_open,
+        page_reads: tally.page_reads,
+        pages: tally.pages.len() as u64,
         rows,
         millis: millis_since(started),
     })
