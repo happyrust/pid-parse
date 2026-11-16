@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use super::diff::pid_publish_counts;
+use super::diff::pid_publish_census;
 use super::model::DatabaseShortfalls;
 use super::oracle_exp::{
     attach_oracle_ports, backup_path_key, backup_uid_key, plant_group_path, read_plant_groups,
@@ -98,6 +98,19 @@ pub struct BackupPublishReport {
     /// package and for one with no dump: their drawings are read from the
     /// `.pid`, and say what they leave out in their own coverage reports.
     pub shortfalls: Vec<PackageDrawingShortfalls>,
+    /// Drawings whose `_Data.xml` states a UID on more than one block —
+    /// objects and `<Rel>`s alike — in the order they were written. Each is
+    /// written and counts as written. `_Index.json` lists
+    /// [`PackageDuplicateUids::describe`] among its `problems` and
+    /// [`PackageDuplicateUids::sentence`] among that drawing's own; the
+    /// `failed` count and the coverage reports do not change. A caller that
+    /// delivers the package says them as well, as `pid_publish_xml` does,
+    /// whose exit code they do not change, `--strict` or not. Every drawing
+    /// of every kind of package is checked, with or without a reference
+    /// directory; where the gate compares a drawing with its reference it
+    /// makes a finding of each such UID as well, and the drawing is one of
+    /// [`PackageGateReport::dirty`].
+    pub duplicate_uids: Vec<PackageDuplicateUids>,
 }
 
 /// A chain stream of one drawing of a backup package whose record chain
@@ -156,6 +169,70 @@ impl PackageDrawingShortfalls {
     }
 }
 
+/// One drawing of a backup package whose `_Data.xml` states a UID on more
+/// than one block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageDuplicateUids {
+    /// `doc_uid` of the drawing's `_Index.json` entry.
+    pub drawing_uid: String,
+    /// The drawing's name, as its `_Index.json` entry has it.
+    pub drawing_name: String,
+    /// Each UID more than one block states — objects and `<Rel>`s alike —
+    /// with the number of blocks that state it, in the order the document
+    /// first states one again. Never empty: a drawing whose document states
+    /// each UID once is not listed.
+    pub uids: Vec<(String, usize)>,
+}
+
+impl PackageDuplicateUids {
+    /// The drawing with the UIDs its document states again — the
+    /// [`duplicate_uids`](super::diff::PidPublishCensus::duplicate_uids) of
+    /// its census, one entry for each block that does — or `None` when
+    /// there is none.
+    fn of(drawing_uid: &str, drawing_name: &str, stated_again: &[String]) -> Option<Self> {
+        let mut uids: Vec<(String, usize)> = Vec::new();
+        let mut places: HashMap<&str, usize> = HashMap::new();
+        for uid in stated_again {
+            let place = *places.entry(uid.as_str()).or_insert_with(|| {
+                // The block that stated it first is one of them.
+                uids.push((uid.clone(), 1));
+                uids.len() - 1
+            });
+            uids[place].1 += 1;
+        }
+        (!uids.is_empty()).then(|| Self {
+            drawing_uid: drawing_uid.to_string(),
+            drawing_name: drawing_name.to_string(),
+            uids,
+        })
+    }
+
+    /// How many UIDs, and each with the number of blocks that state it: the
+    /// sentence the drawing's `_Index.json` entry lists among its
+    /// `problems`.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        let uids = self
+            .uids
+            .iter()
+            .map(|(uid, blocks)| format!("{uid} ×{blocks}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{} {} written more than once: {uids}",
+            self.uids.len(),
+            if self.uids.len() == 1 { "UID" } else { "UIDs" }
+        )
+    }
+
+    /// [`Self::sentence`] under the drawing's name, as `_Index.json` lists
+    /// it among its `problems`.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!("{}: {}", self.drawing_name, self.sentence())
+    }
+}
+
 /// 一次整包发布里 `--diff-against` 的逐图结论。
 ///
 /// 参考按图名索引：`<参考目录>/<图名>_Data.xml`。
@@ -185,6 +262,12 @@ impl PackageGateReport {
 }
 
 /// Publish `package_dir` into `out_dir`.
+///
+/// A drawing whose `_Data.xml` states a UID on more than one block is
+/// written all the same and counts as written: `_Index.json` says so among
+/// the drawing's `problems` and among its own, and the report lists the
+/// drawing under [`BackupPublishReport::duplicate_uids`]. That holds for
+/// every kind of package, with or without `reference_dir`.
 ///
 /// # Errors
 ///
@@ -288,6 +371,7 @@ pub fn publish_backup_package(
         .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
         .collect();
     let mut chain_faults: Vec<PackageChainFault> = Vec::new();
+    let mut duplicate_uids: Vec<PackageDuplicateUids> = Vec::new();
     let mut gate = reference_dir.map(PackageGate::new);
 
     for plant in &scan.plant_data {
@@ -323,6 +407,7 @@ pub fn publish_backup_package(
                 drawings: &mut drawings,
                 problems: &mut problems,
                 chain_faults: &mut chain_faults,
+                duplicate_uids: &mut duplicate_uids,
                 gate: gate.as_mut(),
             },
         ) {
@@ -403,6 +488,7 @@ pub fn publish_backup_package(
         chain_faults,
         // No drawing of this branch goes through the database line.
         shortfalls: Vec::new(),
+        duplicate_uids,
     })
 }
 
@@ -472,6 +558,9 @@ struct PublishTally<'a> {
     /// The chain faults of the drawings read, for the report. Each is also
     /// one of `problems`.
     chain_faults: &'a mut Vec<PackageChainFault>,
+    /// The drawings written with a UID on more than one block, for the
+    /// report. Each is also one of `problems`.
+    duplicate_uids: &'a mut Vec<PackageDuplicateUids>,
     gate: Option<&'a mut PackageGate>,
 }
 
@@ -704,8 +793,8 @@ fn publish_one(
     };
     let source = PathBuf::from(format!("{}:{zip_entry}", plant.file_name));
     let report = pid_coverage_json(&drawing, &source, &file_stem);
-    let (object_count, value_count, rel_count) = match pid_publish_counts(&xml) {
-        Ok(counts) => counts,
+    let census = match pid_publish_census(&xml) {
+        Ok(census) => census,
         Err(error) => {
             let detail = error.to_string();
             tally
@@ -718,6 +807,7 @@ fn publish_one(
             return;
         }
     };
+    let (object_count, value_count, rel_count) = census.counts();
     if let Err(error) = write_three(&data_path, &xml, &meta, &report, &file_stem) {
         tally
             .problems
@@ -731,6 +821,18 @@ fn publish_one(
     *tally.written += 1;
     if let Some(gate) = tally.gate.as_deref_mut() {
         gate.score(&file_stem, &xml, dump_in_run);
+    }
+    // What the document states on more than one block. The drawing is
+    // written and counts as written; the index says it, in the sentence the
+    // caller is handed with the report.
+    if let Some(duplicates) = PackageDuplicateUids::of(
+        &drawing.drawing_uid,
+        &drawing.drawing_name,
+        &census.duplicate_uids,
+    ) {
+        tally.problems.push(duplicates.describe());
+        notes.push(duplicates.sentence());
+        tally.duplicate_uids.push(duplicates);
     }
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
@@ -1273,6 +1375,7 @@ fn publish_staged_database(
     let mut paired_keys = HashSet::new();
     let mut drawings: Vec<Value> = Vec::new();
     let mut shortfalls: Vec<PackageDrawingShortfalls> = Vec::new();
+    let mut duplicate_uids: Vec<PackageDuplicateUids> = Vec::new();
     let mut gate = reference_dir.map(PackageGate::new);
 
     for row in &rows {
@@ -1321,8 +1424,8 @@ fn publish_staged_database(
             ));
             continue;
         }
-        let counts = match pid_publish_counts(&xml) {
-            Ok(counts) => counts,
+        let census = match pid_publish_census(&xml) {
+            Ok(census) => census,
             Err(error) => {
                 let detail = error.to_string();
                 problems.push(format!("{name}: {detail}"));
@@ -1339,6 +1442,7 @@ fn publish_staged_database(
                 continue;
             }
         };
+        let counts = census.counts();
         let source = PathBuf::from(format!("{zip_file}:{zip_entry}"));
         let report =
             super::pid_writer::write_database_coverage_json(&graph, &source, counts, &file_stem);
@@ -1383,6 +1487,15 @@ fn publish_staged_database(
             shortfalls: super::xml_writer::database_shortfalls(&graph),
         };
         problems.extend(short.describe());
+        let mut own_problems = short.shortfalls.describe();
+        // What the document states on more than one block is said the same
+        // way, after what is short of it.
+        if let Some(duplicates) = PackageDuplicateUids::of(&row.uid, &name, &census.duplicate_uids)
+        {
+            problems.push(duplicates.describe());
+            own_problems.push(duplicates.sentence());
+            duplicate_uids.push(duplicates);
+        }
         drawings.push(mtf_drawing_entry(
             row,
             &name,
@@ -1394,7 +1507,7 @@ fn publish_staged_database(
                 format!("{file_stem}_Meta.xml"),
                 format!("{file_stem}_Coverage.json"),
             ],
-            short.shortfalls.describe(),
+            own_problems,
         ));
         if !short.shortfalls.is_empty() {
             shortfalls.push(short);
@@ -1454,6 +1567,7 @@ fn publish_staged_database(
         // is inflated, so no chain is walked.
         chain_faults: Vec::new(),
         shortfalls,
+        duplicate_uids,
     })
 }
 
@@ -1861,6 +1975,90 @@ mod tests {
         assert_eq!(index["drawings"][0]["problems"], json!([]), "{index}");
         assert_eq!(index["failed"], 0, "{index}");
         assert!(run.report.shortfalls.is_empty());
+        assert!(run.report.duplicate_uids.is_empty());
         assert_eq!((run.report.written, run.report.failed), (1, 0));
+    }
+
+    /// What is said of the one UID [`sql_with_a_uid_stated_twice`] makes the
+    /// document state twice.
+    #[cfg(feature = "backup-mdf")]
+    const DUPLICATE_SENTENCE: &str = "1 UID written more than once: V-1 ×2";
+
+    /// The fixture written in full, with a second representation of the
+    /// nozzle whose `SP_ID` is the vessel's: the vessel's block and that
+    /// representation's then state one UID. A plant database keeps an
+    /// `SP_ID` to one row of all its tables, so no real one writes this.
+    #[cfg(feature = "backup-mdf")]
+    fn sql_with_a_uid_stated_twice() -> String {
+        format!(
+            "{SHORTFALLS_SQL}\n\
+             DELETE FROM T_Relationship;\n\
+             DELETE FROM T_Representation WHERE SP_ModelItemID = 'EX-1';\n\
+             DELETE FROM T_ModelItem WHERE SP_ID = 'EX-1';\n\
+             INSERT INTO T_Representation VALUES ('V-1', 'N-1', 'DWG-SHORT-01', '104', \
+             '\\Equipment Components\\Nozzles\\Flanged Nozzle.sym', '13');\n"
+        )
+    }
+
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_that_states_a_uid_twice_is_written_and_named() {
+        let run = publish_staged("duplicate", &sql_with_a_uid_stated_twice());
+        assert_eq!(
+            run.data_xml.matches(r#"<IObject UID="V-1""#).count(),
+            2,
+            "the document states the UID twice: {}",
+            run.data_xml
+        );
+        let index = &run.index;
+        assert_eq!(index["failed"], 0, "{index}");
+        let drawing = &index["drawings"][0];
+        assert_eq!(
+            drawing["files"],
+            json!([
+                "SHORT-01_Data.xml",
+                "SHORT-01_Meta.xml",
+                "SHORT-01_Coverage.json"
+            ]),
+            "the drawing is written: {index}"
+        );
+        assert_eq!((run.report.written, run.report.failed), (1, 0));
+        assert_eq!(
+            index["problems"],
+            json!([format!("SHORT-01: {DUPLICATE_SENTENCE}")]),
+            "{index}"
+        );
+        assert_eq!(drawing["problems"], json!([DUPLICATE_SENTENCE]), "{index}");
+        let listed = PackageDuplicateUids {
+            drawing_uid: "DWG-SHORT-01".into(),
+            drawing_name: "SHORT-01".into(),
+            uids: vec![("V-1".into(), 2)],
+        };
+        assert_eq!(listed.sentence(), DUPLICATE_SENTENCE);
+        assert_eq!(run.report.duplicate_uids, vec![listed]);
+        assert!(run.report.shortfalls.is_empty());
+    }
+
+    #[test]
+    fn the_uids_stated_again_are_counted_by_block_and_said_under_the_drawings_name() {
+        // What the document reader hands over: one entry for each block
+        // that states a UID again.
+        let stated_again = ["B".to_string(), "A".to_string(), "B".to_string()];
+        let duplicates =
+            PackageDuplicateUids::of("DWG-1", "D1", &stated_again).expect("two UIDs stated again");
+        assert_eq!(
+            duplicates.uids,
+            [("B".to_string(), 3), ("A".to_string(), 2)],
+            "each with the blocks that state it, the first one included"
+        );
+        assert_eq!(
+            duplicates.sentence(),
+            "2 UIDs written more than once: B ×3, A ×2"
+        );
+        assert_eq!(
+            duplicates.describe(),
+            "D1: 2 UIDs written more than once: B ×3, A ×2"
+        );
+        assert_eq!(PackageDuplicateUids::of("DWG-1", "D1", &[]), None);
     }
 }

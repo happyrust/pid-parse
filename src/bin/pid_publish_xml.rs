@@ -31,7 +31,7 @@
 //! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
 
 use pid_parse::publish::backup_package::{
-    BackupPublishReport, PackageChainFault, PackageDrawingShortfalls,
+    BackupPublishReport, PackageChainFault, PackageDrawingShortfalls, PackageDuplicateUids,
 };
 use pid_parse::publish::diff::diff_meta_xml;
 use pid_parse::publish::pid_writer::{
@@ -629,6 +629,14 @@ fn run(options: CliOptions) -> Result<i32, String> {
 /// lists the same sentences among its `problems`, and the drawing is
 /// written and counts as written. With `--strict` such a drawing turns the
 /// exit code to 1, and stderr ends with the line that says so.
+///
+/// A drawing whose `_Data.xml` states a UID on more than one block gets one
+/// `warning:` line under its name, with the UIDs; `_Index.json` lists the
+/// same sentence among its `problems`, and the drawing is written and
+/// counts as written. The exit code is what it would be without the line,
+/// with `--strict` as well; where `--diff-against` compares the drawing
+/// with its reference, the gate makes a finding of each such UID on its
+/// own account.
 fn run_package(options: &CliOptions) -> Result<i32, String> {
     let out_dir = options
         .out_dir
@@ -718,16 +726,25 @@ fn package_exit_code(report: &BackupPublishReport, strict: bool) -> i32 {
 /// carries them: a line for each chain stream whose record chain does not
 /// hold, naming the zip and the entry as the single-`.pid` mode's line
 /// does, then a line for each kind of shortfall of each drawing the
-/// database line did not write in full, under the drawing's name. Every
-/// drawing spoken of is written and counts as written, and `_Index.json`
-/// lists the same sentences among its `problems`.
+/// database line did not write in full, under the drawing's name, then a
+/// line for each drawing whose document states a UID on more than one
+/// block, under its name as well. Every drawing spoken of is written and
+/// counts as written, and `_Index.json` lists the same sentences among its
+/// `problems`.
 fn package_warnings(report: &BackupPublishReport) -> Vec<String> {
     let chain_faults = report.chain_faults.iter().map(PackageChainFault::describe);
     let shortfalls = report
         .shortfalls
         .iter()
         .flat_map(PackageDrawingShortfalls::describe);
-    chain_faults.chain(shortfalls).collect()
+    let duplicate_uids = report
+        .duplicate_uids
+        .iter()
+        .map(PackageDuplicateUids::describe);
+    chain_faults
+        .chain(shortfalls)
+        .chain(duplicate_uids)
+        .collect()
 }
 
 /// The line a backup directory run ends stderr with when `--strict` turns
@@ -1310,6 +1327,7 @@ mod tests {
                     shortfalls: shortfalls.clone(),
                 })
                 .collect(),
+            duplicate_uids: Vec::new(),
         }
     }
 
@@ -1332,6 +1350,36 @@ mod tests {
             [format!("D0: {SENTENCE}"), format!("D1: {SENTENCE}")]
         );
         assert!(package_warnings(&package_report(0, 0)).is_empty());
+    }
+
+    #[test]
+    fn a_package_drawing_that_states_a_uid_twice_is_warned_of_and_the_exit_code_stays() {
+        let mut report = package_report(0, 0);
+        report.duplicate_uids = vec![PackageDuplicateUids {
+            drawing_uid: "UID-0".into(),
+            drawing_name: "D0".into(),
+            uids: vec![("A".into(), 2), ("R".into(), 3)],
+        }];
+        assert_eq!(
+            package_warnings(&report),
+            ["D0: 2 UIDs written more than once: A ×2, R ×3"]
+        );
+        // Written but named: neither the exit code nor --strict counts it.
+        for strict in [false, true] {
+            assert_eq!(package_exit_code(&report, strict), 0);
+            assert_eq!(strict_package_verdict(&report, strict), None);
+        }
+        // It comes after what the database line wrote short.
+        let mut both = package_report(0, 1);
+        both.duplicate_uids.clone_from(&report.duplicate_uids);
+        assert_eq!(
+            package_warnings(&both),
+            [
+                package_warnings(&package_report(0, 1)),
+                package_warnings(&report)
+            ]
+            .concat()
+        );
     }
 
     #[test]

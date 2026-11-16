@@ -932,4 +932,7 @@ fn a_package_names_the_drawing_whose_chain_stops() {
     // The drawings of both packages are read from the `.pid`: none goes
     // through the database line, so none is listed as written short by it.
     assert!(report.shortfalls.is_empty() && sound.shortfalls.is_empty());
+    // The documents written from them state each UID once, the damaged
+    // drawing's too: no drawing is listed for a UID written twice.
+    assert!(report.duplicate_uids.is_empty() && sound.duplicate_uids.is_empty());
 }

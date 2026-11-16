@@ -123,10 +123,10 @@ pub use catalog::{cross_check_catalog_index, CatalogIndexCrossCheck};
 pub use diff::{
     check_publish_document, coverage_against_reference, diff_pid_export, diff_publish_xml,
     diff_rel_defuids, parse_attrs_per_interface_per_tag, parse_interfaces_per_tag,
-    parse_pid_tag_counts, parse_rel_defuid_counts, parse_rel_details, pid_publish_counts,
-    supported_pid_tags, CoverageRow, MalformedPublishDocument, PidExportDiff, PublishDocumentSide,
-    RelDefUidDiff, RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
-    WriterCoverage,
+    parse_pid_tag_counts, parse_rel_defuid_counts, parse_rel_details, pid_publish_census,
+    pid_publish_counts, supported_pid_tags, CoverageRow, MalformedPublishDocument, PidExportDiff,
+    PidPublishCensus, PublishDocumentSide, RelDefUidDiff, RelDefUidDiffReport, RelDetail,
+    SemanticDiffReport, TagCountDiff, TagDiffStatus, WriterCoverage,
 };
 #[cfg(feature = "backup-mdf")]
 pub use mdf_load::{

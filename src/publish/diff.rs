@@ -1539,13 +1539,59 @@ impl std::error::Error for MalformedPublishDocument {}
 ///
 /// Returns [`MalformedPublishDocument`] when `xml` is not well-formed XML.
 pub fn pid_publish_counts(xml: &str) -> Result<(usize, usize, usize), MalformedPublishDocument> {
+    pid_publish_census(xml).map(|census| census.counts())
+}
+
+/// The blocks of one `.pid` export, counted, with the UIDs more than one of
+/// them states: what [`pid_publish_census`] reads off the document alone.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PidPublishCensus {
+    /// Top-level blocks other than `<Rel>`. Every block is counted, so a
+    /// block written twice counts twice.
+    pub objects: usize,
+    /// Non-empty attribute values of those blocks, the UID aside: those of
+    /// the last block under each UID.
+    pub values: usize,
+    /// `<Rel>` blocks, every one counted as well.
+    pub rels: usize,
+    /// The UIDs the document states more than once — those of objects and
+    /// `<Rel>`s alike — in document order, one for each block that states a
+    /// UID an earlier block already stated: a UID written three times is
+    /// listed twice. Empty when every block has a UID of its own.
+    pub duplicate_uids: Vec<String>,
+}
+
+impl PidPublishCensus {
+    /// Objects, values and rels, as [`pid_publish_counts`] gives them.
+    #[must_use]
+    pub fn counts(&self) -> (usize, usize, usize) {
+        (self.objects, self.values, self.rels)
+    }
+}
+
+/// Count the blocks of one `.pid` export as [`pid_publish_counts`] does, and
+/// bring out the UIDs it states more than once.
+///
+/// [`diff_pid_export`] makes a finding of each such UID; this reads them off
+/// the generated document alone, for a run with no reference to score
+/// against.
+///
+/// # Errors
+///
+/// Returns [`MalformedPublishDocument`] when `xml` is not well-formed XML.
+pub fn pid_publish_census(xml: &str) -> Result<PidPublishCensus, MalformedPublishDocument> {
     let document = read_publish_document(xml, PublishDocumentSide::Generated)?;
     let values = document
         .objects
         .values()
         .map(|(_, values)| values.len())
         .sum();
-    Ok((document.object_blocks, values, document.rel_blocks))
+    Ok(PidPublishCensus {
+        objects: document.object_blocks,
+        values,
+        rels: document.rel_blocks,
+        duplicate_uids: document.duplicate_uids,
+    })
 }
 
 /// Read `xml` with the reader [`diff_pid_export`] uses and report where it is
@@ -2709,6 +2755,35 @@ mod tests {
         assert!(diff.is_clean(), "{diff}");
         assert_eq!((diff.objects, diff.values, diff.rels), (1, 1, 1));
         assert_eq!(pid_publish_counts(WELL_FORMED_EXPORT), Ok((1, 1, 1)));
+    }
+
+    #[test]
+    fn the_uids_a_document_states_twice_come_out_with_its_counts() {
+        // The instrument's block is there twice, and the rel takes the
+        // instrument's UID.
+        let repeated = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            <PIDNote><IObject UID="N"/></PIDNote>
+            <Rel><IObject UID="A"/><IRel UID1="A" UID2="D" DefUID="DrawingItems"/></Rel>
+        </Container>"#;
+        assert_eq!(
+            pid_publish_census(repeated),
+            Ok(PidPublishCensus {
+                objects: 3,
+                values: 1,
+                rels: 1,
+                duplicate_uids: vec!["A".to_string(), "A".to_string()],
+            }),
+            "one for each block that states the UID again"
+        );
+        assert_eq!(pid_publish_counts(repeated), Ok((3, 1, 1)));
+        let sound = pid_publish_census(WELL_FORMED_EXPORT).expect("well-formed");
+        assert_eq!(sound.counts(), (1, 1, 1));
+        assert!(
+            sound.duplicate_uids.is_empty(),
+            "none in a document that states each UID once"
+        );
     }
 
     #[test]
