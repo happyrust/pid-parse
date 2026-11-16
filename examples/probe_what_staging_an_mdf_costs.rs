@@ -9,11 +9,16 @@
 //! `--stage-only`, which does nothing but the staging.
 //!
 //! The byte count comes from walking the tables the way the loader does — one
-//! `MdfDatabase` per table, every row read — over a source that counts what
-//! is read from it, and how many of the page reads were of a page the same
+//! `MdfDatabase` for all of them, every row read — over a source that counts
+//! what is read from it, and how many of the page reads were of a page the
 //! reader had read before. The loader itself is then run and timed, and the
 //! rows it staged are counted against the rows the walk read: a walk that
 //! read other rows than the loader staged would be measuring something else.
+//!
+//! Last it lists what the loader staged: the columns and the rows of each
+//! table, and a digest of every value in the order the rows went in. Two runs
+//! that list the same staged the same, be they before and after a change to
+//! the loader or on an `.mdf` and on the dump that wraps it.
 //!
 //! ```powershell
 //! cargo run --release --example probe_what_staging_an_mdf_costs -- `
@@ -25,7 +30,8 @@
 //! With `--mtf` the input is an MTF dump. The walk runs over the image
 //! `mdf_bytes_from_mtf_dump` takes out of it, written to a temporary file;
 //! the loader timed is `open_mtf_dump_as_sqlite` on the dump read whole,
-//! which is what publishing a package does. `--stage-only` skips the walk.
+//! which is what publishing a package does. `--stage-only` skips the walk and
+//! the listing.
 //!
 //! Exits 2 on a usage error and 1 when the input does not read, a table does
 //! not parse, or the walk and the loader disagree about the rows; a
@@ -44,6 +50,7 @@ use oxidized_mdf::MdfDatabase;
 use pid_parse::publish::mdf_load::PUBLISH_TABLES;
 use pid_parse::publish::{mdf_bytes_from_mtf_dump, open_mdf_as_sqlite, open_mtf_dump_as_sqlite};
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 
 const USAGE: &str =
     "usage: probe_what_staging_an_mdf_costs <Export.mdf | Export.dmp --mtf> [--stage-only]";
@@ -92,10 +99,13 @@ fn run(input: &Path, mtf: bool, stage_only: bool) -> Result<(), String> {
         Some(walk(input)?)
     };
     let staged = stage(input, mtf)?;
-    match walked {
-        Some(walked) => compare(&walked, &staged),
-        None => Ok(()),
-    }
+    let Some(walked) = walked else {
+        return Ok(());
+    };
+    let held = held_by(&staged)?;
+    compare(&walked, &held)?;
+    print_staged(&held);
+    Ok(())
 }
 
 /// A source that adds what is read from it to a tally its maker keeps.
@@ -137,18 +147,11 @@ impl<R: Seek> Seek for Counting<R> {
     }
 }
 
-/// What reading one table cost.
+/// What reading the rows of one table cost.
 struct TableCost {
     name: &'static str,
-    /// The bytes read before the first row is asked for: the boot page and
-    /// the system tables.
-    to_open: u64,
-    /// The bytes read from there until the last row is out.
-    for_the_rows: u64,
-    /// The page reads, and how many pages they were of: fewer when the
-    /// reader read a page it had read before.
-    page_reads: u64,
-    pages: u64,
+    /// The bytes read from the image while the rows of this table were read.
+    bytes: u64,
     /// The rows read, or `None` for a table the loader skips: one the image
     /// does not hold, or holds without a column.
     rows: Option<usize>,
@@ -156,8 +159,8 @@ struct TableCost {
 }
 
 /// Reads every table of [`PUBLISH_TABLES`] out of `image` the way
-/// `open_mdf_as_sqlite` does, a reader of its own for each, and prints what
-/// each read cost.
+/// `open_mdf_as_sqlite` does, all of them with the one reader, and prints
+/// what opening the image and then each table cost.
 fn walk(image: &Path) -> Result<Vec<TableCost>, String> {
     let size = std::fs::metadata(image)
         .map_err(|error| format!("{}: {error}", image.display()))?
@@ -169,58 +172,9 @@ fn walk(image: &Path) -> Result<Vec<TableCost>, String> {
     );
     println!();
     println!(
-        "{:<20} {:>12} {:>12} {:>13} {:>8} {:>7} {:>9}",
-        "table", "to open", "for the rows", "bytes read", "x image", "rows", "ms"
+        "{:<20} {:>12} {:>8} {:>7} {:>9}",
+        "read", "bytes", "x image", "rows", "ms"
     );
-    let mut costs = Vec::with_capacity(PUBLISH_TABLES.len());
-    for &name in PUBLISH_TABLES {
-        let cost = walk_table(image, name)?;
-        let bytes = cost.to_open + cost.for_the_rows;
-        let rows = cost
-            .rows
-            .map_or_else(|| "-".to_string(), |rows| rows.to_string());
-        println!(
-            "{:<20} {:>12} {:>12} {:>13} {:>8.2} {:>7} {:>9.1}",
-            cost.name,
-            cost.to_open,
-            cost.for_the_rows,
-            bytes,
-            times(bytes, size),
-            rows,
-            cost.millis
-        );
-        costs.push(cost);
-    }
-    let to_open: u64 = costs.iter().map(|cost| cost.to_open).sum();
-    let for_the_rows: u64 = costs.iter().map(|cost| cost.for_the_rows).sum();
-    let rows: usize = costs.iter().filter_map(|cost| cost.rows).sum();
-    let millis: f64 = costs.iter().map(|cost| cost.millis).sum();
-    println!(
-        "{:<20} {:>12} {:>12} {:>13} {:>8.2} {:>7} {:>9.1}",
-        "all of them",
-        to_open,
-        for_the_rows,
-        to_open + for_the_rows,
-        times(to_open + for_the_rows, size),
-        rows,
-        millis
-    );
-    let skipped = costs.iter().filter(|cost| cost.rows.is_none()).count();
-    println!(
-        "{} tables asked for, {skipped} of them not in the image (`-`): the loader skips those",
-        costs.len()
-    );
-    let page_reads: u64 = costs.iter().map(|cost| cost.page_reads).sum();
-    let pages: u64 = costs.iter().map(|cost| cost.pages).sum();
-    println!(
-        "{page_reads} page reads, {} of them of a page the same reader had read before",
-        page_reads - pages
-    );
-    println!();
-    Ok(costs)
-}
-
-fn walk_table(image: &Path, name: &'static str) -> Result<TableCost, String> {
     let started = Instant::now();
     let tally = Rc::new(RefCell::new(Tally::default()));
     let file = File::open(image).map_err(|error| format!("open {}: {error}", image.display()))?;
@@ -229,26 +183,72 @@ fn walk_table(image: &Path, name: &'static str) -> Result<TableCost, String> {
         at: 0,
         tally: Rc::clone(&tally),
     };
-    let mut db = MdfDatabase::from_read(counted).map_err(|error| format!("{name}: {error}"))?;
+    let mut db = MdfDatabase::from_read(counted)
+        .map_err(|error| format!("open {}: {error}", image.display()))?;
+    // The boot page and the system tables: read before a row is asked for.
     let to_open = tally.borrow().bytes;
-    let staged = db
-        .column_names(name)
-        .is_some_and(|columns| !columns.is_empty());
-    let rows = if staged {
-        Some(count_rows(&mut db, name)?)
-    } else {
-        None
-    };
-    let tally = tally.borrow();
-    Ok(TableCost {
-        name,
+    let open_millis = millis_since(started);
+    println!(
+        "{:<20} {:>12} {:>8.2} {:>7} {:>9.1}",
+        "to open the image",
         to_open,
-        for_the_rows: tally.bytes - to_open,
-        page_reads: tally.page_reads,
-        pages: tally.pages.len() as u64,
+        times(to_open, size),
+        "",
+        open_millis
+    );
+    let mut costs = Vec::with_capacity(PUBLISH_TABLES.len());
+    for &name in PUBLISH_TABLES {
+        let started = Instant::now();
+        let read_before = tally.borrow().bytes;
+        let staged = db
+            .column_names(name)
+            .is_some_and(|columns| !columns.is_empty());
+        let rows = if staged {
+            Some(count_rows(&mut db, name)?)
+        } else {
+            None
+        };
+        let cost = TableCost {
+            name,
+            bytes: tally.borrow().bytes - read_before,
+            rows,
+            millis: millis_since(started),
+        };
+        println!(
+            "{:<20} {:>12} {:>8.2} {:>7} {:>9.1}",
+            cost.name,
+            cost.bytes,
+            times(cost.bytes, size),
+            cost.rows
+                .map_or_else(|| "-".to_string(), |rows| rows.to_string()),
+            cost.millis
+        );
+        costs.push(cost);
+    }
+    let bytes = to_open + costs.iter().map(|cost| cost.bytes).sum::<u64>();
+    let rows: usize = costs.iter().filter_map(|cost| cost.rows).sum();
+    let millis = open_millis + costs.iter().map(|cost| cost.millis).sum::<f64>();
+    println!(
+        "{:<20} {:>12} {:>8.2} {:>7} {:>9.1}",
+        "all of it",
+        bytes,
+        times(bytes, size),
         rows,
-        millis: millis_since(started),
-    })
+        millis
+    );
+    let skipped = costs.iter().filter(|cost| cost.rows.is_none()).count();
+    println!(
+        "{} tables asked for, {skipped} of them not in the image (`-`): the loader skips those",
+        costs.len()
+    );
+    let tally = tally.borrow();
+    println!(
+        "{} page reads, {} of them of a page the reader had read before",
+        tally.page_reads,
+        tally.page_reads - tally.pages.len() as u64
+    );
+    println!();
+    Ok(costs)
 }
 
 fn count_rows(db: &mut MdfDatabase, name: &str) -> Result<usize, String> {
@@ -287,11 +287,90 @@ fn stage(input: &Path, mtf: bool) -> Result<Connection, String> {
     Ok(staged)
 }
 
+/// What the staged database holds of one table.
+struct StagedTable {
+    columns: usize,
+    rows: usize,
+    /// SHA-256 over the names of the columns and then every value of every
+    /// row, in the order the rows went in.
+    digest: String,
+}
+
+/// What `staged` holds of each table of [`PUBLISH_TABLES`], in that order:
+/// `None` for a table that was not staged.
+fn held_by(staged: &Connection) -> Result<Vec<Option<StagedTable>>, String> {
+    PUBLISH_TABLES
+        .iter()
+        .map(|table| staged_table(staged, table))
+        .collect()
+}
+
+fn staged_table(staged: &Connection, table: &str) -> Result<Option<StagedTable>, String> {
+    let failed = |error: rusqlite::Error| format!("{table}: {error}");
+    let held: i64 = staged
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(failed)?;
+    if held == 0 {
+        return Ok(None);
+    }
+    let mut statement = staged
+        .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY rowid"))
+        .map_err(failed)?;
+    let columns = statement.column_count();
+    let mut hasher = Sha256::new();
+    hasher.update((columns as u64).to_le_bytes());
+    for name in statement.column_names() {
+        add(&mut hasher, Some(name.as_bytes()));
+    }
+    let mut rows = statement.query([]).map_err(failed)?;
+    let mut count = 0usize;
+    while let Some(row) = rows.next().map_err(failed)? {
+        for column in 0..columns {
+            let value: Option<String> = row.get(column).map_err(failed)?;
+            add(&mut hasher, value.as_deref().map(str::as_bytes));
+        }
+        count += 1;
+    }
+    Ok(Some(StagedTable {
+        columns,
+        rows: count,
+        digest: hex(hasher),
+    }))
+}
+
+/// Adds `value` to `hasher`, marked as there or not and with its length
+/// before it, so that no two runs of values add the same bytes.
+fn add(hasher: &mut Sha256, value: Option<&[u8]>) {
+    match value {
+        None => hasher.update([0u8]),
+        Some(bytes) => {
+            hasher.update([1u8]);
+            hasher.update((bytes.len() as u64).to_le_bytes());
+            hasher.update(bytes);
+        }
+    }
+}
+
+fn hex(hasher: Sha256) -> String {
+    use std::fmt::Write as _;
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
 /// The rows the loader staged against the rows the walk read, table by table.
-fn compare(walked: &[TableCost], staged: &Connection) -> Result<(), String> {
+fn compare(walked: &[TableCost], held: &[Option<StagedTable>]) -> Result<(), String> {
     let mut differences = Vec::new();
-    for cost in walked {
-        let staged_rows = staged_rows(staged, cost.name)?;
+    for (cost, held) in walked.iter().zip(held) {
+        let staged_rows = held.as_ref().map(|held| held.rows);
         if staged_rows != cost.rows {
             differences.push(format!(
                 "  {}: the walk read {:?}, the loader staged {staged_rows:?}",
@@ -310,27 +389,31 @@ fn compare(walked: &[TableCost], staged: &Connection) -> Result<(), String> {
     }
 }
 
-/// The rows of `table` in the staged database, or `None` when it was not
-/// staged.
-fn staged_rows(staged: &Connection, table: &str) -> Result<Option<usize>, String> {
-    let held: i64 = staged
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [table],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("{table}: {error}"))?;
-    if held == 0 {
-        return Ok(None);
+/// Lists what the loader staged, table by table, and one digest over the
+/// whole list.
+fn print_staged(held: &[Option<StagedTable>]) {
+    println!();
+    println!(
+        "{:<20} {:>7} {:>7}  sha-256 of the column names and the values",
+        "staged", "columns", "rows"
+    );
+    let mut all = Sha256::new();
+    let mut rows = 0usize;
+    for (&table, held) in PUBLISH_TABLES.iter().zip(held) {
+        add(&mut all, Some(table.as_bytes()));
+        if let Some(held) = held {
+            add(&mut all, Some(held.digest.as_bytes()));
+            rows += held.rows;
+            println!(
+                "{table:<20} {:>7} {:>7}  {}",
+                held.columns, held.rows, held.digest
+            );
+        } else {
+            add(&mut all, None);
+            println!("{table:<20} {:>7} {:>7}  -", "-", "-");
+        }
     }
-    let rows: i64 = staged
-        .query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
-            row.get(0)
-        })
-        .map_err(|error| format!("{table}: {error}"))?;
-    usize::try_from(rows)
-        .map(Some)
-        .map_err(|error| format!("{table}: {error}"))
+    println!("{:<20} {:>7} {rows:>7}  {}", "all of them", "", hex(all));
 }
 
 /// The image inside an MTF dump, in a temporary file that is removed when

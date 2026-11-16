@@ -55,14 +55,17 @@ pub const PUBLISH_TABLES: &[&str] = &[
 /// Open `path` with `oxidized-mdf`, stage the publish-relevant
 /// `SmartPlant` tables into an in-memory `SQLite` connection, and return
 /// that connection for reuse by the existing query loader.
+///
+/// The `.mdf` is opened once for all the tables, and the rows of a table go
+/// in within one transaction.
 pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
     let t0 = Instant::now();
-    let conn = Connection::open_in_memory()?;
+    let mut conn = Connection::open_in_memory()?;
+    let mut db = MdfDatabase::open(path)?;
     let mut tables_staged = 0u32;
     let mut total_rows = 0usize;
     for table_name in PUBLISH_TABLES {
-        let mut db = MdfDatabase::open(path)?;
-        let rows = stage_table(&mut db, &conn, table_name)?;
+        let rows = stage_table(&mut db, &mut conn, table_name)?;
         if rows > 0 {
             tables_staged += 1;
         }
@@ -101,6 +104,12 @@ pub fn load_drawing_graph_from_mdf(
 /// Returns [`PublishError::Mdf`] when the dump has no `MSDA` stream
 /// or the detected header offset already runs past the body end.
 pub fn mdf_bytes_from_mtf_dump(dump: &[u8]) -> Result<Vec<u8>, PublishError> {
+    mdf_image_in_mtf_dump(dump).map(<[u8]>::to_vec)
+}
+
+/// The MDF image of an `Export.dmp`, where it lies in `dump`: what
+/// [`mdf_bytes_from_mtf_dump`] returns a copy of.
+fn mdf_image_in_mtf_dump(dump: &[u8]) -> Result<&[u8], PublishError> {
     let body = crate::backup::mtf::msda_stream_body(dump).ok_or_else(|| {
         PublishError::Mdf("no MSDA (SQL data) stream in the MTF dump".to_string())
     })?;
@@ -111,16 +120,17 @@ pub fn mdf_bytes_from_mtf_dump(dump: &[u8]) -> Result<Vec<u8>, PublishError> {
             body.len()
         )));
     }
-    Ok(body[offset..].to_vec())
+    Ok(&body[offset..])
 }
 
 /// Stage an MTF-wrapped SQL Server `Export.dmp` into the same
 /// in-memory `SQLite` staging database [`open_mdf_as_sqlite`]
 /// produces for a plain `.mdf` file.
 ///
-/// `oxidized-mdf` reads from a path, so the extracted MDF image is
-/// materialized to a temp file first and removed again once staging
-/// completes (the returned connection no longer touches it).
+/// [`open_mdf_as_sqlite`] takes a path, so the MDF image is written to a
+/// temp file first, straight from where it lies in `dump`, and removed
+/// again once staging completes (the returned connection no longer
+/// touches it).
 ///
 /// # Errors
 ///
@@ -128,8 +138,7 @@ pub fn mdf_bytes_from_mtf_dump(dump: &[u8]) -> Result<Vec<u8>, PublishError> {
 /// [`PublishError::Io`] when the temp file cannot be written, and
 /// whatever [`open_mdf_as_sqlite`] reports while staging.
 pub fn open_mtf_dump_as_sqlite(dump: &[u8]) -> Result<Connection, PublishError> {
-    let mdf = mdf_bytes_from_mtf_dump(dump)?;
-    let staged = StagedMdf::write(&mdf)?;
+    let staged = StagedMdf::write(mdf_image_in_mtf_dump(dump)?)?;
     open_mdf_as_sqlite(&staged.path)
 }
 
@@ -176,7 +185,7 @@ impl Drop for StagedMdf {
 
 fn stage_table(
     db: &mut MdfDatabase,
-    conn: &Connection,
+    conn: &mut Connection,
     table_name: &str,
 ) -> Result<usize, PublishError> {
     let Some(columns) = db.column_names(table_name) else {
@@ -218,17 +227,22 @@ fn stage_table(
         info!("  {table_name}: 0 rows");
         return Ok(0);
     };
-    let mut stmt = conn.prepare(&insert_sql)?;
+    // Outside a transaction every `INSERT` is a transaction of its own.
+    let transaction = conn.transaction()?;
     let mut row_count = 0usize;
-    for row in rows {
-        let row = row?;
-        let values = columns
-            .iter()
-            .map(|column| row.value(column).cloned().and_then(value_to_text))
-            .collect::<Vec<_>>();
-        stmt.execute(params_from_iter(values.iter()))?;
-        row_count += 1;
+    {
+        let mut stmt = transaction.prepare(&insert_sql)?;
+        for row in rows {
+            let row = row?;
+            let values = columns
+                .iter()
+                .map(|column| row.value(column).cloned().and_then(value_to_text))
+                .collect::<Vec<_>>();
+            stmt.execute(params_from_iter(values.iter()))?;
+            row_count += 1;
+        }
     }
+    transaction.commit()?;
     info!(
         "  {}: {} rows, {} cols",
         table_name,
