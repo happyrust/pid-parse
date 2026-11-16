@@ -1672,3 +1672,481 @@ fn cli_verbose_names_each_table_the_database_lacks_and_changes_nothing_else() {
         "-v should change nothing in the files written"
     );
 }
+
+#[test]
+fn cli_pid_meta_out_is_scored_as_the_meta_document_of_out_dir_is() {
+    // `--meta-out` and `--out-dir` write the same `_Meta.xml`, and
+    // `--diff-against` scores it either way: the two runs put the same
+    // reports on stdout and come to the same two verdicts.
+    if !std::path::Path::new(DWG_PID_PATH).is_file() {
+        eprintln!("skipping: fixture {DWG_PID_PATH} not found");
+        return;
+    }
+    let dir = unique_tmp_dir("pid-meta-out-gate");
+    let delivery = dir.join("delivery");
+    let data = dir.join("files").join("D_Data.xml");
+    let meta = dir.join("files").join("D_Meta.xml");
+    let run = |sinks: &[&std::ffi::OsStr]| {
+        Command::new(binary_path())
+            .arg(DWG_PID_PATH)
+            .args(sinks)
+            .args(["--diff-against", common::DWG_REFERENCE_DATA_XML])
+            .output()
+            .expect("spawn pid_publish_xml")
+    };
+    let by_dir = run(&["--out-dir".as_ref(), delivery.as_os_str()]);
+    let by_file = run(&[
+        "--out".as_ref(),
+        data.as_os_str(),
+        "--meta-out".as_ref(),
+        meta.as_os_str(),
+    ]);
+
+    let verdicts = |out: &std::process::Output| -> Vec<String> {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|line| line.starts_with("Meta diff ") || line.starts_with("Semantic diff "))
+            .map(str::to_owned)
+            .collect()
+    };
+    let of_the_delivery = verdicts(&by_dir);
+    assert!(
+        of_the_delivery
+            .iter()
+            .any(|line| line.starts_with("Meta diff against ")),
+        "--out-dir should have its _Meta.xml scored; got {by_dir:?}"
+    );
+    assert_eq!(
+        verdicts(&by_file),
+        of_the_delivery,
+        "--meta-out: {by_file:?}"
+    );
+    assert!(
+        by_file.stdout == by_dir.stdout,
+        "the two runs should put the same reports on stdout"
+    );
+    assert_eq!(by_file.status.code(), by_dir.status.code());
+    assert!(
+        std::fs::read(&meta).expect("read the --meta-out file")
+            == std::fs::read(delivery.join("DWG-0202GP06-01_Meta.xml"))
+                .expect("read the _Meta.xml of --out-dir"),
+        "--meta-out and --out-dir should write the same _Meta.xml"
+    );
+}
+
+#[test]
+fn cli_database_run_names_on_stdout_the_class_the_database_should_have_supplied() {
+    // A class the catalog says the database supplies, in the reference and
+    // not in what the run published, is one line of stdout after the
+    // report, and the run exits 1 on it alone. The reference here is the
+    // run's own document with one such object added, so that class is all
+    // there is to find.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("excused-class");
+    let own = dir.join("A01_Data.xml");
+    let run = |extra: &[&std::ffi::OsStr]| {
+        Command::new(binary_path())
+            .args([A01_MDF_PATH, "--drawing", A01_DRAWING_UID])
+            .args(extra)
+            .output()
+            .expect("spawn pid_publish_xml")
+    };
+    let written = run(&["--out".as_ref(), own.as_os_str()]);
+    assert_eq!(written.status.code(), Some(0), "{written:?}");
+    let against_itself = run(&["--diff-against".as_ref(), own.as_os_str()]);
+    assert_eq!(
+        against_itself.status.code(),
+        Some(0),
+        "the run's own document should be a clean reference; got {against_itself:?}"
+    );
+
+    let document = std::fs::read_to_string(&own).expect("read the run's own document");
+    let (objects, closing) = document
+        .rsplit_once("</Container>")
+        .expect("the document closes its Container");
+    let reference = dir.join("X_Data.xml");
+    std::fs::write(
+        &reference,
+        format!(
+            "{objects}<PIDSignalPort><IObject UID=\"S\"/></PIDSignalPort>\n</Container>{closing}"
+        ),
+    )
+    .expect("write the reference with one class more");
+
+    let out = run(&["--diff-against".as_ref(), reference.as_os_str()]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.ends_with("\ndatabase run excused PIDSignalPort ×1 the database should supply\n"),
+        "the last line of stdout should name the class; stdout:\n{stdout}"
+    );
+    let verdict = stderr.lines().last().unwrap_or_default();
+    assert!(
+        verdict.starts_with("Semantic diff against ")
+            && verdict.ends_with(
+                " has no emitted-side finding in database mode, but excused 1 dump-supplied \
+                 class(es) the dump should supply: PIDSignalPort ×1; exit 1."
+            ),
+        "stderr:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// A stdout that cannot be written
+// ---------------------------------------------------------------------
+
+/// Runs the binary with a stdout nobody reads, a pipe whose reading end is
+/// closed before the run starts, so that the first write to it fails.
+/// Returns the exit code and stderr.
+fn run_with_stdout_closed<I, S>(args: I) -> (Option<i32>, String)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let (reader, writer) = std::io::pipe().expect("a pipe");
+    drop(reader);
+    let out = Command::new(binary_path())
+        .args(args)
+        .stdout(writer)
+        .output()
+        .expect("spawn pid_publish_xml with a closed stdout");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Panics unless the run ended the way an I/O error does: exit 1, and a
+/// last line of stderr that says stdout could not be written. `print!` in
+/// the same place panics, and the process exits 101.
+fn assert_the_write_to_stdout_is_what_failed(what: &str, code: Option<i32>, stderr: &str) {
+    assert!(
+        !stderr.contains("panicked"),
+        "{what}: a stdout that cannot be written should not be a panic; stderr:\n{stderr}"
+    );
+    assert_eq!(code, Some(1), "{what}: stderr:\n{stderr}");
+    let last = stderr.lines().last().unwrap_or_default();
+    assert!(
+        last.starts_with("error: write stdout: "),
+        "{what}: the last line of stderr should say the write failed; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_document_that_cannot_be_written_to_stdout_is_an_error_not_a_panic() {
+    // `--stdout` on the two lines that take it. Each run gets as far as the
+    // document: the line before the error says what it read.
+    if !std::path::Path::new(DWG_PID_PATH).is_file() {
+        eprintln!("skipping: fixture {DWG_PID_PATH} not found");
+        return;
+    }
+    let (code, stderr) = run_with_stdout_closed([DWG_PID_PATH, "--stdout"]);
+    assert_the_write_to_stdout_is_what_failed("a .pid with --stdout", code, &stderr);
+    assert!(
+        stderr.starts_with("Read drawing `DWG-0202GP06-01` "),
+        "{stderr}"
+    );
+
+    if !fixture_available() {
+        return;
+    }
+    let (code, stderr) =
+        run_with_stdout_closed([A01_MDF_PATH, "--drawing", A01_DRAWING_UID, "--stdout"]);
+    assert_the_write_to_stdout_is_what_failed("a database with --stdout", code, &stderr);
+    assert!(stderr.starts_with("Loaded drawing `A01` "), "{stderr}");
+}
+
+#[test]
+fn a_diff_report_that_cannot_be_written_to_stdout_is_an_error_not_a_panic() {
+    if !std::path::Path::new(DWG_PID_PATH).is_file() {
+        eprintln!("skipping: fixture {DWG_PID_PATH} not found");
+        return;
+    }
+    // The `_Data.xml` report is the first thing this run puts on stdout.
+    let (code, stderr) = run_with_stdout_closed([
+        DWG_PID_PATH,
+        "--diff-against",
+        common::DWG_REFERENCE_DATA_XML,
+    ]);
+    assert_the_write_to_stdout_is_what_failed("the _Data.xml report", code, &stderr);
+
+    // With `--out-dir` the run writes a `_Meta.xml` and scores it first, so
+    // here the `_Meta.xml` report is. The three files are written by then,
+    // and neither gate has come to its verdict.
+    let dir = unique_tmp_dir("closed-stdout-meta-report");
+    let out_dir = dir.join("out");
+    let (code, stderr) = run_with_stdout_closed([
+        std::ffi::OsStr::new(DWG_PID_PATH),
+        std::ffi::OsStr::new("--out-dir"),
+        out_dir.as_os_str(),
+        std::ffi::OsStr::new("--diff-against"),
+        std::ffi::OsStr::new(common::DWG_REFERENCE_DATA_XML),
+    ]);
+    assert_the_write_to_stdout_is_what_failed("the _Meta.xml report", code, &stderr);
+    for suffix in ["_Data.xml", "_Meta.xml", "_Coverage.json"] {
+        let file = out_dir.join(format!("DWG-0202GP06-01{suffix}"));
+        assert!(
+            file.is_file(),
+            "{} should be written; stderr:\n{stderr}",
+            file.display()
+        );
+    }
+    assert!(
+        !stderr.contains("diff against"),
+        "no gate should have come to its verdict; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_refusal_that_cannot_be_written_to_stdout_is_still_said_on_stderr() {
+    // A reference that is not well-formed XML is refused on both streams.
+    // stderr has the refusal whatever becomes of stdout, and the run then
+    // ends in the write that failed.
+    let Ok(full) = std::fs::read_to_string(common::DWG_REFERENCE_DATA_XML) else {
+        eprintln!(
+            "skipping: fixture {} not found",
+            common::DWG_REFERENCE_DATA_XML
+        );
+        return;
+    };
+    let dir = unique_tmp_dir("closed-stdout-refusal");
+    let reference = dir.join("Cut_Data.xml");
+    let cut = &full[..full.rfind("</Container>").expect("closing tag")];
+    std::fs::write(&reference, cut).expect("write the cut reference");
+
+    let (code, stderr) = run_with_stdout_closed([
+        std::ffi::OsStr::new(DWG_PID_PATH),
+        std::ffi::OsStr::new("--diff-against"),
+        reference.as_os_str(),
+    ]);
+    assert_the_write_to_stdout_is_what_failed("a refusal", code, &stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let refusal = lines[lines.len() - 2];
+    assert!(
+        refusal.starts_with(&format!(
+            "Semantic diff against {} refused: ",
+            reference.display()
+        )) && refusal.ends_with("; exit 1."),
+        "the line before the error should be the refusal; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_drawing_list_that_cannot_be_written_to_stdout_is_an_error_not_a_panic() {
+    if !fixture_available() {
+        return;
+    }
+    let (code, stderr) = run_with_stdout_closed([A01_MDF_PATH, "--list-drawings"]);
+    assert_the_write_to_stdout_is_what_failed("--list-drawings", code, &stderr);
+}
+
+#[test]
+fn a_package_gate_that_cannot_be_written_to_stdout_is_an_error_not_a_panic() {
+    // The gate's lines are all a backup directory run puts on stdout, and
+    // they come after the package is published: `_Index.json` is there.
+    let package = std::path::Path::new("test-file/backup-test/TEST02_p");
+    if !package.join("Manifest.txt").is_file() || !package.join("Export.dmp").is_file() {
+        eprintln!("skipping: test-file/backup-test/TEST02_p is not a backup package");
+        return;
+    }
+    let dir = unique_tmp_dir("closed-stdout-package");
+    let out_dir = dir.join("out");
+    let (code, stderr) = run_with_stdout_closed([
+        package.as_os_str(),
+        std::ffi::OsStr::new("--out-dir"),
+        out_dir.as_os_str(),
+        std::ffi::OsStr::new("--diff-against"),
+        std::ffi::OsStr::new("test-file/export-test/publish-data/A01"),
+    ]);
+    assert_the_write_to_stdout_is_what_failed("a package gate", code, &stderr);
+    assert!(
+        out_dir.join("_Index.json").is_file(),
+        "the package should be published before its gate prints; stderr:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// A reference that cannot be read
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_reference_that_cannot_be_read_is_reported_where_the_gates_come_to_it() {
+    // With `--out-dir` the run writes a `_Meta.xml`, so two gates score
+    // against the reference: the `_Meta.xml` gate, which reads the sibling
+    // `<Name>_Meta.xml` and then the reference, and the `_Data.xml` gate
+    // after it. Reading the reference once for both changes none of what
+    // stderr says when a file cannot be read, nor the order it says it in.
+    let Ok(meta) = std::fs::read(common::DWG_REFERENCE_META_XML) else {
+        eprintln!(
+            "skipping: fixture {} not found",
+            common::DWG_REFERENCE_META_XML
+        );
+        return;
+    };
+    let dir = unique_tmp_dir("unreadable-reference");
+    // What stderr says after the delivery: the run's exit code and its
+    // lines, without the one on the drawing and the three on the files.
+    let said = |reference: &std::path::Path, out: &str| -> (Option<i32>, Vec<String>) {
+        let run = Command::new(binary_path())
+            .arg(DWG_PID_PATH)
+            .arg("--out-dir")
+            .arg(dir.join(out))
+            .arg("--diff-against")
+            .arg(reference)
+            .output()
+            .expect("spawn pid_publish_xml --out-dir --diff-against");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.stdout.is_empty(),
+            "no report should be printed; stderr:\n{stderr}"
+        );
+        let lines: Vec<String> = stderr
+            .lines()
+            .filter(|line| !line.starts_with("Read drawing ") && !line.starts_with("Wrote "))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            stderr.lines().count() - lines.len(),
+            4,
+            "the delivery should be written before the gates; stderr:\n{stderr}"
+        );
+        (run.status.code(), lines)
+    };
+    let scene = |name: &str| {
+        let scene = dir.join(name);
+        std::fs::create_dir_all(&scene).expect("a directory for the reference");
+        scene.join("R_Data.xml")
+    };
+    let not_text = [b'<', 0xFF, b'>'];
+
+    // Neither file is there. The `_Meta.xml` gate has nothing to score and
+    // says so; the `_Data.xml` gate is the one that fails to read.
+    let reference = scene("neither");
+    let (code, lines) = said(&reference, "out-neither");
+    assert_eq!(code, Some(1), "{lines:?}");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        lines[0],
+        format!(
+            "Meta diff not run: no sibling <Name>_Meta.xml beside {}.",
+            reference.display()
+        )
+    );
+    assert!(
+        lines[1].starts_with(&format!("error: read reference {}: ", reference.display())),
+        "{lines:?}"
+    );
+
+    // A sibling meta that is not text, and no reference: the meta is read
+    // first, so the error is the meta's.
+    let reference = scene("meta-not-text");
+    let sibling = reference.with_file_name("R_Meta.xml");
+    std::fs::write(&sibling, not_text).expect("write the sibling meta");
+    let (code, lines) = said(&reference, "out-meta-not-text");
+    assert_eq!(code, Some(1), "{lines:?}");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!(
+            "error: read reference meta {}: ",
+            sibling.display()
+        )),
+        "{lines:?}"
+    );
+
+    // A sibling meta that reads, and a reference that is not text: the
+    // `_Meta.xml` gate comes to the reference and its read is the error,
+    // said once.
+    let reference = scene("reference-not-text");
+    std::fs::write(reference.with_file_name("R_Meta.xml"), &meta).expect("copy the sibling meta");
+    std::fs::write(&reference, not_text).expect("write the reference");
+    let (code, lines) = said(&reference, "out-reference-not-text");
+    assert_eq!(code, Some(1), "{lines:?}");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!("error: read reference {}: ", reference.display())),
+        "{lines:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// What the usage says of the input, of -v and of a package's failures
+// ---------------------------------------------------------------------
+
+#[test]
+fn cli_help_says_the_input_comes_first_and_the_example_it_gives_is_true() {
+    let help = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    let usage = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        usage.contains(
+            "\nThe input is the first argument and every flag follows it. A flag\n\
+             given first is taken for the input: `pid_publish_xml --stdout a.pid`\n\
+             is an argument error, `unknown flag: a.pid`.\n"
+        ),
+        "--help should say where the input goes; stdout:\n{usage}"
+    );
+
+    // The example, run.
+    let out = Command::new(binary_path())
+        .args(["--stdout", "a.pid"])
+        .output()
+        .expect("spawn pid_publish_xml --stdout a.pid");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "stderr:\n{stderr}");
+    assert_eq!(
+        stderr.lines().next(),
+        Some("argument error: unknown flag: a.pid"),
+        "stderr:\n{stderr}"
+    );
+    assert!(out.stdout.is_empty(), "a usage error leaves stdout alone");
+}
+
+#[test]
+fn cli_help_says_what_verbose_prints_and_what_else_fails_a_package_run() {
+    let help = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    let usage = String::from_utf8_lossy(&help.stdout);
+    // -v is the log: what an MDF is staged into, and the tables a load
+    // asks for in vain (`cli_verbose_names_each_table_the_database_lacks_
+    // and_changes_nothing_else` holds the binary to the second).
+    assert!(
+        usage.contains(
+            "\n-v, --verbose       Print the log to stderr: the tables staged from an\n\
+             \x20                   MDF (the input, or a SQL Server package's) with\n\
+             \x20                   row counts and timing, and each table a drawing\n\
+             \x20                   is read from that the database does not hold.\n"
+        ),
+        "--help should say what -v prints; stdout:\n{usage}"
+    );
+    assert!(
+        !usage.contains("MDF loading diagnostics"),
+        "--help should not describe -v as it was before; stdout:\n{usage}"
+    );
+    // A backup directory run exits 1 on more than a drawing that fails. The
+    // library's `a_zip_or_an_entry_that_cannot_be_opened_is_a_failure_and_
+    // no_drawing` holds the count and the index to this, and the binary's
+    // `a_failed_drawing_or_an_unclean_gate_is_exit_one_whatever_strict_
+    // says` the exit code. A file named as a zip that does not start with
+    // the signature is not opened at all, which is why the sentence names
+    // the signature.
+    assert!(
+        usage.contains(
+            "is recorded; the rest are still written; the process then exits 1.\n\
+             A PlantData file that starts with the zip signature and cannot be\n\
+             opened, and a zip entry whose header cannot be read, are recorded among\n\
+             the problems of _Index.json; the process exits 1 for them as well.\n"
+        ),
+        "--help should say what else makes a package run exit 1; stdout:\n{usage}"
+    );
+}

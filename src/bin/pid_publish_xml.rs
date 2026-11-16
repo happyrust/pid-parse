@@ -24,11 +24,16 @@
 //! pid_publish_xml <backup dir> --out-dir DIR [--diff-against DIR] [--strict]
 //! ```
 //!
+//! The input is the first argument and the flags follow it.
+//!
 //! Exit codes: 0 = written (and, with `--diff-against`, clean);
-//! 1 = an I/O or format error, a `--diff-against` finding, a package
-//! drawing that failed, or, with `--strict`, a database drawing that was
-//! not written in full; 2 = a usage error, including an `--oracle-exp`
-//! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
+//! 1 = an I/O or format error (a stdout that cannot be written is one), a
+//! `--diff-against` finding, a failure a package run counted (a drawing
+//! that was not written, a `PlantData` zip that could not be opened, a zip
+//! entry whose header could not be read), or, with `--strict`, a database
+//! drawing that was not written in full; 2 = a usage error, including an
+//! `--oracle-exp` dump that holds no `T_DRAWING` row for the `.pid`'s
+//! drawing.
 
 use pid_parse::publish::backup_package::{
     write_atomic, BackupPublishReport, PackageChainFault, PackageDrawingShortfalls,
@@ -123,6 +128,9 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--oracle-exp FILE] [--datamap FILE]\n\
          \x20  pid_publish_xml <backup-dir> --out-dir DIR [--plant NAME] [--strict]\n\n\
+         The input is the first argument and every flag follows it. A flag\n\
+         given first is taken for the input: `pid_publish_xml --stdout a.pid`\n\
+         is an argument error, `unknown flag: a.pid`.\n\n\
          A .pid input is read on its own, with no plant database: it is one\n\
          drawing, so --drawing / --style / --list-drawings do not apply, and\n\
          only what the file states is written (no derived ports, pipelines or\n\
@@ -138,7 +146,10 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          clean / dirty / unpaired / revision-mismatch verdict per drawing; a\n\
          drawing that is dirty, of another revision than its reference, or has\n\
          no reference there exits 1. One drawing that fails\n\
-         is recorded; the rest are still written; the process then exits 1.\n\n\
+         is recorded; the rest are still written; the process then exits 1.\n\
+         A PlantData file that starts with the zip signature and cannot be\n\
+         opened, and a zip entry whose header cannot be read, are recorded among\n\
+         the problems of _Index.json; the process exits 1 for them as well.\n\n\
          --out-dir is not emptied first: files an earlier run left there are\n\
          not removed. For a backup package _Index.json is what says which\n\
          files this run wrote; a drawing that fails this time may still have\n\
@@ -228,8 +239,10 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
          \x20                   render flags.\n\
-         -v, --verbose       Print MDF loading diagnostics (table row counts,\n\
-         \x20                   timing) to stderr.\n\
+         -v, --verbose       Print the log to stderr: the tables staged from an\n\
+         \x20                   MDF (the input, or a SQL Server package's) with\n\
+         \x20                   row counts and timing, and each table a drawing\n\
+         \x20                   is read from that the database does not hold.\n\
          Legacy compatibility historical `Export_v2.sqlite` mirrors are still\n\
          \x20                   accepted during the transition, but MDF is the\n\
          \x20                   only public publish-fidelity baseline and `.sqlite`\n\
@@ -534,7 +547,8 @@ fn main() {
 /// - `0` — success and (when `--diff-against` is set) the diff
 ///   surfaced no actionable findings.
 /// - `1` — the generated XML differs from the reference (used as a CI
-///   gate), a package drawing failed, or `--strict` was given and the
+///   gate), a package run counted a failure
+///   ([`BackupPublishReport::failed`]), or `--strict` was given and the
 ///   database line did not write a drawing in full. Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 /// - `2` — the input cannot be published as asked: a package with an
@@ -613,11 +627,12 @@ fn run(options: CliOptions) -> Result<i32, String> {
 
     let diff_exit = match &options.diff_against {
         Some(ref_path) => {
+            let reference = Reference::new(ref_path);
             let meta_exit = match &meta_xml {
-                Some(meta_xml) => report_meta_diff(ref_path, &xml, meta_xml)?,
+                Some(meta_xml) => report_meta_diff(&reference, &xml, meta_xml)?,
                 None => 0,
             };
-            report_pid_diff(ref_path, &xml, DiffMode::Database, meta_exit != 0)?
+            report_pid_diff(&reference, &xml, DiffMode::Database, meta_exit != 0)?
         }
         None => 0,
     };
@@ -668,7 +683,7 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
             let exit = package_exit_code(&report, options.strict);
             if let Some(gate) = &report.gate {
                 for line in &gate.lines {
-                    println!("{line}");
+                    write_stdout(format_args!("{line}\n"))?;
                 }
                 let reference = options
                     .diff_against
@@ -720,10 +735,12 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
     }
 }
 
-/// The exit code of a backup directory run that published: 1 when a
-/// drawing failed or the `--diff-against` gate did not find every drawing
-/// clean, and, with `--strict`, when a database drawing was not written in
-/// full; 0 otherwise.
+/// The exit code of a backup directory run that published: 1 when the run
+/// counted a failure ([`BackupPublishReport::failed`]: a drawing that was
+/// not written, a `PlantData` zip that could not be opened, a zip entry
+/// whose header could not be read) or the `--diff-against` gate did not
+/// find every drawing clean, and, with `--strict`, when a database drawing
+/// was not written in full; 0 otherwise.
 fn package_exit_code(report: &BackupPublishReport, strict: bool) -> i32 {
     i32::from(
         report.failed > 0
@@ -937,47 +954,51 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         stats.conflicting_attributes,
     );
     emit_data(options, &xml)?;
-    if let Some(meta_path) = &options.meta_output {
-        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
-            .map_err(|e| format!("render meta XML: {e}"))?;
-        write_file(meta_path, &meta_xml)?;
-        eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
-    }
-    if let Some(dir) = &options.out_dir {
-        // The delivery: the two documents under the names SmartPlant's
-        // own publish gives them, and the coverage report beside them.
-        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
-            .map_err(|e| format!("render meta XML: {e}"))?;
-        let report = write_pid_coverage_json(&drawing, &options.input_path);
-        for (suffix, contents) in [
-            ("_Data.xml", xml.as_str()),
-            ("_Meta.xml", meta_xml.as_str()),
-            ("_Coverage.json", report.as_str()),
-        ] {
-            let path = dir.join(format!("{}{suffix}", drawing.drawing_name));
-            write_file(&path, contents)?;
-            eprintln!("Wrote {} ({} bytes).", path.display(), contents.len());
+    // `_Meta.xml` is rendered once, for whichever of `--meta-out` and
+    // `--out-dir` asks for it; the gate below scores that same text.
+    let meta_xml = match (&options.meta_output, &options.out_dir) {
+        (None, None) => None,
+        (meta_path, dir) => {
+            let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+                .map_err(|e| format!("render meta XML: {e}"))?;
+            if let Some(meta_path) = meta_path {
+                write_file(meta_path, &meta_xml)?;
+                eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
+            }
+            if let Some(dir) = dir {
+                // The delivery: the two documents under the names SmartPlant's
+                // own publish gives them, and the coverage report beside them.
+                let report = write_pid_coverage_json(&drawing, &options.input_path);
+                for (suffix, contents) in [
+                    ("_Data.xml", xml.as_str()),
+                    ("_Meta.xml", meta_xml.as_str()),
+                    ("_Coverage.json", report.as_str()),
+                ] {
+                    let path = dir.join(format!("{}{suffix}", drawing.drawing_name));
+                    write_file(&path, contents)?;
+                    eprintln!("Wrote {} ({} bytes).", path.display(), contents.len());
+                }
+            }
+            Some(meta_xml)
         }
-    }
+    };
     match &options.diff_against {
         Some(ref_path) => {
+            let reference = Reference::new(ref_path);
             // G5 — the `_Meta.xml` companion gate. A meta document this run
             // generates (`--out-dir` / `--meta-out`) is scored against the
             // reference's own sibling meta; a run that generates none has
             // nothing to score.
-            let meta_exit = if options.meta_output.is_some() || options.out_dir.is_some() {
-                let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
-                    .map_err(|e| format!("render meta XML: {e}"))?;
-                report_meta_diff(ref_path, &xml, &meta_xml)?
-            } else {
-                0
+            let meta_exit = match &meta_xml {
+                Some(meta_xml) => report_meta_diff(&reference, &xml, meta_xml)?,
+                None => 0,
             };
             let mode = if options.oracle_exp.is_some() {
                 DiffMode::OracleExp
             } else {
                 DiffMode::Pid
             };
-            report_pid_diff(ref_path, &xml, mode, meta_exit != 0)
+            report_pid_diff(&reference, &xml, mode, meta_exit != 0)
         }
         None => Ok(0),
     }
@@ -987,9 +1008,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
 fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
     if let Some(target) = &options.output {
         match target {
-            OutputTarget::Stdout => {
-                print!("{xml}");
-            }
+            OutputTarget::Stdout => write_stdout(xml)?,
             OutputTarget::File(path) => {
                 write_file(path, xml)?;
                 eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
@@ -999,16 +1018,29 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Write `text` to stdout and flush it. A write that fails (the reader of a
+/// pipe is gone, the disk behind a redirect is full) comes back as
+/// `write stdout: …`, which ends the run in exit 1; `print!` panics there.
+fn write_stdout(text: impl std::fmt::Display) -> Result<(), String> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "{text}")
+        .and_then(|()| stdout.flush())
+        .map_err(|e| format!("write stdout: {e}"))
+}
+
 /// Print the refusal of a document that is not well-formed XML on stdout and
-/// stderr, so a reader of either stream sees it; the exit code is 1.
-fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> i32 {
+/// stderr, so a reader of either stream sees it; the exit code is 1. Stderr
+/// is told even when stdout cannot be written; the run then ends in that
+/// failure.
+fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> Result<i32, String> {
     let refusal = format!(
         "{gate} against {} refused: {malformed}; exit 1.",
         path.display()
     );
-    println!("{refusal}");
+    let written = write_stdout(format_args!("{refusal}\n"));
     eprintln!("{refusal}");
-    1
+    written.map(|()| 1)
 }
 
 /// Which input a `--diff-against` run scored, as its verdict line names it.
@@ -1032,6 +1064,33 @@ impl DiffMode {
     }
 }
 
+/// The `--diff-against` reference `_Data.xml` of a `.pid` or database run.
+/// Both gates of a run compare against its text; it is read once, by the
+/// gate that comes to it first.
+struct Reference<'a> {
+    path: &'a Path,
+    text: std::cell::OnceCell<String>,
+}
+
+impl<'a> Reference<'a> {
+    fn new(path: &'a Path) -> Self {
+        Self {
+            path,
+            text: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The text of the file, read the first time it is asked for.
+    fn text(&self) -> Result<&str, String> {
+        if let Some(text) = self.text.get() {
+            return Ok(text);
+        }
+        let text = std::fs::read_to_string(self.path)
+            .map_err(|e| format!("read reference {}: {e}", self.path.display()))?;
+        Ok(self.text.get_or_init(|| text))
+    }
+}
+
 /// Print the export's object / value / rel score. An emitted object,
 /// value or rel the reference does not carry exits 1, and so does
 /// reference-only content the explicit exclusion list does not cover:
@@ -1052,18 +1111,17 @@ impl DiffMode {
 /// `database run excused <class> ×N the database should supply`) and the run
 /// exits 1.
 fn report_pid_diff(
-    ref_path: &Path,
+    reference: &Reference,
     xml: &str,
     mode: DiffMode,
     meta_dirty: bool,
 ) -> Result<i32, String> {
-    let reference = std::fs::read_to_string(ref_path)
-        .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-    let diff = match diff_pid_export(xml, &reference) {
+    let ref_path = reference.path;
+    let diff = match diff_pid_export(xml, reference.text()?) {
         Ok(diff) => diff,
-        Err(malformed) => return Ok(refuse("Semantic diff", ref_path, &malformed)),
+        Err(malformed) => return refuse("Semantic diff", ref_path, &malformed),
     };
-    print!("{diff}");
+    write_stdout(&diff)?;
     // The dump or the database is in this run, so a class it should have
     // supplied is not an excuse. The `.pid`-alone mode keeps its excuse:
     // there is no dump there.
@@ -1083,7 +1141,9 @@ fn report_pid_diff(
     let mode = mode.label();
     for (class, count) in &excused_dump_classes {
         let source = source.unwrap_or_default();
-        println!("{mode} run excused {class} ×{count} the {source} should supply");
+        write_stdout(format_args!(
+            "{mode} run excused {class} ×{count} the {source} should supply\n"
+        ))?;
     }
     if diff.is_clean_with_dump(source.is_some()) && !meta_dirty {
         eprintln!(
@@ -1167,23 +1227,23 @@ fn meta_reference_sibling(reference: &Path) -> Option<PathBuf> {
 /// pair drifted or the reference meta is not well-formed XML, and 0 when
 /// every compared field matches. The report goes to stdout and the verdict to
 /// stderr, as the `_Data.xml` gate does.
-fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<i32, String> {
-    let Some(meta_path) = meta_reference_sibling(reference).filter(|path| path.is_file()) else {
+fn report_meta_diff(reference: &Reference, data_xml: &str, meta_xml: &str) -> Result<i32, String> {
+    let Some(meta_path) = meta_reference_sibling(reference.path).filter(|path| path.is_file())
+    else {
         eprintln!(
             "Meta diff not run: no sibling <Name>_Meta.xml beside {}.",
-            reference.display()
+            reference.path.display()
         );
         return Ok(0);
     };
     let reference_meta = std::fs::read_to_string(&meta_path)
         .map_err(|e| format!("read reference meta {}: {e}", meta_path.display()))?;
-    let reference_data = std::fs::read_to_string(reference)
-        .map_err(|e| format!("read reference {}: {e}", reference.display()))?;
-    let diff = match diff_meta_xml(meta_xml, &reference_meta, data_xml, &reference_data) {
+    let reference_data = reference.text()?;
+    let diff = match diff_meta_xml(meta_xml, &reference_meta, data_xml, reference_data) {
         Ok(diff) => diff,
-        Err(malformed) => return Ok(refuse("Meta diff", &meta_path, &malformed)),
+        Err(malformed) => return refuse("Meta diff", &meta_path, &malformed),
     };
-    print!("{diff}");
+    write_stdout(&diff)?;
     if diff.is_clean() {
         eprintln!(
             "Meta diff against {} matched ({} container attributes, {} blocks, {} rels); \
@@ -1264,15 +1324,17 @@ fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
             ))
         })
         .map_err(|e| format!("query T_Drawing rows: {e}"))?;
-    println!(
-        "{:<34} | {:<24} | {:<22} | {:<10} | Path",
+    write_stdout(format_args!(
+        "{:<34} | {:<24} | {:<22} | {:<10} | Path\n",
         "SP_ID", "Name", "DocumentCategory", "DocumentType",
-    );
-    println!("{}", "-".repeat(120));
+    ))?;
+    write_stdout(format_args!("{}\n", "-".repeat(120)))?;
     let mut count = 0usize;
     for row in rows {
         let (uid, name, cat, dtype, path) = row.map_err(|e| format!("read T_Drawing row: {e}"))?;
-        println!("{uid:<34} | {name:<24} | {cat:<22} | {dtype:<10} | {path}",);
+        write_stdout(format_args!(
+            "{uid:<34} | {name:<24} | {cat:<22} | {dtype:<10} | {path}\n"
+        ))?;
         count += 1;
     }
     eprintln!("\nTotal: {count} drawing(s).");
@@ -1298,8 +1360,9 @@ mod tests {
     use pid_parse::publish::backup_package::PackageGateReport;
     use pid_parse::publish::DatabaseShortfalls;
 
-    /// What a backup directory run reports when `failed` drawings were not
-    /// written and `short` of the written ones were not written in full.
+    /// What a backup directory run reports when it counted `failed`
+    /// failures and `short` of the written drawings were not written in
+    /// full.
     fn package_report(failed: usize, short: usize) -> BackupPublishReport {
         let mut shortfalls = DatabaseShortfalls::default();
         shortfalls.placeholder_objects.insert("Exchanger".into(), 1);
@@ -1320,6 +1383,49 @@ mod tests {
                 .collect(),
             duplicate_uids: Vec::new(),
         }
+    }
+
+    /// A file of the temp directory that is removed when the test ends,
+    /// passing or not.
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new(label: &str) -> Self {
+            let name = format!("pid_publish_xml-{label}-{}.xml", std::process::id());
+            Self(std::env::temp_dir().join(name))
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn the_reference_is_read_once() {
+        let file = TempFile::new("reference-read-once");
+        std::fs::write(&file.0, "first").expect("write the reference");
+        let reference = Reference::new(&file.0);
+        assert_eq!(reference.text(), Ok("first"));
+
+        // The second gate of a run gets the text the first one read, not
+        // what the file holds by then, and not a read that now fails.
+        std::fs::write(&file.0, "second").expect("rewrite the reference");
+        assert_eq!(reference.text(), Ok("first"));
+        std::fs::remove_file(&file.0).expect("remove the reference");
+        assert_eq!(reference.text(), Ok("first"));
+    }
+
+    #[test]
+    fn a_reference_that_cannot_be_read_says_which_file() {
+        let file = TempFile::new("reference-missing");
+        let reference = Reference::new(&file.0);
+        let error = reference.text().expect_err("there is no file to read");
+        assert!(
+            error.starts_with(&format!("read reference {}: ", file.0.display())),
+            "{error}"
+        );
     }
 
     #[test]
