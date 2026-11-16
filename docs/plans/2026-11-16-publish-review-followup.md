@@ -333,9 +333,9 @@ Recommended: 两处都做
 
 #### 检查点 5
 
-- [ ] 全套门禁通过
-- [ ] 对照矩阵逐字节不变
-- [ ] 结果发给你
+- [x] 全套门禁通过
+- [x] 对照矩阵逐字节不变
+- [x] 结果发给你
 
 ### 阶段 6：细节
 
@@ -2104,3 +2104,269 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 `test result:` 474 行，都是 `ok`；库的单测程序 1 593 条，补钉的那条用例在内。与 `7e3e60d` 上那一遍比多 1 条（2 589 → 2 590），就是补钉的那一条；测试程序数、忽略数、`skipping: ` 行数都没变。
 
 `24e5149` 与 `6db94f7` 之间只差三份文档，所以这也是 `6db94f7` 的代码的读数。上一节里说这个数「没有量」的几句话是当时的情形，原话没有回头改，以这里为准；`CHANGELOG.md` 里说同一件事的两处跟着这一节一起动了：「用例」里的一句改成量到的数，「没有验到的」里的一条删了。另外七道没有在 `24e5149` 上再跑：它们在 `6db94f7` 上跑过（上一节），那之后改的只有文档。记这一节的提交也只改文档，它之后没有再跑门禁。
+
+### T5.1 exp 增补只编排一处（2026-11-16，`522e77b`）
+
+计划给这一项写的依赖是「另一条线对 `run_pid` 的改动先进 `main`」。那条线还没有进（下一节「另一条线」）；这一项是你定了「现在做」之后，在这条分支上先做的。行号按 `522e77b`；「改前」指 `b2eb6b5`，它的代码就是 `6db94f7` 的。
+
+**量。** 先看两份编排。改前，把 dump 挂到一张图上是十步，两处各写一遍：
+
+| 步 | 做什么 | 命令行 `run_pid`（`pid_publish_xml.rs`） | 整包（`backup_package.rs`） |
+|---|---|---|---|
+| 1 | `attach_dump_only_components`：只在 dump 里的管道部件 | `:825`–`:827` | `attach_exp`（`:1108`–`:1127`） |
+| 2 | `ExpTables::port_tables` | `:833`–`:835` | `attach_exp` |
+| 3 | `attach_oracle_ports`，不会失败 | `:836` | `attach_exp` |
+| 4 | `ExpTables::connectivity_ends` | `:837`–`:839` | `attach_exp` |
+| 5 | `ExpTables::composition_relations` | `:840`–`:842` | `attach_exp` |
+| 6 | `attach_unit_values`：带单位的值 | `:843`–`:844` | `attach_exp` |
+| 7 | `ExpTables::opc_points`，再用 `retain` 只留图上发布了图形表示的 | `:850`–`:859`，`retain` 在 `:858` | `attach_exp`，`retain` 在 `:1124` |
+| | 读数据映射 | `:860`–`:866`，读 `--datamap` | 读包的时候已经读好 |
+| 8 | `attach_pipelines` | `:867`–`:873` | `publish_one`，`:881`–`:888` |
+| 9 | `attach_codelist_values`：枚举值 | `:874`–`:879` | `publish_one`，`:889`–`:896` |
+| 10 | `attach_stored_values`：库里存着的值；有数据映射才做，不会失败 | `:898`–`:915` | `publish_one`，`:897`–`:903` |
+
+十步两边一样，先后一样，两条 `retain` 一个字不差。计划写的是「`attach_exp` 对 `run_pid`」；实际 `attach_exp` 只有前七步，整包的后三步接在 `publish_one` 里。另有第三份，只有一部分：`tests/publish_from_pid.rs:382` 的 `ijingchang_oracle_exp_matches_the_pinned_reference` 自己把这些步骤调了一遍。
+
+两边不一样的是各自怎么说：
+
+- 命令行边做边往 stderr 说。第 1 步之后一行 `oracle-exp: N PIDPipingComponent from the dump, not drawn in the .pid`，N 大于 0 才说（`:828`–`:832`）；第 6 步之后带单位的值一行（`:845`–`:849`）；十步做完再说六行：枚举值、管线、库里存着的值、连接、组合、OPC（`:880`–`:931`），库里存着的值那一行后面给每个没读到的列跟一行（`:912`–`:914`）。哪一步拒绝了 dump 都报成 `error: read <dump 路径>: <拒绝的话>`，数据映射读不了报成 `error: read <数据映射路径>: …`，都退出 1。
+- 整包不说这些数。拒绝的话原样交回去，这张图按名字和原因记失败（T5.2）；没读到的列记成这张图那一行里的备注，`a stored value column was not read: …`。
+
+再看改之前有什么看着这十步。
+
+- 对照矩阵。61 项里带 `--oracle-exp` 的单图项 24 个，个个带 `--datamap`：16 个把十步走完（15 个退出 0；`dwg-exp-diff` 比出差异，退出 1），8 个的图和 dump 不是一个版次，一步没走就被拒绝（退出 2）。整包项 7 个：Oracle 的包 4 个（`pkg-dwg`、`pkg-dwg-gate`、`pkg-full`、`pkg-full-gate`），SQL Server 的 3 个不挂 dump。说「只在 dump 里的部件」那一行的只有 2 项（`acc-02-exp`、`acc-02-exp-diff`，3 个部件）。矩阵看不到的有四样：走到半路被拒绝；不带数据映射；数据映射读不了；库里存着的值有一列读不到。
+- 原有的用例。看得到其中几行，看不到整段：后面故意改坏跑的那一组里，命令行不说枚举值那一行或者库里存着的值那一行，原有的用例一条不红；不说带单位的值那一行，原有的红 1 条。
+
+矩阵看不到的四样，先在改前的发布构建（`pid_publish_xml-6db94f7-release.exe`）上量下来，留着和改后比：
+
+- `t51-fails.ps1`，单图 46 次运行（`runs/t51-before/`）。让某一步拒绝 dump，办法和 T5.2 补钉那次一样：dump 复制一份，在某张表那句 `INSERT` 的列名表里把一个列名改掉一个字母；字节不增不减，表照样框得住，`ExpTables::read` 收下，要这一列的那一步拒绝。仓库里的 dump 造了 8 份，能拒绝的八步一步一份；交付的那个 dump 造了 5 份。场景：十步走完，带和不带数据映射；八步各自拒绝，带和不带数据映射；数据映射不存在、不是 zip、是另一个 zip；八步各自拒绝而数据映射又不存在；dump 不存在、不是 dump；验收语料里 dump 另外放了部件的那张图；版次不对的一张图。5 次成功，39 次退出 1，2 次退出 2。
+- `t51-unread.ps1`，4 次运行（`runs/t51-unread-before/`）。dump 里 `T_PIPERUN.SP_CONNECTORSZEROLENGTH` 改了名（一份），再加 `T_INLINECOMP.FLOWDIRECTION`（另一份）：dump 自己的数据字典还把属性指到这一列，表里却没有了，库里存着的值那一步读不到，但不拒绝 dump。单图三次（一列；两列；两列、不带数据映射），整包一次。
+
+量到的，仓库里那张图配它的包的 dump：
+
+| 停在哪一步 | 改名的列 | 拒绝的话 | 停之前说过的 |
+|---|---|---|---|
+| 1 `attach_dump_only_components` | `T_REPRESENTATION.GRAPHICOID` | `T_REPRESENTATION: column GRAPHICOID is missing` | 没有 |
+| 2 `port_tables` | `T_PIPINGPOINT.PIPINGPOINTNUMBER` | `T_PIPINGPOINT: column PIPINGPOINTNUMBER is missing` | 没有 |
+| 4 `connectivity_ends` | `T_CONNECTOR.SP_CONNECTITEM1ID` | `T_CONNECTOR: column SP_CONNECTITEM1ID is missing` | 没有 |
+| 5 `composition_relations` | `T_NOZZLE.SP_EQUIPMENTID` | `T_NOZZLE: column SP_EQUIPMENTID is missing` | 没有 |
+| 6 `attach_unit_values` | `T_PIPERUN.TAGSEQUENCENO` | `T_PIPERUN: column TAGSEQUENCENO is missing` | 没有 |
+| 7 `opc_points` | `T_OPC.OPCTAG` | `T_OPC: column OPCTAG is missing` | 带单位的值一行（9 个） |
+| 8 `attach_pipelines` | `CODELISTS.CODELIST_SHORT_TEXT` | `CODELISTS: column CODELIST_SHORT_TEXT is missing` | 带单位的值一行（9 个） |
+| 9 `attach_codelist_values` | `T_EQUIPMENT.SP_ID`，改叫 `CLASS` | `T_EQUIPMENT: column CLASS is declared national text, not NUMBER` | 带单位的值一行（8 个） |
+
+八种都是退出 1，stdout 是空的，一个文件不写；stderr 是「停之前说过的」加一行 `error: read <dump 路径>: <拒绝的话>`。第 3 步和第 10 步不会失败。第 9 步没有非要不可的列，所以是让 `T_EQUIPMENT` 的 `SP_ID` 顶了它后面 `CLASS` 的名字，这一步先碰到的 `CLASS` 成了文字列；第 6 步在这张表里找不到 `SP_ID`，设备就跳过去，带单位的值是 8 个不是 9 个。「只在 dump 里的部件」那一行，仓库里这张图没有（dump 没有给它另放部件）；验收语料那张图有，说在最前面。
+
+数据映射是第 7 步做完才读的，这是改前就有的次序：`--datamap` 指着一个不存在的文件，dump 没毛病时，先说带单位的值一行，再报数据映射读不了；dump 停在第 1–7 步，报的是那一步的拒绝，数据映射提都不提；dump 停在第 8、9 步，报的是数据映射，那一步没走到。46 次里有 14 次的输出靠这个次序：要是改成一上来就读，这 14 次都会变。
+
+库里存着的值读不到一列：图照写，退出 0。命令行在那一行后面给每一列跟一行 `oracle-exp stored values: not read: <表>.<列>: the dump holds no such column`，按名字排；不带数据映射就没有这一步，一行都没有。整包里这句话只记在读过这一列的那几张图各自的那一行里，包一级的 `problems` 是空的，摘要行不提，退出 0。
+
+**改。** 一个提交，4 个文件，+1 127／−103 行：产品代码 +180／−103，测试 +947。
+
+- `src/publish/oracle_exp.rs`（+530，其中测试 +400）。新函数 `attach_dump`（`:1545`）照上面的先后做十步，`retain` 只剩这一处（`:1568`）。
+  - 数据映射不是参数，是一个闭包：`datamap: impl FnOnce() -> Result<Option<M>, E>`。第 7 步做完才调，只调一次；返回 `Ok(None)` 就是这次运行没有数据映射。这样命令行读 `--datamap` 的时机不变。`M: Borrow<DataMap>`：命令行交出刚读来的 `DataMap`，整包交出早就读好的那一份的引用。
+  - 做到哪一步，记在 `done: &mut DumpAttachment`（`:1466`）里：`dump_only_components`、`unit_values`、`codelist_values`、`stored_values` 四个 `Option`，哪一步做完哪一个才有值。函数返回错误时它还在调用方手里，命令行靠它在被拒绝之后照样说出前面几步的那几行。
+  - 错误是 `DumpAttachError<E>`（`:1486`）：`Dump(ExpError)` 是某一步拒绝了 dump，`DataMap(E)` 是闭包交不出数据映射。它显示出来就是里面那个错误，不加字：是哪个文件的事，由调用方说。
+- `src/bin/pid_publish_xml.rs`（+35／−57）。`run_pid`（`:793`）调 `attach_dump`（`:831`），闭包里读 `--datamap`。返回之后先照 `done` 说「只在 dump 里的部件」和带单位的值两行（`:845`、`:850`），再看结果（`:857`）：`Dump` 报成 `read <dump 路径>: …`，`DataMap` 原样报。后面六行照旧（`:861`–`:910`）。
+- `src/publish/backup_package.rs`（+175／−46，其中测试 +160）。`publish_one`（`:810`）调 `attach_dump`（`:881`），交给它读好的表、dump 的路径、这次运行的装置名和读好的数据映射；出错把话原样交回去，没读到的列记成备注（`:894`），和原来一样。`attach_exp` 删了。
+- `tests/publish_from_pid.rs`（+387）。
+
+和改前差在哪：命令行原来是第 1 步一做完就说那一行、第 6 步一做完就说带单位的值，现在是 `attach_dump` 返回之后一起说。写出来的字节和先后没有变：中间这几步自己不往 stderr 写东西，也不打日志（`oracle_exp`、`pipeline`、`codelist_values`、`stored_values`、`unit_values`、`placement` 六个模块在测试之外没有一处 `log` 调用，也没有 `eprintln!`，带 `--verbose` 也一样）。差别只在某一步 panic 的时候：原来前面那两行已经说了，现在没说。手头没有能让哪一步 panic 的输入。
+
+公有接口：新增三个公开项，`publish::oracle_exp::attach_dump`、`DumpAttachment`、`DumpAttachError`；没有改签名，没有新依赖；私有的 `attach_exp` 没有了。
+
+**用例。** 新增 11 条，原有的断言一条没改。
+
+库内 `oracle_exp` 4 条（`:6148`–`:6324`），用的是手写的小 dump（`followed_fixture`），小到说得出每一步在图上留下什么：
+
+- `attach_dump_runs_every_stage`：十步都留了痕迹。只在 dump 里的那个部件上了图，端口挂在它上面（所以部件先于端口上图），dump 的路径记下了，连接端 1 个、组合关系 2 条、OPC 点 1 个，管线试过了；`done` 四项都有值，数据映射只要了一次。不给数据映射时库里存着的值那一步不做，`done` 里那一项是空的。
+- `attach_dump_keeps_an_off_page_connector_only_when_its_representation_is_published`：dump 里有 1 个 OPC 点；图上发布了它的图形表示就留下，没发布（包括一个表示都没有）就不留。
+- `attach_dump_ends_at_the_first_stage_that_refuses_the_dump`：八步各自拒绝一次。断言四样：拒绝的话；`done` 里正好是前面几步的；数据映射要没要过（前六种没有，后两种一次）；图上正好留着前面几步的东西，没有后面的。再把下一步也弄坏，报的还是前一步：这就是先后。
+- `attach_dump_asks_for_the_data_map_between_the_off_page_connectors_and_the_pipelines`：闭包交不出数据映射时，返回的是闭包自己的错误，一个字不加；这时 OPC 点已经在图上，管线还没试。管线那一步也坏的 dump，报的还是数据映射；OPC 那一步坏的 dump，报的是 OPC，数据映射没要过。
+
+库内 `backup_package` 2 条：
+
+- `a_stored_column_the_dump_does_not_hold_is_noted_on_the_drawings_it_was_read_for`（`:3255`）：仓库里那个包的清单、两个 zip 和 dump，dump 改两个字节（上面那两列各一个字母）。七张图都写出来，`failed` 0；备注只记在读过那一列的图上：壳和两张既没有管线也没有管件的图没有备注，三张两句，一张只有管线那一句。
+- `a_package_drawing_names_the_packages_dump_and_its_pipelines_take_the_runs_plant`（`:3355`）：仓库里那个包原样，用 `P01` 和 `Unit 7` 两个装置名各发一遍。按 `SP_ID` 配上的六张图，覆盖报告里 `oracle_exp.dump` 是这个包的 `Export.dmp`；`_Data.xml` 里每条管线的 UID 等于 `pipeline_uid(装置名, 管线名)`，三张图一共 12 条。壳的覆盖报告里没有 `oracle_exp`，也没有管线。
+
+命令行 `tests/publish_from_pid.rs` 5 条，断言的都是整段 stderr：
+
+- `a_dump_run_says_every_stage_once_and_in_one_order`（`:1838`）：仓库里那张图配它的包的 dump 和数据映射，stderr 正好是七行加最后一行 `Read drawing …`；不带数据映射是六行，没有库里存着的值那一行。
+- `a_stage_that_refuses_the_dump_ends_the_run_after_what_the_stages_before_it_said`（`:1999`）：上面那张表的八种，stderr 逐字节是「停之前说过的」加 `error: read <dump 路径>: <拒绝的话>`，退出 1，stdout 空。
+- `the_data_map_is_read_when_the_first_stage_that_takes_it_is_reached`（`:2014`）：数据映射不存在时的九种（dump 没毛病一种，八步各自拒绝八种），就是上面说次序的那一段。
+- `a_dump_run_that_ends_early_has_said_what_the_dump_added`（`:2045`）：验收语料里的一张图配交付的 dump，停在第 7 步：先说「3 个部件」，再说带单位的值，再报错。这一条要本机才有的语料，没有就跳过。
+- `a_dump_run_says_each_stored_column_it_could_not_read`（`:2081`）：两列读不到，图照写，退出 0；库里存着的值那一行从 28 个变成 19 个，后面跟两行 `not read`，按列名排；不带数据映射时一行都没有。
+
+这些是钉住现状的用例，不是先红后绿。不调新函数的 7 条（整包 2 条，命令行 5 条）都放到改前的代码上跑过。命令行那 5 条里除了最后一条，是动产品代码之前写的，当时就在改前的代码上跑了（`runs/t51-pins-before.log`，4 条全过）。提交之前又把三个源文件放回 `b2eb6b5` 的样子，把整包那 2 条搬进去，7 条一起跑一遍（`pins-on-old.ps1`，`runs/t51-pins-on-old.log`，57 s）：全过；然后还原，三个文件的 SHA-256 与开始时相同。另外 4 条测的是这次才有的函数。
+
+**绿。** 提交的内容上跑的（`runs/t51-precommit-2.log`，137 s）：`cargo fmt --all -- --check` 无差异，`cargo clippy --locked --workspace --all-targets -- -D warnings` 0 条警告；库的单测 1 599 条全过（1 593 → 1 599）；命令行自己的单测 5 条；发布这条线的 13 组集成用例全过，其中 `publish_from_pid` 27 条（22 → 27），`publish_completeness` 10 条，一条没动。合计 1 759 通过，0 失败，2 忽略。全套门禁见下一节。
+
+**对照矩阵。** 跑了两遍，结果一样：
+
+- 提交之前，在带着这项改动的工作区上（`cp-matrix.ps1 -Label t51`，`runs/t51-matrix.log`）：发布构建 36 s，矩阵 61 项 93 s。`t52e` 对 `t51` 717 个文件全部相同，`cp4` 对 `t51` 717 个全部相同。
+- 提交之后，在干净的 `522e77b` 上（`-Label post51`，`runs/post51-matrix.log`，`dirty files: 0`）：发布构建 35 s，矩阵 61 项 89 s。`t51` 对 `post51`、`t52e` 对 `post51` 都是 717 个全部相同，没有只在一边的。
+
+验收写的两条：单图和整包两种入口都在矩阵里（上面数过：走完十步的单图 16 项，Oracle 的整包 4 项）；`tests/publish_completeness.rs` 没有动，这个提交只有上面 4 个文件。
+
+**失败路径的对照。** 矩阵看不到的那四样，改后的发布构建再量一遍，和改前逐个文件比 SHA-256。每次运行比的是命令行、退出码、stdout、stderr 和写出的每个文件：
+
+| 量的什么 | 运行 | 文件 | 结果 |
+|---|---|---|---|
+| 单图，半路被拒绝、数据映射的各种情形（`t51-fails.ps1`，`runs/t51-after/`） | 46 | 197 | 全部相同 |
+| 库里存着的值有列读不到（`t51-unread.ps1`，`runs/t51-unread-after/`） | 4 | 48 | 全部相同 |
+| 整包，八步各自拒绝（`t51-pkg-fails.ps1`，`runs/t51-pkg-after/`） | 9 | 100 | 全部相同 |
+
+第三行是提交之后补的。仓库里的包复制一份，`Export.dmp` 依次换成那 8 份改过的 dump，外加原样的一次；改前的程序（`6db94f7`）和改后的程序（`522e77b`）各发一遍。八种都是退出 1，写出 4 个文件（壳的三个和 `_Index.json`），`paired` 1、`failed` 6、`shells` 1，`problems` 六句是同一句话：那一步的拒绝。T5.2 补钉「没有验的」第 4 条说别的失败法「没有各造一份输入」，现在八步都造了，都量了。
+
+前两行用的改后程序是提交之前从工作区构建的（`pid_publish_xml-b2eb6b5-release.exe`，名字取的是当时的 `HEAD`）。它和提交之后从 `522e77b` 构建的那一份都是 4 730 368 字节，逐字节比只差 4 个字节，在 `0x108`–`0x109` 和 `0x401594`–`0x401595`，是链接时间戳的两处（16:26:08Z 对 17:14:16Z）。所以提交之前量的就是提交了的代码。
+
+**故意改坏。** 不重复的一共 45 处，分三轮，跑了 51 次；没有编译不过的，每次跑完源文件都还原并核过 SHA-256。前两轮跑的是库的单测、命令行自己的单测和 `tests/publish_from_pid.rs`，其中 `backup_directory_publishes_the_whole_package` 跳过（它一遍 60 多秒）。下面「新」是这次加的用例，「原有」是早就有的。
+
+第一轮 42 处（`mutants-t51.spec.ps1`，汇总 `runs/t51-mut-summary.txt`，960 s）：39 处红，3 处全绿。
+
+`attach_dump` 自己 23 处：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `retain-dropped`：`retain` 去掉 | 5 | 新 3，原有 2 |
+| `retain-inverted`：`retain` 的条件取反 | 8 | 新 5，原有 3 |
+| `components-after-ports`：第 1 步挪到端口之后 | 2 | 新 2 |
+| `connectivity-before-ports`：第 4 步挪到第 2、3 步之前 | 0 | 全绿，见下 |
+| `compositions-before-connectivity`：第 5 步挪到第 4 步之前 | 1 | 新 1 |
+| `unit-values-before-compositions`：第 6 步挪到第 5 步之前 | 3 | 新 3 |
+| `opc-before-unit-values`：第 7 步挪到第 6 步之前 | 4 | 新 4 |
+| `codelists-before-pipelines`：第 9 步挪到第 8 步之前 | 1 | 新 1 |
+| `stored-before-codelists`：第 10 步挪到第 9 步之前 | 1 | 新 1 |
+| `data-map-asked-first`：一上来就要数据映射 | 3 | 新 3 |
+| `data-map-asked-before-opc`：第 7 步之前就要 | 3 | 新 3 |
+| `components-not-recorded`：第 1 步的数不记进 `done` | 4 | 新 4 |
+| `unit-values-not-recorded`：第 6 步的数不记 | 9 | 新 8，原有 1 |
+| `codelists-not-recorded`：第 9 步的数不记 | 3 | 新 3 |
+| `stored-not-recorded`：第 10 步的结果不记 | 4 | 新 4 |
+| `stored-not-run`：第 10 步不做，`done` 里放一个空的 | 5 | 新 3，原有 2 |
+| `ports-not-attached`：第 3 步不做 | 6 | 新 3，原有 3 |
+| `dump-path-ignored`：交给第 3 步的 dump 路径换成空的 | 1 | 新 1（`attach_dump_runs_every_stage`） |
+| `plant-ignored`：交给第 8 步的装置名换成空的 | 1 | 原有 1（`the_dwg_fixture_publishes_against_its_packages_later_dump`） |
+| `pipelines-without-data-map`：不把数据映射交给第 8 步 | 5 | 新 2，原有 3 |
+| `codelists-without-data-map`：不把数据映射交给第 9 步 | 4 | 新 2，原有 2 |
+| `refusal-reworded`：拒绝的话前面加 `attach: ` | 3 | 新 2，原有 1 |
+| `data-map-error-reworded`：数据映射的错误前面加 `data map: ` | 1 | 新 1 |
+
+命令行 12 处，都只有新用例红，除了注明的：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `cli-silent-before-a-refusal`：被拒绝时前面几步的行不说 | 3 | 新 3 |
+| `cli-components-line-dropped`：不说「只在 dump 里的部件」那一行 | 1 | 新 1（要本机语料的那一条） |
+| `cli-components-line-always`：0 个也说 | 4 | 新 4 |
+| `cli-unit-values-line-dropped`：不说带单位的值那一行 | 6 | 新 5，原有 1 |
+| `cli-codelists-line-dropped`：不说枚举值那一行 | 2 | 新 2 |
+| `cli-stored-line-dropped`：不说库里存着的值那一行 | 2 | 新 2 |
+| `cli-refusal-without-the-dump-path`：拒绝的话前面不带 dump 的路径 | 3 | 新 3 |
+| `cli-data-map-error-under-the-dump-path`：数据映射的错误报在 dump 的路径名下 | 1 | 新 1 |
+| `cli-data-map-path-not-named`：数据映射的错误不带它的路径 | 1 | 新 1 |
+| `cli-data-map-never-read`：`--datamap` 不读 | 5 | 新 3，原有 2 |
+| `cli-unread-lines-dropped`：没读到的列不说 | 1 | 新 1 |
+| `cli-unread-only-the-first`：没读到的列只说第一个 | 1 | 新 1 |
+
+整包 7 处：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `package-notes-dropped`：没读到的列不记备注 | 1 | 新 1 |
+| `package-notes-reworded`：备注不带前面那半句 | 1 | 新 1 |
+| `package-notes-only-the-first`：只记第一个 | 1 | 新 1 |
+| `package-data-map-withheld`：不把数据映射交出去 | 2 | 新 1，原有 1 |
+| `package-plant-ignored`：装置名换成空的 | 0 | 全绿，见下 |
+| `package-dump-path-ignored`：dump 的路径换成别的 | 0 | 全绿，见下 |
+| `package-refusal-swallowed`：增补失败只记成备注，图照写 | 1 | 原有 1（T5.2 补钉的那一条） |
+
+全绿的 3 处，都先补了钉再提交：
+
+- `connectivity-before-ports`。第 4 步自己也要投影那两张端口表，和第 2 步用的是同一个投影，所以端口表有毛病的 dump，这两步谁在前都是同一句拒绝；两个调用方在被拒绝之后都把图丢掉，从命令行和整包里看不出这两步的先后。看得出来的只有库的调用者：函数的文档写着，出错时图上留着前面几步放上去的东西。补的钉在库内那条拒绝用例里：每一种停法，图上正好留着哪几样（`LEFT_ON_THE_DRAWING`，六样）。
+- `package-plant-ignored`、`package-dump-path-ignored`。这一轮跑的那一组里没有一条看着整包里管线的 UID 用的是哪个装置名、覆盖报告里写的是哪个 dump。补的钉是 `a_package_drawing_names_the_packages_dump_and_its_pipelines_take_the_runs_plant`。
+
+第二轮 7 处（`mutants-t51b.spec.ps1`，`runs/t51-mut2-summary.txt`，196 s），补钉之后跑的，7 处全红，各红 1 条。`attach_dump` 的 4 处红的是库内那条拒绝用例（`attach_dump_ends_at_the_first_stage_that_refuses_the_dump`，钉就补在它里面）；整包的 3 处红的是补的那条整包用例。这 7 处是：上面 3 处；它们的 3 个变体（`ports-attached-after-connectivity`、`ports-attached-after-compositions`：只把第 3 步往后挪；`package-plant-fixed`：装置名写死成 `P01`）；1 处对照（`compositions-before-connectivity`，第一轮就红；这一轮红的也是那条拒绝用例）。
+
+第三轮 2 处（`mutants-t51c.spec.ps1`，`runs/t51-mut3-summary.txt`，248 s），是为了弄清整包那 2 处原来到底有没有用例看着：这一轮把会发布整包的用例组都带上，不跳过（库的单测、命令行自己的单测、`publish_chain_faults`、`publish_from_pid`、`publish_xml_cli`）。2 处各红 2 条：补的那条钉，和 `backup_directory_publishes_the_whole_package`。后者拿交付的那个包里的一张图，和这张图单独发布的结果比（`_Data.xml`、`_Meta.xml` 逐字节，覆盖报告去掉 `source`）。所以这两件事原来有一条用例看着，只是它要本机才有、不在仓库里的那个包和验收语料，没有的机器上是跳过的；前两轮也把它跳过了。补的那条用的是仓库里的包，哪里都跑，库内 1 秒上下，另外多看了「装置名不是 `P01`」。
+
+**超出计划原文的。**
+
+1. 函数里是十步，不是 `attach_exp` 原来的七步。两份编排对得上的是十步，只收七步，后三步的先后还是两处各写一遍。
+2. 新增三个公开项（见「改」）。
+3. 加了 11 条用例。计划给这一项的验收只有对照矩阵；矩阵看不到半路被拒绝的那些情形，这次动的恰好是那一段，所以先量、再钉。
+4. 新写的脚本，都在 `target/publish-audit/review/` 下，不进 git：`t51-fails.ps1`、`t51-unread.ps1`、`t51-pkg-fails.ps1`、`pins-on-old.ps1`，三份故意改坏的清单。
+5. 依赖没有满足就做了（见本节开头）。
+
+**没有改的。**
+
+1. 第三份编排没有动：`tests/publish_from_pid.rs:382` 那条用例还是自己一步步调。那一段另一条线也在改（给它加了一步），这次不碰；两条线合了之后它可以改成调 `attach_dump`。
+2. `--datamap` 还是第 7 步做完才读。一上来就读更好讲，也更早报错，但那是改行为：46 次对照里 14 次的输出会变。这一项只认字节，没有动。等你定。
+3. 整包里库里存着的值有列读不到，还是只记在图自己那一行里。等你定。
+4. 命令行里 `done` 的四项各自是 `None` 时就不说那一行。`attach_dump` 成功返回之后前三项一定有值，这个 `None` 走不到；万一走到，是少说一行而不是报错。库内的用例看着「成功之后三项都有值」，命令行的用例看着那几行都在。
+5. 命令行里把 `failed` 当成图来说的 6 处，还是留给 T6.2。
+
+**没有验的。**
+
+1. 第一轮红的 39 处里，除了当对照的那 1 处，另外 38 处没有在补钉之后重跑。补钉只加了断言和一条用例，没有删改原有的断言，红的不会因此变绿；这是推出来的，不是量的。
+2. `package-plant-fixed` 没有带着那条整包用例跑。那条用例两边都用 `P01` 发布，照理看不出来；没有试。
+3. `a_dump_run_that_ends_early_has_said_what_the_dump_added` 在没有语料的机器上跳过。命令行不说「只在 dump 里的部件」那一行，红的只有它；矩阵里说这一行的 2 项用的也是那份语料。只有仓库的机器上，这一行没有东西看着。
+4. 某一步 panic 时的差别（见「改」），没有输入可试。
+5. `pipelines_stated`（补的那条整包用例用它从 `_Data.xml` 里取管线的 UID 和名字）取的是写在文件里的拼法；名字里要是有 XML 要转义的字符，取到的是转义之后的。这个包的 12 条管线名里没有这样的字符。
+6. 只开 `backup-exp` 的组合：`cargo check` 过（还是那 1 条原有的警告），库内测试 1 515 条全过（1 509 → 1 515，这次库内的 6 条在内；`runs/t51-exp-only.log`，34 s）。集成用例和别的目标没有在这个组合下跑。
+7. 没有在 Linux 上跑。
+
+**顺带记下的。**
+
+1. `oracle_exp` 现在引用了 `pipeline`、`codelist_values`、`stored_values`、`unit_values` 四个模块，这四个模块本来就引用 `oracle_exp`。同一个 crate 里互相引用编译没有问题，它和 `pid_load`、`placement` 原来就是这样；记一笔，是因为「读 dump」和「编排十步」现在在同一个文件里，以后要拆，从 `attach_dump` 拆最顺手。
+2. 发布构建的程序小了 2 048 字节（4 732 416 → 4 730 368）。
+3. 整包里一张图被拒绝，包里按 `SP_ID` 配上的图就都被拒绝，同一句话说六遍，八步都是这样（上面第三行对照）。T5.2 补钉「顺带记下的」说的是端口表一步，现在知道每一步都一样。
+
+### 检查点 5（2026-11-16）
+
+阶段 5 的两项都做完了：T5.2（`a3e6a89`，补钉 `6db94f7`）先做，T5.1（`522e77b`）后做，次序和计划相反（见「顺序调整」）。
+
+**门禁。** `gates.ps1 -Label cp5`，在 `522e77b` 上跑，开跑时工作区是干净的（`dirty files: 0`）。跑的中间：改了三份文档（这份计划、`CHANGELOG.md`、`AGENTS.md`）；在 `target/publish-audit/review/` 下写了脚本和结果；把已经构建好的两份发布程序各跑了 9 次（上一节「失败路径的对照」第三行；两份结果分别在 01:18:45 和 01:18:55 写完，第 2 道是 01:18:11 开跑的）；跑了 `git fetch origin main` 和下面「另一条线」里的试并。源码没有动，cargo 没有另跑。这三份文档没有哪段代码去读：照检查点 4 的办法又 `git grep` 了一遍，提到它们的还是 51 处，都在注释行上；T5.1 在 `tests/publish_from_pid.rs` 的一段注释里按文件名提了这份计划，原来的式子数不到它，把文件名加进式子是 52 处，也都在注释行上。日志在 `target/publish-audit/review/gates/cp5/`。
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 120 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 525 s | 475 个测试程序；2 601 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 12 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 5 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 8 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 1 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 0 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 20 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+上一次全量是 `24e5149` 上补跑的第 2 道，2 590 通过。这一遍多 11 条（2 590 → 2 601），就是 T5.1 加的那 11 条：库内 6 条（1 593 → 1 599），`tests/publish_from_pid.rs` 5 条（22 → 27）。测试程序还是 475 个，`test result:` 还是 474 行，都是 `ok`。忽略数、`skipping: ` 行数、缺文档数、不带默认特性的 985 条都没变。要本机语料的那条新用例（`a_dump_run_that_ends_early_has_said_what_the_dump_added`）这一遍是真跑了的：21 行 `skipping: ` 里没有它那一句。`tests/publish_completeness.rs` 10 条，没有动。用时：构建 120 s 对 113 s（`after-t63`），测试 1 525 s 对 1 556 s（`after-t63`）和 1 501 s（`after-docs-02`），clippy 12 s 对 14 s，fmt 5 s 对 6 s，缺文档 8 s 对 10 s，byte-audit 20 s 对 19 s。
+
+**对照矩阵。** T5.1 的两遍在上一节。第二遍（`post51`）就是在 `522e77b`、干净的工作区上跑的，01:15 跑完，这一遍门禁 01:16 开跑；门禁之后没有再跑矩阵，这中间改的只有文档。一环一环：`cp4` → `t52`／`t52b` → `t61` → `t63` → `post63` → `t52e` → `t51` → `post51`，每一环都是 717 个文件全部相同，没有只在一边的。检查点 5 的第二项这一回照字面成立：阶段 5 的两项都没有动用法说明。
+
+**说明。** `CHANGELOG.md` 的 `[Unreleased]` 加了 T5.1 一条：编排收到一处、公有接口、行为上的差别、输出的变化、量到的现状、用例、没有改的、没有验到的。`AGENTS.md` 改了四处：架构表里 exp 增补一行写上 `attach_dump` 是把 dump 挂到图上的唯一一处、十步的先后和数据映射什么时候要；整包一行写上它经 `attach_dump`、没读到的列记在图自己那一行；用例表加一行讲 T5.1 的 6 条库内用例；`tests/publish_from_pid.rs` 一行加上 5 条命令行用例。讲用例的话对着用例的代码逐句过了一遍。
+
+**另一条线。** 计划给 T5.1 写的依赖是那条线对 `run_pid` 的改动先进 `main`；没有等（上一节开头）。现在的情形：
+
+- 刚 `git fetch origin main` 过：`main` 和 `origin/main` 都还在 `a4b490e`。那条线（`export-closeout-20261115`）还在 `d329c2f`，比 `main` 多 11 个提交，没有并进去。这条分支比 `main` 多 32 个提交（记这两节的提交不算），少 0 个，没有 push 过。
+- 和那条分支试并了两次（`git merge-tree --write-tree`，只往对象库里写树，工作区、索引、引用都没动）：一次拿 `522e77b`；一次连没提交的三份文档一起算，拿的是 `git stash create` 造的一个不挂在任何引用上的提交（`git stash list` 还是空的）。两次的冲突都只有 `CHANGELOG.md` 一个文件；`src/bin/pid_publish_xml.rs`、`tests/publish_from_pid.rs`、`AGENTS.md` 和另外 6 个文件自动合并。第二次试并之后又改过的是这份计划（这一节，和上一节里的一句话）和 `CHANGELOG.md` 里的一句。
+- git 报不出来的，是读合并出来的那棵树读到的，没有编译，没有跑：
+  - 那条线的 `f4c7763` 给命令行 `oracle-exp stored values` 那一行加了半句（`, {} names left out because a label disagrees with the dump`）。合并的结果里这半句落在 T5.1 新写的 `if let Some(stored) = &attached.stored_values {` 那一块里面，读起来是对的。
+  - T5.1 新加的用例把那一行整行钉住了：`tests/publish_from_pid.rs` 的 `DWG_EXP_SAYS` 第四句（这条分支 `:1828`）。合并的结果里这一句还是以 `0 left out unspelled` 结尾，所以合并之后 `a_dump_run_says_every_stage_once_and_in_one_order` 和 `a_dump_run_says_each_stored_column_it_could_not_read` 两条会红，要跟着那条线改期望值。
+  - 那条线不只改这一行，还改了写出来的值：它自己把仓库里那个包的 `values` 从 1 492 改钉成 1 502，交付的那个包从 172 427 改钉成 176 940，又给第三份编排（`ijingchang_oracle_exp_matches_the_pinned_reference`）手加了一步 `attach_stored_values`。所以合并之后对照矩阵会和这条分支的不一样（差的是那条线打算改的东西），T5.1 的 11 条用例要在合并的结果上整个重跑；除了上面那一句，还有哪几个钉住的数会动（比如 `28 written`），要跑了才知道。
+- 那条线相对 `main` 没有动 `src/publish/backup_package.rs` 和 `src/publish/oracle_exp.rs`；`src/bin/pid_publish_xml.rs` 它只动了上面那 4 行。
+
+**等你定的。** 这一节新出来的四条，加上前面还开着的：
+
+1. 两条线怎么合。git 只会报 `CHANGELOG.md`，要改的期望值它报不出来（上面「另一条线」）。可以：那条线先进 `main`，这条分支再并 `main`、改期望值、重跑矩阵和门禁；或者反过来；或者先在一个临时工作区里把两条线试并出来、编译、跑一遍，把要改的地方列成清单，两条分支都不动。
+2. `--datamap` 要不要改成一上来就读（T5.1「没有改的」第 2 条）。改了更早报错，46 次对照里 14 次的输出会变。
+3. 整包里库里存着的值有列读不到，要不要在包一级说（T5.1「没有改的」第 3 条）。现在只记在图自己那一行里，包一级的 `problems` 是空的，摘要行不提，退出 0。`--strict` 现在只管数据库线写的图，Oracle 的包里它什么都不改；要不要让它也管这一条，一并定。
+4. 第三份编排要不要改成调 `attach_dump`（T5.1「没有改的」第 1 条）。那条线给它加了一步，等两条线合了再改最顺。
+5. 「T5.2、T6.1、T6.3 之后的门禁」一节「等你定的」那 12 条还开着；其中第 11 条归 T6.2，第 12 条指检查点 4 的六条。
+
+**接下来。** T6.2、T6.4、检查点 6。T6.2 要改的 `src/bin/pid_publish_xml.rs`，那条线只动了上面说的 4 行。
+
+**顺带记下的。**
+
+1. 通过数的账：`24e5149` 上 2 590，量过；T5.1 加 11 条，这一遍 2 601，量过。
+2. 故意改坏的账：T5.1 不重复的 45 处，跑了 51 次；全绿 3 处，都先补了钉再提交（上一节）。
+3. 工作区里没提交的文件数，日志开头记的：`post51` 矩阵 0，这一遍门禁 0。门禁跑的中间改的三份文档，现在 `git status` 里就是这三份。
