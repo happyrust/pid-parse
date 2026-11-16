@@ -266,9 +266,9 @@ Recommended: 两处都做
 
 #### 检查点 3
 
-- [ ] 全套门禁与 vendored 件自己的测试通过
-- [ ] 对照矩阵逐字节不变
-- [ ] 改前改后的读数发给你
+- [x] 全套门禁与 vendored 件自己的测试通过（vendored 件按 T3.2 写的 `cargo test --lib`；它的集成测试有 2 条改前就不过，见 §9）
+- [x] 对照矩阵逐字节不变
+- [x] 改前改后的读数发给你
 
 ### 阶段 4：小修
 
@@ -746,3 +746,220 @@ test export_bundle::tests::export_bundle_publish_xml_writes_data_meta_and_succes
 
 1. 系统表读到一半断掉时，读取器不报错。`vendor/oxidized-mdf/src/sys.rs` 里读系统表的循环是 `while let Some(Ok(page)) = …`，读页出错就停，停下之前读到的照用。把 `Export.mdf` 截到前 2 000 页试了（开库要的第 2 145 页不在了）：`MdfDatabase::open` 成功，24 张表里只认得 `T_InlineComp`、`T_SignalRun` 两张，其余 22 张被当成库里没有，`open_mdf_as_sqlite` 照常返回，探针退出 0。命令行 `--list-drawings` 退出 1，报的是 `no such table: T_Drawing`，没有提文件不完整。截到前 1 000 页也是这样。截到前 2 146 页（系统表完整，后面的数据页没了）则照实报 `IO Error: failed to fill whole buffer`，退出 1。`sqlite_load.rs` 里有几处查询把缺表当成空表（`prepare_optional`），所以要是截断处恰好留下了 `T_Drawing` 而丢了这样的表，图会少东西而不报错；这一句是照代码推的，没有造出这样的文件来试。这是改之前就有的行为，T3.2 不改变它。试的文件和输出在 `target/publish-audit/review/t31-truncated/`。
 2. 检查点 2 的记录说第八道门禁在 `summary.txt` 里的那一行一直没有出来。后来那个 `VCTIP.EXE` 退了，行补了出来：`08-byte-audit  exit 0    921 s`。退出码与补跑的一致；921 s 里门禁自己只有 19 s，其余是脚本在等。`gates.ps1`、`run-stable.ps1` 已经改成只等自己起的那个命令（`WaitForExit()`，不再用 `Start-Process -Wait`）。这次量之前的第一次发布构建又碰上了同一件事，改了以后脚本不再停在这上面。
+
+### T3.2 读取器按页寻址（2026-11-16，`9dbfff8`）
+
+**红。** 在 `vendor/oxidized-mdf/src/lib.rs` 里先写了 8 条单元测试，在没改的读取器上跑（只多了一个还没人用的常量 `PAGE_CACHE_LIMIT = 256`）：5 条红，3 条本来就绿（`runs/t32-red-1.log`）。
+
+| 测试 | 在没改的读取器上 |
+|---|---|
+| `a_page_reads_without_the_pages_before_it` | 红：要第 12 页，从文件读了 106 496 字节（13 页），该读 8 192 |
+| `a_chain_is_followed_to_wherever_its_pages_lie` | 红：链 12 → 3 → 7 的页读对了，读了 106 496 字节，该读 24 576 |
+| `a_page_the_reader_keeps_is_not_read_again` | 红：第 5 页要两次，读了 49 152 字节（6 页），该读 8 192 |
+| `the_reader_keeps_no_more_pages_than_its_limit` | 红：读过 264 页，缓存里留着 264 页，上限 256 |
+| `a_page_the_reader_let_go_reads_again` | 红：读过 264 页以后再要第 0 页，没有去读文件（0 字节，该是 8 192）：它从来没被放掉 |
+| `an_earlier_page_reads_after_a_later_one` | 绿 |
+| `a_page_past_the_end_is_an_io_error_and_the_ones_before_it_still_read` | 绿 |
+| `an_image_that_ends_before_its_boot_page_is_an_io_error` | 绿 |
+
+**计划里有一句不成立。** T3.2 的验收写的是「先读后面的页、再读前面的页，能读到（今天报 `forward-only reader cannot re-read an earlier page`）」。今天读得到，上表第六条就是它。`Page::try_from` 对任何 8 192 字节都成功（`pages.rs:893`，只取页头里的两个字段），所以读过的页一页不落都进了缓存；缓存没有上限；`read_page` 先查缓存，查的时候还不看文件号。那条错误走不到。这条测试留下了，改完以后它守的是「往回读能读对」；红的是数字节的三条和管缓存的两条。后两条绿的把住不该变的：页在文件末尾之后，还是 `IoError`（`UnexpectedEof`）；镜像不到引导页那么长，也还是。
+
+**改。** `PageReader` 的源从 `Box<dyn Read>` 换成能 seek 的（私有 trait `PageSource: Read + Seek`）。`read_page` 先查缓存，没有就 seek 到 `page_id × 8192`，读 8 192 字节，解析一次，放进缓存。原来是从当前位置一页页读到要的那一页，每页解析两遍（`read_next_page` 里一遍，回到循环里又一遍）。缓存 `PageCache` 按页号建键，最多留 256 页（2 MiB），多一页就放掉最早读进来的那一页；放掉的页再要，就再读一次。`MdfDatabase::open(path)` 的签名没动。`from_read` 现在要 `Read + Seek`，只读引导页（第 9 页），不再把第 0–8 页读一遍。文件头的改动清单补了 `Modified: 2026-11-16` 一段。
+
+**绿。**
+
+- vendored 件自己的测试（`cd vendor/oxidized-mdf && cargo test --no-fail-fast`，`runs/t32-green-1.log`）：单元 46 过（原有 38，新增 8）；集成 20 条里 18 过、2 不过；文档 4 过。改之前（`runs/t32-vendored-before-all-2.log`）：单元 38 过，集成同样 18 过 2 不过，文档 4 过。不过的是同样两条、同样的读数，见顺带记下的第 1 条。计划要的 `cargo test --lib` 就是其中单元那一组。
+- 在 vendored 目录里 `cargo clippy --all-targets`：0 条警告。
+- 根 crate：`tests/publish_mdf_load.rs` 5 过，`tests/publish_a01_raw_residual.rs` 4 过 2 忽略，断言没动；`cargo clippy --locked --workspace --all-targets -- -D warnings` 退出 0；`cargo fmt --all -- --check` 退出 0。
+- 对照矩阵 `t32` 对 `cp2`：717 / 717 个文件逐字节相同。矩阵是提交之前在工作区上跑的，工作区当时的内容就是 `9dbfff8`。
+
+**逐行核对（计划之外加的）。** A01 的发布表每张只有一到三页，靠它看不出长链上、往回读的时候对不对。所以写了个临时程序（`target/publish-audit/review/t32-old-reader/dumper.rs`，不入库）：一个 `MdfDatabase` 开到底，按表名顺序把库里每张表的每一行写出来，`rows()` 一遍，`try_rows()` 再一遍。分别接上改前的读取器（`fe52012` 那一版的 `vendor/oxidized-mdf`，另放了一份）和改后的，依赖版本相同（两边的 `Cargo.lock` 除了包名一字不差），各跑三个库，输出逐字节比：
+
+| 库 | 表 | `rows()` | `try_rows()` | 输出 | 改前改后 |
+|---|---|---|---|---|---|
+| A01 的 `Export.mdf` | 156 | 2 569 行 | 2 568 行，1 条错误 | 1 748 944 字节，SHA-256 `95e3fd49…271262b8` | 相同 |
+| `spg_verein_TST.mdf`（vendored 件自带，14 745 600 字节） | 134 | 7 753 行 | 7 403 行，352 条错误 | 3 907 179 字节，SHA-256 `ecdc8cba…cac0a84e` | 相同 |
+| `AWLT2005.mdf`（vendored 件自带，5 242 880 字节） | 读到 `SalesOrderDetail` 时 panic | | | panic 之前写出的 7 997 945 字节，SHA-256 `25634a4d…fde007db` | 相同，panic 在同一处 |
+
+panic 见顺带记下的第 3 条。输出在 `target/publish-audit/review/t32-old-reader/rows/`。
+
+**读数。** 发布构建，stable 1.99.1：探针 2 294 784 字节，SHA-256 `d31b2053…c868afbf`；`pid_publish_xml.exe` 4 723 712 字节，SHA-256 `dd024f16…1c9d5993`。量法和 T3.1 一样，峰值工作集各跑 5 次。输出：`runs/t32-probe-mdf-1.log`、`runs/t32-probe-mtf-1.log`、`measure/t32-*/summary.txt`。
+
+| | 改前（T3.1） | T3.2 之后 |
+|---|---|---|
+| 开一次库读入 | 17 580 032 字节（2 146 页） | 999 424 字节（122 页） |
+| 24 张表读行读入 | 14 032 896 字节（1 713 页） | 221 184 字节（27 页） |
+| 合计，比文件大小 | 435 953 664 字节，21.88 倍 | 24 207 360 字节，**1.22 倍** |
+| 同一个读取器把一页读了两次 | 没数 | 2 955 次读页里 0 次 |
+| `open_mdf_as_sqlite` | 459.6 ms | 69.9 ms |
+| `open_mtf_dump_as_sqlite` | 490.2 ms | 99.5 ms |
+| 峰值工作集，只跑暂存，`.mdf` | 29 642 752–29 868 032 字节，1.49–1.50 倍 | 9 658 368–9 973 760 字节，0.48–0.50 倍 |
+| 峰值工作集，只跑暂存，整包 | 69 496 832–69 918 720 字节，3.47–3.49 倍 | 49 762 304–50 003 968 字节，**2.49–2.50 倍** |
+| 峰值工作集，命令行，A01 | 29 802 496–29 949 952 字节，1.50 倍 | 9 728 000–10 264 576 字节，0.49–0.52 倍 |
+| 峰值工作集，命令行，整包 | 70 283 264–70 594 560 字节，3.51–3.53 倍 | 50 495 488–50 737 152 字节，2.52–2.54 倍 |
+| 命令行从起到退，A01 | 460–533 ms | 85–98 ms |
+| 命令行从起到退，整包 | 520–548 ms | 127–133 ms |
+
+整包那一组逐表的读入与 `.mdf` 相同。两条路的峰值各降了约 20 MB。整包还在 2.5 倍，线以上：dump 整个在内存里一份，拷出的镜像又一份，T3.3 去掉后一份。
+
+256 页在这个库上够用：开一次库 122 页，24 张表的行一共 27 页，没有一页要了第二次，所以上限没有让它多读一次。
+
+**超出计划原文的。**
+
+1. `from_read` 成了泛型：`from_read<R: Read + Seek + 'static>(read: R)`。`Box<dyn Read + Seek>` 写不出来（一个 trait 对象只能带一个非自动 trait），所以接泛型，里面再装箱。调用处从 `from_read(Box::new(file))` 变成 `from_read(file)`。
+2. 计划写 `from_read`「仓库里只被 `open` 调用」，那是 T3.1 之前；现在 T3.1 的探针也调它。探针里计数的源要能 seek 才编得过，所以 `examples/probe_what_staging_an_mdf_costs.rs` 也在这个提交里；顺手让它数「同一个读取器把一页读了两次」的次数，上面那一行 0 次就是它数的。
+3. 测试写了 8 条，计划点了两条。逐行核对也是计划之外的。
+4. `PagePointer::with_page_id` 现在没有人调用了。它是上游原有的函数，在 `pages.rs`，这个 crate 整体 `allow(dead_code)`；没有删。
+
+**没有验的。**
+
+- 「同一页不再解析两遍」没有测试守着：解析没有副作用，从外面看不出做了几遍。依据是代码里现在只有一处调用。
+- 峰值内存「不跟着文件大小走」没有第二种大小的发布库来验。依据是缓存有上限这一条，加上这一个样本上降下来的读数。
+- 一趟要读 256 页以上的表，缓存放掉前面的页以后会不会回头再要：照代码不会（顺着链往下，每页要一次）；逐行核对的三个库里有没有这么长的链，没有去数。
+- 多文件的库（带 `.ndf`）：页指针里的文件号和以前一样不看，所有页都从这一个文件读。没有这样的样本。
+- 用时只在这一台机器上量过，文件当时都在系统缓存里。
+
+**顺带记下的。** 下面几条都是改之前就有的，改前改后一样，T3.2 没有动它们。
+
+1. vendored 件自己的集成测试有 2 条不过，都在 `spg_verein_TST.mdf` 上：`number_of_rows::case_3`（`tbl_Bankleitzahlen` 期望 3 549 行，读到 3 548；测试里自己写着 TODO，说正确的数应该是 3 643）和 `rows::case_5`（`tbl_Mitglied` 第一行的 `Kontosaldo` 期望 `Some(Null)`，读到 `None`，就是这一列没有解析出来）。门禁只跑 `cargo test --lib`，所以平时看不到。没有查是哪次改动之后开始不过的。
+2. **空表会读出一行假数据。** 一张表在库里一页都没有时，系统表里记的首页指针是 `0:0`。读取器把它当成真的页指针，去读第 0 页——文件头页——把上面那条记录按这张表的列解析成一行。A01 的 `Export.mdf` 里，24 张发布表有 10 张的起始指针全是 `0:0`：`T_EquipComponent`、`T_Pipeline`、`T_InlineComp`、`T_PipingComp`、`T_Instrument`、`T_InstrFunction`、`T_ItemNote`、`T_Exchanger`、`T_Mechanical`、`T_SignalRun`。每张读出一行、暂存进一行，行里是同一串乱码；全库 156 张表里有 56 张读出了带这串乱码的行。说这 10 张表本来是空的，依据是这个库的 `T_ModelItem` 只有 4 行，类型是 `Vessel`、`Nozzle`、`PipeRun`、`PipingPoint`，没有这些表管的东西；没有拿 SQL Server 去查。所以 T3.1 写的「23 张表共 243 行」里，真的是 13 张表 233 行，另外 10 张表读行读的那一页是第 0 页。发布结果没有看到受影响：对照矩阵 `t32` 的 717 个文件里，没有一个出现这串乱码，也没有一个提到这些表的表名（查了其中四个）；A01 对参考的四条测试（`tests/publish_a01_raw_residual.rs`）一直是过的。但装载的查询里有没有哪一条会把这一行带出去，没有逐条查。起始指针是用一条临时测试打出来的（`runs/t32-scratch-iter-1.log`），那一行的内容在逐行核对的输出里。页头解析已经把「下一页」指针的页号 0 当成没有下一页（`pages.rs:782`），起始指针没有这样处理。现有的一条测试是靠这一行过的：`tests/publish_mdf_load.rs` 的 `strict_rows_load_a01_equip_component_table` 断言 `T_EquipComponent`「有行」，而这张表读出来的只有这一行。哪天把起始指针 `0:0` 改成「没有页」，这条断言要跟着改。
+3. 读取器在自带的样本上会 panic：读 `AWLT2005.mdf` 的 `SalesOrderDetail` 时，`rust_decimal` 报 `Number exceeds maximum value that can be represented.`（`rust_decimal-1.43.0` 的 `decimal.rs:481`，在 `Decimal::from_i128_with_scale` 里：数超出 96 位它就 panic，不返回错误）。vendored 件里调它的有三处：`money`、`smallmoney` 传的是 `i64`、`i32`，超不出；剩下 `pages.rs:292`（`parse_decimal_opt`），`decimal` / `numeric` 的精度超过 28 位时取 16 个字节当 `i128`，会超出。检查点 3 时确认了就是这一处：在读取器的临时副本里、这一句前面加一行打印，panic 之前最后打出的是精度 38、小数 6 位，取到的数是 253 605 848 548 607 286 669 085 476 477 182 361，超出 96 位。（带回溯跑，栈帧全是 `<unknown>`：这台机器上的构建目录里没有 `.pdb`。）发布表里要是有这样的值，命令行会直接崩。A01 的库里没有这样的列：同样的打印加在 `parse_decimal_opt` 的开头，把库里有的 23 张发布表读一遍（243 行，0 条错误），一次也没有打出来，也就是这 23 张表没有 `decimal` / `numeric` 列。拿 `AWLT2005.mdf` 做了对照，`Product` 的 295 行各打出一次精度 8、小数 2 位。`T_ProcessEquipment` 这个库里没有，它的列不知道；别的版本的库也没有看过。输出在 `target/publish-audit/review/cp3-checks/`（`awlt-panic-callsite.txt`、`a01-decimal-columns.txt`、`awlt-decimal-columns.txt`）。
+4. 一张表有几个起始页指针时，只读第一条链。`PageIter` 在第一条链读完时返回 `None`，`rows()` / `try_rows()` 用的 `flat_map` 到这里就停（临时测试：给两个指针，连着取六次得到 `Some(2), None, Some(5), None, None, None`）。A01 的库里 156 张表有 89 张不止一个起始指针，每个行集一个，索引的行集也算在内。只读第一条大概正是读出来的是数据行而不是索引行的原因，但这靠的是数据的那个行集排在最前；分区表的后几个分区会读不到。这两句是照代码推的，没有造这样的库来试。
+5. vendored 件自带的例子 `print_all` 在这台机器上把输出重定向到文件时会崩（退出码 `0xC0000005`，打完第一张表的表头就崩），所以逐行核对没有用它。
+
+### T3.3 暂存只开一次（2026-11-16，`67529b7`）
+
+**先钉住结果。** 这一条改的是做法，结果不该变，没有哪条测试能在改之前红。所以先把结果钉住，再改：
+
+- 探针加了一段暂存清单。装载返回的 SQLite 连接里，`PUBLISH_TABLES` 的每张表打一行：几列、几行，再加一个 SHA-256——列数、各列的名字，然后按 `rowid` 的顺序把每一行的每一个值喂进去（每个值前面带「有没有」的标记和长度）；最后一行是整张清单的摘要。改之前先跑一遍留底（`runs/t33-probe-mdf-before.log`、`runs/t33-probe-mtf-before.log`）。
+- `tests/publish_mdf_load.rs` 加了 3 条测试，守整包那条路。这条路以前没有自己的测试：`TEST02_p` 整包的用例走得到它，但没有一条拿它和 `.mdf` 那条路直接比。
+  - `an_mtf_dump_stages_what_its_mdf_stages`：从 `Export.dmp` 暂存出的 24 张表，逐表的列名和每一行，与从 `Export.mdf` 暂存出的相同。
+  - `the_image_inside_the_dump_is_the_extracted_mdf`：`mdf_bytes_from_mtf_dump` 取出的镜像与 `extracted/Export.mdf` 逐字节相同。
+  - `staging_a_dump_leaves_no_image_in_the_temp_directory`：暂存完，临时目录里没有这个进程留下的镜像。
+
+三条在没改的装载上都是绿的（`runs/t33-tests-old-loader.log`，8 条全过，2.54 s）。再把装载故意改坏，看它们红不红。下面这张表是检查点 3 在提交了的装载（`67529b7`）上做的：改一处跑一次，跑完用 `git checkout` 还原。
+
+| 故意改坏 | `an_mtf_dump_stages…` | `the_image_inside…` | `staging_a_dump_leaves…` | 输出 |
+|---|---|---|---|---|
+| 暂存完从 `T_Representation` 删掉一行；`mdf_bytes_from_mtf_dump` 返回的镜像翻一位 | 红，在逐表比较那一条（第 237 行）：`T_Representation` | 红，在内容那一条（第 256 行）：长度相同，内容不同 | 绿 | `runs/cp3-mutant-rows-and-bytes.log` |
+| 临时镜像不删 | 绿 | 绿 | 红（第 285 行），点出留下的两个镜像 | `runs/cp3-mutant-image-left-behind.log` |
+| 镜像少取 300 页 | 红，停在暂存这一步（第 231 行，`IO Error: failed to fill whole buffer`），没有走到比行 | 红，在长度那一条（第 254 行）：17 465 344，该是 19 922 944 | 红，同样停在暂存（第 275 行） | `runs/cp3-mutant-image-cut-short.log` |
+
+三次的 8 条用例各用 0.37 s、0.34 s、0.25 s，是改后装载的速度（不改坏时 0.34–0.36 s）。第三次暂存失败以后，临时目录里没有留下镜像。第二次留下的两个镜像（各 19 922 944 字节）按名字删了。还原后 `mdf_load.rs` 的 SHA-256 与提交的相同，8 条全过（`runs/cp3-tests-restored-2.log`）。三条用例里没有见过红的断言还有两条：第 240 行的「至少比了一行」，第 287 行的「暂存出的库不再需要镜像」。
+
+提交之前也改坏过两次，这一节原先的表列的是那两次：`runs/t33-mutant-image-left-behind.log`（7 过 1 红）和 `runs/t33-mutant-image-cut-short.log`（5 过 3 红），红的用例与上表后两行相同。原先说那是在「改后的装载」上做的，不对。那两次 8 条用例用了 2.55 s 和 0.82 s，是没改的装载的速度；紧接着的 `runs/t33-tests-new-loader.log` 失败得和第二次一模一样，`Finished` 只用了 0.94 s（重编这个库要 6–7 s），同一次里的 `publish_a01_raw_residual` 用了 0.78 s（改后是 0.05–0.06 s），可见那时编进去的还是没改的装载；再下一份 `runs/t33-tests-new-loader-2.log` 才是改后的（重编 12.04 s，8 条全过，0.35 s）。所以那两次改坏的是没改的装载：说明用例会红，不说明改后的装载被它们守着。上表是补做的。
+
+**改。** `src/publish/mdf_load.rs`：
+
+- `open_mdf_as_sqlite` 开一次 `MdfDatabase`，24 张表共用；`stage_table` 改成接 `&mut MdfDatabase`，不再自己开库。
+- 每张表的行在一个事务里插入（`conn.transaction()`，插完 `commit()`）。`CREATE TABLE` 和原来一样先执行，在事务外面。
+- 整包那条路：新的私有函数 `mdf_image_in_mtf_dump` 返回镜像在 dump 里的那段切片，`open_mtf_dump_as_sqlite` 把这段切片直接写进临时文件。公有的 `mdf_bytes_from_mtf_dump` 签名和结果不变，现在是这段切片的一份拷贝，`open_mtf_dump_as_sqlite` 不再调它。
+
+探针跟着改：用一个读取器把 24 张表读完（原来每张表开一个），量的还是装载做的那件事。输出从「每张表开库读了多少、读行读了多少」变成「开库一次读了多少，每张表读行又读了多少」。
+
+**绿。**
+
+- `tests/publish_mdf_load.rs` 8 过（原有 5，新增 3），`tests/publish_a01_raw_residual.rs` 4 过 2 忽略，原有的断言没动（`runs/t33-tests-final.log`）。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` 退出 0；`cargo fmt --all -- --check` 退出 0。
+- 暂存清单：`.mdf` 改前与改后相同，dump 改前与改后相同，`.mdf` 与 dump 相同。26 行逐行相同（表头、24 张表、合计），合计 243 行，整张清单的摘要 `179906c7…103504fd`（`runs/t33-probe-mdf-after.log`、`runs/t33-probe-mtf-after.log`）。计划要的「暂存出来的表逐行与改前相同」是靠这个摘要和上面第一条测试两处说的，没有把行一行行打出来比。
+- 对照矩阵 `t33` 对 `cp2`、对 `t32`：都是 717 / 717 个文件逐字节相同。矩阵是提交之前在工作区上跑的，工作区当时的内容就是 `67529b7`；检查点 3 在提交上又跑了一遍。
+
+**读数。** 发布构建，stable 1.99.1：探针 2 324 480 字节，SHA-256 `f2ece8aa…9ccb67d3`；`pid_publish_xml.exe` 4 728 832 字节，SHA-256 `7b80540e…596e4f1d`。量法和 T3.1 一样，峰值工作集各跑 5 次。输出：上面两份 `-after.log`、`measure/t33-*/summary.txt`。
+
+| | 改前（T3.1） | T3.2 之后 | T3.3 之后 |
+|---|---|---|---|
+| 开库读入 | 17 580 032 字节（2 146 页），24 次 | 999 424 字节（122 页），24 次 | 999 424 字节（122 页），1 次 |
+| 24 张表读行读入 | 14 032 896 字节（1 713 页） | 221 184 字节（27 页） | 147 456 字节（18 页） |
+| 合计，比文件大小 | 435 953 664 字节，21.88 倍 | 24 207 360 字节，1.22 倍 | 1 146 880 字节，**0.06 倍** |
+| 读页次数，其中重复的 | 没数 | 2 955 次，0 次 | 140 次，0 次 |
+| 探针只读不存的那一遍 | 407.8 ms | 62.8 ms | 4.1 ms |
+| `open_mdf_as_sqlite` | 459.6 ms | 69.9 ms | 6.4 ms |
+| `open_mtf_dump_as_sqlite` | 490.2 ms | 99.5 ms | 26.2 ms |
+| 峰值工作集，只跑暂存，`.mdf` | 29 642 752–29 868 032 字节，1.49–1.50 倍 | 9 658 368–9 973 760 字节，0.48–0.50 倍 | 8 634 368–8 736 768 字节，0.43–0.44 倍 |
+| 峰值工作集，只跑暂存，整包 | 69 496 832–69 918 720 字节，3.47–3.49 倍 | 49 762 304–50 003 968 字节，2.49–2.50 倍 | 28 602 368–28 717 056 字节，**1.43 倍** |
+| 峰值工作集，命令行，A01 | 29 802 496–29 949 952 字节，1.50 倍 | 9 728 000–10 264 576 字节，0.49–0.52 倍 | 8 810 496–8 896 512 字节，0.44–0.45 倍 |
+| 峰值工作集，命令行，整包 | 70 283 264–70 594 560 字节，3.51–3.53 倍 | 50 495 488–50 737 152 字节，2.52–2.54 倍 | 29 483 008–29 618 176 字节，**1.47–1.48 倍** |
+| 命令行从起到退，A01 | 460–533 ms | 85–98 ms | 20–25 ms |
+| 命令行从起到退，整包 | 520–548 ms | 127–133 ms | 58–67 ms |
+
+「T3.2 之后」那一列的 62.8 ms 是这次改之前用带清单的探针量的（`runs/t33-probe-mdf-before.log`），其余是 T3.2 记的。同一份没改的装载这次也又量了一遍：`open_mdf_as_sqlite` 73.7 ms，`open_mtf_dump_as_sqlite` 89.2 ms，T3.2 记的是 69.9 和 99.5。同样的代码，单次计时两次之间能差一成，上表里的毫秒数照这个精度看。
+
+Q4 的两条线（读入 3 倍、峰值 2 倍）现在都在线以下。
+
+读入是文件的 0.06 倍，比计划写的「约 1 倍」低得多。计划是照「把文件从头读一遍」估的；T3.2 以后读取器只读要的页，开库 122 页，读行 18 页：11 张表各 1 页，`codelists`、`attributes` 各 3 页，还有 1 页是第 0 页——空表读出的那一行假数据（T3.2 顺带记下的第 2 条），10 张空表里第一张读了它，后面 9 张用的是缓存里的。T3.2 之后是 27 页，多出的 9 页就是那 9 张空表各自再读的一次第 0 页。
+
+整包那条路的峰值比 `.mdf` 那条路多 19 968 000–19 980 288 字节（只跑暂存的两组，最小对最小、最大对最大），`Export.dmp` 是 20 012 544 字节：多出来的就是整个读进内存的那一份 dump，拷出来的那份镜像不在了。T3.1 的记录估这条路「预计还剩 1 倍多一点」，估低了，实际是 1.43–1.48 倍。dump 一份是 1 倍；其余的，只跑暂存时是 8.6–8.7 MB，和 `.mdf` 那条路的峰值一样多，命令行整包是 9.5–9.6 MB（整包在暂存之外还要读 zip 的目录、逐图发布）。什么都不做的进程就有 4.2–4.7 MB（T3.1 量的），这几个数里都含着它。
+
+整包暂存比 `.mdf` 暂存多 20 ms（26.2 对 6.4）。照代码，两个函数差的只有三步：在 dump 里找到镜像，把 19.9 MB 写成临时文件，用完删掉。没有分开计时。
+
+**超出计划原文的。**
+
+1. 计划列的文件是装载和探针，另外动了 `tests/publish_mdf_load.rs`：上面那 3 条测试。
+2. 探针多了暂存清单，那一遍读的输出格式也变了。清单用的 `sha2` 是 `backup-mdf` 特性本来就带的依赖，`Cargo.toml` 没有动。
+3. 新的私有函数 `mdf_image_in_mtf_dump`；`open_mdf_as_sqlite`、`open_mtf_dump_as_sqlite` 的文档注释各改了一句，说的是现在的做法。
+
+**没有验的。**
+
+- 事务这一项单独省了多少，分不出来：只开一次库和事务是一起改的，量到的是合起来的数，这个库的发布表一共才 243 行。
+- 「峰值内存不再跟着文件大小走」只有一个大小的库可量。`.mdf` 这条路照做法是这样：读取器最多留 256 页（2 MiB），与文件多大无关；内存里的 SQLite 存着发布表的全部行，跟着的是发布表的数据量。整包这条路还跟着 dump 的大小走，见顺带记下的第 1 条。
+- 发布表上千行、一张表跨很多页的库上会怎样，没有样本。
+- 一张表读到一半出错时，照代码事务随 `Transaction` 一起回滚，错误和原来一样往上返回，整个暂存失败。没有专门的测试。
+- 用时只在这一台机器上量过，文件当时都在系统缓存里。
+
+**顺带记下的。**
+
+1. **整包这条路，dump 还是整个读进内存。** `publish_mtf_package`（`backup_package.rs:1158`）用 `fs::read` 读整个 `Export.dmp`，只为了交给 `open_mtf_dump_as_sqlite`；这份字节一直留到整包发布完才放。计划写的做法（从切片直接写临时文件）去不掉它，剩下的 1.43–1.48 倍里有 1 倍是它。再往下有两种做法，都不在这一轮计划里，没有做：
+   - 暂存完就放掉这份字节。改一处，峰值不变（峰值就在暂存那一刻），后面逐图发布时少占 20 MB。
+   - 不整个读：从 dump 文件里按偏移直接读镜像，把一个带偏移的 `Read + Seek` 交给 `MdfDatabase::from_read`。峰值降到和 `.mdf` 那条路差不多，临时文件也不用写了，上面那 20 ms 跟着没有。要动的是找镜像的那一段（`backup/mtf.rs:359` 的 `msda_stream_body` 现在接的是整份字节）和 `publish_mtf_package`，源码里调 `open_mtf_dump_as_sqlite` 的只有它这一处；`open_mtf_dump_as_sqlite(&[u8])` 是公有函数，得留着，另加一个接路径的。
+2. 暂存清单里，10 张空表各有 1 行，就是 T3.2 顺带记下的第 2 条说的那一行假数据。清单把它也算进了摘要，所以「改前改后相同」这句话连这 10 行也包括在内。
+
+### 检查点 3（2026-11-16）
+
+**门禁。** `gates.ps1 -Label cp3`，在 `67529b7` 上跑。开跑时工作区只有这份计划文档有未提交的改动（T3.3 的记录）；跑的中间又改了 `CHANGELOG.md`、`AGENTS.md`，源码没有动。这三份文件没有哪段代码去读（`git grep` 过 `src`、`tests`、`examples`、`benches`、`build.rs`、`pid-plot`、`.github/scripts`：提到它们的 49 处都在注释里）。日志在 `target/publish-audit/review/gates/cp3/`：
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 87 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 583 s | 475 个测试程序；2 555 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 1 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 6 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 1 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 0 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 15 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+与检查点 2 比，通过的测试多 3 条（2 552 → 2 555），是 T3.3 在 `tests/publish_mdf_load.rs` 加的 3 条；测试程序多 1 个（474 → 475），是 T3.1 的探针 `examples/probe_what_staging_an_mdf_costs.rs`，里面没有用例。忽略数、`skipping: ` 行数、缺文档数、不带默认特性的 985 条都没变。第八道在 `summary.txt` 里的那一行这次正常出来了（检查点 2 那次没有）。
+
+**vendored 件自己的测试。** `vendor/oxidized-mdf` 不在工作区里，上面的门禁不跑它，另跑（`runs/cp3-vendored-all.log`，`cargo test --no-fail-fast`）：单元测试 46 条全过，其中 8 条是 T3.2 加的；文档测试 4 条全过；集成测试 20 条里 18 条过、2 条失败（`rows::case_5`、`number_of_rows::case_3`），就是 T3.2 的记录里改之前已经失败的那两条。计划给这一项写的命令是 `cargo test --lib`，即单元测试那一组，它是全过的。
+
+**对照矩阵。** `67529b7` 的发布构建（`target/publish-audit/bin/pid_publish_xml-67529b7-release.exe`，4 728 832 字节，SHA-256 `7b80540e…596e4f1d`，和 T3.3 量读数的是同一份：源码没有再变，cargo 没有重编）跑了一遍矩阵（`target/publish-audit/review/cp3/`，61 项，173 s，`runs/cp3-matrix.log`）。`compare.ps1 -A cp2 -B cp3`：717 个文件全部相同。阶段 3 的三个任务都没有改写出的东西。
+
+**读数。** 全部读数在 T3.3 一节的表里，这里只列几行（发布构建；`Export.mdf` 19 922 944 字节，`Export.dmp` 20 012 544 字节）：
+
+| | 改前（T3.1） | T3.2 之后 | T3.3 之后 |
+|---|---|---|---|
+| 暂存从镜像读入 | 435 953 664 字节，21.88 倍 | 24 207 360，1.22 倍 | 1 146 880，0.06 倍 |
+| `open_mdf_as_sqlite` | 459.6 ms | 69.9 ms | 6.4 ms |
+| `open_mtf_dump_as_sqlite` | 490.2 ms | 99.5 ms | 26.2 ms |
+| 命令行发布 A01，峰值工作集比 `Export.mdf` | 1.50 倍 | 0.49–0.52 倍 | 0.44–0.45 倍 |
+| 命令行发布 `TEST02_p` 整包，峰值工作集比 `Export.dmp` | 3.51–3.53 倍 | 2.52–2.54 倍 | 1.47–1.48 倍 |
+
+Q4 的两条线（读入 ≥ 3 倍，峰值 ≥ 2 倍）现在都在线下。整包剩下的 1.47–1.48 倍里有 1 倍是整个读进内存的 `Export.dmp`（T3.3 顺带记下的第 1 条）。只有这一个大小的库可量。
+
+**截断的文件。** T3.1 的三份截断样本在改后的代码上重跑了一遍（`cp3-checks/`），行为与 T3.1 记下的相同：
+
+- 前 1 000 页、前 2 000 页：探针退出 0，只认出 `T_InlineComp`、`T_SignalRun` 两张表，各 1 行（那一行假数据）；命令行 `--list-drawings` 退出 1，`error: prepare T_Drawing query: no such table: T_Drawing`。开库读了 54 页（442 368 字节），改前是把截断后的文件整个读进来。
+- 前 2 146 页：探针和命令行都退出 1，`IO Error: failed to fill whole buffer`。
+
+**故意改坏。** T3.3 提交前做的两次，改坏的是没改的装载，那一节原先写错了。这次在提交了的装载上补做了三次，三条新用例该红的时候都红了。经过和表在 T3.3 一节。
+
+**decimal 的 panic。** 位置实际看到了（T3.2 顺带记下的第 3 条已经更新）：`parse_decimal_opt`（`pages.rs:292`），精度 38、小数 6 位、值超出 96 位。A01 的库里有的 23 张发布表没有 `decimal` / `numeric` 列，这个库的发布走不到它；别的库版本没有看过。
+
+**说明。** `CHANGELOG.md` 的 `[Unreleased]` 加了阶段 3 一条：读数、公有接口变了什么、结果没变的依据、读取器原有而没改的五处。`AGENTS.md` 改了五处：页读取器那一段照现在的做法重写，新加「Known limits」五条，用例表改了两行，vendored 单测的条数 37 → 46，「Panic-free」那一条补了 decimal 这个例外。提交前把两处的数字和名字对着上面的记录过了一遍；`SalesOrderDetail` 是 panic 的那张表这一句，对的是 `cp3-checks/awlt-decimal-columns.txt`。
+
+**顺带记下的。**
+
+1. 读取器原有的五处（空表读出一行假数据、decimal 的 panic、只读第一条链、截断的系统表不报错、vendored 件的集成测试 2 条不过）这一阶段都没有动，改前改后一样。要不要改、先改哪一条，等你定。第一条改起来小（`0:0` 当作没有页），但会改变暂存出来的内容，`strict_rows_load_a01_equip_component_table` 要跟着改。
+2. `AGENTS.md` 里「297 of the 305 tracked root examples」这个数在 `a4b490e` 上就已经不对（当时是 301 / 309，加了 T3.1 的探针后是 302 / 310），留给 T6.4 一起对。
+3. 这台机器的构建不出 `.pdb`，panic 的回溯里全是 `<unknown>`。decimal 那一处是在读取器的一份临时拷贝里加打印看出来的，拷贝在 `target/publish-audit/review/t32-old-reader/`，不在仓库里。
+4. 换进一个源文件之后要确认 cargo 真的重编了：`Copy-Item` 保留原文件的修改时间，cargo 当它没变。T3.3 提交前那一次「新装载」的运行（`runs/t33-tests-new-loader.log`）跑在了旧的库上，应当就是这个原因。这一轮的故意改坏都用编辑和 `git checkout`，每次的日志里都有重编的那一行。
