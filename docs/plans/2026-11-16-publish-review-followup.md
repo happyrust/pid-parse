@@ -365,9 +365,9 @@ Recommended: 两处都做
 
 #### 检查点 6（收尾）
 
-- [ ] 全套门禁通过
-- [ ] 对照矩阵与基线逐项比过，差异只有 §6 表里写明的
-- [ ] 每个任务的提交号和读数填进 §9
+- [x] 全套门禁通过
+- [x] 对照矩阵与基线逐项比过，差异只有 §6 表里写明的（原有各项发布写出的文件和它们的 stdout、stderr、退出码是这样；`help`、`no-args` 两项里的用法说明，T2.2、T2.3、T4.3、T6.2 按各自的「做什么」改过，不在表里；矩阵从检查点 2 起多了两项带 `--strict` 的。逐个文件的来历见 §9）
+- [x] 每个任务的提交号和读数填进 §9
 
 ## 7. 不在本计划内
 
@@ -2105,7 +2105,7 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 
 `24e5149` 与 `6db94f7` 之间只差三份文档，所以这也是 `6db94f7` 的代码的读数。上一节里说这个数「没有量」的几句话是当时的情形，原话没有回头改，以这里为准；`CHANGELOG.md` 里说同一件事的两处跟着这一节一起动了：「用例」里的一句改成量到的数，「没有验到的」里的一条删了。另外七道没有在 `24e5149` 上再跑：它们在 `6db94f7` 上跑过（上一节），那之后改的只有文档。记这一节的提交也只改文档，它之后没有再跑门禁。
 
-### T5.1 exp 增补只编排一处（2026-11-16，`522e77b`）
+### T5.1 exp 增补只编排一处（2026-11-17，`522e77b`）
 
 计划给这一项写的依赖是「另一条线对 `run_pid` 的改动先进 `main`」。那条线还没有进（下一节「另一条线」）；这一项是你定了「现在做」之后，在这条分支上先做的。行号按 `522e77b`；「改前」指 `b2eb6b5`，它的代码就是 `6db94f7` 的。
 
@@ -2322,7 +2322,7 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 2. 发布构建的程序小了 2 048 字节（4 732 416 → 4 730 368）。
 3. 整包里一张图被拒绝，包里按 `SP_ID` 配上的图就都被拒绝，同一句话说六遍，八步都是这样（上面第三行对照）。T5.2 补钉「顺带记下的」说的是端口表一步，现在知道每一步都一样。
 
-### 检查点 5（2026-11-16）
+### 检查点 5（2026-11-17）
 
 阶段 5 的两项都做完了：T5.2（`a3e6a89`，补钉 `6db94f7`）先做，T5.1（`522e77b`）后做，次序和计划相反（见「顺序调整」）。
 
@@ -2371,7 +2371,7 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 2. 故意改坏的账：T5.1 不重复的 45 处，跑了 51 次；全绿 3 处，都先补了钉再提交（上一节）。
 3. 工作区里没提交的文件数，日志开头记的：`post51` 矩阵 0，这一遍门禁 0。门禁跑的中间改的三份文档，现在 `git status` 里就是这三份。
 
-### T6.2 命令行的小项（2026-11-16，`159b8a0`）
+### T6.2 命令行的小项（2026-11-17，`159b8a0`）
 
 计划这一条有四件事：`_Meta.xml` 只渲染一次；参考的 `_Data.xml` 只读一次；`print!` 换成会把写入失败报出来的写法；「输入必须是第一个参数」写进用法。另有两处是前面交到这一条来的：T4.6「没有改的」第 6 条（用法里 `-v` 那一段说窄了），T6.3「没有改的」第 3 条（命令行里把 `failed` 当成图来说的 6 处）。行号按 `159b8a0`；「改前」指 `1693139`，它的代码就是 `522e77b` 的。
 
@@ -2582,3 +2582,276 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 1. 提交前第一遍测试是红的，原因在脚本（见「绿」）。凡是把源文件换掉、跑完再用拷贝还原的脚本，还原之后都要把修改时间设为当前。T5.1 的 `pins-on-old.ps1` 有这一行（去看过，`:72`），那一份没有这个毛病；`t62-on-old.ps1` 是这次新写的，漏了，现在补上了。故意改坏的脚本不用拷贝，是把原来的字节重写一遍，文件的时间本来就是新的。
 2. 发布构建的程序大了 4 608 字节（4 730 368 → 4 734 976）。
 3. `t62wt2` 那一遍矩阵跑的时候，第二轮故意改坏和 42 次对照的后一遍也在跑。矩阵和对照用的是事先拷出来的发布程序，不读源文件；提交之后单独跑的 `post62` 和它 717 个文件全部相同。
+
+### T6.4 文档（2026-11-17，`21b0f72`）
+
+计划这一条有两件事：`src/publish/mod.rs` 模块文档的 Outstanding 一节照现状改；`README.md`、`AGENTS.md`、`CHANGELOG.md` 补上 `--strict`、覆盖报告的新段、原子写。验收两条：`check-missing-docs.sh` 通过；文档里的命令照着跑得出文档里的结果。
+
+**量。** 改之前先看这几份文档现在写着什么、照着跑会怎样。
+
+Outstanding 一节。计划说它「还是 `048a842` 时的样子」。这句话是从上一份计划（`docs/plans/2026-11-10-publish-export-completion.md`）里抄来的，那边写的时候是对的；到这条分支开出来的时候已经不对：`048a842` 之后模块文档又改过六次（`f968a40`、`46ecb18`、`b49e649`、`dbf40a9`、`7091e59`、`a4b490e`），其中 `7091e59` 就是专门把这份清单对齐的一次。所以没有整节重写，是逐条核对。`.pid` + exp 的清单拿 DWG 那张图带 dump 的门禁结果来对（矩阵里的 `dwg-exp-diff`，退出 1）：
+
+| 门禁报的 | 数 | 清单里对应的 |
+|---|---|---|
+| 对象多 | 6 | 按 `T_PIPELINE` 合成的 6 个 `PIDPipeline`（S10） |
+| 对象少 | 6 | 参考里的 5 个 `PIDPipeline`（S10）；1 个 `PIDBranchPoint`（S12） |
+| 关系多 | 6 | 6 条 `PipingConnectors`（S10） |
+| 值少 | 11 | `PipingComponentType1`–`3` 共 3 处（S8，叶子不在 `LEAF_LEVELS` 里）；`CatalogPartNumber` 1 处（这份 dump 里是 NULL，不是哪一步漏的）；`InsulThickSrc` 6 处、`SlopedPipeDirection` 1 处，清单里没有 |
+
+少的 11 处值逐处是什么，`tests/publish_from_pid.rs:1572` 起的注释里早就列着。清单漏的是那两个枚举：`T_PIPERUN` 的 `INSULATIONTHKSOURCE` 和 `SLOPEDIRECTION`，没有哪一步读这两列（`codelist_values` 的属性表里没有它们）。清单其余几条（S7 的两个属性、零散的几个值、S17）这道门禁不报，对的是上一份计划里各自那一行，没有另外量。数据库线只有一段，说三件事：只在 A01 上核过；DWG 一侧的用例跳过；两个映射是暂定的。阶段 2 加的东西（写少的两种、`database_shortfalls`、`--strict`、`shortfalls`）一句没有。
+
+README。发布一节（`### Backup 解析 + Publish Data XML 生成`）里搜 `--strict`、`shortfalls`、`.tmp`，一处都没有。把这一节的命令和它讲的话照着跑了 27 次（`t64-docs.ps1`，`runs/t64-before/`，`a191923` 的发布构建），两处不对：
+
+1. 第 1 条命令 `cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf`。`--out` 给的是输出目录。照着跑：退出 0，得到一个名叫 `Export.mdf` 的目录，里面是 `Export.msci.json`（537 字节）、`Export.msci.bin`（3 304）、`Export.msda.bin`（19 923 952），没有 `.mdf`；要 `.mdf` 得加 `--as-mdf`。第 2 到 6 条命令的输入都是它本该写出的 `Export.mdf`。
+2. 整包门禁的判词。README 写三种（`clean`／`dirty`／`unpaired`）。程序有第四种 `revision mismatch`（参考是同名图的另一个修订，这张图不比），末尾还有一行汇总；用法里写着，README 没有。
+
+`AGENTS.md`。`:1354` 的「297 of the 305 tracked root examples」：`git ls-files` 数下来，根目录的 example 是 310 个，`probe_*` 302 个，另外 8 个是 `byte_audit_demo`、`dump_symbol_geometry`、`mermaid_demo`、`oracle_exp_schema`、`parse_walkthrough`、`psm_dump`、`publish_walkthrough`、`roundtrip_walkthrough`（检查点 3 记过这个数不对，留到这里）。`--strict` 和 `shortfalls` 改之前只出现在讲用例的那张表（Test gates）里，架构表讲代码的三行（数据库线、共用、命令行）没有提。原子写在架构表整包一行已经有了（T4.3 写的）。
+
+`CHANGELOG.md`。`--strict` 和 `shortfalls` 在 T2 的条目里、文件整份到位在 T4 的条目里已经写过，这里只加 T6.4 自己的一条。
+
+**改。** 一个提交（`21b0f72`），3 个文件，+105／−14 行：`README.md` +69／−5，`src/publish/mod.rs` +32／−5，`AGENTS.md` +4／−4。`CHANGELOG.md` 的条目和这一节在记录的提交里（T6.2 也是这样分的）。
+
+README，都在发布一节：
+
+- 第 1 条命令改成 `--out . --as-mdf`，注释写明 `--out` 给的是目录、旁边另有三个文件。
+- 第 6 条命令的注释加半句：有差异退出 1，A01 对仓库里它的参考现在就有。
+- 新增第 9 条命令：A01 带 `--strict`；A01 写得完整，退出 0。
+- 「三条输入线」的表下面加一条：单张 `.pid` 的 `<图名>` 是文件名去掉扩展名；整包里每张图的名字和文件看 `_Index.json` 的 `name` 和 `files`。
+- 新小节「命令行约定与退出码」：输入是第一个参数；退出 0、1、2 各是什么。三句和命令行模块文档讲退出码的那一段（`src/bin/pid_publish_xml.rs:29`）一一对应。
+- 新小节「数据库线写得不完整时：告警、`--strict` 与 `shortfalls`」：哪两样写得出来、写不完整；每样一行 `warning:`；`--strict` 退出 1、文件不变；小样本；`--strict` 管谁不管谁；整包里的告警和 `problems`；不在这本账里的两样；`shortfalls` 一段的 JSON 原文和各个键。
+- 新小节「文件怎么落盘」，五条：整份写到临时名再改名；整包里一张图的三件；被打断之后可能留下的；`--out-dir` 不先清空；没有做的。对的是 `write_atomic`、`write_three` 的文档和用法里的那一段。
+- 门禁一节：判词补成四种，加上汇总行；说退出 1 的那一句补上「参考是另一个修订」。
+
+`src/publish/mod.rs`，只动 `//!`：
+
+- Outstanding 的清单加一条：管道上的两个枚举 `IInsulatedItem.InsulThickSrc`、`ISlopedPipingItem.SlopedPipeDirection`，没有哪一步从 dump 里读，这张图自己的 `--diff-against` 把它们报成少的值。
+- 数据库线：在原来那一段前面加两段、中间一个两条的清单。写的是：这条线（`.mdf`、`.sqlite`、SQL Server 的备份包）不拒绝图，写不全的就写少；类型没有专用写法的对象（`Exchanger`、`Mechanical`、`EquipmentOther`、`OPC`，和 `catalog` 没有列的类型）写成只带 UID 的 `<PIDItem>`；有一端是对象的 `T_Relationship` 行，`<Rel>` 的定义只凭两端的类型；`database_shortfalls` 数这两样，命令行每样一句告警、带 `--strict` 退出 1，SQL Server 的包写在 `_Coverage.json` 的 `shortfalls` 和 `_Index.json` 的 `problems` 里；库里没有、读图又可以不要的表被跳过，`-v` 点名，这本账和 `--strict` 都不算它。原来那一段留着，开头从「The database line」改成「That line」。
+- 末尾加一段：2026-11-16 的审核找到了什么、留着没动的是什么，在这份计划的 §9。
+
+`AGENTS.md`：
+
+- 架构表「Publish DB line」一行末尾加一句：这条线不拒绝图，写得不完整的见下一行。
+- 「Publish shared」一行加 `DatabaseShortfalls`：记的是哪两样；`xml_writer::database_shortfalls` 用写手分派时的同一套判断来数；命令行每样一句告警；SQL Server 的包写进 `<Name>_Coverage.json` 的 `shortfalls` 一段和 `_Index.json` 的 `problems`；被跳过的可选表和写了两次的 UID 不算在里面。
+- 「CLI entry」一行加 `--strict`（数据库输入和备份包目录接受它，`.pid` 输入和 `--list-drawings` 拒绝它、退出 2；它把写得不完整的图变成退出 1，不改文件）和退出 0、1、2。
+- `:1354`：297／305 改成 302／310。
+- 记录的提交里另改一处：架构表整包一行的「a drawing's three all or none」后面补上「against a write that fails」和被打断时会留下什么。T4.3 的 `b69ce84` 在用法、模块文档和 `write_three` 上改过这句话，这一行当时没有跟着改。
+
+**验。**
+
+`check-missing-docs.sh` 在改后的工作区上通过（`current=0, baseline=0`）。一起跑的 `cargo fmt --all -- --check` 无差异；clippy 0 条警告，`pid-parse` 是重新检查过的（`gates.ps1 -Label t64-pre -Only 0[345]`，`gates/t64-pre/`）。提交之后的全套门禁在下一节。
+
+README 的命令照原文跑（`t64-readme.ps1`）。脚本按围栏从 README 里取出发布一节的三个代码块：编号命令（`README.md:104` 起 41 行）、小样本（`:177` 起 7 行）、`shortfalls` 的 JSON（`:193` 起 10 行）。编号命令按 `# N.` 切开，每条的原文连同注释和续行符交给 Git Bash 执行，就是 README 写的 `cargo run`（dev 构建）；只替换 `<UID>`、`<backup-dir>`、`<dir>` 三个占位符。输入按 README 写的名字摆在临时目录里：`Export.dmp`（`TEST02_p` 的 MTF 备份；第 7 条用的是 Oracle 的那一份）、`reference/A01_Data.xml`、`drawing.pid`、`SPPIDDataMap.xml`。小样本用的是相对路径 `tests/fixtures/publish-shortfalls.sql`，所以在仓库根目录跑；它写出的 `shortfalls.sqlite` 和 `SHORT-01_Data.xml` 跑完就删，跑完 `git status` 里没有多出文件。11 次运行：
+
+| 命令 | 退出 | 看的是什么 |
+|---|---|---|
+| 1 | 0 | `Export.mdf` 是文件，和提交着的 `extracted/Export.mdf`（19 922 944 字节）逐字节相同；旁边是 `Export.msci.bin`、`Export.msci.json`、`Export.msda.bin` |
+| 2 | 0 | 列出 1 张图（`Total: 1 drawing(s).`） |
+| 3 | 0 | `A01_Data.xml` 8 482 字节 |
+| 4 | 0 | `A01_Meta.xml` 1 481 字节；`A01_Data.xml` 和第 3 条写的一样 |
+| 5 | 0 | `DWG_Data.xml` 8 549 字节 |
+| 6 | 1 | 打印差异，退出 1；README 现在写着 |
+| 7 | 0 | `out/` 下三件：`drawing_Data.xml` 67 010、`drawing_Meta.xml` 1 484、`drawing_Coverage.json` 4 614 字节 |
+| 8，Oracle 的包 | 0 | `Published 7 drawings … (0 failed, 1 without a DrawingNo)`；22 个文件，其中 `_Index.json` 1 个 |
+| 8，SQL Server 的包 | 0 | `A01_Coverage.json` 的末尾就是 README 里那段 JSON，一字不差 |
+| 9 | 0 | `A01_Data.xml` 和第 3 条写的逐字节相同 |
+| 小样本 | 1 | `pid_publish_xml` 在 stderr 上最后说的三行和 README 抄的一样 |
+
+README 改一轮跑一遍，共四遍（`runs/t64-readme/`、`t64-readme2/`、`t64-readme3/`、`t64-readme4/`）；上面是最后一遍，跑在提交的文本上（29 745 字节，SHA-256 `65a311ff…`）。第一遍有一项对不上：小样本经 `cargo run` 跑，stderr 的最后一行是 cargo 自己的 `error: process didn't exit successfully …`，README 抄的三行排在它前面。README 那句注释改成「`pid_publish_xml` 在 stderr 上最后说的三行（经 cargo run 跑，后面还跟着 cargo 自己的一行 error:）」，脚本比的时候去掉 cargo 的那一行。第 7 条写出的文件名也是这一遍看出来的：文件照字面叫 `drawing.pid`，三件就叫 `drawing_*`；README 原来只写 `<图名>`，没说它从哪来。
+
+README 新写的话，用发布构建一句一句量（`t64-docs2.ps1`，`runs/t64-after/`，33 次；没有 dump 的包另量 2 次，`runs/t64-nodump2/`）：
+
+| README 说的 | 量到的 |
+|---|---|
+| 第 1 条命令的旧写法写不出 `.mdf` | 退出 0，`Export.mdf` 是目录，里面没有 `.mdf` |
+| `--strict` 遇到写得完整的图 | A01 退出 0，文件和不带它时逐字节相同 |
+| 小样本，不带 `--strict` | 退出 0，两句 `warning:`；`SHORT-01_Data.xml` 3 532 字节，里面 1 个 `<PIDItem>` |
+| 小样本，带 `--strict` | 退出 1，最后一行是 `--strict: the drawing is not written in full (see the warnings above); exit 1.`；文件逐字节相同 |
+| `--strict` 配 `.pid` 输入 | 退出 2：`argument error: a .pid input is read without a plant database: --strict does not apply` |
+| `--strict` 配 `--list-drawings` | 退出 2：`argument error: --list-drawings is mutually exclusive with --strict` |
+| `--strict` 配 SQL Server 的包 | 退出 0，写出的文件和不带它时逐字节相同 |
+| `--strict` 配 Oracle 的包 | 同上 |
+| `--strict` 配没有 dump 的包 | 把 Oracle 那个包去掉 `Export.dmp` 拷一份：带和不带都退出 1，stderr 相同，19 个文件逐字节相同 |
+| 被跳过的可选表只有 `-v` 点名 | 小样本不带 `-v` stderr 5 行，带 `-v` 15 行；多出的 10 行每行一张表，`<表>: not in the database, skipped`；退出码不变 |
+| 判词四种，末尾一行汇总 | Oracle 的包对只放了一张参考的目录：6 张 `unpaired`，1 张 `dirty`，退出 1，stderr 末尾一行汇总。SQL Server 的包对 A01 的参考：`dirty`。把 DWG 的参考改名成 `A01_Data.xml` 放进参考目录：`A01: revision mismatch`，这张图不比，退出 1 |
+| 旗标写在输入前面 | 退出 2，`argument error: unknown flag: <路径>` |
+| dump 里没有这张图的行 | 退出 2，`… has no T_DRAWING row for DocUID …; the .pid is not this dump's revision` |
+| 目标是设备时原地写 | `--out NUL`：退出 0，`Wrote NUL (8479 bytes).`，没有留下文件 |
+| `--out-dir` 不先清空 | 往已有的输出目录再跑一遍：退出 0，文件名和字节不变，事先放进去的一个旧文件还在 |
+| 不留临时文件 | 这些运行的目录里 `.tmp` 文件 0 个 |
+
+没有 dump 的那两次都退出 1，和 `--strict` 无关：7 张图里 6 张写出，1 张失败（`zcgc/A3jqz/001.pid`，`_Index.json` 记的原因是 `no P&IDAttributes row carries a DrawingNo, and T_DRAWING.PATH does not match`）。带 dump 时 7 张都写出。
+
+这一条不改行为，也没有加用例，没有红绿；改前改后的对照就是上面的 27 次和 33 次。
+
+**对照矩阵。** 两遍：
+
+- 提交之前，带着三份改动的工作区（`wt-matrix.ps1 -Label t64wt -Tag t64wt`，`runs/t64wt-matrix.log`）：对 `post62`，717 个文件全部相同。
+- 提交之后，干净的 `21b0f72`（`cp-matrix.ps1 -Label post64`，`runs/post64-matrix.log`，`dirty files: 0`）：对 `post62`、对 `t64wt`，都是 717 个全部相同。
+
+两遍用的发布程序是同一份字节（4 734 976 字节，SHA-256 `b573183d…`）：提交前后源文件没有变，cargo 没有重新链接。大小和 T6.2 的那一份一样。
+
+**超出计划原文的。**
+
+1. README 第 1 条命令和判词少一种，都不是这一轮整改带来的，是照着跑才跑出来的；改了。
+2. README 多写了三样计划没有点的：退出码一小节；`.pid` 的 `<图名>` 从哪来；第 6 条命令的退出码。都是照着跑的时候对不上、或者 README 没说清的地方。
+3. Outstanding 的清单加了一条（两个枚举）。
+4. 日期。T5.1、检查点 5、T6.2 三节的标题原来写 2026-11-16，提交是本机时间 11-17 凌晨做的（`522e77b` 01:13，`1693139` 01:46，`159b8a0` 02:27，`a191923` 02:43）。前面各节用的都是本机日期，这三节照 `git log` 改成 11-17；`CHANGELOG.md` 里 T5.1、T6.2 两条的标题同改。
+5. 新写的脚本，都在 `target/publish-audit/review/` 下，不进 git：`t64-docs.ps1`、`t64-docs2.ps1`、`t64-readme.ps1`。
+
+**没有改的。**
+
+1. `AGENTS.md` `:1760` 起讲 `cargo fmt --all` 命令行长度的一段没有动。它的数（367 个文件，「305 examples, 51 tests」）写明是 2026-11-13 在当时的树上量的；现在是 310 个 example、53 个测试文件。那一段的结论（检出路径长过多少个字符 `cargo fmt` 就跑不了）要换几个长度的路径各检出一份才能重量，这次没有做，所以数也没有动。这条分支的检出路径是 40 个字符，`cargo fmt --all -- --check` 是过的。
+2. README 发布一节以外的命令没有跑，也没有改。
+3. `CHANGELOG.md` 早先各条里「T6.4 没有做」之类是当时的话，没有回头改。
+
+**没有验的。**
+
+1. SQL Server 的包里有图写得不完整：`shortfalls` 不是 0、带图名的告警、`_Index.json` 的 `problems`、整包带 `--strict` 退出 1。仓库里的 SQL Server 包只有 A01 一张图，写得完整，命令行上造不出来。README 这几句对的是代码、用法和库内的用例（T2.3 的几条，命令行单测 `strict_turns_a_package_drawing_written_short_into_exit_one`）。
+2. 整包里同一个 UID 写了不止一次：没有这样的包，对的是 `backup_package.rs:136` 起的文档。
+3. 运行被打断之后留下什么、不 `fsync`：对的是 `write_three`、`write_atomic` 的文档和 T4.3 的记录，没有真去打断一次。
+4. README 发布一节以外的命令。
+5. 只在 Windows 上经 Git Bash 跑过；别的 shell 和 Linux 没有跑。README 的代码块标的是 `bash`，小样本里的 `<` 重定向在 PowerShell 5.1 里不能用。
+6. Outstanding 清单里门禁不报的几条没有另外量（见「量」）。
+
+**等你定的。** 这一节新出来的两条：
+
+1. 三节标题的日期改成了 11-17（「超出计划原文的」第 4 条）。不想改的话说一声，改回去。
+2. `AGENTS.md` 讲 `cargo fmt` 命令行长度的那一段要不要重量（「没有改的」第 1 条）。
+
+**顺带记下的。**
+
+1. 计划里「还是 `048a842` 时的样子」是从上一份计划抄来的旧话。写下一份计划时，引用前一份的现状描述之前先对一下 `git log`。
+2. PowerShell 里函数不要叫 `H`：`h` 是 `Get-History` 的别名，别名排在函数前面。补量没有 dump 的包时第一次因为这个停在半路（`runs/t64-nodump/`，只跑了不带 `--strict` 的那一次），换了名字重跑（`runs/t64-nodump2/`）。
+
+### 检查点 6（2026-11-17）
+
+阶段 6 的四项都做完了：T6.1（`f5b36c5`）和 T6.3（`7e3e60d`）提到 T5.1 前面做了（见「顺序调整」），T6.2（`159b8a0`）和 T6.4（`21b0f72`）在 T5.1 之后做。计划里的 23 个任务到这里都做过了，这一节是收尾。
+
+**门禁。** `gates.ps1 -Label cp6`，在 `21b0f72` 上跑，开跑时工作区是干净的（`dirty files: 0`），03:18 开跑，03:46 跑完。跑的中间：改了三份文档（这份计划、`CHANGELOG.md`、`AGENTS.md`）；在 `target/publish-audit/review/` 下写了两个只读的脚本（`test-log-diff.ps1`、`gate-readings.ps1`），跑了它们和开跑前一分钟写的 `cp6-lineage.ps1`，结果也写在那里；读了门禁自己的日志看进度；跑了 `git fetch origin main` 和下面「另一条线」里的试并。源码没有动，cargo 没有另跑，发布程序没有再跑。另有一次想量 `target/publish-audit/review/` 占多少盘，把这个目录整个列了两遍，90 秒没有列完，数没有量出来；它和测试那一道抢了一阵磁盘。
+
+这三份文档没有哪段代码去读，这一回是这样查的：在 `src`、`tests`、`examples`、`benches`、`build.rs`、`pid-plot`、`.github/scripts` 里 `git grep` `README`、`AGENTS`、`CHANGELOG` 和这份计划的文件名，一共 10 行，8 行是注释；另 2 行是 `pid-plot` 两条用例里的提示语，说的是 `docs/baselines/README.md`，另一份文件，也只是一句话，没有去打开。`*.toml` 和 `*.sh` 里提到这几个名字的只有 `vendor/` 下四个包的 `readme = "README.md"`，说的是它们自己的。前几个检查点记的 51、52 处是另一个式子数的，那个式子这一回没有照原样重跑。日志在 `target/publish-audit/review/gates/cp6/`。
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 110 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 555 s | 475 个测试程序；2 613 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 2 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 5 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 12 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 2 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 1 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 4 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+上一次全量是检查点 5 在 `522e77b` 上的那一遍，2 601 通过；T6.2 提交之后只跑过它自己那一组（T6.2「绿」，1 771 通过），全量留到了这里。这一遍多 12 条（2 601 → 2 613），就是 T6.2 加的那 12 条：拿 `test-log-diff.ps1` 把两遍的日志按测试程序逐个比，474 个程序里通过数变了的只有两个，命令行程序自己的单测 5 → 7，`tests/publish_xml_cli.rs` 37 → 47。T6.4 只动文档和 `//!` 注释，没有加用例。测试程序还是 475 个，`test result:` 还是 474 行，都是 `ok`。忽略数、缺文档数、不带默认特性的 985 条都没变。
+
+`skipping: ` 还是 21 行，出自同样的 6 个测试程序，各自的行数也和检查点 5 一样：`parse_real_files` 1，`publish_dwg_generated_parity` 4，`publish_dwg_mirror` 4，`publish_interface_parity` 7，`publish_meta_parity` 2，`publish_rel_parity` 3。其中 13 行是本机没有 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`，7 行是 A01 参考里没有的类，1 行是没有成对的 `.pid`。T6.2 那 12 条所在的两个程序一行都没有。
+
+用时：构建 110 s 对 120 s，测试 1 555 s 对 1 525 s，clippy 2 s 对 12 s，fmt 5 s 对 5 s，缺文档 12 s 对 8 s，byte-audit 4 s 对 20 s。测试慢的 30 s 是不是上面列目录那一次抢的，没有查。clippy 和 byte-audit 快，多半是它们要编的东西在 T6.4 提交前已经编过（`t64-pre` 的 clippy，照 README 原文跑的那几遍 `cargo run`），也没有另查；byte-audit 的日志和检查点 5 一样是 103 行，末尾是 `completed comparisons=3, skipped=0`。
+
+**对照矩阵和基线。** T6.4 的两遍在上一节：提交前在工作区上的 `t64wt`，提交后在干净的 `21b0f72` 上的 `post64`，和 T6.2 之后的 `post62` 比都是 717 个文件全部相同。`post64` 03:18 跑完，这一遍门禁紧接着开跑；门禁之后没有再跑矩阵，这中间改的只有文档。
+
+和 T0.1 的基线（`base`）比，用的是这一节新写的 `cp6-lineage.ps1 -First base -Last post64`（只读，结果在 `runs/post64-lineage.txt`）。它把 `base` 到 `post64` 的 33 遍矩阵按先后排开，两头不一样的文件，逐个找出它的字节是在哪一遍变的。
+
+基线 59 项、703 个文件，现在 61 项、717 个文件。两头都有的 700 个里 691 个相同、9 个不同；只在基线里的 3 个；只在现在这一头的 17 个。`compare.ps1` 另算的一遍是同样的几个数（`runs/post64-matrix.log`）。
+
+| 文件 | 哪一遍变的 | 哪个任务 | §6 的表 |
+|---|---|---|---|
+| `ij-short-diff` 的 `exit.txt`、`stdout.bin`、`stderr.bin` | `t11` | T1.1 | 阶段 1：只在用短路径调用时变 |
+| `ij-short-outdir` 的 `stderr.bin`；它写出的三个文件从 `IB031~1_*` 换成长名字（少 3 个，多 3 个） | `t11` | T1.1 | 同上 |
+| `pkg-test02`、`pkg-test02-gate` 的 `out/A01_Coverage.json` | `t23` | T2.3 | 阶段 2：数据库线的 `_Coverage.json` 多一段 |
+| `a01-strict` 的 6 个文件、`pkg-test02-strict` 的 8 个文件（多 14 个） | `cp2` | 矩阵从这一遍起多的两项，带 `--strict` 跑 | 不在表里：是矩阵多了两项，原有的项没有因此变 |
+| `help/stdout.bin`、`no-args/stderr.bin` | `t22`、`t23`、`t43`、`t43b`、`t62wt`、`t62wt2` | T2.2、T2.3、T4.3、T6.2 改的用法说明 | 不在表里，见下 |
+| `summary.txt` | 上面每一遍 | 矩阵自己的汇总表，每项一行：退出码、文件数、stdout 和 stderr 的字节数 | 不在表里：它抄的是上面各项 |
+
+9 个不同的是第一行 3 个、第二行 1 个、第三行 2 个、第五行 2 个、第六行 1 个。两头比，别的文件一个字节不差。
+
+检查点 6 的第二个框照字面读，不成立的只有用法说明这一处。§6 的表给阶段 2 写的是「数据库线的 `_Coverage.json` 多一段」，给阶段 4、阶段 6 写的是「不变」；T2.2、T2.3、T4.3、T6.2 各按自己的「做什么」改过用法说明，打印它的两项（`help`、`no-args`）跟着变了六遍。每一遍都记在当时那一节的「对照矩阵」里，检查点 2、检查点 4 的框也是带着这句话勾的。这两项之外，原有各项写出的文件、stdout、stderr、退出码和基线的差别都在 §6 的表里。框勾上了，括号里写明；这样读对不对，和 T6.2「等你定的」第 1 条是同一件事。
+
+**每个任务的提交和记录。** 这条分支比 `main` 多 36 个提交（记这两节的这一个不算）：计划 2 个（`493b3b7`，细化阶段 2 的 `6e93415`），任务 25 个，记录 9 个。23 个任务在 §9 各有一节，除 T0.1 外标题上都带提交号。每一节是哪个提交记进来的，是拿 `git log -S` 按标题查的：
+
+| 任务 | 提交 | 记录在 |
+|---|---|---|
+| T0.1 | 没有：矩阵和基线在 `target/` 下，不进仓库 | `493b3b7`（随计划一起） |
+| T0.2 | `192f7fe` | `180bee8` |
+| T1.1 | `d65dc74` | `180bee8` |
+| T1.2 | `acc3f09` | `180bee8` |
+| T2.1 | `a3908ac` | `0f6aa9b` |
+| T2.2 | `c427901` | `0f6aa9b` |
+| T2.3 | `ace68c4` | `0f6aa9b` |
+| T2.4 | `c974f47` | `0f6aa9b` |
+| T3.1 | `6a47804` | `fe52012` |
+| T3.2 | `9dbfff8` | `9c09065` |
+| T3.3 | `67529b7` | `9c09065` |
+| T4.1 | `b3d3fd1` | `3e0ddcf` |
+| T4.2 | `b77384f` | `3e0ddcf` |
+| T4.3 | `9d24529`、`ecfc5c4`、`b69ce84` | `3e0ddcf` |
+| T4.4 | `7b98510` | `3e0ddcf` |
+| T4.5 | `79250b8` | `3e0ddcf` |
+| T4.6 | `b7eeaf7` | `3e0ddcf` |
+| T5.1 | `522e77b` | `1693139` |
+| T5.2 | `a3e6a89`，补钉 `6db94f7` | `24e5149` |
+| T6.1 | `f5b36c5` | `24e5149` |
+| T6.2 | `159b8a0` | `a191923` |
+| T6.3 | `7e3e60d` | `24e5149` |
+| T6.4 | `21b0f72` | 记这两节的这一个提交 |
+
+检查点 1 到 5 的记录分别在 `180bee8`、`0f6aa9b`、`9c09065`、`3e0ddcf`、`1693139`；`b2eb6b5` 记的是 `24e5149` 之后补跑的全量测试。T4.3 是三个提交，T5.2 是两个，计划是一个任务一个（下面「等你定的」第 2 条）。
+
+**另一条线。** 刚 `git fetch origin main` 过：`main` 和 `origin/main` 都还在 `a4b490e`。那条线（`export-closeout-20261115`）还在 `d329c2f`，比 `main` 多 11 个提交，没有并进去。这条分支比 `main` 多 36 个提交（记这两节的这一个不算），少 0 个，没有 push 过，也没有设上游。
+
+- 又试并了两次（`git merge-tree --write-tree`，只往对象库里写树，工作区、索引、引用都没动）：一次拿 `21b0f72`；一次连没提交的三份文档一起算，拿的是 `git stash create` 造的一个不挂在任何引用上的提交（`git stash list` 还是空的）。两次的冲突都只有 `CHANGELOG.md` 一个文件；自动合并的 9 个：`AGENTS.md`、`Cargo.toml`、`docs/baselines/publish-diff-accepted.json`、`src/bin/pid_publish_xml.rs`、`src/publish/catalog.rs`、`src/publish/pid_load.rs`、`tests/common/mod.rs`、`tests/publish_diff_accepted_baseline.rs`、`tests/publish_from_pid.rs`。第二次试并之后又改过的是这份计划和 `CHANGELOG.md`。
+- T6.4 改的三个文件里，那条线相对 `main` 动过的只有 `AGENTS.md`，自动合并；`README.md` 和 `src/publish/mod.rs` 它没有动。
+- 检查点 5 读合并出来的树读到的头两件事，在第二次试并出来的树上又读了一遍，没有变：那条线给 `oracle-exp stored values` 那一行加的半句，落在 `if let Some(stored) = &attached.stored_values {` 那一块里面，读起来是对的；`tests/publish_from_pid.rs` 的 `DWG_EXP_SAYS` 第四句还是以 `0 left out unspelled` 结尾，所以合并之后钉住这一行的那两条用例会红，要跟着那条线改期望值。第三件（那条线改了写出来的值，对照矩阵会和这条分支的不一样，T5.1 的用例要在合并的结果上整个重跑）是那条线自己的提交里的事，它没有动过。还是没有编译，没有跑。
+- T6.4 这边多出一件：`README.md` 第 7、第 8 条命令走的是 Oracle exp 的增补，那条线改的正是这一段写出来的值。合并之后这两条要照 T6.4 的办法重跑一遍，上一节实测的表里和这两条有关的读数会跟着变。README 的正文里没有写那条线会改的那几个数。
+
+**等你定的。** 到收尾还开着的 26 条收在一处，按事情分了四组；括号里是它原来记在哪一节。
+
+两条线和提交：
+
+1. 两条线怎么合（检查点 5 第 1 条，上面「另一条线」）。git 只会报 `CHANGELOG.md`；要改的期望值、要重跑的矩阵和 README 命令，它报不出来。
+2. T4.3 是三个提交，T5.2 是两个，计划是一个任务一个；要合成一个得改写历史，没有做（检查点 4 第 2 条，「T5.2、T6.1、T6.3 之后的门禁」第 10 条）。
+3. T5.1、检查点 5、T6.2 三节标题的日期改成了 11-17，对上 `git log`；不想改就改回去（T6.4 第 1 条）。
+
+行为上要不要改：
+
+4. 整包里把一个 UID 写了两次的图，要不要退出 1，或者归 `--strict` 管（检查点 4 第 1 条）。
+5. 单图模式的 `--out-dir` 三个文件不是「都有或都没有」；运行开始时不删旧的 `_Index.json`；这一轮失败的图不清上一轮留下的文件（检查点 4 第 3 条）。
+6. `.pid` 条目的上限 512 MiB 不能从命令行调；别处解压 zip 条目的三处没有设上限（检查点 4 第 4 条）。
+7. 不带 `-v` 时库里缺子表仍然无声，`--strict` 不管（检查点 4 第 5 条）。
+8. SQL Server 的包，`PlantData` 的 zip 以签名开头但打不开：图一张不少地写出来，摘要却说 `1 failed`，退出 1（「之后的门禁」第 2 条）。
+9. 不以 zip 签名开头的 `PlantData` 文件整个被跳过，退出 0，哪里都不说（同上第 3 条）。
+10. 没有配上条目的图，`_Coverage.json` 的 `source` 是 `":"`（同上第 4 条）。
+11. 没有 dump 的包里，同一张图以两个条目名各出现一次，两份都写出来，`problems` 里没有话（同上第 6 条）。
+12. 端口表缺列这一类整包的失败，一张图一张图报，同一句话说多遍（同上第 8 条）。
+13. 失败的图那一行不带已经查到的 UID 和 dump 的行（同上第 9 条）。
+14. `--datamap` 要不要改成一上来就读（检查点 5 第 2 条）。
+15. 整包里库里存着的值有列读不到，要不要在包一级说，`--strict` 要不要管（检查点 5 第 3 条）。
+16. 整包跑完的那一行摘要里的 `failed` 改不改（T6.2 第 2 条）。
+17. `--help` 写不进去要不要报（T6.2 第 3 条）。
+18. 整包门禁写不进去时，要不要先把摘要说了（T6.2 第 4 条）。
+19. 旗标放在输入前面时，要不要另给一句话（T6.2 第 5 条）。
+
+代码和用例：
+
+20. T6.1 的做法：照现在这样留着，还是照字面做 A 或 B（「之后的门禁」第 1 条）。
+21. SQL Server 一支的记账要不要也并进 `PublishTally`（同上第 5 条）。
+22. 还没有用例看着的三处：`_Meta.xml` 渲染失败、统计失败两个出口，交接重复 UID 的那一行（同上第 7 条）。
+23. 第三份编排要不要改成调 `attach_dump`（检查点 5 第 4 条）。
+24. 读取器原有的五处要不要改、先改哪一条（检查点 3「顺带记下的」第 1 条）。
+
+验收和文档：
+
+25. 「对照矩阵逐字节不变」和「差异只有 §6 表里写明的」照「用法说明之外」来读，对不对（T6.2 第 1 条，这一节「对照矩阵和基线」）。
+26. `AGENTS.md` 讲 `cargo fmt` 命令行长度的那一段要不要重量（T6.4 第 2 条）。
+
+前面记过、已经了结的：检查点 4 第 6 条（用法里 `-v` 的说明）T6.2 改了；「之后的门禁」第 11 条（`failed` 的 6 处）T6.2 改了 5 处，剩的一处是上面第 16 条；T5.1 等不等那条线，你定了不等。
+
+**接下来。** 计划里的 23 个任务和 6 个检查点都做完了。没有 push，`main` 没有动，另一条线没有碰。往下先要定的是两条线怎么合（上面第 1 条）；push 不 push、往哪里 push，也等你说。
+
+**顺带记下的。**
+
+1. 通过数的账：检查点 5 是 2 601，量过；T6.2 加 12 条，这一遍 2 613，量过，按测试程序逐个对过。T6.4 没有加用例。
+2. 故意改坏的账：T6.2 不重复的 26 处，跑了 30 次（T6.2 一节）；T6.4 只动文档，没有红绿，也没有故意改坏。
+3. 工作区里没提交的文件数，日志开头记的：`post64` 矩阵 0，这一遍门禁 0。门禁跑的中间改的三份文档，现在 `git status` 里就是这三份。
+4. `skipping: ` 的行不能拿整行去比：同一个测试程序里几条用例并行着打印，这一句会和别的用例的 `test … ...` 接在同一行上，两遍接的地方不一样。这一回是按「出自哪个程序、说的是哪个文件或哪个类」来对的。
+5. 这一节用的三个新脚本都只读，在 `target/publish-audit/review/` 下，不进仓库：`cp6-lineage.ps1`（矩阵两头不一样的文件是哪一遍变的），`test-log-diff.ps1`（两份测试日志按程序比通过数），`gate-readings.ps1`（一遍门禁的读数）。后一个先在检查点 5 的日志上跑过，读出来的数和检查点 5 记的一样。

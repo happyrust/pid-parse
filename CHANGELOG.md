@@ -2,7 +2,32 @@
 
 ## [Unreleased]
 
-### publish：stdout 写不进去是一个错误，不再是 panic；命令行另三个小项（审核整改 T6.2，2026-11-16）
+### publish：文档照现状补齐：`--strict`、`shortfalls`、文件整份到位；README 的命令照原文跑过，改对两处（审核整改 T6.4，2026-11-17）
+
+**只改文档，程序没有动；对照矩阵 717 个文件逐字节相同。`README.md`、`AGENTS.md` 和 `src/publish/mod.rs` 的模块文档补上了这一轮整改加的三样：数据库线写得不完整时的告警和 `--strict`；SQL Server 包覆盖报告里的 `shortfalls` 一段；文件整份写好再到位。README 发布一节的命令块从文件里原样取出来跑了一遍，跑出两处这一轮之前就不对的地方，一起改了：第 1 条命令写不出 `.mdf`；整包门禁的判词少写一种。** 计划给这一条写的起点是模块文档的 Outstanding 一节「还是 `048a842` 时的样子」。量下来不是：分支点之前 `7091e59` 已经专门把这份清单对齐过一次，`a4b490e` 又改过。所以这次是逐条核对，补了一条，重写了数据库线的一段。
+
+- **README 第 1 条命令。** 原来是 `cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf`。`--out` 给的是输出目录：照着跑，退出 0，得到的是一个名叫 `Export.mdf` 的目录，里面是 `Export.msci.json`、`Export.msci.bin`、`Export.msda.bin`，没有 `.mdf`；后面几条命令要的 `Export.mdf` 文件并不存在。改成 `--out . --as-mdf`。拿仓库里的 `test-file/backup-test/TEST02_p/Export.dmp` 跑：当前目录下写出 `Export.mdf`，19 922 944 字节，和提交在 `extracted/` 下的那一份逐字节相同。
+- **README 新增的。** 第 9 条命令（A01 带 `--strict`；A01 写得完整，退出 0），和三小节：
+  - 「命令行约定与退出码」：输入是第一个参数；退出 0、1、2 各是什么情形。
+  - 「数据库线写得不完整时：告警、`--strict` 与 `shortfalls`」：哪两样东西写得出来、写不完整；每样在 stderr 上一行 `warning:`；`--strict` 把退出码变成 1，文件一个字节不变；`--strict` 管谁、不管谁；整包里告警带图名，同时记进 `_Index.json` 的 `problems`；哪两样不在这本账里；`_Coverage.json` 里 `shortfalls` 一段的原文和各个键。带一份照着就能跑的小样本：用 `tests/fixtures/publish-shortfalls.sql` 建库，发 `DWG-SHORT-01`，退出 1，README 抄着程序最后说的三行。
+  - 「文件怎么落盘」：先整份写到 `<文件名>.<进程号>.tmp` 再改名；整包里一张图的三件，有一件写不成就一件不留；运行被打断之后可能留下什么；`--out-dir` 不先清空；没有做的（不 `fsync`；目标是设备、链接、目录时原地写）。
+- **README 另外改的三处。** 整包门禁的判词是四种，原来只写了三种：补上 `revision mismatch`（参考是同名图的另一个修订，这张图不比，进程退出 1）和末尾汇总各判词张数的那一行。第 6 条命令写明有差异退出 1，A01 对仓库里它的参考现在就有差异。单张 `.pid` 的 `<图名>` 是文件名去掉扩展名：照第 7 条命令的字面拿一个叫 `drawing.pid` 的文件跑，写出的是 `drawing_Data.xml`、`drawing_Meta.xml`、`drawing_Coverage.json`。
+- **`src/publish/mod.rs` 的模块文档。** Outstanding 一节里 `.pid` + exp 的那份清单，对着 DWG 那张图带 dump 跑 `--diff-against` 的结果逐条核过（对象多 6 个、少 6 个，值少 11 处，关系多 6 条）。少的 11 处值里有 7 处清单没有提：管道上的两个枚举，`IInsulatedItem.InsulThickSrc` 6 处，`ISlopedPipingItem.SlopedPipeDirection` 1 处，没有哪一步从 dump 里读它们。补了一条。数据库线原来只有一段，说它只在 A01 上核过、DWG 一侧的用例跳过；现在在它前面写明：这条线不拒绝图，写不全的就写少；写少的两种各是什么；`database_shortfalls` 数它们；命令行的告警和 `--strict`；SQL Server 包覆盖报告的 `shortfalls` 和 `_Index.json` 的 `problems`；库里没有、可以不要的表被跳过，只有 `-v` 点名，不算在这本账里。末尾加一句，指到计划 §9。
+- **`AGENTS.md`。** 架构表里三行各加了话：数据库线一行（不拒绝图）；两条线共用的一行（`DatabaseShortfalls` 这本账记的是什么、谁来数、写到哪里、什么不算）；命令行一行（`--strict` 管谁，退出 0、1、2 各是什么）。整包一行的「a drawing's three all or none」后面补上了「against a write that fails」和运行被打断时会留下什么：T4.3 的 `b69ce84` 在用法、模块文档和 `write_three` 上改过这句话，这一行当时没有跟着改；这一处不在 `21b0f72` 里，是和这一条一起提交的。讲 `probe_*` 个数的一句从「297 of the 305」改成「302 of the 310」：仓库里跟踪着的根目录 example 是 310 个，其中 `probe_*` 302 个。
+- **日期。** T5.1、检查点 5、T6.2 是本机时间 2026-11-17 凌晨提交的，标题里写成了 11-16。按 `git log` 改成 11-17：本文件两处，计划 §9 三处。
+- **输出的变化。** 没有。对照矩阵（发布构建，61 次运行，717 个文件，逐个比 SHA-256）跑了两遍：提交之前在带着这项改动的工作区上，提交之后在干净的 `21b0f72` 上；两遍对 T6.2 提交之后的那一遍都是 717 个全部相同。
+- **照着跑。** 计划给这一条的验收是「文档里的命令照着跑得出文档里的结果」。README 发布一节的三个代码块（9 条编号命令、小样本、`shortfalls` 的 JSON）由脚本从 README 里原样取出，交给 Git Bash 执行，`cargo run` 和续行符都不动；只替换 `<UID>`、`<backup-dir>`、`<dir>` 三个占位符，输入文件按 README 写的名字摆好。11 次运行（第 8 条两种包各一次）：第 6 条和小样本退出 1，其余退出 0，和 README 写的一样；小样本最后三行、`A01_Coverage.json` 的末尾，和 README 抄的逐字相同。README 每改一轮重跑一遍，共四遍，最后一遍跑在提交的文本上。第一遍有一处对不上：经 `cargo run` 跑，程序的三行后面还跟着 cargo 自己的一行 `error:`，README 那句注释照这个改了。另外用发布构建量了 35 次，看 README 新写的话：`--strict` 对 `.pid`、`--list-drawings` 和三种包（SQL Server、Oracle、没有 dump）；四种判词；`-v` 点名被跳过的表；`--out NUL`；往已有的输出目录再跑一遍。改之前在 `a191923` 上先量了 27 次。改后的工作区上 `cargo fmt --check` 无差异，clippy 0 条警告，`check-missing-docs.sh` 通过（缺文档 0，基线 0）。提交之后在 `21b0f72` 上跑了全套门禁，8 道全过，通过的测试 2 601 → 2 613，多的 12 条是 T6.2 加的。细节在 `docs/plans/2026-11-16-publish-review-followup.md` §9 的 T6.4 和检查点 6 两节。
+- **没有改的。**
+  - `AGENTS.md` 讲 `cargo fmt --all` 命令行长度的那一段（「305 examples, 51 tests」）没有动：它写明是 2026-11-13 在当时的树上量的。现在是 310 个 example、53 个测试文件，那一段里的数没有重量。
+  - README 发布一节以外的命令没有跑，也没有改。
+  - 本文件早先各条里的「T6.4 没有做」是当时的话，没有回头改。
+- **没有验到的。**
+  - SQL Server 包里有图写得不完整的情形（`shortfalls` 不是 0、带图名的告警、`_Index.json` 的 `problems`、整包带 `--strict` 退出 1）在命令行上造不出来：仓库里的 SQL Server 包只有 A01 一张图，写得完整。README 这几句是照代码和库内的用例写的。
+  - 整包里同一个 UID 写了不止一次：没有这样的包，照代码写的。
+  - 运行被打断之后留下什么、不 `fsync`：照代码和 T4.3 的记录写的，没有真去打断一次。
+  - 只在 Windows 上经 Git Bash 跑过；别的 shell 和 Linux 没有跑。
+
+### publish：stdout 写不进去是一个错误，不再是 panic；命令行另三个小项（审核整改 T6.2，2026-11-17）
 
 **改了一处行为，另外三件结果不变。`pid_publish_xml` 往 stdout 写的九处原来用 `print!`／`println!`，stdout 写不进去时（比如接在管道后面的程序先把它那一头关了）进程 panic：退出 101，stderr 末尾是 Rust 的四行 panic。现在它和别的读写错误一个出口：`error: write stdout: <系统的话>`，退出 1。另外三件：`.pid` 线的 `_Meta.xml` 一次运行只渲染一遍；`--diff-against` 的参考 `_Data.xml` 一次运行只读一遍；用法里写明输入必须是第一个参数。stdout 写得进去的时候，变的只有用法的文字：对照矩阵 717 个文件里 714 个逐字节相同，不同的 3 个是 `--help` 的 stdout、不带参数时的 stderr 和矩阵自己的汇总表。** 计划给这一条写的验收是「矩阵里每一项的 stdout、stderr、退出码不变」；照字面，`help` 和 `no-args` 两项没有做到，因为这一条自己要求往用法里加话。照「用法之外一个字节不差」来读对不对，等定。T6.4 没有做。
 
@@ -34,7 +59,7 @@
   - 第一轮红的 20 处里，17 处没有在补钉之后重跑。补钉只加了一条用例、改了用法里的一句和对应的断言，红的不会因此变绿；这是推出来的，不是量的。
   - 没有在 Linux 上跑。
 
-### publish：把 exp dump 挂到图上的十步只编排一处（审核整改 T5.1，2026-11-16）
+### publish：把 exp dump 挂到图上的十步只编排一处（审核整改 T5.1，2026-11-17）
 
 **收拾，结果不变。把 exp dump 一步步挂到一张图上，单图命令行和整包发布原来各写一遍：十步，先后一样，只留「图上发布了图形表示的 OPC 点」的那条 `retain` 两处一字不差。现在是库里的一个函数 `publish::oracle_exp::attach_dump`，两边都调它。对照矩阵 717 个文件逐字节相同；矩阵走不到的几种情形（走到半路被拒绝、数据映射读不了、库里存着的值有列读不到）另量了 59 次运行、345 个文件，改前和改后的程序也全部相同；原有的断言一条没改。** 计划给这一项写的依赖是另一条线对 `run_pid` 的改动先进 `main`。那条线还没有进，这一项是定了「现在做」之后在这条分支上先做的；两条线合并时有一处要对，见「没有改的」。T6.2、T6.4 没有做。
 
