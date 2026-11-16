@@ -2370,3 +2370,215 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 1. 通过数的账：`24e5149` 上 2 590，量过；T5.1 加 11 条，这一遍 2 601，量过。
 2. 故意改坏的账：T5.1 不重复的 45 处，跑了 51 次；全绿 3 处，都先补了钉再提交（上一节）。
 3. 工作区里没提交的文件数，日志开头记的：`post51` 矩阵 0，这一遍门禁 0。门禁跑的中间改的三份文档，现在 `git status` 里就是这三份。
+
+### T6.2 命令行的小项（2026-11-16，`159b8a0`）
+
+计划这一条有四件事：`_Meta.xml` 只渲染一次；参考的 `_Data.xml` 只读一次；`print!` 换成会把写入失败报出来的写法；「输入必须是第一个参数」写进用法。另有两处是前面交到这一条来的：T4.6「没有改的」第 6 条（用法里 `-v` 那一段说窄了），T6.3「没有改的」第 3 条（命令行里把 `failed` 当成图来说的 6 处）。行号按 `159b8a0`；「改前」指 `1693139`，它的代码就是 `522e77b` 的。
+
+**量。** 改前命令行往 stdout 写的地方是九处：
+
+| 写的是什么 | 在哪（改前的行号） | 写法 |
+|---|---|---|
+| `--stdout` 的 `_Data.xml` | `emit_data`，`:991` | `print!` |
+| `_Data.xml` 的比对报告 | `report_pid_diff`，`:1066` | `print!` |
+| `_Meta.xml` 的比对报告 | `report_meta_diff`，`:1186` | `print!` |
+| 参考不是 XML 时拒绝它的那一句 | `refuse`，`:1009` | `println!` |
+| `… run excused … should supply` 一行 | `report_pid_diff`，`:1086` | `println!` |
+| 整包门禁的每一行 | `run_package`，`:671` | `println!` |
+| `--list-drawings` 的表头、横线、每张图一行 | `list_drawings`，`:1267`、`:1271`、`:1275` | `println!` |
+
+计划点的是三处 `print!`（它写的 `:866`、`:941`、`:1061` 是定计划时的行号）。`println!` 写不进去时一样 panic，所以九处一起量。
+
+矩阵里没有「stdout 写不进去」的项，也没有「参考读不了」的项，另外量了 42 次（`t62-probe.ps1`）：
+
+| 组 | 次数 | 量的什么 |
+|---|---|---|
+| `c-*` | 11 | stdout 是一条没人读的管道：读的那一头在进程启动之后立刻关掉 |
+| `r-*` | 16 | `--diff-against` 的参考读不了，或者不是 XML；带和不带 `_Meta.xml` 门禁 |
+| `m-*` | 4 | 既为写文件、又为门禁渲染 `_Meta.xml` 的运行；文档和报告都放到 stdout 的运行 |
+| `u-*` | 5 | 输入不在第一个参数上 |
+| `v-*` | 6 | 六种输入各带一次 `-v`；输出里有时间，只读不比 |
+
+改前的程序（`pid_publish_xml-522e77b-release.exe`，`runs/t62-before/`）量到的：
+
+- 写不进去。`--help` 一次：退出 0，stderr 是空的。另外 10 次都退出 101，stderr 的末尾是 Rust 的 panic，四行：一个空行；`thread 'main' (…) panicked at …\library\std\src\io\stdio.rs:1168:9:`；`failed printing to stdout: 管道正在被关闭。 (os error 232)`；`note: run with … to display a backtrace`。其中两次是参考被拒绝的运行，拒绝的那一句哪里都没有说出来：`println!` 先 panic，后面往 stderr 说的那一句没有走到。要写文件的运行，文件在这之前已经写好。
+- 输入不在最前面。`--stdout <图>.pid` 报 `argument error: unknown flag: <图>.pid`；`--drawing <UID> <库> --stdout` 报 `unknown flag: <UID>`；只给一个 `--stdout`，报 `--drawing UID is required (or use --list-drawings)`；给两个输入，报的是第二个 `unknown flag`。都退出 2，后面跟整段用法。也就是说，第一个参数不管长什么样都当输入。用法里没有一句话说这件事。
+
+`_Meta.xml`。`run_pid` 里渲染它的有三处（改前 `:941`、`:949`、`:969`；计划写的是 `:816`、`:824`、`:844`）：`--meta-out` 一处，`--out-dir` 一处，`--diff-against` 的门禁一处。`--out-dir` 和 `--meta-out` 不能同时给（`:452`），所以一次运行最多走到两处：写文件渲染一遍，门禁再渲染一遍。计划说的「最多三次」数的是调用的地方，不是一次运行里的遍数。数据库线（`run`）本来就只有一处（`:611`），门禁用的就是写出去的那一份。
+
+参考的 `_Data.xml`。两道门禁各读一遍（改前 `:1180` 是 `_Meta.xml` 门禁，`:1060` 是 `_Data.xml` 门禁），两道都有的运行读两遍：数据库线带 `--meta-out`，`.pid` 线带 `--meta-out` 或 `--out-dir`。先后是：`_Meta.xml` 门禁在前，它先找参考旁边的 `<Name>_Meta.xml`（没有就说一句 `Meta diff not run: …`，不算错），再读这份 meta，再读参考；然后才是 `_Data.xml` 门禁。所以参考读不了时，报的是哪个文件、前面说过什么，都跟着这个先后走。`r-*` 的 16 次量的就是这个。
+
+交过来的两处。`-v`：用法原来写的是 `Print MDF loading diagnostics (table row counts, timing) to stderr.`。六次带 `-v` 的运行读下来：MDF 输入发一张图，日志 36 行，暂存的每张表一行（`T_Drawing: 1 rows, 29 cols`），一行合计带用时（`MDF staged: 23 tables, 243 rows in 12.2ms`），库里没有的表暂存说一遍、读图时再说一遍（`T_ProcessEquipment: not in the database, skipped`）；SQL Server 的包一样是 36 行；`--list-drawings` 35 行，没有读图的那一句；旧的 `.sqlite` 输入 3 行，都是它没有的表；`.pid` 和 Oracle 的包一行日志都没有。`failed` 的 6 处见 T6.3「没有改的」第 3 条：用户看得见的 2 处，注释 4 处。
+
+**改。** 一个提交，2 个文件，+656／−72 行：`src/bin/pid_publish_xml.rs` +178／−72，`tests/publish_xml_cli.rs` +478。
+
+- `write_stdout`（`:1024`）：锁住 stdout，写，flush；写不进去就返回 `write stdout: <系统的话>`。九处都改成调它：`emit_data`（`:1011`），`report_pid_diff`（报告 `:1124`，`excused` 那一行 `:1144`），`report_meta_diff`（`:1246`），`refuse`（`:1041`），`run_package`（`:686`），`list_drawings`（`:1327`、`:1331`、`:1335`）。错误顺着原有的 `Result<_, String>` 回到 `main`，和别的读写错误一个出口：`error: write stdout: …`，退出 1。
+- `refuse`（`:1036`）改成返回 `Result<i32, String>`：先往 stdout 写、把成没成记下，再往 stderr 说拒绝的那一句，最后才把写的结果交回去。所以 stdout 写不进去时，拒绝的话照样在 stderr 上；改前这种时候它哪里都没说。
+- `Reference`（`:1070`）：参考的路径，加一个 `OnceCell<String>`。`text()`（`:1084`）第一次要的时候读，读到了留着；读不了返回 `read reference <路径>: …`，和原来两处的话一样。`run`（`:630`）和 `run_pid`（`:987`）各建一个，交给两道门禁。没有做成一上来就读：那样三种读不了的情形里先说哪一句会变（下面钉先后的那一条用例）。
+- `run_pid`：`_Meta.xml` 只在 `:962` 渲染。`--meta-out`、`--out-dir` 给了哪一个都渲染一遍、写文件；门禁比的就是写出去的这一份。两个都没给就不渲染，`_Meta.xml` 门禁不跑，和原来一样。
+- 用法（`print_usage`，`:120`）多三段，127 行变 136 行，7 594 字节变 8 145 字节：
+  - `:131` 起三行，接在开头的写法后面：输入是第一个参数，旗标都跟在它后面；放在前面的旗标会被当成输入，`pid_publish_xml --stdout a.pid` 是参数错误 `unknown flag: a.pid`。
+  - `:150` 起三行，接在「一张图失败……进程退出 1」那一句后面：以 zip 签名开头却打不开的 `PlantData` 文件、读不出头的 zip 条目，记在 `_Index.json` 的 `problems` 里，进程同样退出 1。
+  - `:242` 起四行，换掉原来两行的 `-v`：往 stderr 打日志，一是从 MDF（输入的那个，或者 SQL Server 包里的）暂存的表，带行数和用时，二是读一张图要用、库里却没有的表。
+- 注释四处照 `failed` 现在数的东西改了：模块文档讲退出码的一段，`run` 的文档，`package_exit_code` 的文档，测试里 `package_report` 的注释。模块文档另加一句输入在最前面（`:27`），退出码 1 里加上「stdout 写不进去」。
+
+用法里 zip 那一句的第一稿写的是「打不开的 `PlantData` zip」。拿改后的程序在 T6.3 造的两个包上各跑了一次（`runs/t62-zip/`），第一稿不对：以签名开头、打不开的，退出 1，摘要 `1 failed`，`_Index.json` 里 `failed` 1、`problems` 两句；名字叫 `.zip`、不以签名开头的，整个被跳过，退出 0，`failed` 0，`problems` 是空的。所以改成点明签名的说法，用例跟着改；矩阵、42 次对照和有关的故意改坏都是改完之后重跑的。
+
+公有接口没有变，这些都是命令行自己的私有函数；没有新依赖。
+
+**用例。** 新增 12 条，原有的断言一条没改：`tests/publish_xml_cli.rs` 10 条（37 → 47），命令行自己的单测 2 条（5 → 7）。用到的语料都在仓库里。
+
+| 用例 | 位置 | 看的是什么 |
+|---|---|---|
+| `a_document_that_cannot_be_written_to_stdout_is_an_error_not_a_panic` | `:1843` | `.pid --stdout` 和 `库 --drawing … --stdout`，stdout 关着：stderr 里没有 `panicked`，退出 1，最后一行以 `error: write stdout: ` 开头；第一行还是读到图的那一句 |
+| `a_diff_report_that_cannot_be_written_to_stdout_is_an_error_not_a_panic` | `:1867` | `.pid --diff-against`（先写的是 `_Data.xml` 的报告）和再带 `--out-dir` 的（先写的是 `_Meta.xml` 的报告）：同上；后一种三个文件都已经写好，两道门禁都还没有下结论 |
+| `a_refusal_that_cannot_be_written_to_stdout_is_still_said_on_stderr` | `:1908` | 参考截掉最后一个闭合标签：stderr 倒数第二行是 `Semantic diff against <参考> refused: …; exit 1.`，最后一行是写不进去的错误 |
+| `a_drawing_list_that_cannot_be_written_to_stdout_is_an_error_not_a_panic` | `:1942` | `--list-drawings`：同第一条 |
+| `a_package_gate_that_cannot_be_written_to_stdout_is_an_error_not_a_panic` | `:1951` | SQL Server 的包带 `--out-dir --diff-against`：同第一条；`_Index.json` 已经写好 |
+| `a_reference_that_cannot_be_read_is_reported_where_the_gates_come_to_it` | `:1980` | `.pid --out-dir --diff-against` 的三种情形，stdout 都是空的，交付的四行都说在前面。参考和旁边的 meta 都没有：先说 `Meta diff not run: …`，再报 `read reference <参考>`。旁边的 meta 不是文本、参考没有：只报 `read reference meta <meta>`。meta 读得了、参考不是文本：只报一次 `read reference <参考>` |
+| `cli_pid_meta_out_is_scored_as_the_meta_document_of_out_dir_is` | `:1677` | `.pid --out-dir` 和 `.pid --out --meta-out` 配同一份参考各跑一次：前一次有 `Meta diff against …` 那一行；两次的 `Meta diff`、`Semantic diff` 两类行一样，stdout 一样，退出码一样，写出的 `_Meta.xml` 逐字节一样 |
+| `cli_database_run_names_on_stdout_the_class_the_database_should_have_supplied` | `:1738` | 数据库线：拿自己写出的文档当参考，退出 0；往这份参考里加一个 `PIDSignalPort`，退出 1，stdout 最后一行是 `database run excused PIDSignalPort ×1 the database should supply`，stderr 最后一行是那句结论 |
+| `cli_help_says_the_input_comes_first_and_the_example_it_gives_is_true` | `:2083` | 用法里有那三行；再照着例子跑一遍 `--stdout a.pid`：退出 2，stderr 第一行是 `argument error: unknown flag: a.pid`，stdout 是空的 |
+| `cli_help_says_what_verbose_prints_and_what_else_fails_a_package_run` | `:2114` | 用法里有 `-v` 的四行，没有原来那句 `MDF loading diagnostics`；有 zip 那三行，紧接在「…the process then exits 1.」后面 |
+| `tests::the_reference_is_read_once` | `pid_publish_xml.rs:1406` | 文件里写 `first`，要一次；改写成 `second` 再要，还是 `first`；删掉再要，还是 `first` |
+| `tests::a_reference_that_cannot_be_read_says_which_file` | `pid_publish_xml.rs:1421` | 文件不存在：错误以 `read reference <路径>: ` 开头 |
+
+关 stdout 的办法：`std::io::pipe()` 造一条管道，先把读的一头丢掉，写的一头交给子进程当 stdout，子进程第一次往里写就失败。
+
+**红。** 动产品代码之前先写了 8 条（关 stdout 的 5 条，钉先后的 1 条，用法的 2 条），在改前的代码上跑（`runs/t62-red-1.log`）：7 条红，1 条过，过的是钉先后的那一条。
+
+提交之前又把最终的 47 条放到改前的源文件上跑了一遍（`t62-on-old.ps1`，`runs/t62-on-old-1.log`；源文件换成 `1693139` 的，跑完还原，SHA-256 与开始时相同）：40 条过，7 条红。红的 7 条：关 stdout 的 5 条，断言的话都是 `a stdout that cannot be written should not be a panic`，子进程的 stderr 里是上面那四行 panic；用法的 2 条，报的是用法里没有那几句。过的 40 条里有 3 条是这次加的，它们钉的是「改前改后一样」，不是先红后绿：钉先后的一条，`--meta-out` 的一条，`excused` 的一条。两条单测测的是这次才有的类型，改前的代码上没有它。
+
+**绿。** 提交的内容上跑的（`precommit.ps1`，`runs/t62-precommit-2.log`，133 s）：`cargo fmt --all -- --check` 无差异；`cargo clippy --locked --workspace --all-targets -- -D warnings` 0 条警告；库的单测 1 599 条；命令行自己的单测 7 条；发布这条线的 13 组集成用例，其中 `publish_xml_cli` 47 条，`publish_from_pid` 27 条。合计 1 771 通过（1 759 → 1 771），0 失败，2 忽略，日志里没有 `skipping`。全套门禁留到检查点 6。
+
+这是第二遍。第一遍（`runs/t62-precommit.log`）`publish_xml_cli` 是 40 过 7 红，另外 14 组全过。红的原因在我的脚本，不在代码：`t62-on-old.ps1` 用 `Copy-Item` 还原源文件，文件带回了原来的修改时间（02:17:52），比刚用改前的源文件编出来的程序（02:20:12）早；cargo 按时间判断，认为这个程序是新的，没有重编，这一遍的集成用例跑的是改前的程序。红的 7 条正好是「改前该红」的那 7 条。脚本改成还原之后把修改时间设为当前；源文件只刷新了时间，内容没动（SHA-256 不变）；重跑就是上面那一遍，日志里有一次 `Compiling`。受影响的只有那一遍：换成改前代码去跑，是它之前的最后一步；矩阵和 42 次对照用的是另外构建的发布程序。
+
+**对照矩阵。** 跑了两遍，结果一样：
+
+- 提交之前，在带着这项改动的工作区上（`wt-matrix.ps1 -Label t62wt2`，`runs/t62wt2-matrix.log`，程序 `pid_publish_xml-t62-worktree2-release.exe`）：发布构建 2 s，矩阵 61 项 90 s。`post51` 对 `t62wt2`、`cp4` 对 `t62wt2` 都是 717 个文件里 714 个相同、3 个不同，没有只在一边的。
+- 提交之后，在干净的 `159b8a0` 上（`cp-matrix.ps1 -Label post62`，`runs/post62-matrix.log`，`dirty files: 0`）：发布构建 2 s，矩阵 94 s。`post51` 对 `post62` 是 714 个相同、3 个不同；`t62wt2` 对 `post62` 717 个全部相同。
+
+不同的 3 个：`help/stdout.bin`（127 → 136 行，7 594 → 8 145 字节）；`no-args/stderr.bin`（128 → 137 行，7 690 → 8 241 字节，第一行报错的那一句没变，后面是用法）；`summary.txt`（只有这两项各自那一行的字节数）。用法逐行比过：多出上面说的两段共 7 行（含一个空行），`-v` 的两行换成四行，别的行没有动。另外 59 项的 stdout、stderr、退出码和写出的文件都没有变。
+
+提交之前和之后的两份程序都是 4 734 976 字节，逐字节比只差 4 个字节，在 `0x108`–`0x109` 和 `0x4021D4`–`0x4021D5`，是链接时间戳的两处（18:17:35Z 对 18:27:15Z）。所以提交之前量的就是提交了的代码。
+
+验收写的是「矩阵里每一项的 stdout、stderr、退出码不变」。照字面，`help` 和 `no-args` 两项没有做到：这一条自己要求往用法里加话，这两项的输出就是用法。T4.6 把 `-v` 留到这一条时已经写了「改它会动 `--help` 的字节」。读法和 T2.2、T2.3、T4.3 三次一样：用法之外一个字节不差。这样读对不对，等你定。
+
+**42 次对照。** 改后的程序再跑一遍（`runs/t62-after2/`，用的是提交之前从工作区构建的那一份），和改前逐个文件比 SHA-256，`v-*` 的 6 次不比。36 次运行，183 个文件（命令行、退出码、stderr、写出的每个文件；`c-*` 之外的 25 次还有 stdout），158 个相同，25 个不同：
+
+| 组 | 运行 | 结果 |
+|---|---|---|
+| `r-*` | 16 | 全部相同 |
+| `m-*` | 4 | 全部相同 |
+| `c-*` | 11 | `--help` 一次相同；另外 10 次各有 2 个文件不同：退出码和 stderr |
+| `u-*` | 5 | 各有 1 个文件不同，是带用法的那一个：4 次是 stderr，`<图>.pid --help` 那一次是 stdout |
+
+`c-*` 的 10 次逐行核过：改后的 stderr 是改前的那几行原样，末尾的四行 panic 换成一行 `error: write stdout: 管道正在被关闭。 (os error 232)`；两次参考被拒绝的运行，这一行前面多出拒绝的那一句。写出的文件数没有变，文件也逐字节相同：
+
+| 运行 | 改前退出 | 改后退出 | 写出的文件 |
+|---|---|---|---|
+| `--help` | 0 | 0 | 0 |
+| 库 `--list-drawings` | 101 | 1 | 0 |
+| 库 `--drawing --stdout` | 101 | 1 | 0 |
+| 库 `--drawing --out --meta-out --diff-against` | 101 | 1 | 2 |
+| `.pid --stdout` | 101 | 1 | 0 |
+| `.pid --stdout --diff-against` | 101 | 1 | 0 |
+| `.pid --diff-against` | 101 | 1 | 0 |
+| `.pid --diff-against`，参考被拒绝 | 101 | 1 | 0 |
+| `.pid --out-dir --diff-against` | 101 | 1 | 3 |
+| `.pid --out-dir --diff-against`，参考被拒绝 | 101 | 1 | 3 |
+| 整包 `--out-dir --diff-against` | 101 | 1 | 4 |
+
+`u-*` 带用法的 5 个文件：把改前文件里那段用法换成新的，就和改后的文件逐字节相同；4 个 stderr 的第一行没有变。
+
+`excused` 那一行另量了一次（`runs/t62-excused/`）。改之前它没有用例看着，矩阵里也没有一项说这一行。数据库线发 A01，配三份参考：一份带 `PIDSignalPort` 又有别的差异的；它自己写出的文档；自己的文档加一个 `PIDSignalPort`。改前和改后的程序，三次的 stdout、stderr、退出码都逐字节相同（退出 1、0、1；stdout 5 050、250、316 字节）。量完才加的那条钉。
+
+**故意改坏。** 不重复的 26 处，分两轮，跑了 30 次；没有编译不过的，每次跑完源文件都还原并核过 SHA-256。跑的是命令行自己的单测、`publish_xml_cli` 和 `cli_help_streams`；第一轮里动 `.pid` 的 `_Meta.xml` 的 3 处另带 `publish_from_pid`。下面「新」是这次加的用例，「原有」是早就有的。
+
+第一轮 25 处（`mutants-t62.spec.ps1`，`runs/t62-mut-summary.txt`，约 5 分钟）：20 处红，5 处全绿。这一轮跑在改用法里 zip 那一句之前的源文件上（SHA-256 `2db0d28a…`），当时 `publish_xml_cli` 是 46 条。
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `emit-data-print`：`_Data.xml` 文档换回 `print!` | 1 | 新 1 |
+| `pid-diff-print`：`_Data.xml` 的报告换回 `print!` | 1 | 新 1 |
+| `meta-diff-print`：`_Meta.xml` 的报告换回 `print!` | 1 | 新 1 |
+| `refuse-println`：拒绝的那一句换回 `println!` | 1 | 新 1 |
+| `refuse-stderr-lost`：stdout 写不进去就直接返回，stderr 那一句不说 | 1 | 新 1 |
+| `package-gate-println`：整包门禁的行换回 `println!` | 1 | 新 1 |
+| `list-header-println`：表头换回 `println!` | 1 | 新 1 |
+| `list-rule-println`：横线换回 `println!` | 0 | 全绿，见下 |
+| `list-row-println`：每张图一行换回 `println!` | 0 | 全绿，见下 |
+| `excused-println`：`excused` 那一行换回 `println!` | 0 | 全绿，见下 |
+| `excused-no-newline`：`excused` 那一行末尾不带换行 | 1 | 新 1 |
+| `no-flush`：`write_stdout` 不 flush | 0 | 全绿，见下 |
+| `write-failure-swallowed`：写不进去当成写进去了 | 5 | 新 5（关 stdout 的 5 条） |
+| `write-failure-wording`：写不进去的话换了说法 | 5 | 新 5（同上） |
+| `reference-reread`：`text()` 每次都重读 | 1 | 新 1（单测 `the_reference_is_read_once`） |
+| `reference-read-up-front`：`_Meta.xml` 门禁还没找旁边的 meta 就先读参考 | 1 | 新 1（钉先后的那一条） |
+| `meta-gate-reads-data-first`：`_Meta.xml` 门禁先读参考、再读 meta | 1 | 新 1（同上） |
+| `reference-error-wording`：读不了的话换了说法 | 2 | 新 2（单测一条，钉先后的一条） |
+| `pid-meta-out-gate-off`：只给 `--meta-out` 时，渲染好的 meta 不交给门禁 | 0 | 全绿，没料到，见下 |
+| `pid-out-dir-gate-off`：给 `--out-dir` 时不交给门禁 | 6 | 新 1（钉先后的那一条），原有 5（`publish_from_pid` 的 `meta_gate_*`） |
+| `pid-meta-out-not-written`：`--meta-out` 的文件不写 | 1 | 原有 1（`publish_from_pid` 的 `a_document_written_over_an_earlier_one_takes_its_name_as_a_new_file`） |
+| `usage-input-first-removed`：去掉输入在最前面的那三行 | 1 | 新 1 |
+| `usage-example-not-true`：参数解析里 `unknown flag:` 改成 `unexpected argument:`，用法里的例子就不对了 | 1 | 新 1；原有的用例没有一条看着这句话 |
+| `usage-verbose-old-text`：`-v` 换回原来那两行 | 1 | 新 1 |
+| `usage-zip-sentence-removed`：去掉 zip 那三行 | 1 | 新 1 |
+
+全绿的 5 处：
+
+- `list-rule-println`、`list-row-println`、`excused-println`，料到的。用例里 stdout 是从一开始就关着的，这三处都不是一次运行里的第一次写，前面那一次写（表头；比对报告）已经把运行结束了；stdout 好着的时候，两种写法写出的字节一样。换回 `println!` 的害处出在「前面的写进去了、后面的写不进去」，比如读的一头读了一行就关：那时会回到 panic。这种情形没有用例：仓库里的输入写出的东西一次就进了管道的缓冲，读的一头什么时候关都赶不上，造不出稳定的用例。
+- `no-flush`，料到的。命令写到 stdout 的每一段都以换行结尾，stdout 的行缓冲见到换行就往下写，失败出在写的那一步，轮不到 flush。flush 留着，防的是哪天有一段不以换行结尾。
+- `pid-meta-out-gate-off`，没料到。`.pid` 只给 `--meta-out`、不给 `--out-dir`，再配 `--diff-against`，`_Meta.xml` 门禁该跑。把它关掉，连 `publish_from_pid` 的 27 条在内没有一条红；矩阵里也没有这样的项（`m-*` 里的那一次是这回才量的）。这个缺口改之前就有。这次重排了这一段，所以补了钉：`cli_pid_meta_out_is_scored_as_the_meta_document_of_out_dir_is`。
+
+第二轮 5 处（`mutants-t62b.spec.ps1`，`runs/t62-mut2-summary.txt`，7 s），补钉、改完用法那一句之后跑的，在最终的源文件上（SHA-256 `dfa57889…`，`publish_xml_cli` 47 条）。5 处全红：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `pid-meta-out-gate-off` | 1 | 补的那条钉 |
+| `pid-out-dir-gate-off` | 2 | 补的那条钉，钉先后的那一条 |
+| `pid-meta-out-not-written` | 1 | 补的那条钉（这一轮没带 `publish_from_pid`） |
+| `usage-zip-sentence-removed` | 1 | 用法的第二条 |
+| `usage-zip-sentence-as-first-written`：zip 那一句换回第一稿 | 1 | 用法的第二条 |
+
+**超出计划原文的。**
+
+1. 九处都换了，不只计划点的三处 `print!`。
+2. stdout 写不进去时，拒绝参考的那一句现在说在 stderr 上；改前它哪里都没说。
+3. 用法多写了两段（`-v`、zip 那一句），注释改了四处，都是前面交过来的。
+4. 加了 12 条用例。计划给这一条的验收只有对照矩阵；矩阵看不到写不进去、参考读不了这两类，这次动的恰好是这两段。
+5. 新写的脚本，都在 `target/publish-audit/review/` 下，不进 git：`t62-probe.ps1`、`wt-matrix.ps1`、`t62-on-old.ps1`、`precommit.ps1`，两份故意改坏的清单。
+
+**没有改的。**
+
+1. 整包跑完的那一行摘要（`Published {} drawings from {} ({} failed, …)`）没有改。`failed` 的 6 处里改了 5 处（用法 1 处，注释 4 处），剩的就是它。改了它，矩阵里 7 个整包项的 stderr 都会变，和这一条的验收对不上。前面「等你定的」第 11 条写的「不用另定」对这一处不成立，等你定。
+2. `--help` 写不进去还是不出声，退出 0。`print_usage` 的写入结果原来就不看，量到的改前改后一样。等你定。
+3. 整包门禁的行写不进去时，运行停在第一行，后面那一行摘要（在 stderr 上）就不说了；包这时已经发布完，`_Index.json` 在盘上。改前 panic 的时候摘要同样没说。要不要改成先说摘要再报错，等你定。
+4. `unknown flag: <第二个参数>` 这句话本身没有改，只是用法里写明了。它说的是后面那个参数，不是放错位置的旗标。要不要另给一句「输入要放在最前面」，等你定；改了是一句新的话，`u-*` 那几次的第一行会变。
+5. zip 那一句没有加整包的命令行用例。它由两条原有的用例分两步看着：库内 `a_zip_or_an_entry_that_cannot_be_opened_is_a_failure_and_no_drawing` 看计数和索引，命令行单测 `a_failed_drawing_or_an_unclean_gate_is_exit_one_whatever_strict_says` 看退出码；另有上面那一次实测。
+6. 不以 zip 签名开头的 `PlantData` 文件还是整个跳过、哪里都不说（前面「等你定的」第 3 条，还开着）。用法那一句点明签名，就是因为这个。
+
+**没有验的。**
+
+1. 「只渲染一次」从外面量不出来：渲染一遍和两遍，写出的、说出的都一样。故意改坏里没有「再渲染一遍」这一处，它哪条用例都不会红。靠的是读代码：`run_pid` 里 `write_pid_meta_xml` 只剩 `:962` 一处。
+2. 「只读一次」在整条命令上也量不出来。`Reference` 自己由单测看着；`run` 和 `run_pid` 各只建一个、两道门禁用的是同一个，这一点是读代码读到的：要是有人给两道门禁各建一个，没有用例会红。
+3. 写不进去只试了一种：读的一头关掉的管道，在 Windows 上（os error 232）。磁盘满、重定向到写不了的地方没有试。
+4. 「前面的写进去了、后面的写不进去」没有试（见全绿的前三处）。
+5. `oracle-exp run excused …` 那一种没有造出来；钉住的是数据库线的那一句。两种是同一行代码（`:1144`），只差开头的词。
+6. `-v` 那一段是对着六次运行的输出读的，没有用例逐字去钉日志；「库里没有的表」那半句由原有的 `cli_verbose_names_each_table_the_database_lacks_and_changes_nothing_else` 看着。带 `-v` 时还有 10 行是读 MDF 的那个库（`oxidized_mdf`）自己的日志，用法没有单提。
+7. 第一轮红的 20 处里，第二轮重跑了 3 处，另外 17 处没有在补钉、改用法那一句之后重跑；料到全绿的 4 处也没有重跑。两轮之间只加了一条用例、改了用法里的一句和用例里对应的断言，红的不会因此变绿；这是推出来的，不是量的。
+8. 全套门禁还没有跑，留到检查点 6；没有在 Linux 上跑。
+
+**等你定的。** 这一节新出来的五条：
+
+1. 验收照「用法之外一个字节不差」来读，对不对（见「对照矩阵」）。
+2. 整包摘要行里的 `failed` 改不改（「没有改的」第 1 条）。
+3. `--help` 写不进去要不要报（第 2 条）。
+4. 整包门禁写不进去时，要不要先把摘要说了（第 3 条）。
+5. 旗标放在输入前面时，要不要另给一句话（第 4 条）。
+
+**顺带记下的。**
+
+1. 提交前第一遍测试是红的，原因在脚本（见「绿」）。凡是把源文件换掉、跑完再用拷贝还原的脚本，还原之后都要把修改时间设为当前。T5.1 的 `pins-on-old.ps1` 有这一行（去看过，`:72`），那一份没有这个毛病；`t62-on-old.ps1` 是这次新写的，漏了，现在补上了。故意改坏的脚本不用拷贝，是把原来的字节重写一遍，文件的时间本来就是新的。
+2. 发布构建的程序大了 4 608 字节（4 730 368 → 4 734 976）。
+3. `t62wt2` 那一遍矩阵跑的时候，第二轮故意改坏和 42 次对照的后一遍也在跑。矩阵和对照用的是事先拷出来的发布程序，不读源文件；提交之后单独跑的 `post62` 和它 717 个文件全部相同。
