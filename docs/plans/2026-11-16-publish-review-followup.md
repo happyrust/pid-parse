@@ -1599,3 +1599,496 @@ T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面。是等那条线进 `main`
 1. 这次门禁比检查点 3 慢：构建 117 s 对 87 s，测试 1 626 s 对 1 583 s，clippy 13 s 对 1 s，缺文档 8 s 对 6 s，byte-audit 19 s 对 15 s。原因没有查。可能有关的两件事：T4.5 记过这台机器不同时段快慢差得不少；T4.6 的故意改坏动过源文件的修改时间，构建和 clippy 都得重做。
 2. 发布构建的哈希每重链接一次就变（上面那一段）。记录里的程序哈希只能说明是哪一次构建，不能拿两次构建的哈希相不相同去判断源码变没变；要比的是提交号和跑出来的东西。
 3. 门禁的 `summary.txt` 开头记的是 `dirty files: 1`，矩阵的日志记的是 `dirty files: 3`：两个时刻之间加的是 `CHANGELOG.md` 和 `AGENTS.md`。
+
+### 顺序调整（2026-11-16）
+
+检查点 4 的末尾问过：T5.2、T6.1–T6.4 在计划里都排在 T5.1 后面，而 T5.1 要等另一条线进 `main`，是等还是不等。你回的是「按推荐继续」。推荐的是：先做 T5.2、T6.1、T6.3，T5.1、T6.2、T6.4 和检查点 5、6 等那条线进了 `main` 再做。
+
+**为什么是这三项。**
+
+- 那条线（`export-closeout-20261115`，`d329c2f`，比 `main` 多 11 个提交）相对 `main` 改了 26 个文件，`src` 下 4 个：`src/bin/pid_publish_xml.rs`、`src/publish/catalog.rs`、`src/publish/pid_load.rs`、`src/publish/stored_values.rs`。
+- T5.2、T6.1、T6.3 改的是 `src/publish/` 下的 `backup_package.rs`、`pid_writer.rs`、`pipeline.rs`、`xml_writer.rs`、`model.rs` 五个文件，一个都不在那 26 个里。
+- T5.1、T6.2 要改的 `src/bin/pid_publish_xml.rs` 正是那条线改过的文件；T6.4 是文档，依赖前面各阶段。
+
+三项做完之后又 `git fetch origin main` 了一次，`main` 和 `origin/main` 都还在 `a4b490e`；这条分支比它多 28 个提交（记这几节的提交不算），少 0 个。拿 `7e3e60d` 和那条分支又试并了一次（`git merge-tree --write-tree`，只往对象库里写一棵树，工作区、索引、引用都没动）：冲突还是只有 `CHANGELOG.md` 一个文件，和检查点 4 那次一样。
+
+**代价。**
+
+1. 计划里 T5.2 依赖 T5.1，这个次序没有守。T5.1 以后要在 T5.2 收拾过的 `publish_one` 上做。它要抽的那一段 `attach_exp`，T5.2 一个字没动（函数体改前改后逐字比过）；动的是 `publish_one` 调它的地方：失败时从「就地记账再返回」改成了「把原因交回去」。
+2. T6.1 依赖 T5.2、T6.3 依赖 T6.1，这两条守了。
+3. 检查点 5 的三个框都没有勾：T5.1 没做，阶段 5 没有完。三项之后跑的那一遍全套门禁记在本节后面单独的一节里，不算检查点 5。
+4. T6.2 没有做。命令行里把 `failed` 当成图来说的地方（数出来 6 处，用户看得见的 2 处）和 T6.3 这次写准的说明对不上，还留着，见 T6.3 的「没有改的」。
+
+下面三节里的行号，各按那一节标题里的提交。
+
+### T5.2 `publish_one` 收拾（2026-11-16，`a3e6a89`）
+
+**量。** 改前（`3e0ddcf`）的 `src/publish/backup_package.rs` 是 2 878 行，测试模块从 `:1862` 起。计划写的三件事，量出来是：
+
+- `uid_from` 是字符串。四种字样（`"DrawingNo"`、`"T_DRAWING.SP_ID"`、`"T_DRAWING.PATH"`、`"T_Drawing.SP_ID"`）在测试模块之外的 12 行代码里出现 13 次：`publish_one` 里 10 行（`:736`–`:921`：赋值、比较，还有 `:830`–`:834` 按字样把 dump 的行再查一遍），`excluded_from_totals` 的 `:1320`，SQL Server 那一支的 `:1851`。另有 `:1311` 一行文档注释。
+- 失败记账。`.pid`／Oracle 这一支里 `failed += 1` 有 10 处（`publish_package` 的 `:453`；`publish_zip` 的 `:658`、`:688`；`publish_one` 的 `:754`、`:768`、`:822`、`:848`、`:862`、`:878`、`:890`）。其中 8 处是同样的三步：往 `problems` 加一句，`failed` 加一，往 `drawings` 加一行 `failed_drawing(…)`，就是计划说的「约 8 处」。另外 2 处（`:453` zip 打不开，`:658` 条目的头读不出）没有行。
+- `PublishTally<'a>`（`:570`–`:601`）是 25 个字段：24 个 `&'a mut` 借用，1 个 `Option<&'a mut PackageGate>`（计划写的是 24 个）。`publish_package` 先开 25 个局部变量，再在循环里一个个借给它（`:422`）。
+
+`publish_one`（`:705`–`:966`）262 行，没有返回值：每个失败出口自己记账再 `return`。
+
+**改。** 只动 `src/publish/backup_package.rs`（+636／−266 行，改后 3 248 行）：
+
+- `UidFrom`（`:523`，私有枚举）：`DrawingNo`、`DumpSpId`、`DumpPath`、`DatabaseSpId` 四个变体，最后一个带 `#[cfg(feature = "backup-mdf")]`。`as_str`（`:543`）给出写进 `_Index.json` 的字样，一个字母不改：Oracle 这一支写 `T_DRAWING`，SQL Server 那一支写 `T_Drawing`，就是计划点到的那种拼法。四种字样现在只在这里各出现一次；`excluded_from_totals`（`:1307`）和 `mtf_drawing_entry`（`:1841`）从它取。
+- `PublishTally`（`:557`）：25 个字段都改成自己持有的值，加 `#[derive(Default)]`。`publish_package` 建一个（`:382`），那 25 个局部变量没有了（函数从 214 行到 164 行）。七个方法：
+
+  | 方法 | 记的是什么 |
+  |---|---|
+  | `problem`（`:592`） | `problems` 里一句，以 `<zip 文件> <条目>: ` 开头 |
+  | `fail`（`:601`） | 一个 `.pid` 条目失败：`problems` 一句，`failed` 加一，`drawings` 一行（只有条目的名字和原因） |
+  | `fail_listed_as`（`:607`） | 同上，行里的原因另有说法。只有读条目失败用它：行里写 `read: …`，`problems` 里不带这个前缀，改前就是这样 |
+  | `fail_unlisted`（`:618`） | 没有条目可挂的失败（zip 打不开，条目的头读不出）：`problems` 一句，`failed` 加一，没有行 |
+  | `chain_fault`（`:627`） | 一条链断了：报告里一项，`problems` 一句 |
+  | `duplicates`（`:634`） | 一张图把一个 UID 写了不止一次：报告里一项，`problems` 一句 |
+  | `count_written`（`:646`） | 写出的一张图：`written`、`paired`、`shells`，对象／值／关系三项合计，`oracle_exp` 的八项合计 |
+
+- `publish_one`（`:786`–`:955`，170 行）返回 `Result<(), String>`。七个失败出口（`:827`、`:838`、`:881`、`:894`、`:897`、`:900`、`:902`）只把原因交回去，记账在调用处的一行（`publish_zip` 的 `:776`，`tally.fail`）。
+- dump 里的那一行只查一次。改前先按 `DrawingNo`（或按路径）查到一次，后面又按 `uid_from` 的字样再查一遍（`:830`–`:834`）；改后第一次查到的行一路带下去（`:814`）。查的条件和先后没有变。
+- `publish_zip`（`:718`）：读条目失败走 `fail_listed_as`（`:763`），条目的头读不出走 `fail_unlisted`（`:734`）；`publish_package` 里 zip 打不开走 `fail_unlisted`（`:404`）。
+
+没有新的公开项，没有新依赖；`publish_backup_package` 的签名和 `BackupPublishReport` 的字段没有动。
+
+**用例。** 计划的验收是「不改任何断言」。原有的断言一条没动；另加了 4 条库内用例（这个模块 21 → 25 条，库内 1 585 → 1 589 条），把重构碰到、原来又没有用例看着的地方先钉住：
+
+| 用例 | 位置 | 看的是什么 |
+|---|---|---|
+| `a_pid_entry_that_cannot_be_published_fails_by_name_and_reason` | `backup_package.rs:2835` | 现造一个没有 dump 的包，zip 里 5 个 `.pid` 条目：第二个不是复合文件，第三个和第一个同名（在另一个文件夹里），第四个不带 `DrawingNo`。写出 2 张、失败 3 张、条目 5 个、壳 0 张；写出的两行、各项合计、`unmatched_pid_entries`、`problems` 的三句、失败的三行逐项钉死 |
+| `a_zip_or_an_entry_that_cannot_be_opened_is_a_failure_and_no_drawing` | `:2967` | 一个 zip 里有一个条目的本地头被改坏；另一个文件以 zip 的签名开头，却不是 zip。写出 1 张，失败 2，`.pid` 条目只数到 1 个；`drawings` 只有一行；`problems` 四句（扫描两句，发布两句）逐句看 |
+| `a_drawing_a_dump_holds_is_listed_with_what_its_row_says` | `:3032` | 仓库里的 Oracle 包（`DWG-0202GP06-01_p`）：写出 7、失败 0、条目 7、壳 1，`problems` 是空的；七行各自的 `doc_uid`、名字、图号、路径、模板、装置分组、`uid_from` 逐项钉死 |
+| `the_tally_says_a_drawing_that_states_a_uid_twice` | `:3152` | `PublishTally::duplicates` 的单测：报告里留一项，`problems` 里多一句，别的数不动 |
+
+这几条在改前的代码上是什么样子：
+
+- 前两条写好后先放到改前的代码上跑。第一遍两条都红（`runs/t52-pin-1.log`），错在用例，不在代码：
+  1. 我把 `problems` 数成三句，实际是四句：坏了的两个 zip，扫描各说一句，发布时再各说一句。
+  2. 第三个条目当时叫 `U02/FIRST-AGAIN.pid`，内容和第一个相同，我以为它会因为输出名被占而失败。实际它写出来了（写出 3、失败 2）：没有 dump 时图名取自条目名，条目名不同，输出名就不同。改成和第一个同名（`U02/FIRST.pid`）才是要钉的那种失败。
+
+  改了用例再跑，两条在改前的代码上都过（`runs/t52-pin-2.log`）。
+- 第三条是第一轮故意改坏之后加的，同样拼到改前的文件上跑过，过（`runs/t52-pin-3.log`）。
+- 第四条测的是这次才有的方法，改前没有可跑的。
+
+**绿。** `runs/t52-precommit.log`（退出 0，158 s）：`cargo fmt --all -- --check` 过；`cargo clippy --locked --workspace --all-targets -- -D warnings` 没有警告；库内 1 589、`--bin pid_publish_xml` 5、`cli_help_streams` 2、`inspect_cli` 21、`parser_panic_safety` 6、`publish_a01_raw_residual` 4（另 2 条忽略）、`publish_chain_faults` 7、`publish_completeness` 10、`publish_diff_accepted_baseline` 19、`publish_from_pid` 22、`publish_mdf_load` 8、`publish_rel_parity` 9、`publish_sqlite_load` 4、`publish_unit_values` 1、`publish_xml_cli` 37，全过。
+
+**对照矩阵。** 跑了两遍，都对 `cp4`，都是 61 项、717 个文件全部相同、没有只在一边的：
+
+- `t52`（`runs/t52-matrix.log`）：补后两条用例之前。
+- `t52b`（`runs/t52b-matrix.log`，构建 47 s，矩阵 104 s）：提交的这一版。两遍之间改的只有测试模块。
+
+程序是 `pid_publish_xml-3e0ddcf-release.exe`，4 683 264 字节。脚本按当时的 `HEAD` 起名，所以名字里是这个提交的前一个；下面两节也是这样。`t52b` 那一份 SHA-256 `8d924863…d4fcbba0`；`t52` 那一份（`14956c9b…545fe243`）被它同名覆盖了。
+
+矩阵能说明的有边界。7 项整包的 `_Index.json` 里 `failed` 都是 0，`problems` 都是空的：它证明的是「写得出来的图，写出的东西一个字节没变」。失败记账那一半（`fail`、`fail_listed_as`、`fail_unlisted`、`problem`、`chain_fault`、`duplicates`）矩阵走不到，只由用例和下面的故意改坏看着。
+
+**故意改坏。** 两轮，都在提交前的工作树上逐处改、跑、按内容还原。30 处还原后的 SHA-256 都与开始时相同，都没有编译错误。
+
+第一轮 25 处（脚本 `mutants-t52.ps1`，汇总 `runs/t52-mut-summary.txt`，各处的日志 `runs/t52-mut-<名字>.log`）。每处跑库内 `backup_package` 一组（当时 23 条）加 `publish_from_pid`、`publish_chain_faults`、`publish_xml_cli` 三组集成用例，104–163 s 一处。21 处红，4 处全绿。原有的用例里红过的有 8 条，表里用字母指代；「新第几条」照上面用例表的顺序。
+
+- a：`a_pid_entry_over_the_limit_fails_by_name_and_the_rest_are_published`
+- b：`a_package_drawing_one_of_whose_files_cannot_be_written_leaves_none_of_them`
+- c：`the_limit_a_package_is_published_with_is_512_mib`
+- d：`excluded_from_totals_names_only_the_shell_rows`
+- e：`backup_directory_publishes_the_whole_package`
+- f：`sql_server_mtf_directory_publishes_t_drawing_rows`
+- g：`the_dwg_package_publishes_every_drawing_it_lists`
+- h：`a_package_names_the_drawing_whose_chain_stops`
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `fail-uncounted`：失败的条目不计入 `failed` | 3 | 新第一条；a、b |
+| `fail-no-row`：失败的条目在 `drawings` 里没有行 | 3 | 新第一条；a、b |
+| `fail-silent`：失败的条目 `problems` 里不说 | 4 | 新第一条；a、b、c |
+| `problem-wording`：`problems` 那一句里 zip 名和条目名之间的空格换成冒号 | 4 | 新第一条；a、b、c |
+| `failure-dropped`：`publish_one` 交回的失败，调用处不记 | 2 | 新第一条；b |
+| `read-row-unprefixed`：读不出的条目，行里少了 `read: ` | 1 | a |
+| `read-problem-prefixed`：读不出的条目，`problems` 那一句多了 `read: ` | 2 | a、c |
+| `unlisted-uncounted`：打不开的 zip、读不出头的条目不计入 `failed` | 1 | 新第二条 |
+| `unlisted-silent`：这两种 `problems` 里不说 | 1 | 新第二条 |
+| `zip-unopened-dropped`：zip 打不开，调用处不记 | 1 | 新第二条 |
+| `entry-unopened-dropped`：条目的头读不出，调用处不记 | 1 | 新第二条 |
+| `text-drawingno`：字样 `DrawingNo` 写成 `DrawingNumber` | 1 | 新第一条 |
+| `text-dump-spid`：字样 `T_DRAWING.SP_ID` 写成 `T_Drawing.SP_ID` | 0 | 全绿 |
+| `text-dump-path`：字样 `T_DRAWING.PATH` 写成 `T_Drawing.PATH` | 2 | d、e |
+| `text-database-spid`：字样 `T_Drawing.SP_ID` 写成 `T_DRAWING.SP_ID` | 1 | f |
+| `rule-variant`：`excluded_from_totals` 按 `DumpSpId` 挑行 | 2 | d、e |
+| `written-uncounted`：写出的图不计入 `written` | 5 | 新第一、二条；a、b、h |
+| `shell-in-totals`：壳的对象／值／关系也加进合计 | 2 | e、g |
+| `paired-path-only`：按 `SP_ID` 找到的图不算配上 | 2 | e、g |
+| `oracle-pipelines-uncounted`：`oracle_exp` 八项合计里不加 `pipelines` | 2 | e、g |
+| `chain-fault-silent`：断链不进 `problems` | 1 | h |
+| `duplicates-silent`：重复的 UID 不进 `problems` | 0 | 全绿 |
+| `row-lost-spid`：按 `SP_ID` 查到的行没有带下去 | 0 | 全绿 |
+| `row-lost-path`：按路径查到的行没有带下去 | 0 | 全绿 |
+| `note-variant`：「dump 里没有这张图」的注记给了 dump 里有的图 | 2 | b、g |
+
+全绿的 4 处说的是两件事。一件：整包里最常见的那种图（dump 里按 `SP_ID` 找到的）在 `_Index.json` 里那一行写了什么，`uid_from` 的字样、图号、路径、模板、装置分组，跑的这几组用例里原来没有一条看；壳的那一行也没有。另一件：重复的 UID 进不进 `problems`，也没有一条看。照规矩先补钉再提交：加了用例表的第三、四条。
+
+第二轮 5 处（`mutants-t52b.spec.ps1`，汇总 `runs/t52-mut2-summary.txt`），只跑库内 `backup_package` 一组（25 条），9–11 s 一处。5 处全红：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `text-dump-spid`（同上） | 1 | 新第三条 |
+| `row-lost-spid`（同上） | 1 | 新第三条 |
+| `row-lost-path`（同上） | 1 | 新第三条 |
+| `duplicates-silent`（同上） | 1 | 新第四条 |
+| `duplicates-unkept`：重复的 UID 不留在报告里 | 1 | 新第四条 |
+
+**超出计划原文的。**
+
+1. 加了 4 条用例。计划只写了「不改任何断言」。
+2. dump 的行只查一次。`uid_from` 换成枚举之后，按字样再查一遍的那一段没有留着的理由，第一次查到的行带下去。
+3. `publish_one` 改成返回 `Result`。计划写的是失败记账「收成一个函数」；实际是 `PublishTally` 的两个方法（`fail`、`fail_listed_as`）加调用处的一行，`publish_one` 的失败出口不再碰记账。
+4. `PublishTally` 的字段从借用改成自己持有。计划写的是「收成方法」；借用留着方法也能写，但 `publish_package` 那 25 个局部变量和借出去的 25 行就还得留着。
+5. `UidFrom::DatabaseSpId` 带 `#[cfg(feature = "backup-mdf")]`：只开 `backup-exp` 时没有地方用这个变体。改前改后各在这个组合下 `cargo check` 过（`runs/t52-base-exp-only.log`、`runs/t52-exp-only.log`），警告都只有原有的 1 条（`catalog.rs:100` 的 `db_subtables` 没有读）。这个组合 CI 和本机门禁都不跑。
+
+**没有改的。**
+
+1. SQL Server 那一支（`publish_staged_database`，`:1461`–`:1743`）一个字没动，函数体改前改后逐字比过。它的 7 处 `failed += 1`（`:1502`、`:1510`、`:1519` 没有行；`:1565`、`:1589`、`:1606`、`:1625` 有行）还是各写各的，不走 `PublishTally`：它有自己的一套局部变量，失败的行用 `mtf_drawing_entry` 造，和这一支的 `failed_drawing` 不是一个样子。计划这一条点的是 `publish_one` 和 `PublishTally`。要不要把两支的记账并到一处，等你定。
+2. 读不出的条目，行里写 `read: …`，`problems` 里不带这个前缀：原样留着。现在 `fail_listed_as` 把这个差别明写了出来，两头各有改坏的一处看着（`read-row-unprefixed`、`read-problem-prefixed`）。
+3. `failed_drawing`、`attach_exp`、`write_three`、`shell_drawing`、`row_by_id`、`row_by_path`、`coverage_oracle` 的函数体逐字没变。
+
+**没有验的。**
+
+1. `publish_one` 的七个失败出口里，三个只读过代码，没有用例走到：exp 增补失败（`:881`）、`_Meta.xml` 渲染失败（`:897`）、统计失败（`:900`）。另外四个各有用例：不带 `DrawingNo`（`:827`）、不是复合文件（`:838`）、输出名被占（`:894`）是新第一条，三个文件写不全（`:902`）是原有的 b。七个出口交回的原因都由同一行 `tally.fail`（`:776`）记。
+2. `publish_one` 把重复的 UID 交给记账的那一行（`:915`）没有用例走到：仓库里没有哪个 `.pid` 发布出来会把一个 UID 写两次。新第四条看的是记账的方法，不是这一行；用例的注释里也写了这一句。
+3. 故意改坏第一轮跑的是库内 `backup_package` 一组和三组集成用例，第二轮只跑库内那一组；别的用例没有跑。
+4. 只开 `backup-exp` 的组合只 `cargo check` 过，没有跑测试。
+5. 全套门禁没有在这一条之后单独跑，是三项做完一起跑的，见后面那一节。没有在 Linux 上跑。
+
+**顺带记下的。**
+
+1. 打不开的 zip 在 `problems` 里有两句：扫描说一句（`<路径>: zip archive parse error: …`），发布时再说一句（`open <路径>: …`）；`failed` 只加一。里面有一个条目的头读不出的 zip 也是两句。这是写新第二条时数错了才看到的，改前就是这样。
+2. 没有 dump 的包里，同一张图（同一个 DocUID）以两个不同的条目名各出现一次，两份都写出来（`FIRST_*`、`FIRST-AGAIN_*`），`problems` 里没有话。这是新第一条的第一版在改前的代码上跑出来的（`runs/t52-pin-1.log`）。这一段逻辑 T5.2 没有动，改后没有再造这样的包跑。有 dump 时图名取自 dump 的行，两份会撞输出名，第二份失败：这一句是读代码得的，没有跑。
+3. 没有 dump 的包里，5 个条目（写出的 2 个和失败的 3 个）都列在 `unmatched_pid_entries` 里：算配上的只有 dump 里有行、又写出来了的图。新第一条照这个钉的。
+4. 仓库里的 Oracle 包第六张图，dump 里名字是 `DWG-0202GP06-01`，图号是 `DWG-0202GP06-02`：两个字段不一样，数据自己就是这样。新第三条照数据钉的。
+5. 加了读整包的新第三条之后，库内 `backup_package` 这一组从 0.30 s 到 0.97 s。
+6. 发布构建的程序从检查点 4 的 4 756 992 字节到 4 683 264 字节，少 73 728。原因没有查。
+
+### T6.1 序列化失败不再吞掉（2026-11-16，`f5b36c5`）
+
+**量。** 计划点的四处，改前（`a3e6a89`）是：
+
+| 位置 | 写的是什么 | 序列化失败时 |
+|---|---|---|
+| `backup_package.rs:462` | `.pid`／Oracle 整包的 `_Index.json` | `serde_json::to_string_pretty(&index)` 失败就换成 `"{}"`：写出一个空对象 |
+| `backup_package.rs:1725` | SQL Server 整包的 `_Index.json` | 同上 |
+| `pid_writer.rs:766` | `.pid` 一路的 `_Coverage.json` | `serde_json::to_string_pretty(&report).unwrap_or_default()`：写出只有一个换行的文件 |
+| `pid_writer.rs:817` | 数据库一路的 `_Coverage.json` | 同上 |
+
+四处序列化的都是 `json!` 造出来的 `serde_json::Value`。这种值往内存里序列化没有失败的路：键都是字符串，数都是有限的，写的是 `String`。所以这四个兜底今天到不了，计划说的「改成把错误报出去」也就没有错误可报；没有哪个输入能让它发生，也就写不出一条先红的用例。
+
+改前全仓库 `src` 下别的 `serde_json::to_*` 调用也看了一遍：跟在后面就 `unwrap_or…` 的只有这四处；`src/export_bundle.rs` 的三处本来就 `map_err` 报出去。
+
+**改。**
+
+- `src/publish/pid_writer.rs`：新的 `json_file_text`（`:827`，`pub(crate)`）给出一份 JSON 文件的文本，就是 `format!("{value:#}\n")`：返回 `String`，不返回 `Result`。`{:#}` 走的就是 `to_string_pretty` 用的那个序列化器（读的是 serde_json 1.0.149 的源码）。两份覆盖报告（`:766`、`:815`）改成调它。
+- `src/publish/backup_package.rs`：两处 `_Index.json`（`:464`、`:1725`）改成调它。
+
+四处的兜底都删了。2 个文件，+53／−13 行。没有新的公开项。
+
+**和计划原文不一样的地方。** 计划写的是「改成把错误报出去」。实际做的是把到不了的兜底删掉，渲染收到一个不会失败的函数里，没有多出一条报错的路。照字面做有两种办法，都没有做，等你定：
+
+- A：两个公开的覆盖报告函数改成返回 `Result`，错误一路报到调用方。这是对外的破坏性改动，换来的是一条没有输入能走到的分支。
+- B：只在整包这条路里报（索引序列化失败就让 `publish_backup_package` 返回错误），覆盖报告不动。公开签名不变，但四处变成两种写法。
+
+万一哪天 `Value` 的序列化真的出了错，现在的结果是 panic（`format!` 在 `Display` 返回错误时 panic），不再是悄悄写出一个 `{}` 或空文件。这一句是读出来的，没有办法造出来验。
+
+**用例。** 1 条（库内 1 589 → 1 590）：
+
+| 用例 | 位置 | 看的是什么 |
+|---|---|---|
+| `the_text_of_a_json_file_is_the_pretty_layout_and_a_line_feed` | `pid_writer.rs:1211` | 一个字面量钉版式：每层缩进两个空格，键和值在一行，文末一个换行。再拿六个值和 `to_string_pretty` 加换行逐字节比：一个把 JSON 的各种值都装进去的对象（转义、非 ASCII、`u64::MAX`、`i64::MIN`、`1e300`、空数组和空对象、多层嵌套），另有 `null`、一个数、一个字符串、空数组、空对象 |
+
+这条在改前没有可跑的（函数是新的）。它看的是「新函数和旧写法给出同样的字节」；四处调用写出的字节由对照矩阵和原有的用例看。
+
+**绿。** `runs/t61-precommit.log`（退出 0，170 s）：fmt 过；clippy 没有警告；库内 1 590，其余 14 组的条数同 T5.2，全过。
+
+**对照矩阵。** `t61` 对 `t52b`：61 项，717 个文件全部相同，没有只在一边的（`runs/t61-matrix.log`，构建 37 s，矩阵 96 s）。程序 `pid_publish_xml-a3e6a89-release.exe`，4 738 560 字节，SHA-256 `c12060bd…bea6a01d`。矩阵比的文件里有 7 份 `_Index.json` 和 152 份 `_Coverage.json`，四处调用写出的两种文件都在里面。
+
+**故意改坏。** 6 处（`mutants-t61.spec.ps1`，汇总 `runs/t61-mut-summary.txt`），每处跑库内 `publish::` 一组（462 条，15–16 s）。都没有编译错误，6 处还原后的 SHA-256 都与开始时相同。6 处全红：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `compact`：版式换成紧凑的 | 2 | 新用例；原有的 `the_database_coverage_report_states_what_was_written_short` |
+| `no-line-feed`：文末不加换行 | 3 | 新用例；原有的 `the_coverage_report_counts_what_is_written_and_names_what_is_left_out`、`the_database_coverage_report_states_what_was_written_short` |
+| `coverage-pid-empty`：`.pid` 一路的覆盖报告是一个空行（删掉的兜底写出的样子） | 8 | 都是原有的 |
+| `coverage-database-empty`：数据库一路的覆盖报告是一个空行 | 7 | 都是原有的 |
+| `index-pid-braces`：`.pid`／Oracle 整包的索引是 `{}`（删掉的兜底写出的样子） | 5 | T5.2 加的前三条；原有的 `the_limit_a_package_is_published_with_is_512_mib`、`a_pid_entry_over_the_limit_fails_by_name_and_the_rest_are_published` |
+| `index-database-braces`：SQL Server 整包的索引是 `{}` | 4 | 都是原有的 |
+
+后四处等于把删掉的兜底「真的发生」演了一遍：每一处都有用例红，所以四处调用都有用例读它写出的文件。
+
+**没有改的。**
+
+1. 两个公开的覆盖报告函数的签名没有动，还是返回 `String`（上面的 A）。
+2. `write_atomic` 写文件失败的报错照旧：`_Index.json` 写不出去，`publish_backup_package` 返回 `Io`。这次动的只是写之前的渲染。
+
+**没有验的。**
+
+1. 「`Value` 的序列化不会失败」是读 serde_json 的源码得的，不是测出来的。
+2. 故意改坏只跑了库内 `publish::` 一组，集成用例没有跑。
+3. 全套门禁见后面那一节；没有在 Linux 上跑。
+
+**顺带记下的。**
+
+1. `json!` 里插进去的表达式是经 `serde_json::to_value(…).unwrap()` 变成 `Value` 的：要是哪个插进去的值自己序列化不了，panic 在造 `Value` 的那一步，轮不到这四处。这也是读源码得的。
+2. `index-pid-braces` 红的 5 条里 3 条是 T5.2 刚加的：在库内 `publish::` 这一组里，T5.2 之前读 `.pid`／Oracle 整包索引的用例只有 2 条。
+3. 发布构建的程序 4 683 264 → 4 738 560 字节，多 55 296。原因没有查。
+
+### T6.3 库内小项（2026-11-16，`7e3e60d`）
+
+计划这一条有四件事：两件改代码，两件只改说明。
+
+**量。** 改前（`f5b36c5`）：
+
+1. `pipeline_uid`（`pipeline.rs:203`）：`Uuid::parse_str(DNS_NAMESPACE).unwrap_or_else(|_| Uuid::nil())`，`DNS_NAMESPACE` 是 `:36` 的一个字符串常量。字符串解析不了时静默换成全零的 UUID，算出来的 UID 全都变样，没有任何提示。字符串是对的，这个兜底今天到不了。
+2. `pid_coverage_json`（`pid_writer.rs`）：`left_out_by_design` 先照 `LEFT_OUT_BY_DESIGN` 五句原样放进报告（`:655`），图上挂了 dump 时再回头用 `.get_mut("left_out_by_design")` 取出数组，把 `list[0]` 换掉（`:658`–`:667`）。
+3. `fmt_err`（`xml_writer.rs:2073`）把 `std::fmt::Error` 装进 `PublishError::Sqlite`。用到它的地方有 246 处，全是 `.map_err(fmt_err)`；文件里 252 处 `write!`／`writeln!` 写的都是 `buf`，一个 `String`（30 个 `&mut String` 参数，2 个 `String::with_capacity` 局部变量）。往 `String` 里写不会失败，这个错误只可能来自被写的值自己的 `Display`。
+4. `failed`：`BackupPublishReport::failed` 的文档只有一句 `Drawings that were not written.`，模块文档也没有说它还数别的。`publish_backup_package` 的 `# Errors` 一节有一句不对：它说 `PlantData` 的 zip 打不开时返回 `Io`。实际打不开的 zip 不返回错误：计一次 `failed`，在 `problems` 里说一句，照样往下走。
+
+**改。** 5 个文件，+153／−32 行。
+
+1. `src/publish/pipeline.rs`：`DNS_NAMESPACE` 这个字符串常量删了，`pipeline_uid`（`:205`）直接用 `Uuid::NAMESPACE_DNS`（uuid 1.23.1 里的 `pub const`，不挂在哪个特性后面）。没有要解析的字符串，也就没有可以静默落进去的另一个命名空间。文档注释补上这条 v5 的链：DNS 命名空间里的 `pid-parse/pipeline` 是根，根里的装置名是装置的命名空间，其中的管线名就是 UID。
+2. `src/publish/pid_writer.rs`：新的 `left_out_by_design`（`:522`，私有）按图的来源直接给出五句，`pid_coverage_json` 构造报告时就调它（`:680`），事后换 `list[0]` 的那一段删了。第一句有三种：没挂 dump（`.pid` 自己的那一句）；挂了 dump、没有合成管线；挂了 dump、合成过管线。后四句不分来源。
+3. `src/publish/xml_writer.rs`（`:2079`）、`src/publish/model.rs`（`:116`）：只改注释。`fmt_err` 的注释写明：格式化错误是装在 `PublishError::Sqlite` 里出去的，文字是 `format: …`，这个名字不对，里面没有数据库；`PublishError` 没有它自己的变体，而加一个会让按枚举匹配的调用方编译不过（枚举不是 `#[non_exhaustive]`）；每一处写的都是 `String`，错误只可能来自被写的值的 `Display`。`PublishError::Sqlite` 的注释补一句，说它也装这个。
+4. `src/publish/backup_package.rs`：只改注释，三处。模块文档（`:17`–`:31`）和 `BackupPublishReport::failed`（`:87`–`:97`）写明 `failed` 数的是什么：
+   - 没写出来的图各算一次，在 `drawings` 里有一行，`files` 是空的；
+   - 打不开的 `PlantData` zip 各算一次，读不出头的条目各算一次，这两种没有行，也不在任何一个 `.pid` 计数里，只有 `problems` 里的一句；
+   - 所以它不是图数：一个打不开的 zip 不管装了多少张图都只算一次，一个读不出头的条目不管是不是 `.pid` 都算一次；SQL Server 的包只列 zip、不从 zip 里读图，`failed` 可以大于 0 而每张图都写出来了。
+
+   模块文档里原来的一句「每个 `.pid` 条目都在索引里恰好记一次」也改了，现在说的是这次运行**列得出来**的每个 `.pid` 条目：打不开的 zip 里的条目列不出来，不在这个「恰好一次」里。
+
+   `# Errors`（`:311`–`:322`）照代码重写，写之前把这个文件里造 `Usage`、`Io` 的每一处都对了一遍：没有 `Manifest.txt`、`Export.dmp` 的头不认识、是 SQL Server 的磁带而这次构建不带 `backup-mdf`，返回 `Usage`；目录、dump、data map 读不出，输出目录建不了，`_Index.json` 写不出，返回 `Io`；失败的图、打不开的 zip、读不出头的条目都不返回错误。
+
+没有新的公开项。公开项里变的只有文档：`pipeline_uid`、`BackupPublishReport::failed`、`publish_backup_package`、`PublishError::Sqlite`。
+
+**用例。** 2 条（库内 1 590 → 1 592）。两条都是改代码之前先写、先跑的：在改前的代码上都过（`runs/t63-pin-1.log`，2 过，另 1 590 条被过滤掉），改完还过。它们钉的是「改前改后给出的东西一样」，不是「先红后绿」。
+
+| 用例 | 位置 | 看的是什么 |
+|---|---|---|
+| `the_uid_is_the_version_5_chain_from_the_dns_namespace` | `pipeline.rs:310` | 三个 UID 的字面值：（`P01`，`25 mm-CI-1901201-B9`）是 `2E52F1CC1D5954A1A405B479A958B3D1`，（`SQPlant`，同一个名字）是 `784526020BD05F2FAF49B683513899FD`，（`P01`，`-PG-1001105-F9`）是 `85E8B7EE98D55F28B9EC507861703DF2`。三个值是在这个库之外另算的：照 RFC 4122 的 v5 一层层算，用的是 PowerShell 里 .NET 的 SHA-1；写这一节时又照样算了一遍，相符 |
+| `left_out_by_design_says_what_a_dump_adds_and_keeps_the_rest` | `pid_writer.rs:1309` | 经 `write_pid_coverage_json` 取报告里的那个数组，四种图：没挂 dump（五句就是 `LEFT_OUT_BY_DESIGN`，第一句的字面值钉死）；没挂 dump、但标着合成过管线（还是那五句）；挂了 dump、没合成（第一句的字面值，后四句同常量）；挂了 dump、合成过（第一句的字面值，后四句同常量） |
+
+**绿。** `runs/t63-precommit.log`（退出 0，177 s）：fmt 过；clippy 没有警告；库内 1 592，其余 14 组的条数同 T5.2，全过。这之前另有一遍快检（`runs/t63-check-1.log`）：fmt、clippy 过，库内 `publish::` 一组 464 条全过。
+
+**对照矩阵。** `t63` 对 `t61`：61 项，717 个文件全部相同，没有只在一边的（`runs/t63-matrix.log`，构建 39 s，矩阵 97 s）。程序 `pid_publish_xml-f5b36c5-release.exe`，4 732 416 字节，SHA-256 `2e55fc6d…394be6d4`。
+
+矩阵看得到这两处改动的地方：写出的 156 份 `_Data.xml` 里 128 份有管线，其中 6 份有新用例钉的三个 UID 之一；152 份 `_Coverage.json` 里，19 份的第一句是 `.pid` 自己的那一句，130 份是合成过管线的那一句，3 份是数据库一路的报告（没有这个数组）。「挂了 dump、没有合成管线」那一句，矩阵里一份都没有。
+
+**故意改坏。** 9 处（`mutants-t63.spec.ps1`，汇总 `runs/t63-mut-summary.txt`），每处跑库内 `publish::` 一组（464 条，15–18 s）。都没有编译错误，9 处还原后的 SHA-256 都与开始时相同。9 处全红：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `namespace-nil`：命名空间换成全零的 UUID（删掉的兜底会落进去的样子） | 1 | 新第一条 |
+| `namespace-url`：换成 RFC 4122 的另一个命名空间（URL） | 1 | 新第一条 |
+| `root-name`：根的名字 `pid-parse/pipeline` 多一个字母 | 1 | 新第一条 |
+| `flag-inverted`：合成过管线和没合成的两句对调 | 1 | 新第二条 |
+| `dump-ignored`：挂了 dump、没合成管线的图，给的是 `.pid` 自己的那一句 | 1 | 新第二条 |
+| `alone-says-emitted`：没挂 dump 的图，说端口是从 dump 来的 | 1 | 新第二条 |
+| `rest-short`：后四句少一句 | 2 | 新第二条；原有的 `the_coverage_report_counts_what_is_written_and_names_what_is_left_out` |
+| `first-last`：讲端口和管线的那一句放到最后 | 1 | 新第二条 |
+| `synthesized-wording`：合成过管线的那一句里去掉 `the plant and`（`a UUID v5 of the plant and the name` 成了 `a UUID v5 of the name`） | 1 | 新第二条 |
+
+9 处里 8 处只有新用例红。也就是说，在库内 `publish::` 这一组里，T6.3 之前没有一条用例钉着管线 UID 的值，也没有一条钉着 `left_out_by_design` 的第一句。集成用例这次没有跑，它们钉没钉没有查；对照矩阵是看得到的（见上）。
+
+**超出计划原文的。**
+
+1. 动了 `src/publish/model.rs`（`PublishError::Sqlite` 的注释），计划这一条列的四个文件里没有它。`fmt_err` 的注释说错误是装在这个变体里出去的，变体自己的注释不提就对不上。
+2. `# Errors` 一节整节照代码重写了。计划只说在说明里把 `failed` 写清；那一节原来有一句和 `failed` 的新说明直接矛盾（zip 打不开返回 `Io`），留着就是两处说法打架。
+3. 加了 2 条用例。计划的验收只有对照矩阵。
+
+**没有改的。**
+
+1. `PublishError` 没有加变体：格式化错误还是装在 `Sqlite` 里，文字还是 `format: …`。计划定的就是这一轮只把注释写准。
+2. `failed` 数的东西没有变，变的只是说明。它还是把失败的图、打不开的 zip、读不出头的条目加在一个数里；命令行拿它定退出码（`pid_publish_xml.rs:726` 的 `package_exit_code`，`failed > 0` 就退出 1）。
+3. 命令行（`src/bin/pid_publish_xml.rs`）里把 `failed` 当成图来说的地方，这次一处没有碰，留给 T6.2：这个文件是 T5.1、T6.2 要改的，那条线也改过它。写这一节时数了一遍，是 6 处：
+   - 用户看得见的 2 处。整包跑完的那一行摘要（`:701`–`:708`，`Published {} drawings from {} ({} failed, …)`），`failed` 的数原样填在「failed」前面。用法说明（`:139`–`:140`，`One drawing that fails is recorded; the rest are still written; the process then exits 1.`）只说了图失败，没有说打不开的 zip 也让进程退出 1。
+   - 注释 4 处。模块文档（`:28`–`:29`，`a package drawing that failed`），`run` 的文档（`:535`–`:537`，`a package drawing failed`），`package_exit_code` 的文档（`:722`–`:725`，`1 when a drawing failed …`），测试里造报告的 `package_report` 的注释（`:1323`）。
+4. `pid_coverage_json` 里别的几处事后往报告里加东西的写法（`:696` 的 `.get_mut("classified_items")`、`:712` 的 `.get_mut("relationships")`、`:722` 的 `.get_mut("attribute_values")`，和 `:727` 的 `report["oracle_exp"] = …`）没有动。计划点的只有 `list[0]` 那一处。
+5. `attach_pipelines` 是公开的。不挂 dump 就调它的图，`pipelines_attempted` 是真而 `exp` 是空，报告里给的还是 `.pid` 自己的那一句，和改前一样。命令行和整包发布都是先挂 dump 再合成管线（`pid_publish_xml.rs:836` 然后 `:867`；`backup_package.rs:880` 然后 `:882`），走不到这种情形；新第二条把它钉成现在的样子。
+
+**没有验的。**
+
+1. 「挂了 dump、没有合成管线」那一句只由新第二条看，矩阵里没有。
+2. 故意改坏只跑了库内 `publish::` 一组，集成用例没有跑。
+3. 注释里的说法（`failed` 数什么、`# Errors`、`fmt_err`）是对着代码读的，加上 T5.2 的用例和下面两次实测；没有用例去钉注释。
+4. 全套门禁见后面那一节；没有在 Linux 上跑。
+
+**顺带记下的。** 为了对 `failed` 的新说明，拿这一版的发布构建（`pid_publish_xml-f5b36c5-release.exe`）在 SQL Server 的包上实测了两种情形，各跑了两遍，两遍的结果一样（`runs/t63-mtf-zip-unopened/`：`pkg`、`pkg-nosig` 都是 `TEST02_p` 的拷贝，只把 `PlantData~2~711.zip` 换掉；第二遍把退出码也写进了文件）：
+
+1. 文件以 zip 的签名开头、但打不开（`pkg`：26 个字节，前 4 个是 `50 4B 03 04`；`out2`、`out3`，`stderr3.txt`，`exit3.txt`）：退出 1；stderr 是 `Published 1 drawings from … (1 failed, 0 without a DrawingNo). Wrote …`；索引里 `failed` 1、`drawing_rows` 1、`pid_entries` 0、`paired` 0，`drawings` 一行，三个文件都在，`problems` 两句（扫描一句，发布一句，说的都是 `invalid Zip archive: Could not find EOCD`）。也就是说：图一张不少地写出来了，摘要说「1 failed」，退出码是 1。要不要给这种情形换个说法或换个退出码，等你定。
+2. 文件不以 zip 的签名开头（`pkg-nosig`：27 个字节的一句英文；`out`、`out-nosig`，`stderr-nosig.txt`，`exit-nosig.txt`）：退出 0；摘要是 `Published 1 drawings from … (0 failed, 0 without a DrawingNo). Wrote …`；索引里 `failed` 0、`drawing_rows` 1、`pid_entries` 0、`paired` 0，`problems` 是空的。名字叫 `PlantData~2~711.zip` 的这个文件整个被跳过，哪里都没有一句话。
+3. 两种情形写出的 `A01_Data.xml`、`A01_Meta.xml` 都和完好的包写出的（矩阵里的 `t63/pkg-test02/out`）逐字节相同。`A01_Coverage.json` 只差一处：`source` 是 `":"`，完好的包是 `"PlantData~2~711.zip:01/01/A01.pid"`。图的那一行没有配上 `.pid` 条目（`paired` 0），zip 名和条目名都是空的，中间的冒号照写。
+4. 发布构建的程序 4 738 560 → 4 732 416 字节，少 6 144。原因没有查。
+
+### T5.2 补钉：exp 增补失败的出口（2026-11-16，`6db94f7`）
+
+这一节是三项提交之后、全套门禁（记在下一节）跑完才做的。起因是 T5.2「没有验的」第 1、2 条：`publish_one` 的三个失败出口和把重复的 UID 交给记账的那一行，那里写的是读代码的结论。行号按 `6db94f7`；`:3167` 之前的行与 `7e3e60d` 相同。
+
+**量。** 先量有没有用例走到。在 `7e3e60d` 上（源码干净），让每一处在原地 panic 或者干脆去掉，跑库内 `backup_package` 一组（25 条）和 `publish_from_pid`、`publish_chain_faults`、`publish_xml_cli` 三组集成用例（22、7、37 条）。走到的用例会红：直接调库的因为 panic，起命令行的因为退出码 101。
+
+| 改坏的地方 | 结果 | 用时 |
+|---|---|---|
+| `duplicates-not-handed-over`：`:939` 的 `tally.duplicates(duplicates);` 换成 `drop(duplicates);` | 全绿 | 88 s |
+| `exit-exp-attach-panics`：`:905` 的 `return Err(error.to_string());` 换成 `panic!` | 全绿 | 88 s |
+| `exit-meta-panics`：`:921` 的 `map_err` 里 panic | 全绿 | 92 s |
+| `exit-census-panics`：`:924` 的 `map_err` 里 panic | 全绿 | 88 s |
+| `control-name-taken-panics`（对照）：`:918`「输出名被占」的出口换成 `panic!` | 红 1 条 | 90 s |
+
+第一处是 `mutants-t52c.spec.ps1`（汇总 `runs/t52c-mut-summary.txt`），后四处是 `mutants-t52d.spec.ps1`（`runs/t52d-mut-summary.txt`）。对照红的是 T5.2 的新第一条 `a_pid_entry_that_cannot_be_published_fails_by_name_and_reason`，已知它走到那个出口：同样的改法它红了，所以前四处全绿是没有用例走到，不是这个量法看不出来。第一处编译器另给了一条警告 `method `duplicates` is never used`：那一行是这个方法在测试之外唯一的调用处。五处改完都还原了，文件哈希与开始时相同。
+
+再看有没有输入能走到：
+
+| 哪一处 | 有没有输入能走到 | 依据 |
+|---|---|---|
+| exp 增补失败（`:905`） | 有 | `ExpTables::read`（`oracle_exp.rs:343`）只管把表读进来，各个投影要哪几列是用到时才查的。`attach_exp`（`:1108`）的第二步 `port_tables()`（`oracle_exp.rs:454`）要 `T_PIPINGPOINT` 的 `SP_PLANTITEMID`、`PIPINGPOINTNUMBER`、`FLOWDIRECTION`、`NOMINALDIAMETER` 四列（`project_piping`，`oracle_exp.rs:1584`），缺一列就拒绝。这样的 dump 整份读得进来，每张按 `SP_ID` 配上的图都从这个出口失败。`APPLICATIONS` 钉不上的 dump 走不到这里：`load_dump` 就失败，整包返回错误 |
+| `_Meta.xml` 渲染失败（`:921`） | 读代码：没有 | `write_meta_xml`（`xml_writer.rs:116`）和它的五个帮手里，错误只有 `fmt_err`（`xml_writer.rs:2079`）一处造，都是往 `String` 里 `writeln!`，写进去的是字符串和常量 |
+| 统计失败（`:924`） | 没有找到，也没有证明一定没有 | `pid_publish_census`（`diff.rs:1582`）在刚写出的 `_Data.xml` 不是合式 XML 时失败。值都经 `escape_attr`（`xml_writer.rs:2751`）：五个实体，CR、LF、TAB 写成字符引用，XML 1.0 装不下的字符换成 U+FFFD。要走到，得写出器写出自己读不回去的文档 |
+| 交接重复的 UID（`:939`） | 手头没有 | 要一张发布出来把一个 UID 写两次的图，仓库里没有。拿改过的 dump 能不能造出来，没有试 |
+
+最后量 exp 增补失败这一个出口改前改后一样不一样（`attach-fails.ps1`，产物在 `runs/t52e-attach-fails/`）。把仓库里的 Oracle 包（`test-file/backup-test/DWG-0202GP06-01_p`，16 个文件）整个复制一份，`Export.dmp`（8 802 304 字节）只改 1 个字节：偏移 8 174 552，`0x50` → `0x58`。那是 `INSERT INTO "T_PIPINGPOINT" (…)` 的列名表里 `"PIPINGPOINTNUMBER"` 的第一个字母，列名成了 `XIPINGPOINTNUMBER`。这句 `INSERT` 在 dump 里只有一处（偏移 8 174 385）；字节不增不减，表照样框得住。脚本核过：改后的 dump 与仓库里的只差这 1 个字节，其余 15 个文件逐字节相同。
+
+两份发布构建各发一遍（`<程序> <包> --out-dir <目录>`），写到同一个输出路径、跑完再改名，所以输出里的路径两边一样：
+
+| | 程序 | 退出码 | 写出的文件 | stdout | stderr |
+|---|---|---|---|---|---|
+| 改前 | `pid_publish_xml-b7eeaf7-release.exe`（检查点 4 的矩阵用的那一份，SHA-256 `f6099763…`） | 1 | 4 | 0 字节 | 279 字节 |
+| 改后 | `pid_publish_xml-7e3e60d-release.exe`（`95d971b3…`） | 1 | 4 | 0 字节 | 279 字节 |
+
+写出的 4 个文件加命令行、stdout、stderr、退出码，一共 8 个文件，两边逐字节相同。
+
+- stderr：`Published 1 drawings from <包> (6 failed, 1 without a DrawingNo). Wrote <目录>\_Index.json.`
+- 写出的文件：`001_Data.xml`、`001_Meta.xml`、`001_Coverage.json`、`_Index.json`。
+- `_Index.json`：`pid_entries` 7，`drawing_rows` 7，`paired` 1，`failed` 6，`shells` 1。`problems` 六句，都是 `PlantData~2~711.zip <条目>: T_PIPINGPOINT: column PIPINGPOINTNUMBER is missing`。`drawings` 七行：壳一行，带三个文件；另六行 `files` 是空的，行里的 `problems` 是不带 zip 和条目的那一句。
+
+所以 T5.2 对这个出口的改法（从就地记账改成把原因交回去，由调用处记一次，`:800`）没有改变结果。T5.2 的记录里这一个出口写的是「只读过代码」，现在是量出来的。
+
+**改。** 只加一条用例：`src/publish/backup_package.rs` +107 行，都在 `mod tests` 里（`:3167`–`:3273`）。产品代码一个字没动。
+
+**用例。** `a_drawing_the_dump_cannot_be_attached_to_fails_by_name_and_reason`（`:3178`）：
+
+- 把那个包的 `Manifest.txt` 和 `PlantData~2~711.zip` 复制到临时目录，`Export.dmp` 读进内存、改掉上面那一个字节再写过去。字节的位置是找出来的（那句 `INSERT`，它的列名表，表里的列名），不是写死的偏移。
+- 先在这份 dump 上直接问一遍：`ExpTables::read` 读得进来，`port_tables()` 拒绝，拒绝的话以 `T_PIPINGPOINT: ` 开头。后面期望的句子用的就是这句话，不是抄的字面值。
+- 发布整包，断言：报告里写出 1、失败 6、条目 7、壳 1；索引里 `pid_entries` 7、`drawing_rows` 7、`paired` 1、`failed` 6、`shells` 1；`problems` 正好六句，依次是 `PlantData~2~711.zip <条目>: <拒绝的话>`；`drawings` 第一行是壳（`uid_from` 是 `T_DRAWING.PATH`，三个文件），后六行依次是那六个条目，`files` 是空的，行里的 `problems` 只有那句拒绝的话；输出目录里只有壳的三个文件和 `_Index.json`。
+
+**绿。** `runs/t52e-pin-1.log`：库内 `backup_package` 26 条全过（25 → 26），这一组 0.97 s → 1.08 s。提交的内容上又跑一遍（`runs/t52e-final.log`，32 s）：26 条全过，clippy 0 条警告，fmt 无差异。
+
+这是钉住现状的用例，不是先红后绿：在 `7e3e60d` 的代码上加上去就过。它没有放到 T5.2 之前的代码上跑；「改前改后一样」是上面那次两份发布构建的对照给的。对照用的是整包，用例用的是其中三个文件；用例断言的就是对照里看到的那些：六句 `problems`、七行 `drawings`、四个文件。
+
+**对照矩阵。** 提交之后在 `6db94f7` 上跑的（`cp-matrix.ps1 -Label t52e`，`runs/t52e-matrix.log`；工作区只有三份文档没提交）：发布构建 37 s，矩阵 61 项 90 s。`post63` 对 `t52e` 717 个文件全部相同，`cp4` 对 `t52e` 717 个全部相同，没有只在一边的。程序是 `pid_publish_xml-6db94f7-release.exe`，4 732 416 字节，SHA-256 `cc3c8589…678e8a48`。前三项的矩阵都是提交之前跑的；这一次先提交再跑，因为没提交时程序会取 `7e3e60d` 的名字，把 `post63` 和上面那次对照用的那一份同名覆盖掉（检查点 4 记过这种事）。
+
+**故意改坏。** 4 处（`mutants-t52e.spec.ps1`，汇总 `runs/t52e-mut-summary.txt`），只跑库内 `backup_package` 一组（26 条），8–10 s 一处。4 处全红，红的都只有这条新用例：
+
+| 改坏的地方 | 红 | 红的是哪些 |
+|---|---|---|
+| `exit-exp-attach-panics`：就是上面全绿的那一处 | 1 | 新用例 |
+| `attach-reason-reworded`：交回的原因前面加 `attach: ` | 1 | 新用例 |
+| `attach-failure-swallowed`：增补失败只记成一句备注，图照写 | 1 | 新用例 |
+| `shell-attaches`：`dump_in_run`（`:868`）的条件从「按 `SP_ID` 找到的」放宽成「dump 里有行的」，壳也去做增补 | 1 | 新用例 |
+
+第四处只有新用例红，说的是另一件事：库内这一组原有的 25 条里没有一条看着「壳不做增补」。三组集成用例和对照矩阵看不看得到，没有试。
+
+这 4 处是在用例上面那段注释改最后一次之前跑的；两版只差注释里的一句话（「包是仓库里那一个」改成「包是仓库里那一个的清单、zip 和 dump」），代码相同。
+
+**超出计划原文的。**
+
+1. 这条用例和这个提交。计划是一个任务一个提交，T5.2 现在是两个（`a3e6a89`、`6db94f7`）；没有 amend。
+2. 规矩是全绿的改坏先补钉再提交。这一处是提交之后才试的：T5.2 的记录把它列在「没有验的」里，当时没有当成改坏的一处去试。另外三处全绿的没有补，见下。
+3. `attach-fails.ps1` 是为这次对照新写的脚本，和别的脚本一样在 `target/publish-audit/review/` 下，不进 git。
+
+**没有改的。**
+
+1. 另外三处全绿的没有补钉：`_Meta.xml` 渲染失败和统计失败两个出口，交接重复 UID 的那一行。手头造不出走到它们的输入。要钉，得在产品代码里开一个能让它们失败的口子。`_Meta.xml` 那一个也可以反过来：`write_meta_xml` 对什么输入都不会失败，改成不返回 `Result`，这个出口就没有了（T6.1 对 JSON 就是这么做的）；但它和 `write_pid_meta_xml` 都是 `pub fn`，这是改签名。统计那一个去不掉：`pid_publish_census` 读的是任意一份文档，本来就该能失败。等你定。
+2. 失败的图那一行不带已经查到的东西。这六张图失败的时候 UID 和 dump 的行都已经查到了，行里 `doc_uid`、`drawing_number`、`path`、`template`、`plant_group`、`uid_from` 却都是空的，只有名字和条目。改前就是这样（两份构建的输出相同）；用例没有去钉这几个空字段，代码也没有动。
+
+**没有验的。**
+
+1. 全套门禁是在 `7e3e60d` 上跑的。这个提交之后重跑了哪些、没有重跑哪些，记在下一节。
+2. 用例没有放到 T5.2 之前的代码上跑（见「绿」）。
+3. 故意改坏只跑了库内 `backup_package` 一组。
+4. 别的失败法没有试，试的只有「端口表缺一列」。`attach_exp` 里别的几步（只在 dump 里的部件、连接端、组合关系、单位值、OPC 点）和它后面的 `attach_pipelines`、`attach_codelist_values` 失败时走的是同一个出口，没有各造一份输入。
+5. 没有在 Linux 上跑。
+
+**顺带记下的。**
+
+1. 这种失败是整包的事，却是一张图一张图报的：端口表缺一列，包里每张按 `SP_ID` 配上的图都失败，同一句话说六遍，而 dump 本身在读的时候是收下了的。要不要在读 dump 时就把各个投影要的列查一遍、整包只说一次，没有动。
+
+### T5.2、T6.1、T6.3 之后的门禁（2026-11-16）
+
+**门禁。** `gates.ps1 -Label after-t63`，在 `7e3e60d` 上跑，开跑时工作区是干净的（`dirty files: 0`）。跑的中间只改了文档，在 `target/publish-audit/review/` 下写了几个文件，把已经构建好的发布程序跑了两次（T6.3 一节里换掉 zip 的那两种情形的第二遍）；源码没有动，cargo 没有另跑。这几份文档没有哪段代码去读：照检查点 4 的办法又 `git grep` 了一遍，提到它们的还是 51 处，都在注释行上。日志在 `target/publish-audit/review/gates/after-t63/`。这一遍不算检查点 5：T5.1 没有做，阶段 5 没有完。
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 113 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 556 s | 475 个测试程序；2 589 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 14 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 6 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 10 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 1 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 0 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 19 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+与检查点 4 比，通过的测试多 7 条（2 582 → 2 589），就是这三项加的那 7 条，都在库内（1 585 → 1 592）：`backup_package` 4 条，`pid_writer` 2 条，`pipeline` 1 条。测试程序还是 475 个，`test result:` 还是 474 行（不打结果行的那一个是基准程序）。忽略数、`skipping: ` 行数、缺文档数、不带默认特性的 985 条都没变。用时：构建 113 s 对 117 s，测试 1 556 s 对 1 626 s，clippy 14 s 对 13 s，fmt 6 s 对 5 s，缺文档 10 s 对 8 s，byte-audit 19 s 对 19 s。
+
+**补钉之后重跑的。** 上面那一遍跑完之后才有 `6db94f7`（上一节，只加了一条库内用例）。在 `6db94f7` 上（工作区只有三份文档没提交）重跑了 8 道里的 7 道。`gates.ps1 -Only` 认的是门禁名字的一个开头，挑不出「除了第 2 道的七道」，一个标签又只能用一次，所以是一道一个标签，日志在 `gates/after-t52e-01/`、`-03/` … `-08/` 七个目录里：
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 114 s | |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 1 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 6 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 1 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 0 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 7 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+第 2 道（整个工作区的测试，26 分钟）没有重跑。代替它跑的是库的单测程序整个一遍（`cargo test --locked -p pid-parse --lib`，`runs/t52e-lib-all.log`，8 s）：1 593 条全过（1 592 → 1 593），新用例在内。这个提交只改了 `#[cfg(test)]` 里的代码，这段代码只编进库自己的单测程序；另外 474 个测试程序在 `6db94f7` 上重新构建过（第 1 道），没有重新跑。照此全量的通过数该是 2 590，这个数没有量。
+
+**这中间改了什么。** `git diff --stat 3e0ddcf..6db94f7`：`src/publish/` 下 5 个文件（`backup_package.rs`、`model.rs`、`pid_writer.rs`、`pipeline.rs`、`xml_writer.rs`），+949／−311 行，其中 `6db94f7` 是 +107 行测试。`Cargo.toml`、`Cargo.lock`、`vendor/`、`pid-plot/`、`tests/` 都没有动。
+
+**对照矩阵。** 三项各自的矩阵都是提交之前、在带着那一项改动的工作区上跑的（各节有）。提交之后又跑了两遍：
+
+- `post63`，在 `7e3e60d` 上（`runs/post63-matrix.log`；当时工作区有两份文档没提交）：构建 37 s，矩阵 61 项 88 s。`t63` 对 `post63` 717 个文件全部相同，`cp4` 对 `post63` 717 个全部相同。
+- `t52e`，在 `6db94f7` 上（上一节）：`post63` 对 `t52e`、`cp4` 对 `t52e` 都是 717 个全部相同。
+
+一环一环：`cp4` → `t52`／`t52b` → `t61` → `t63` → `post63` → `t52e`，每一环都是 717 个文件全部相同，没有只在一边的。
+
+**发布构建的程序。** `7e3e60d` 和 `6db94f7` 两个名字的程序都是 4 732 416 字节，逐字节比只差 4 个字节，在 `0x108`–`0x109` 和 `0x401a94`–`0x401a95`。前一处是 PE 头的 `TimeDateStamp`；两份程序里两处的值各自相等，分别是 2026-11-16 12:25:41Z 和 12:49:26Z。两个提交之间产品代码没有变，程序也就只差这个链接时间戳，和检查点 4 那次量到的一样。
+
+**门禁之外又量的。** 都没有改已提交的产品代码。
+
+1. 只开 `backup-exp` 的组合（CI 和本机门禁都不跑它）。在 `7e3e60d` 上：`cargo check` 两种 profile 都过（`runs/t63-exp-only.log`，10 s；dev 那一遍 1 条原有的警告，`catalog.rs:100` 的 `db_subtables` 没有读）；库内测试跑了一遍（`runs/t63-exp-only-test.log`，34 s），1 508 条全过，三项新加的 7 条都在内。在 `6db94f7` 上又跑一遍（`runs/t52e-exp-only-test.log`，17 s）：1 509 条全过，补钉的那条在内。集成用例和别的目标没有在这个组合下跑。
+2. `publish_one` 的三个失败出口和交接重复 UID 的那一行，有没有用例走到、有没有输入能走到：上一节。四处原来都没有用例走到；exp 增补失败的出口补了一条用例，另外三处没有。
+3. SQL Server 的包换掉 zip 的两种情形：T6.3 一节的「顺带记下的」。
+
+**前面几节里被这两节往前推了一步的话。** 前面三节是各自提交时写的，原话没有回头改，以这里为准：
+
+- T5.2「没有验的」第 1 条说三个出口「只读过代码，没有用例走到」：现在是量过的，其中 exp 增补失败的出口有了用例。
+- T5.2「没有验的」第 2 条说 `:915` 那一行「没有用例走到」：现在是量过的（那一行在 `6db94f7` 是 `:939`）。
+- T5.2「没有验的」第 4 条说只开 `backup-exp` 的组合「没有跑测试」：现在库内测试跑过。
+- T5.2「没有验的」第 5 条说的「后面那一节」就是这一节。
+
+**等你定的。** 这一轮各节里要你拿主意的，收在一处：
+
+1. T6.1 的做法。计划写的是「改成把错误报出去」，实际做的是把到不了的兜底删掉、渲染收到一个不会失败的函数里。照现在这样留着，还是照字面做 A（两个公开的覆盖报告函数改成返回 `Result`）或 B（只在整包这条路里报）（T6.1）。
+2. SQL Server 的包，`PlantData` 的 zip 以签名开头但打不开：图一张不少地写出来，摘要却说 `1 failed`，退出 1（T6.3「顺带记下的」第 1 条）。这种情形该不该算失败。
+3. 不以 zip 签名开头的 `PlantData` 文件整个被跳过，退出 0，哪里都不说（同上第 2 条）。
+4. 没有配上条目的图，`_Coverage.json` 的 `source` 是 `":"`（同上第 3 条）。
+5. SQL Server 一支的记账要不要也并进 `PublishTally`（T5.2「没有改的」第 1 条）。
+6. 没有 dump 的包里，同一张图以两个条目名各出现一次，两份都写出来，`problems` 里没有话（T5.2「顺带记下的」第 2 条）。
+7. 还没有用例看着的三处：`_Meta.xml` 渲染失败、统计失败两个出口，交接重复 UID 的那一行。开不开口子，或者把 `_Meta.xml` 那一个改成不会失败的写法（上一节「没有改的」第 1 条）。
+8. 端口表缺列这一类整包的失败，现在是一张图一张图报、同一句话说多遍（上一节「顺带记下的」）。
+9. 失败的图那一行不带已经查到的 UID 和 dump 的行（上一节「没有改的」第 2 条）。
+10. T5.2 现在是两个提交（`a3e6a89`、`6db94f7`），计划是一个任务一个。要合成一个得改写历史，没有做。
+11. 命令行里把 `failed` 当成图来说的 6 处（T6.3「没有改的」第 3 条）留给 T6.2，不用另定，列在这里只为不漏。
+12. 检查点 4「等你定的」里的六条还开着。
+
+**T5.1、T6.2、T6.4 的前提。** 这三项和检查点 5、6 还在等另一条线进 `main`。刚 `git fetch origin main` 过：`main` 和 `origin/main` 都还在 `a4b490e`；那条线（`export-closeout-20261115`）还在 `d329c2f`，比 `main` 多 11 个提交，没有并进去。这条分支比 `main` 多 29 个提交（记这几节的提交不算），少 0 个，没有 push 过。和那条分支又试并了两次（`git merge-tree --write-tree`，只往对象库里写树，工作区、索引、引用都没动）：一次拿 `6db94f7`；一次连没提交的三份文档一起算，拿的是 `git stash create` 造的一个不挂在任何引用上的提交（`git stash list` 还是空的）。两次的冲突都只有 `CHANGELOG.md` 一个文件，`AGENTS.md` 和源文件都自动合并。第二次试并之后又改过的只有这份计划（记这几句话），那条线没有动 `docs/plans/` 下的文件。
+
+**顺带记下的。**
+
+1. 通过数的账：检查点 4 是 2 582；三项加 7 条，2 589，全量量过；补钉加 1 条，库内 1 593 量过，全量的 2 590 没有量。
+2. 这一轮故意改坏一共 54 处：三项提交前 45 处（T5.2 两轮 30 处，T6.1 6 处，T6.3 9 处），提交后 9 处（量走没走到的 5 处，其中 1 处是对照；补钉的 4 处）。全绿的一共 8 处：T5.2 第一轮 4 处，当时补了两条用例；提交后 4 处，补了一条，另 3 处造不出输入，等你定。
+3. 工作区里没提交的文件数，各份日志开头记的是：全套门禁 0，跑完四分钟后的 `post63` 矩阵 2，`t52e` 矩阵和补钉之后重跑的七道都是 3。都是文档：现在 `git status` 里只有这份计划、`AGENTS.md`、`CHANGELOG.md`。
