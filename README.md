@@ -101,8 +101,9 @@ cargo run --bin pid_inspect -- a.pid --diff b.pid
 ### Backup 解析 + Publish Data XML 生成（offline pipeline）
 
 ```bash
-# 1. 从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf
-cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
+# 1. 从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf。--out 给的是输出目录；
+#    加 --as-mdf 才写出 Export.mdf（旁边另有 Export.msci.json / .msci.bin / .msda.bin）
+cargo run --bin pid_backup_extract -- Export.dmp --out . --as-mdf
 
 # 2. 用 Rust MDF loader（vendor/oxidized-mdf）直接列出 drawing
 cargo run --bin pid_publish_xml -- Export.mdf --list-drawings
@@ -121,7 +122,8 @@ cargo run --bin pid_publish_xml -- Export.mdf \
 cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing <UID> --plant TEST02 --style dwg --out DWG_Data.xml
 
-# 6. 跟 SmartPlant 参考 _Data.xml 跑 SemanticDiff（CI gate）
+# 6. 跟 SmartPlant 参考 _Data.xml 跑 SemanticDiff（CI gate）。有差异退出 1；A01 对
+#    仓库里它的参考（test-file/export-test/publish-data/A01/A01_Data.xml）现在就有。
 cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --diff-against reference/A01_Data.xml
@@ -134,6 +136,12 @@ cargo run --bin pid_publish_xml -- drawing.pid \
 # 8. 备份包目录（目录里有 Manifest.txt）。Oracle exp 的 Export.dmp 读一次，
 #    PlantData zip 里每张 .pid 写出三件，包级另写 _Index.json。
 cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
+
+# 9. --strict：数据库线把对象或关系写得不完整时退出 1，文件照写（见下方
+#    「数据库线写得不完整时」）。A01 写得完整，这一条退出 0。
+cargo run --bin pid_publish_xml -- Export.mdf \
+    --drawing D9635C3C898840D1990B7E8BEE1D55DA \
+    --plant TEST02 --out A01_Data.xml --strict
 ```
 
 ### publish 的三条输入线与四个产出文件名
@@ -145,12 +153,68 @@ cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
 | 备份包目录 | `pid_publish_xml <backup-dir> --out-dir DIR` | 三件（Oracle exp 与 SQL Server MTF 同形：`<图名>_Data.xml` + `<图名>_Meta.xml` + `<图名>_Coverage.json`） | `_Index.json` |
 
 - **四个产出文件名**：`_Data.xml`（对象 / 值 / 关系）、`_Meta.xml`（容器与版本元数据）、`_Coverage.json`（逐图覆盖报表）、`_Index.json`（包级索引）。`.pid` 输入与 Oracle exp 备份包的每张图交付就是三件（`_Data.xml` + `_Meta.xml` + `_Coverage.json`）。
+- **单张 `.pid` 输入的 `<图名>`** 是文件名去掉扩展名：`drawing.pid` 写出 `drawing_Data.xml`、`drawing_Meta.xml`、`drawing_Coverage.json`。备份包里每张图用的名字和写出的文件见 `_Index.json` 的 `name` 与 `files`。
 - **SQL Server MTF 的 `Export.dmp`**：默认特性（`backup` ⊃ `backup-mdf`）下先把 MTF 头剥出 MDF，再按数据库线把每条 `T_Drawing` 行发布出来（退出 0）。
 - **`--style a01|dwg` 只对数据库输入**（`Export.mdf` / legacy `Export_v2.sqlite`）有效：`.pid` 输入与备份包目录都会拒绝它（退出 2 并点名 `--style`），不再静默忽略。
 
+### 命令行约定与退出码
+
+- **输入是第一个参数**，旗标都跟在它后面。旗标写在前面会被当成输入：`pid_publish_xml --stdout a.pid` 是用法错误（`unknown flag: a.pid`）。
+- **退出 0**：写出了；带 `--diff-against` 时还表示对照干净。
+- **退出 1**：I/O 或格式错误（stdout 写不进去也算）、`--diff-against` 有差异、整包记了失败，或者带 `--strict` 时数据库线有图写得不完整。
+- **退出 2**：用法错误，包括 `--oracle-exp` 给的 dump 里没有这张图的 `T_DRAWING` 行。
+
+### 数据库线写得不完整时：告警、`--strict` 与 `shortfalls`
+
+数据库线（`Export.mdf`、legacy `.sqlite`、SQL Server 备份包）不拒绝任何一张图。有两样东西它写得出来、但写不完整，光看 `_Data.xml` 看不出来：
+
+- **类型没有专用写法的对象**（`Exchanger`、`Mechanical`、`EquipmentOther`、`OPC`，以及 `PublishItemCatalog` 里没有列的类型）写成只带 UID 的 `<PIDItem>` 占位，类和属性都不写。
+- **有一端是对象、不是图形表示的 `T_Relationship` 行**，`<Rel>` 的定义只凭两端的对象类型决定。
+
+每样在 stderr 上一行 `warning:`，按类型给出个数；文件照写，退出码还是 0。加上 `--strict`，文件一个字节不变，退出码变成 1，stderr 末尾多一行说明。仓库里有一份小样本可以直接试（要有 `sqlite3`；`.sqlite` 输入另有一行弃用提示）：
+
+```bash
+sqlite3 shortfalls.sqlite < tests/fixtures/publish-shortfalls.sql
+cargo run --bin pid_publish_xml -- shortfalls.sqlite \
+    --drawing DWG-SHORT-01 --out SHORT-01_Data.xml --strict
+# 退出 1。pid_publish_xml 在 stderr 上最后说的三行（经 cargo run 跑，后面还跟着 cargo 自己的一行 error:）：
+# warning: 1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1
+# warning: 1 relationship row defined from the item types of its ends alone: Nozzle -> Exchanger as Relationship 1
+# --strict: the drawing is not written in full (see the warnings above); exit 1.
+```
+
+- **`--strict` 只管数据库线。** `.pid` 输入和 `--list-drawings` 带它是用法错误（退出 2 并点名 `--strict`）。备份包目录接受它：SQL Server 包的图走数据库线，受它管；Oracle exp 包和没有 dump 的包每张图都来自 `.pid`，带不带它结果一样。
+- **整包里**每句告警前面带图名（`warning: <图名>: …`）。同一句话写进 `_Index.json` 顶层的 `problems`，不带图名的那一句写进这张图自己的 `problems`；图照样算写出，`failed` 不变。
+- **不在这本账里的**：数据库里没有的可选表会被跳过，只有带 `-v` 时在 stderr 上点名；整包里一张图的 `_Data.xml` 把同一个 UID 写在不止一个块上，是 stderr 上一行告警和 `_Index.json` 的 `problems` 里一条，图照样算写出。这两样 `--strict` 都不管。
+
+SQL Server 包每张图的 `<图名>_Coverage.json` 末尾都有一段 `shortfalls`。写得完整时两个 `total` 都是 0，A01 就是这样：
+
+```json
+  "shortfalls": {
+    "placeholder_objects": {
+      "total": 0,
+      "by_item_type": {}
+    },
+    "relationship_rows_defined_by_item_type": {
+      "total": 0,
+      "rows": []
+    }
+  }
+```
+
+写得不完整时，`by_item_type` 是「对象类型 → 个数」，`rows` 的每一项是 `item1` / `item2`（两端的类型）、`written_as`（写出的定义）和 `count`。`.pid` 线的覆盖报告没有这一段，它没写什么由自己的 `left_out` / `left_out_by_design` 说明。
+
+### 文件怎么落盘
+
+- **整份到位。** `pid_publish_xml` 写文件，是先整份写到目标旁边的临时名 `<文件名>.<进程号>.tmp`，写完再改名（例外见本节最后一条）；没到位就失败的，临时文件删掉。被打断的运行不会留下写了一半的 `_Data.xml` / `_Meta.xml` / `_Coverage.json` / `_Index.json`。
+- **整包里一张图的三件，有一件写不成就一件都不留。** 三件先都写到临时名，再依次改名；有一件改不成，已经到位的删掉，这张图在 `_Index.json` 里点名，其余的图照写。这防的是写失败，不是运行被打断。
+- **被打断之后可能留下的**：名字以 `.tmp` 结尾的文件（可以删），和三件不齐的图（打断在两次改名之间）。已经到位的每个文件都是整份的。
+- **`--out-dir` 不先清空**：以前的运行留在那里的文件不会被删。整包以 `_Index.json` 为准看这一次写了哪些文件。
+- **没有做的**：不 `fsync`，不防掉电。单个文件（`--out`、`--meta-out`、单图 `--out-dir` 的各件、`_Index.json`）的目标名下已经是设备（`NUL`、`/dev/null`）、链接或目录时不改名，照旧原地写（`--out NUL` 这样的用法不变，目录照旧失败）；整包里每张图的三件一律改名。
+
 ### 备份包与 `_Meta.xml` 的 publish 门禁
-- **整包 `--diff-against <参考目录>`**：备份包目录现在也接受 `--diff-against`，逐张图对照 `<DIR>/<图名>_Data.xml`，每张打印一行 `clean` / `dirty` / `unpaired` 判词。
-- 某张图 dirty、或在该目录里没有参考文件，进程退出 1：失败的图会被记账，其余图照常写出，全部写完后退出 1。
+- **整包 `--diff-against <参考目录>`**：备份包目录现在也接受 `--diff-against`，逐张图对照 `<DIR>/<图名>_Data.xml`，每张打印一行 `clean` / `dirty` / `unpaired` / `revision mismatch` 判词，末尾一行汇总各判词的张数和退出码。
+- 某张图 dirty、参考是同名图的另一个修订（`revision mismatch`，这张图不比）、或在该目录里没有参考文件（`unpaired`），进程退出 1：失败的图会被记账，其余图照常写出，全部写完后退出 1。
 - **`_Meta.xml` 伴随门禁**：本轮写出的 `_Meta.xml`（`--out-dir` 或 `--meta-out`）还会与参考 `<图名>_Data.xml` 旁的 `<图名>_Meta.xml` 对照，比 13 个 `<Container>` 属性、顶层块顺序、三条 `Rel` 的 DefUID 及角色接线，以及兄弟 `_Data.xml` 的 DocUID。
 - 参考旁没有兄弟 meta 时，meta diff 明确报告它没有运行，而不是静默判过。
 - **已接受差异是数据，不是断言**：`docs/baselines/publish-diff-accepted.json` 由 `tests/publish_diff_accepted_baseline.rs` 消费，把一次 `--diff-against` 运行打印的每一行归为 registered / disappeared / unregistered。

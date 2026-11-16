@@ -79,6 +79,10 @@
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state
 //!   (S8); and the interfaces an equipment type decides;
+//! * two enumerations of a pipe run that no stage reads from the dump,
+//!   `IInsulatedItem.InsulThickSrc` and
+//!   `ISlopedPipingItem.SlopedPipeDirection`, which the fixture's own
+//!   `--diff-against` reports as missing values;
 //! * a few scattered values (instrument tag parts,
 //!   `LongMaterialDescription3`, `EquipPrefix`, `ReliefPressure`,
 //!   `EquipmentTrimSpec`) and the interfaces stated only beside them;
@@ -87,11 +91,34 @@
 //!   than piping components the database draws on a sheet its `.pid` does
 //!   not (S17).
 //!
-//! The database line has been checked on A01 alone. No DWG `Export.mdf`
-//! is in the repository, so its DWG-side tests soft-skip through
-//! `common::DWG_MDF_MISSING_HINT`, and that line's `item_type_name`
-//! mapping for `PIDBranchPoint` / `PIDPipingBranchPoint` stays
-//! provisional.
+//! The database line (`.mdf`, `.sqlite`, a `SQL Server` backup package)
+//! never refuses a drawing; where it cannot write something in full it
+//! writes less:
+//!
+//! * an item whose type has no writer of its own (`Exchanger`,
+//!   `Mechanical`, `EquipmentOther`, `OPC`, and any type `catalog` does
+//!   not list) is written as a `<PIDItem>` that holds its UID and nothing
+//!   else;
+//! * a `T_Relationship` row with an item at either end is written as a
+//!   `<Rel>` whose definition is decided from the item types of the two
+//!   ends alone.
+//!
+//! [`database_shortfalls`] counts both. The command line prints one
+//! warning for each kind and, with `--strict`, exits 1; a `SQL Server`
+//! package states them under `shortfalls` in the drawing's
+//! `_Coverage.json` and among the `problems` of `_Index.json`. A table
+//! the database does not hold and the loader can do without is skipped:
+//! `-v` names it, and neither that account nor `--strict` counts it.
+//!
+//! That line has been checked on A01 alone. No DWG `Export.mdf` is in the
+//! repository, so its DWG-side tests soft-skip through
+//! `common::DWG_MDF_MISSING_HINT`, and its `item_type_name` mapping for
+//! `PIDBranchPoint` / `PIDPipingBranchPoint` stays provisional.
+//!
+//! What the review of 2026-11-16 found and left as it was (the limits of
+//! the vendored `.mdf` reader, what an interrupted run leaves on disk, the
+//! decisions still open) is in
+//! `docs/plans/2026-11-16-publish-review-followup.md`, section 9.
 
 pub mod backup_package;
 // wayfinder M4: A1 (`60f1b25`) seeded the table, A2–A4 moved the database
