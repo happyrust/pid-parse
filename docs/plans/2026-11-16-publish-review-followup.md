@@ -235,9 +235,9 @@ Recommended: 两处都做
 
 #### 检查点 2
 
-- [ ] 全套门禁通过
-- [ ] 对照矩阵：只有数据库线的 `_Coverage.json` 变了，变的只是多出的那一段
-- [ ] 结果发给你
+- [x] 全套门禁通过
+- [x] 对照矩阵：只有数据库线的 `_Coverage.json` 变了，变的只是多出的那一段（打印用法说明的两项也跟着变了，细化计划 §2 第 4 处写过；见 §9）
+- [x] 结果发给你
 
 ### 阶段 3：MDF 读取（审核第 3 条，依 Q4）
 
@@ -515,3 +515,195 @@ I井场 oracle-exp by a copy stored as IB031~1.pid: exit 1, pid export diff: obj
 计划里 T1.1 的验收写的是「对照矩阵逐字节不变」。实际是：除了用短路径调 I井场 的两项，其余逐字节不变；那两项正是要改对的地方。
 
 **顺带记下的。** `AGENTS.md` 里 `cargo fmt` 命令行长度的那组读数已经过时（见 T0.1），放在阶段 6 的文档收口里一起改。阶段 2 的细化计划另成一份，等评审。
+
+### 阶段 2 的读数（2026-11-16）
+
+阶段 2 照细化计划 `docs/plans/2026-11-16-publish-review-phase-2.md`（`6e93415`）做。它 §1.3 的读数抄在这里：
+
+| 看的是什么 | 结果 |
+|---|---|
+| 仓库里唯一的 SQL Server 库（`TEST02_p` 的 `Export_v2.sqlite`） | 1 张图，4 个条目（`Vessel`、`Nozzle`、`PipeRun`、`PipingPoint` 各 1），6 个图形表示，3 行关系：2 行两端都是本图的图形表示，1 行一端为空 |
+| 真实工厂的库（Oracle 包 `Export.dmp`，53 张图）里的条目，照数据库线的载入规则算 | 15 439 个对象，没有专用写手的 1 283 个：`OPC` 952、`EquipmentOther` 225、`Mechanical` 94、`Exchanger` 12。53 张图里 49 张有份，最多的一张 476 个 |
+| 同一个库的关系表（`T_RELATIONSHIP`） | 24 664 行：22 353 行两端都是图形表示，2 311 行有一端为空。以条目作端点的行是 0 |
+| 检查点 1 的对照矩阵的全部输出 | 323 份 XML（308 个文件，15 份写在 stdout 上）里 `<PIDItem>` 0 个，`DefUID="Relationship"` 0 条 |
+| SmartPlant 自己发布的参考 XML | 14 份、28 384 条关系：`<PIDItem>` 0 个，`DefUID="Relationship"` 0 条 |
+
+第二、三行是只读脚本照载入规则从 Oracle 包的表里数的，不是数据库线跑出来的（Oracle 包喂不进数据库线）。输出留在 `target/publish-audit/review/runs/rel-ends-export-dmp.txt`，检查点 2 时重看过，数字对得上。第四行在检查点 2 的矩阵上重数了一遍（见「检查点 2」）。第一、五行没有重数。
+
+这些数定下了阶段 2 的验法。能喂给数据库线的真实数据只有 `TEST02_p` 那一张图，它不触发任何降级。所以降级时的行为只能用现造的小库验，真实数据上验的是「没有降级时一个字节都不变」。
+
+**矩阵的跑法。** 阶段 2 每个任务的矩阵都是改完、提交之前跑的（`cp-matrix.ps1`：发布构建，跑 59 项，与上一份比）。脚本用当时 `HEAD` 的提交号给可执行文件起名，所以名字里的提交号比任务自己的早一个：T2.1 的叫 `pid_publish_xml-6e93415-release.exe`，T2.2 的叫 `pid_publish_xml-a3908ac-release.exe`，依此类推。每次的记录 `runs/t2N-matrix.log` 头一行写着当时的 `commit` 和未提交的文件数。
+
+### T2.1 写手侧记账（2026-11-16，`a3908ac`）
+
+**红。** `database_shortfalls` 先留一个返回空汇总的桩，加上用例，跑 `cargo test --locked -p pid-parse --lib publish::`（`runs/t21-red.log`）：
+
+```text
+test publish::xml_writer::tests::shortfalls_count_the_placeholders_the_writer_emits ... FAILED
+   left: {}
+  right: {"EquipmentOther": 1, "Exchanger": 2, "Mechanical": 1, "OPC": 1, "SomethingNew": 1}
+test publish::xml_writer::tests::shortfalls_count_the_relationship_rows_defined_by_item_type ... FAILED
+   left: {}
+  right: {("Nozzle", "(not in the drawing)", "Relationship"): 1, ("Nozzle", "Exchanger", "Relationship"): 1, ("Nozzle", "Vessel", "EquipmentComponentComposition"): 1, ("PipeRun", "Nozzle", "PipingEnd1Conn"): 1}
+test publish::xml_writer::tests::shortfalls_name_an_item_without_a_type_and_a_representation_end ... FAILED
+   left: None
+  right: Some(1)
+test publish::xml_writer::tests::shortfalls_report_every_catalog_type_without_a_writer_of_its_own ... FAILED
+  the account must name exactly the catalog types that have no writer of their own
+   left: []
+  right: ["EquipmentOther", "Exchanger", "Mechanical", "OPC"]
+test result: FAILED. 424 passed; 4 failed; 0 ignored; 0 measured; 1126 filtered out
+```
+
+四条都是断言失败：左边是桩给的空汇总，右边是该有的数。
+
+**改。** 汇总是 `DatabaseShortfalls`（`src/publish/model.rs`，`#[non_exhaustive]`）：占位对象按条目类型计数；关系表里只凭两端的条目类型定出定义的行，按（1 端的类型，2 端的类型，写成的定义）计数。它有 `is_empty()`、两个合计和 `describe()`；`describe()` 每类给一句英文，后面三个入口用的是同一份。`database_shortfalls(&PublishDrawing)`（`src/publish/xml_writer.rs`）取这份汇总。
+
+判定只写一处，写手和记账共用，所以汇总里的数就是文档里标签的数：
+
+- 对象：`catalog::dedicated_db_writer` 回答一个类型有没有自己的写手。`write_business_objects` 照它分派，取不到就用 `catalog::placeholder_db_writer`（分派里原来的那个 `expect` 也就没有了）；记账照它数。
+- 关系：`published_relationship_rows` 给出关系表里会写成 `<Rel>` 的行和各自的定义，两条跳过的规则（一端为空、两端都是图形表示）和对 `classify_relationship` 的调用都在里面。`write_relationships` 照它写，记账照它数。`classify_relationship` 本身没有动。
+
+这个提交里还没有人读这份汇总，命令行、整包、导出包在后面三个任务里接上。
+
+**绿。** 同一条命令（`runs/t21-green.log`）：`430 passed; 0 failed; 0 ignored; 0 measured; 1126 filtered out`，比红的那次多的 2 条是之后加的 `catalog.rs` 两条。`unsupported_item_types_still_fall_back_to_generic_placeholder` 没有改，两次都过。`tests/publish_mdf_load.rs` 整个文件 5 条都过（`runs/t21-mdf.log`），新加的那条打印 `A01: 3 items, 3 relationship rows, no shortfalls`。clippy 没有警告；`cargo fmt` 的检查第一遍报了新用例里的两处排版，排好之后是空的；不带默认特性的 985 条都过。
+
+**没有看过红的。** 新用例 11 条（`xml_writer.rs` 5、`catalog.rs` 2、`model.rs` 3、`publish_mdf_load.rs` 1），红过的是上面 4 条。其余 7 条：
+
+- `model.rs` 的三条（句子的写法）在红的那次就过了：桩只桩了 `database_shortfalls`，结构和 `describe()` 当时已经写好。
+- `a_drawing_written_in_full_has_no_shortfalls` 和真实 A01 的 `a01_is_written_in_full_and_the_account_says_so` 要的就是空汇总，对着桩也过，红不了。它们防的是多记。
+- `catalog.rs` 的两条是绿了之后加的，没有在没改的代码上跑过。
+
+**超出计划原文的。** 条目的类型名为空时，记在 `(no item type)` 名下，不记在空名字下。图形表示作端点、另一端是条目的行，图形表示那一端照写手原有的查表记成 `Representation`。两样都由 `shortfalls_name_an_item_without_a_type_and_a_representation_end` 盯着；它和 `catalog.rs`、`model.rs` 的五条都是计划的五条之外加的。
+
+**对照矩阵。** `compare.ps1 -A cp1 -B t21`：703 个文件逐字节相同。可执行文件 4 658 688 字节，SHA-256 `dd42c3a5…aeb0bba9`。
+
+### T2.2 单图命令行说出来，加 `--strict`（2026-11-16，`c427901`）
+
+**夹具。** `tests/fixtures/publish-shortfalls.sql`（53 行，建表加插入）：一张图 `SHORT-01`，一台换热器、一个容器、一个管口，一行管口到换热器的关系。命令行用例拿它在临时目录里建 `.sqlite`，T2.3、T2.4 的单测拿它建库，建表的代码只有这一份。
+
+**红。** 加 7 条用例，在没改的代码上跑 `cargo test --locked -p pid-parse --test publish_xml_cli`（`runs/t22-red.log`）：
+
+```text
+test cli_database_input_warns_of_what_it_wrote_short_and_exits_zero ... FAILED
+  stderr should say each kind of shortfall once; stderr:
+  warning: `.sqlite` input is deprecated for publish fidelity; prefer `Export.mdf`. …
+  Loaded drawing `SHORT-01` (DWG-SHORT-01 UID): 3 objects, 3 representations, 1 relationships
+test cli_strict_turns_a_shortfall_into_exit_one_and_changes_no_file ... FAILED
+  --strict should exit 1 on a shortfall; stderr:
+  argument error: unknown flag: --strict
+test result: FAILED. 27 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+第一条的 stderr 就是审核第 2 条说的现状：这张图里有一台写成占位的换热器和一行只凭类型定义的关系，命令行只报了载入的个数。另外五条是 `cli_help_documents_strict_and_drops_the_unreachable_feature_note`（用法说明里没有 `--strict`）和 `cli_strict_on_a_drawing_written_in_full_exits_zero`、`cli_strict_with_a_pid_input_is_an_argument_error`、`cli_strict_with_list_drawings_is_an_argument_error`、`cli_strict_with_a_backup_directory_is_an_argument_error`，后四条都停在 `unknown flag: --strict` 上。
+
+**改。** `CliOptions` 加 `strict`。单图这一支在文件写完之后取汇总，每类往 stderr 打一行：
+
+```text
+warning: 1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1
+warning: 1 relationship row defined from the item types of its ends alone: Nozzle -> Exchanger as Relationship 1
+```
+
+不带 `--strict`，退出码和原来一样。带了而且汇总不空，等别的都做完再退出 1：文件是同样的字节，`--diff-against` 的报告照出，stderr 最后一行是 `--strict: the drawing is not written in full (see the warnings above); exit 1.`。`.pid` 输入带它、或者和 `--list-drawings` 一起用，按用法错误退出 2，照 `--style` 的先例。用法说明加了 `--strict` 一段，删了 `(backup-mdf feature; without it the input still exits 2)` 那句走不到的话。
+
+**绿。** 同一条命令（`runs/t22-green.log`）：`34 passed; 0 failed`。之后又加了一条 `cli_strict_is_decided_after_the_diff_report_not_instead_of_it`，再跑是 `35 passed`（`runs/t22-green2.log`）。clippy 没有警告，fmt 没有差异。
+
+**没有看过红的。** `cli_strict_is_decided_after_the_diff_report_not_instead_of_it` 是绿了之后加的，没有在没改的代码上跑过。
+
+**超出计划原文的。** 细化计划列了 5 条用例，实际 8 条。多的三条：`--strict` 和 `--list-drawings` 一起用退出 2（规则在细化计划 §4.3 里，用例清单没列）；带 `--diff-against` 时差异报告照出、`--strict` 在它之后才定退出码（上面那一条）；目录输入带 `--strict` 退出 2。最后这条是过渡：细化计划 §4.3 定的是目录接受 `--strict`，可整包这一支到 T2.3 才报降级，在那之前收下它就是收下来不管。所以这个提交先拒绝，T2.3 接上之后改成接受，用例跟着换。
+
+**对照矩阵。** `compare.ps1 -A t21 -B t22`：703 个文件，700 个相同。变的 3 个是 `help\stdout.bin`（95 → 105 行）、`no-args\stderr.bin`（96 → 106 行）和汇总各项大小的 `summary.txt`，都是用法说明带来的。A01 各项的 stdout、stderr、退出码没有变。可执行文件 4 676 608 字节，SHA-256 `1eba1425…18592b8f`。
+
+### T2.3 整包记下来（2026-11-16，`ace68c4`）
+
+**先拆。** `publish_mtf_package` 里从列出 `T_Drawing` 到写 `_Index.json` 的那一段原样搬进 `publish_staged_database`（crate 内部，参数是暂存好的库连接），`publish_mtf_package` 只剩读包、暂存、调它。搬完先单独验：`publish::backup_package` 的 4 条单测过（`runs/t23-move-lib.log`），`sql_server_mtf_directory_publishes_t_drawing_rows` 过（`runs/t23-move-mtf.log`），`compare.ps1 -A t22 -B t23-move` 703 个文件逐字节相同（可执行文件 4 676 608 字节，SHA-256 `83583437…39c71cfe`）。搬动和后面的改动在同一个提交里。
+
+**红。** 用例拿夹具建内存库，包目录是一个空的临时目录，把 `publish_staged_database` 从头跑到尾。四份记录：
+
+| 记录 | 跑的 | 结果 | 失败的用例 |
+|---|---|---|---|
+| `runs/t23-red-lib.log` | `publish::backup_package` 的单测 | 4 过 4 败 | `a_staged_drawing_written_short_says_so_in_its_coverage_report`（`shortfalls` 是 `Null`）、`a_staged_drawing_written_short_is_written_and_listed_among_the_problems`（`problems` 是 `[]`）、`a_staged_drawing_written_short_is_named_in_the_report`（报告的新字段是 `[]`）、`a_staged_drawing_written_in_full_has_the_section_and_no_problem`（`shortfalls` 是 `Null`） |
+| `runs/t23-red-writer.log` | `publish::pid_writer` 的单测 | 20 过 1 败 | `the_database_coverage_report_states_what_was_written_short` |
+| `runs/t23-red-bin.log` | 可执行文件自己的单测 | 1 过 1 败 | `strict_turns_a_package_drawing_written_short_into_exit_one`（左 0，右 1） |
+| `runs/t23-red-cli.log` | `publish_xml_cli` 里筛出来的 8 条（其余 28 条没跑） | 5 过 3 败 | `cli_help_documents_strict_and_drops_the_unreachable_feature_note`（目录那一行用法没有 `--strict`）、`cli_strict_with_a_backup_directory_is_accepted`、`cli_strict_on_a_sql_server_package_written_in_full_exits_zero`（后两条都停在 T2.2 加的那句拒绝上） |
+
+库这一侧先绿（`runs/t23-mid-lib.log` 8 过，`runs/t23-mid-writer.log` 21 过）。可执行文件那边又加了两条，`runs/t23-mid-bin.log` 是 1 过 3 败：`the_strict_verdict_counts_the_drawings_and_is_said_only_with_strict`（左 `None`）、`a_package_drawing_written_short_is_warned_of_under_its_name`（左 `[]`），和表里那一条。
+
+**改。**
+
+- `write_database_coverage_json` 自己从图里取汇总，在 `document_counts` 之后写 `shortfalls` 一段。这一段恒有，写全了的图各项是 0。
+- 逐图循环把句子放进 `_Index.json` 里这张图的 `problems`，带上图名放进顶层的 `problems`。图仍算写出，`failed` 不变。
+- `BackupPublishReport` 加公有字段 `shortfalls`，元素是新的公有类型 `PackageDrawingShortfalls`：图的 UID、图名和它的 `DatabaseShortfalls`。Oracle 包和没有 dump 的包，这个字段恒为空。
+- 命令行的 `run_package` 每句打一行 `warning: <图名>: …`。带 `--strict` 而且有这样的图，退出 1，stderr 最后一行是 `--strict: N drawings are not written in full (see the warnings above); exit 1.`。
+- 目录输入从这个提交起接受 `--strict`。包是哪一种要读完才知道，所以 Oracle 包和没有 dump 的包也收下它，只是不起作用；用法说明里写了。
+
+**绿。** `publish::backup_package` 8 过，`publish::pid_writer` 21 过，可执行文件的单测 4 过，`publish_xml_cli` 整个文件 36 过，`publish_chain_faults` 7 过，`sql_server_mtf_directory_publishes_t_drawing_rows` 过（`runs/t23-green-*.log`）。clippy 没有警告；fmt 第一遍报了新用例里的几处排版，排好之后是空的。
+
+**没有看过红的。** 可执行文件单测里的 `a_failed_drawing_or_an_unclean_gate_is_exit_one_whatever_strict_says`：有失败的图或者门禁有发现时，带不带 `--strict` 都退出 1。这是原有的行为，红的那两次它都过。
+
+**没有验到的。** 仓库里没有一个 SQL Server 包有写不全的图，`Export.dmp` 里的 MDF 也没法现造。所以整包的告警行和 `--strict` 的退出码是在 `run_package` 调的三个函数上验的（`package_warnings`、`package_exit_code`、`strict_package_verdict`），没有经过可执行文件。经可执行文件真跑的是写全了的 `TEST02_p`：带 `--strict` 退出 0。
+
+**超出计划原文的。** 报告新字段的元素单成一个公有类型 `PackageDrawingShortfalls`，带 `describe()`，给出带图名的句子；细化计划只说了「多一个字段」。T2.2 那条「目录带 `--strict` 是用法错误」的用例换成了 `cli_strict_with_a_backup_directory_is_accepted`，另加 `cli_strict_on_a_sql_server_package_written_in_full_exits_zero`。`pid_writer.rs` 一条、可执行文件四条单测是计划的四条之外加的；`tests/publish_chain_faults.rs` 加了一句断言：两个从 `.pid` 读图的包，新字段都是空的。
+
+**对照矩阵。** `compare.ps1 -A t22 -B t23`：703 个文件，698 个相同。变的 5 个：`help\stdout.bin`（105 → 114 行）、`no-args\stderr.bin`（106 → 115 行）；`pkg-test02` 和 `pkg-test02-gate` 两项的 `A01_Coverage.json`（397 → 588 字节，原有的内容没动，后面多出全是 0 的 `shortfalls` 一段）；`summary.txt`。Oracle 的两个整包和单图各项逐字节不变。可执行文件 4 723 200 字节，SHA-256 `414d2a8b…ae13117f`。
+
+### T2.4 导出包也记（2026-11-16，`c974f47`）
+
+**红。** 库里 `export_bundle` 的单测（`runs/t24-red-lib.log`），`15 passed; 2 failed`：
+
+```text
+test export_bundle::tests::export_bundle_publish_xml_lists_what_was_written_short ... FAILED
+   left: None
+  right: Some(["1 object written as a <PIDItem> placeholder, class and attributes left out: Exchanger 1", "1 relationship row defined from the item types of its ends alone: Nozzle -> Exchanger as Relationship 1"])
+test export_bundle::tests::export_bundle_publish_xml_writes_data_meta_and_success_status ... FAILED
+   left: None
+  right: Some([])
+```
+
+第二条是原有的用例，加了一句断言：A01 写全了，`shortfalls` 应当是空数组。
+
+**改。** `ExportBundlePublishStatus` 加公有字段 `shortfalls: Option<Vec<String>>`，`publish/status.json` 在 `meta_xml_written` 之后多 `shortfalls` 一个键，放的是 `DatabaseShortfalls::describe` 的句子。写出了 XML 就有这个键，`[]` 表示写全了。没有生成 XML 的那份状态是 `None`，不写这个键；读回这个提交之前写的状态文件也是 `None`。没算过和没有不是一回事。图照写，`state` 仍然是 `written`，什么都不打印，`pid_inspect --export-bundle` 不用改。`docs/pid-export-bundle-contract.md` 写了这个键。
+
+**绿。** 同一组 17 条都过（`runs/t24-green-lib.log`），`inspect_cli` 里筛出来的 4 条过（`runs/t24-green-inspect.log`）。clippy 没有警告，fmt 没有差异。
+
+**没有看过红的。** `a_status_file_without_shortfalls_reads_as_not_counted`：读一份没有这个键的状态文件，要的是 `None`。红的那次字段已经加上、恒为 `None`，它当时就过。
+
+**超出计划原文的。** `docs/pid-export-bundle-contract.md` 的说明（细化计划的文件清单里只有 `src/export_bundle.rs`），和上面那条没看过红的用例。
+
+**对照矩阵。** `compare.ps1 -A t23 -B t24`：703 个文件逐字节相同。矩阵跑的都是 `pid_publish_xml`，导出包不在里面，这一比验的是别处没被带动。可执行文件 4 722 176 字节，SHA-256 `baf3e4ac…df77d941`。
+
+### 检查点 2（2026-11-16）
+
+**门禁。** `gates.ps1 -Label cp2`，在 `c974f47` 上跑，开跑时工作区没有未提交的改动；日志在 `target/publish-audit/review/gates/cp2/`：
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 119 s | |
+| `cargo test --locked --workspace --all-targets` | 0 | 1 558 s | 474 个测试程序；2 552 通过，0 失败，3 忽略；`skipping: ` 提示 21 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 2 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 7 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib` | 0 | 2 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 1 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0（补跑取的，见下） | 19 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+与检查点 1 比，通过的测试多 31 条（2 521 → 2 552），正是阶段 2 加的：库内单测 17 条（`xml_writer.rs` 5、`model.rs` 3、`catalog.rs` 2、`pid_writer.rs` 1、`backup_package.rs` 4、`export_bundle.rs` 2），可执行文件的单测 4 条，`publish_xml_cli` 9 条，`publish_mdf_load` 1 条。忽略数、`skipping: ` 行数、缺文档数、不带默认特性的 985 条都没变。
+
+第八道的日志是完整的：11:48:02 到 11:48:21，三份基线各一行 `Regressions: 0`，最后一行是 `completed comparisons=3, skipped=0.`；脚本开着 `set -euo pipefail`，走到这一行就是退出 0。但 `summary.txt` 里它那一行，到写这段记录时（12:00）还没有出来。这一道重新编译并链接了 `pid_inspect`（18.6 s），同一时刻（11:48:20）起来了一个 `VCTIP.EXE`（MSVC 工具链的遥测进程），到 12:00 还在；`gates.ps1` 的进程也还在，名下已经没有直接的子进程。`Start-Process -Wait` 要等被起的进程连同它留下的后代都退出，脚本应当是停在这上面。没有去动那个进程，另用 `gates.ps1 -Label cp2-08 -Only 08` 补跑了一次取退出码：退出 0，2 s，不用再编译（日志在 `gates/cp2-08/`；当时工作区多了 `CHANGELOG.md`、`AGENTS.md` 两份还没提交的说明）。表里的 19 s 是第一次那份日志的起止时间。
+
+**对照矩阵。** `c974f47` 的发布构建（`target/publish-audit/bin/pid_publish_xml-c974f47-release.exe`，4 722 176 字节，SHA-256 `baf3e4ac…df77d941`，和 T2.4 那个是同一份：源码没有再变，cargo 没有重编）跑了一遍矩阵（`target/publish-audit/review/cp2/`，136 s）。这次是 61 项：原来的 59 项，加上带 `--strict` 的 A01 单图（`a01-strict`）和 `TEST02_p` 整包（`pkg-test02-strict`）。
+
+- `compare.ps1 -A t24 -B cp2`：原有的 703 个文件里 702 个相同，变的只有 `summary.txt`（多了两项）；新两项带来 14 个文件。
+- `compare.ps1 -A cp1 -B cp2`（`runs/cp2-vs-cp1.txt`）：原有的 703 个文件里 698 个相同，变的 5 个就是 T2.2、T2.3 两节列的：`help\stdout.bin`（95 → 114 行）、`no-args\stderr.bin`（96 → 115 行）、两项的 `A01_Coverage.json`、`summary.txt`。
+- 新两项都退出 0，stderr 里没有告警，也没有 `--strict` 那一行。写出的文件和不带开关的那一项逐字节相同：`a01-strict` 的两个文件对 `a01-out-meta`，`pkg-test02-strict` 的四个文件对 `pkg-test02`。
+- 检查点 2 的全部输出里有 327 份 XML（312 个文件，15 份写在 stdout 上），`<PIDItem>` 0 个，`DefUID="Relationship"` 0 条。整个矩阵里出现 `<PIDItem>` 这几个字的只有 `help\stdout.bin` 和 `no-args\stderr.bin`，是用法说明里讲 `--strict` 的那一段。
+
+这与细化计划检查点 2 预期的两处一致：打印用法说明的两项跟着用法说明变，`TEST02_p` 的 `A01_Coverage.json` 多出那一段（这个包在矩阵里发布了两次，带和不带 `--diff-against` 各一次，所以是两个文件）。
+
+**说明。** `CHANGELOG.md` 的 `[Unreleased]` 加了阶段 2 一条，写明两个公有结构各加了一个字段、输出变了哪些、哪些没有验到；`AGENTS.md` 的用例表补上了新用例。两处的数字和名字逐项对过代码和上面的记录。
+
+**顺带记下的。**
+
+1. 真实数据上，这一阶段验到的只有「没有降级时什么都不变」。1 283 这个数是照载入规则算的，不是跑的。拿到一个带换热器、机械设备的 SQL Server 包，跑一遍就有逐图的数字。
+2. 只开 `backup-exp` 特性编库时有一条 `dead_code` 警告：`PublishItemRow` 的 `db_subtables` 字段没有人读（`runs/t21-exponly.log`、`runs/t23-exp-only.log`；两份记录没有留命令行，从警告和编进去的用例看是这个组合）。读它的两处，一处在 `sqlite_load.rs`（属 `backup-mdf`），一处在测试里。`a4b490e` 上读它的也只有这两处，所以不是阶段 2 带来的（基线上没有重跑）。CI 不编这个组合，门禁里看不到它。这一轮没有动。同一个组合下 `publish::backup_package` 原有的 4 条单测过（`runs/t23-exp-only-tests.log`）；T2.3 新加的 4 条要建内存库，只在 `backup-mdf` 下编。
+3. 命令行的降级用例走的是 `.sqlite` 输入，这个入口标着 deprecated。哪天它被删掉，这几条要换入口，而 `.mdf` 没法现造（细化计划 §6 已经写了）。

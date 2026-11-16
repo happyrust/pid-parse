@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### publish：数据库线没写全的地方数出来、说出来，`--strict` 时退出 1（审核整改 T2，2026-11-16）
+
+**数据库线（`.mdf`、`.sqlite`、SQL Server 备份包、导出包）把一张图写得不完整时，以前退出 0，stderr 和报告里都不提；现在每个入口都说，带 `--strict` 时退出 1。写出的 `_Data.xml` 与 `_Meta.xml` 逐字节不变，不带 `--strict` 时退出码不变；`.pid` 线与 Oracle 整包不受影响。** 写得不完整有两种：条目类型没有专用写手（`Exchanger`、`Mechanical`、`EquipmentOther`、`OPC`，以及目录里没有的类型），对象写成只带 UID 的 `<PIDItem>` 占位，类和全部属性都没有；`T_Relationship` 里有一端不是图形表示的行，`<Rel>` 的定义只凭两端的条目类型判出。这一轮只让它们看得见，没有去补。
+
+- **读数。** 仓库里唯一的 SQL Server 库（`TEST02_p`，1 张图、4 个条目、3 行关系）两种都不触发。真实工厂的库（Oracle 包 `Export.dmp`，53 张图）照数据库线的载入规则数：15 439 个对象里没有专用写手的 1 283 个（`OPC` 952、`EquipmentOther` 225、`Mechanical` 94、`Exchanger` 12），49 张图有份；24 664 行关系里以条目作端点的是 0 行。这组数是从表里算的，不是跑出来的：Oracle 包喂不进数据库线。SmartPlant 自己发布的 14 份参考 XML 里 `<PIDItem>` 是 0 个。
+- **汇总只算一处。** 新的公有函数 `publish::database_shortfalls(&PublishDrawing) -> DatabaseShortfalls`：占位对象按条目类型计数，关系行按「两端的类型、写成的定义」计数，`describe()` 每类给一句英文，各入口用同一份句子。「这个类型有没有专用写手」（`catalog::dedicated_db_writer`）与「关系表哪些行写成 `<Rel>`、各写成什么」（`xml_writer::published_relationship_rows`）各收成一处，写手照它写、记账照它数，所以汇总里的数就是 XML 里的标签数。
+- **单图命令行。** 数据库输入写完文件后每类打一行 `warning: …`。新开关 `--strict`：有这样的告警时文件照写、`--diff-against` 的报告照出，最后 stderr 多一行 `--strict: the drawing is not written in full (see the warnings above); exit 1.` 并退出 1。`.pid` 输入带 `--strict`、或与 `--list-drawings` 同用，是用法错误，退出 2。
+- **SQL Server 整包。** 每张图的 `_Coverage.json` 多 `shortfalls` 一段（恒有；写全了的图两个 `total` 都是 0）。`_Index.json` 不加新键：这张图的 `problems` 里是那些句子，顶层 `problems` 里是前面带图名的同样句子；图仍算写出，`failed` 不变。stderr 每类一行 `warning: <图名>: …`。目录输入接受 `--strict`，有这样的图时整包退出 1；Oracle 包和没有 dump 的包每张图都从 `.pid` 来，开关不起作用（读完包才知道是哪一种，所以不拒绝）。
+- **导出包。** `export_bundle_publish_xml` 写的 `publish/status.json` 多 `shortfalls` 键，值是句子的数组：写出了 XML 就有，写全了是 `[]`；没有生成 XML 的那份状态不写这个键——没算过，不等于没有。`pid_inspect --export-bundle` 不打印它。格式说明在 `docs/pid-export-bundle-contract.md`。
+- **公有接口。** 两个字段全公开的结构各加了一个字段，照字段逐个构造它们的调用方要跟着补：`BackupPublishReport::shortfalls: Vec<PackageDrawingShortfalls>`（Oracle 包和没有 dump 的包上恒为空）、`ExportBundlePublishStatus::shortfalls: Option<Vec<String>>`（读没有这个键的旧文件得到 `None`）。新增公有类型 `publish::DatabaseShortfalls`（`#[non_exhaustive]`）、`publish::backup_package::PackageDrawingShortfalls`，公有函数 `publish::database_shortfalls`。公有函数 `publish::pid_writer::write_database_coverage_json` 签名不变，写出的 JSON 多 `shortfalls` 一段。
+- **输出的变化。** 发布构建改前改后各跑一遍对照矩阵（逐个比 SHA-256）：原有 59 次运行的 703 个文件，698 个相同。变的是 `--help` 的 stdout 和不带参数时 stderr 上的同一份用法说明（95 → 114 行：两行用法各加 `[--strict]`，加 `--strict` 一段，删掉走不到的 `backup-mdf feature; without it the input still exits 2`），`TEST02_p` 两次整包运行各自的 `A01_Coverage.json`（397 → 588 字节，原有的内容一字不动，只在末尾多出那一段），以及矩阵自己的汇总表。新加的两次运行，A01 单图与 `TEST02_p` 整包各带 `--strict`，都退出 0，写出的文件与不带开关时逐字节相同。
+- **用例。** 夹具 `tests/fixtures/publish-shortfalls.sql` 是一份建表加插入的脚本：一张图，换热器、容器、管口各一个，一行管口到换热器的关系；用例拿它现造 `.sqlite` 或内存库。库内：`xml_writer` 5 条（汇总的个数等于 `write_data_xml` 写出的 `<PIDItem>` 与 `<Rel>` 数；遍历目录，每个没有专用写手的类型都要被点到）、`model` 3 条（句子）、`catalog` 2 条、`pid_writer` 1 条、`backup_package` 4 条（现造的库经 `publish_staged_database` 发布，验覆盖报告、索引、报告的新字段，以及写全了的图）、`export_bundle` 新 2 条并在已有 2 条里加断言；可执行文件 `pid_publish_xml` 的第一个单测模块 4 条（整包的告警行、`--strict` 的结论句与退出码）。集成：`tests/publish_xml_cli.rs` 9 条（告警、`--strict` 退出 1 且两个文件逐字节不变、差异报告照出、A01 与 `TEST02_p` 带 `--strict` 退出 0、两种用法错误、目录接受 `--strict`、`--help`），`tests/publish_mdf_load.rs` 1 条（真实的 A01 没有降级）。红与绿的输出、哪几条没有看过红，记在 `docs/plans/2026-11-16-publish-review-followup.md` §9。
+- **没有验到的。** 带降级的 SQL Server 包造不出来：`Export.dmp` 里的 MDF 没法现造，仓库里唯一的 SQL Server 包没有降级。所以「整包有降级时 stderr 打告警、带 `--strict` 退出 1」没有经可执行文件从头到尾跑过，是三段拼起来验的：库这一段用现造的库；命令行这一段把「打什么、退出几」拆成三个函数（`package_warnings`、`strict_package_verdict`、`package_exit_code`）由单测逐字断言；真包验的是没有降级时除那一段外什么都不变。那 1 283 个占位是算的：真拿一个这样的 SQL Server 包来跑，数字应当相同，但没有跑过。
+
 ### publish：`.pid` 按文件存的名字发布，不管路径怎么写（审核整改 T1，2026-11-16）
 
 **`pid_publish_xml` 拿到的路径写的不是文件存的名字时，写出的图名变了：从路径上写的名字改成文件存的名字。** 两种情形：8.3 短路径（`IB031~1.PID`，以前发布成 `IB031~1`），以及在不区分大小写的文件系统上大小写写得不一样的路径（`dwg-0202gp06-01.PID`，以前发布成 `dwg-0202gp06-01`）。路径照文件存的名字写的，输出逐字节不变；数据库线与整包不受影响。
