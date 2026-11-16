@@ -26,7 +26,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use super::oracle_exp::{read_text_cells, ExpError};
+use super::oracle_exp::{ExpError, Inserts};
 use crate::backup::{DataMap, MapSource};
 
 /// The data dictionary an Oracle `exp` dump carries: which table and column
@@ -128,20 +128,17 @@ impl DumpDictionary {
     /// tables and not the others, a table's bytes do not frame, or a table
     /// lacks a column the dictionary reads.
     pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::read_inserts(&Inserts::of(dump))
+    }
+
+    /// [`Self::read`] for a dump whose inserts are already found.
+    pub(crate) fn read_inserts(inserts: &Inserts<'_>) -> Result<Self, ExpError> {
         let tables = [
-            read_text_cells(dump, "ITEM", &["NAME", "ID"])?,
-            read_text_cells(
-                dump,
-                "ITEMATTRIBUTIONS",
-                &["ITEMID", "NAME", "ATTRIBUTIONID"],
-            )?,
-            read_text_cells(
-                dump,
-                "UNIQUEATTS",
-                &["ID", "ENTITY_NUMBER", "ATTRIBUTE_NUMBER"],
-            )?,
-            read_text_cells(dump, "ENTITIES", &["ENTITY_NUMBER", "ENTITY_NAME"])?,
-            read_text_cells(dump, "ATTRIBUTES", &["ATTRIBUTE_NUMBER", "ATTRIBUTE_NAME"])?,
+            inserts.text_cells("ITEM", &["NAME", "ID"])?,
+            inserts.text_cells("ITEMATTRIBUTIONS", &["ITEMID", "NAME", "ATTRIBUTIONID"])?,
+            inserts.text_cells("UNIQUEATTS", &["ID", "ENTITY_NUMBER", "ATTRIBUTE_NUMBER"])?,
+            inserts.text_cells("ENTITIES", &["ENTITY_NUMBER", "ENTITY_NAME"])?,
+            inserts.text_cells("ATTRIBUTES", &["ATTRIBUTE_NUMBER", "ATTRIBUTE_NAME"])?,
         ];
         if tables.iter().all(Option::is_none) {
             return Ok(Self::default());

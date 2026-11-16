@@ -342,27 +342,28 @@ impl ExpTables {
     /// name.
     pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
         Self::pin(dump)?;
+        let inserts = Inserts::of(dump);
         Ok(Self {
-            piping_point: read_table_tolerant(dump, "T_PIPINGPOINT")?,
-            signal_point: read_table_tolerant(dump, "T_SIGNALPOINT")?,
-            connector: read_table_tolerant(dump, "T_CONNECTOR")?,
-            representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
-            piperun: read_table_tolerant(dump, "T_PIPERUN")?,
-            signalrun: read_table_tolerant(dump, "T_SIGNALRUN")?,
-            opc: read_table_tolerant(dump, "T_OPC")?,
-            nozzle: read_table_tolerant(dump, "T_NOZZLE")?,
-            note: read_table_tolerant(dump, "T_NOTE")?,
-            itemnote: read_table_tolerant(dump, "T_ITEMNOTE")?,
-            modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
-            plantitem: read_optional_table(dump, "T_PLANTITEM")?,
-            inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
-            codelists: read_table_tolerant(dump, "CODELISTS")?,
-            drawing: read_table_tolerant(dump, "T_DRAWING")?,
-            equipment: read_optional_table(dump, "T_EQUIPMENT")?,
-            vessel: read_optional_table(dump, "T_VESSEL")?,
-            pipingcomp: read_optional_table(dump, "T_PIPINGCOMP")?,
-            instrument: read_optional_table(dump, "T_INSTRUMENT")?,
-            dictionary: DumpDictionary::read(dump)?,
+            piping_point: inserts.table("T_PIPINGPOINT")?,
+            signal_point: inserts.table("T_SIGNALPOINT")?,
+            connector: inserts.table("T_CONNECTOR")?,
+            representation: inserts.table("T_REPRESENTATION")?,
+            piperun: inserts.table("T_PIPERUN")?,
+            signalrun: inserts.table("T_SIGNALRUN")?,
+            opc: inserts.table("T_OPC")?,
+            nozzle: inserts.table("T_NOZZLE")?,
+            note: inserts.table("T_NOTE")?,
+            itemnote: inserts.table("T_ITEMNOTE")?,
+            modelitem: inserts.table("T_MODELITEM")?,
+            plantitem: inserts.optional_table("T_PLANTITEM")?,
+            inlinecomp: inserts.optional_table("T_INLINECOMP")?,
+            codelists: inserts.table("CODELISTS")?,
+            drawing: inserts.table("T_DRAWING")?,
+            equipment: inserts.optional_table("T_EQUIPMENT")?,
+            vessel: inserts.optional_table("T_VESSEL")?,
+            pipingcomp: inserts.optional_table("T_PIPINGCOMP")?,
+            instrument: inserts.optional_table("T_INSTRUMENT")?,
+            dictionary: DumpDictionary::read_inserts(&inserts)?,
         })
     }
 
@@ -851,7 +852,7 @@ impl ExpTables {
         Ok(Self {
             representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
-            inlinecomp: read_optional_table(dump, "T_INLINECOMP")?,
+            inlinecomp: Inserts::of(dump).optional_table("T_INLINECOMP")?,
             ..Self::blank()
         })
     }
@@ -1128,10 +1129,10 @@ pub fn drawing_in_dump(tables: &ExpTables, uid: &str) -> Result<bool, ExpError> 
 /// Returns [`ExpError::Table`] when the insert is present but not the
 /// pinned row shape, or when `SP_ID` / `NAME` / `PARENTID` is missing.
 pub fn read_plant_groups(dump: &[u8]) -> Result<Vec<PlantGroup>, ExpError> {
-    if find_slice(dump, b"INSERT INTO \"T_PLANTGROUP\"").is_none() {
+    let Some(at) = find_slice(dump, b"INSERT INTO \"T_PLANTGROUP\"") else {
         return Ok(Vec::new());
-    }
-    let table = read_table_tolerant(dump, "T_PLANTGROUP")?;
+    };
+    let table = read_table_tolerant_at(dump, "T_PLANTGROUP", at)?;
     let id = column_index(&table, "SP_ID", Kind::Char)?;
     let name = column_index(&table, "NAME", Kind::Char)?;
     let parent = column_index(&table, "PARENTID", Kind::Char)?;
@@ -2431,71 +2432,118 @@ fn lesser_id(model: &str, paired: &str) -> String {
     }
 }
 
-/// [`read_table_tolerant`], or an empty table when the dump has no insert
-/// for `name`. A present table that is not the pinned format still fails.
-fn read_optional_table(dump: &[u8], name: &str) -> Result<Table, ExpError> {
-    let marker = format!("INSERT INTO \"{name}\"");
-    if find_slice(dump, marker.as_bytes()).is_none() {
-        return Ok(Table::blank(name));
-    }
-    read_table_tolerant(dump, name)
+/// What the insert of every table opens with.
+const INSERT_OPENING: &[u8] = b"INSERT INTO \"";
+
+/// Where a dump reads `INSERT INTO "`, in the order of the dump.
+///
+/// [`find_slice`] for a table's `INSERT INTO "NAME"` walks the dump from its
+/// start, once for every table asked for. This walks the dump once, and
+/// [`Self::first`] then answers what `find_slice` answers: the first place
+/// the dump reads `INSERT INTO "NAME"`, wherever in the dump that is.
+pub(crate) struct Inserts<'a> {
+    dump: &'a [u8],
+    starts: Vec<usize>,
 }
 
-/// The cells of `columns` in the first insert of `name`, row by row, each
-/// as text: national text as stored, an integer `NUMBER` in decimal, and
-/// `None` for NULL or any other cell. `Ok(None)` when the dump has no
-/// insert of that name.
-///
-/// # Errors
-///
-/// Returns [`ExpError::Table`] when the table's bytes do not frame or it
-/// lacks one of `columns`.
-pub(crate) fn read_text_cells(
-    dump: &[u8],
-    name: &str,
-    columns: &[&str],
-) -> Result<Option<Vec<Vec<Option<String>>>>, ExpError> {
-    let marker = format!("INSERT INTO \"{name}\"");
-    if find_slice(dump, marker.as_bytes()).is_none() {
-        return Ok(None);
+impl<'a> Inserts<'a> {
+    /// Find where `dump` reads `INSERT INTO "`.
+    pub(crate) fn of(dump: &'a [u8]) -> Self {
+        let starts = dump
+            .windows(INSERT_OPENING.len())
+            .enumerate()
+            .filter(|(_, window)| *window == INSERT_OPENING)
+            .map(|(at, _)| at)
+            .collect();
+        Self { dump, starts }
     }
-    let table = read_table_tolerant(dump, name)?;
-    let indices = columns
-        .iter()
-        .map(|column| {
-            table
-                .columns
-                .iter()
-                .position(|candidate| candidate.name == *column)
-                .ok_or_else(|| table_error(name, format!("column {column} is missing")))
+
+    /// Where the dump first reads `INSERT INTO "name"`.
+    fn first(&self, name: &str) -> Option<usize> {
+        self.starts.iter().copied().find(|&at| {
+            self.dump[at + INSERT_OPENING.len()..]
+                .strip_prefix(name.as_bytes())
+                .is_some_and(|rest| rest.first() == Some(&b'"'))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Some(
-        table
-            .rows
+    }
+
+    /// The first insert of `name`, read as [`read_table_tolerant`] reads it.
+    fn table(&self, name: &str) -> Result<Table, ExpError> {
+        let at = self
+            .first(name)
+            .ok_or_else(|| table_error(name, "INSERT not found".to_string()))?;
+        read_table_tolerant_at(self.dump, name, at)
+    }
+
+    /// [`Self::table`], or an empty table when the dump has no insert for
+    /// `name`. A present table that is not the pinned format still fails.
+    fn optional_table(&self, name: &str) -> Result<Table, ExpError> {
+        match self.first(name) {
+            Some(at) => read_table_tolerant_at(self.dump, name, at),
+            None => Ok(Table::blank(name)),
+        }
+    }
+
+    /// The cells of `columns` in the first insert of `name`, row by row,
+    /// each as text: national text as stored, an integer `NUMBER` in
+    /// decimal, and `None` for NULL or any other cell. `Ok(None)` when the
+    /// dump has no insert of that name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when the table's bytes do not frame or it
+    /// lacks one of `columns`.
+    pub(crate) fn text_cells(
+        &self,
+        name: &str,
+        columns: &[&str],
+    ) -> Result<Option<Vec<Vec<Option<String>>>>, ExpError> {
+        let Some(at) = self.first(name) else {
+            return Ok(None);
+        };
+        let table = read_table_tolerant_at(self.dump, name, at)?;
+        let indices = columns
             .iter()
-            .map(|row| {
-                indices
+            .map(|column| {
+                table
+                    .columns
                     .iter()
-                    .map(|index| match row.get(*index) {
-                        Some(Field::Text(text)) => Some(text.clone()),
-                        Some(Field::Int(value)) => Some(value.to_string()),
-                        _ => None,
-                    })
-                    .collect()
+                    .position(|candidate| candidate.name == *column)
+                    .ok_or_else(|| table_error(name, format!("column {column} is missing")))
             })
-            .collect(),
-    ))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(
+            table
+                .rows
+                .iter()
+                .map(|row| {
+                    indices
+                        .iter()
+                        .map(|index| match row.get(*index) {
+                            Some(Field::Text(text)) => Some(text.clone()),
+                            Some(Field::Int(value)) => Some(value.to_string()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .collect(),
+        ))
+    }
 }
 
 fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
+    let marker = format!("INSERT INTO \"{name}\"");
+    let at = find_slice(dump, marker.as_bytes())
+        .ok_or_else(|| table_error(name, "INSERT not found".to_string()))?;
+    read_table_tolerant_at(dump, name, at)
+}
+
+/// The table whose `INSERT INTO "name"` the dump reads at `at`.
+fn read_table_tolerant_at(dump: &[u8], name: &str, at: usize) -> Result<Table, ExpError> {
     let fail = |detail: String| ExpError::Table {
         name: name.to_string(),
         detail,
     };
-    let marker = format!("INSERT INTO \"{name}\"");
-    let at =
-        find_slice(dump, marker.as_bytes()).ok_or_else(|| fail("INSERT not found".to_string()))?;
     let line_end = dump[at..]
         .iter()
         .position(|byte| *byte == b'\n')
@@ -5559,5 +5607,188 @@ mod tests {
                     .unwrap_or_default();
             }
         }
+    }
+
+    /// What a search for the table `name` looks for.
+    fn insert_of(name: &str) -> Vec<u8> {
+        format!("INSERT INTO \"{name}\"").into_bytes()
+    }
+
+    /// A table is found where a search of the dump from its start finds it:
+    /// the first place that reads `INSERT INTO "NAME"`, whether or not a
+    /// statement starts there, and nowhere when no place does.
+    #[test]
+    fn a_table_is_found_where_a_search_from_the_start_finds_it() {
+        let dump: &[u8] = b"INSERT INTO \"ITEMATTRIBUTIONS\" (\"A\")\n\
+            a cell that reads INSERT INTO \"T_NOTE\" before the statement\n\
+            INSERT INTO \"ITEM\" (\"A\")\n\
+            INSERT INSERT INTO \"T_NOTES\" (\"A\")\n\
+            INSERT INTO \"T_NOTE\" (\"A\")\n\
+            INSERT INTO \"CODELISTS\" (\"A\")\n\
+            INSERT INTO \"CODELISTS\" (\"B\")\n\
+            INSERT INTO \"T_VES";
+        let inserts = Inserts::of(dump);
+        assert_eq!(inserts.starts.len(), 8);
+        for name in [
+            "ITEMATTRIBUTIONS",
+            "ITEM",
+            "ITE",
+            "T_NOTE",
+            "T_NOTES",
+            "CODELISTS",
+            "T_VES",
+            "T_VESSEL",
+            "A",
+            "",
+        ] {
+            assert_eq!(
+                inserts.first(name),
+                find_slice(dump, &insert_of(name)),
+                "{name}"
+            );
+        }
+        let after = |name: &str| {
+            let at = inserts.first(name).expect(name);
+            &dump[at + insert_of(name).len()..]
+        };
+        // A longer name that starts the same and comes first is another
+        // table.
+        assert!(inserts.first("ITEM") > inserts.first("ITEMATTRIBUTIONS"));
+        assert!(after("ITEM").starts_with(b" (\"A\")\nINSERT INSERT"));
+        assert!(after("T_NOTES").starts_with(b" (\"A\")\nINSERT INTO \"T_NOTE\""));
+        // The first place that reads so is the one, statement or not.
+        assert!(after("T_NOTE").starts_with(b" before the statement"));
+        assert!(after("CODELISTS").starts_with(b" (\"A\")"));
+        // A name the dump ends in the middle of is not there.
+        assert_eq!(inserts.first("T_VES"), None);
+        assert_eq!(inserts.first("T_VESSEL"), None);
+        assert_eq!(inserts.first("ITE"), None);
+        assert_eq!(inserts.first(""), None);
+
+        for dump in [
+            &b""[..],
+            b"INSERT INTO",
+            b"INSERT INTO \"",
+            b"INSERT INTO \"\"",
+        ] {
+            let inserts = Inserts::of(dump);
+            for name in ["", "T_NOTE"] {
+                assert_eq!(
+                    inserts.first(name),
+                    find_slice(dump, &insert_of(name)),
+                    "{name} in {dump:?}"
+                );
+            }
+        }
+        assert_eq!(Inserts::of(b"INSERT INTO \"\"").first(""), Some(0));
+    }
+
+    /// On the committed dump: every place a search for `INSERT INTO "`
+    /// stops at is known, and every table the readers ask for is where a
+    /// search for it from the start of the dump finds it.
+    #[test]
+    fn the_inserts_of_the_committed_dump_are_where_a_search_finds_them() {
+        let dump = committed_dwg_dump();
+        let inserts = Inserts::of(&dump);
+        let mut searched = Vec::new();
+        let mut from = 0;
+        while let Some(offset) = find_slice(&dump[from..], INSERT_OPENING) {
+            searched.push(from + offset);
+            from += offset + 1;
+        }
+        assert_eq!(inserts.starts, searched);
+
+        for name in [
+            "APPLICATIONS",
+            "T_PIPINGPOINT",
+            "T_SIGNALPOINT",
+            "T_CONNECTOR",
+            "T_REPRESENTATION",
+            "T_PIPERUN",
+            "T_SIGNALRUN",
+            "T_OPC",
+            "T_NOZZLE",
+            "T_NOTE",
+            "T_ITEMNOTE",
+            "T_MODELITEM",
+            "CODELISTS",
+            "T_DRAWING",
+        ] {
+            let at = inserts.first(name);
+            assert!(at.is_some(), "{name}");
+            assert_eq!(at, find_slice(&dump, &insert_of(name)), "{name}");
+        }
+        for name in [
+            "T_PLANTITEM",
+            "T_INLINECOMP",
+            "T_EQUIPMENT",
+            "T_VESSEL",
+            "T_PIPINGCOMP",
+            "T_INSTRUMENT",
+            "ITEM",
+            "ITEMATTRIBUTIONS",
+            "UNIQUEATTS",
+            "ENTITIES",
+            "ATTRIBUTES",
+            "T_PLANTGROUP",
+            "T_",
+            "T_NO_SUCH_TABLE",
+        ] {
+            assert_eq!(
+                inserts.first(name),
+                find_slice(&dump, &insert_of(name)),
+                "{name}"
+            );
+        }
+        assert_eq!(inserts.first("T_NO_SUCH_TABLE"), None);
+    }
+
+    /// A table [`ExpTables::read`] cannot do without is an error by its
+    /// name when the dump has no insert for it. Each of the six it can do
+    /// without reads as a table of no columns and no rows.
+    #[test]
+    fn a_table_the_dump_lacks_is_an_error_unless_the_reader_can_do_without_it() {
+        for name in [
+            "T_PIPINGPOINT",
+            "T_SIGNALPOINT",
+            "T_CONNECTOR",
+            "T_REPRESENTATION",
+            "T_PIPERUN",
+            "T_SIGNALRUN",
+            "T_OPC",
+            "T_NOZZLE",
+            "T_NOTE",
+            "T_ITEMNOTE",
+            "T_MODELITEM",
+            "CODELISTS",
+            "T_DRAWING",
+        ] {
+            let Err(error) = ExpTables::read(&fixture_without(name, None)) else {
+                panic!("a dump without {name} was read");
+            };
+            assert_eq!(error.to_string(), format!("{name}: INSERT not found"));
+        }
+
+        let blank = |table: &Table, name: &str| {
+            assert_eq!(table.name, name);
+            assert!(table.columns.is_empty() && table.rows.is_empty(), "{name}");
+        };
+        // The fixture has four of the six and reads without the other two.
+        let full = ExpTables::read(&dump_of(&followed_fixture())).expect("the fixture reads");
+        blank(&full.pipingcomp, "T_PIPINGCOMP");
+        blank(&full.instrument, "T_INSTRUMENT");
+        for table in [
+            &full.plantitem,
+            &full.inlinecomp,
+            &full.equipment,
+            &full.vessel,
+        ] {
+            assert!(!table.columns.is_empty(), "{}", table.name);
+        }
+        let without = |name: &str| ExpTables::read(&fixture_without(name, None)).expect(name);
+        blank(&without("T_PLANTITEM").plantitem, "T_PLANTITEM");
+        blank(&without("T_INLINECOMP").inlinecomp, "T_INLINECOMP");
+        blank(&without("T_EQUIPMENT").equipment, "T_EQUIPMENT");
+        blank(&without("T_VESSEL").vessel, "T_VESSEL");
     }
 }
