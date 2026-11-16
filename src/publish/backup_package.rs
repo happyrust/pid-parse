@@ -19,6 +19,9 @@
 //! template under a `Template Files` folder, or listed under
 //! `unmatched_pid_entries`.
 //!
+//! A `.pid` entry is unpacked into memory. One that would unpack to more
+//! than 512 MiB is not unpacked: it is a drawing that fails, by name.
+//!
 //! A drawing's three files and the index each take their name only once
 //! written whole ([`write_atomic`]), so a run that is stopped leaves no
 //! part of a document under a document's name; it can leave temporary
@@ -279,6 +282,10 @@ impl PackageGateReport {
 /// drawing under [`BackupPublishReport::duplicate_uids`]. That holds for
 /// every kind of package, with or without `reference_dir`.
 ///
+/// A `.pid` entry of a `PlantData` zip that would unpack to more than
+/// 512 MiB is not unpacked: that drawing fails, `_Index.json` names it
+/// among the `problems`, and the others are published all the same.
+///
 /// # Errors
 ///
 /// Returns [`BackupPublishError::Usage`] when `Export.dmp` has an
@@ -294,6 +301,24 @@ pub fn publish_backup_package(
     out_dir: &Path,
     plant_name: &str,
     reference_dir: Option<&Path>,
+) -> Result<BackupPublishReport, BackupPublishError> {
+    publish_package(
+        package_dir,
+        out_dir,
+        plant_name,
+        reference_dir,
+        MAX_PID_ENTRY_BYTES,
+    )
+}
+
+/// [`publish_backup_package`], with the most bytes a `.pid` entry may
+/// unpack to as an argument, so that a test can set it low.
+fn publish_package(
+    package_dir: &Path,
+    out_dir: &Path,
+    plant_name: &str,
+    reference_dir: Option<&Path>,
+    max_pid_entry_bytes: u64,
 ) -> Result<BackupPublishReport, BackupPublishError> {
     if !package_dir.join("Manifest.txt").is_file() {
         return Err(BackupPublishError::Usage(
@@ -393,6 +418,7 @@ pub fn publish_backup_package(
             out_dir,
             plant_name,
             loaded.as_ref(),
+            max_pid_entry_bytes,
             &mut PublishTally {
                 failed: &mut failed,
                 written: &mut written,
@@ -574,11 +600,48 @@ struct PublishTally<'a> {
     gate: Option<&'a mut PackageGate>,
 }
 
+/// The most bytes a `.pid` entry of a `PlantData` zip may unpack to.
+///
+/// A drawing is unpacked into memory before it is read, so an entry that
+/// unpacks without bound would take the run down, and with it every other
+/// drawing of the package. The `.pid` files met so far are a few megabytes.
+/// An entry over the limit is a drawing that fails, by name, and the rest
+/// are still published.
+const MAX_PID_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
+
+/// What `entry` unpacks to, when that is `limit` bytes or fewer.
+///
+/// `stated` is the size the zip states for the entry. An entry that states
+/// more than `limit` is refused before a byte of it is unpacked. What a zip
+/// states is its word and not a fact, so whatever it states the read itself
+/// stops one byte past `limit`, and an entry that got that far is refused
+/// too. The error is the sentence for the drawing's `problems`.
+fn read_entry_within(entry: &mut impl Read, stated: u64, limit: u64) -> Result<Vec<u8>, String> {
+    if stated > limit {
+        return Err(format!(
+            "would unpack to {stated} bytes, over the limit of {limit} for a .pid entry"
+        ));
+    }
+    let mut bytes = Vec::new();
+    entry
+        .by_ref()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if usize::try_from(limit).is_ok_and(|limit| bytes.len() > limit) {
+        return Err(format!(
+            "states {stated} bytes and unpacks to more than the limit of {limit} for a .pid entry"
+        ));
+    }
+    Ok(bytes)
+}
+
 fn publish_zip(
     plant: &PlantDataFile,
     out_dir: &Path,
     plant_name: &str,
     loaded: Option<&LoadedDump>,
+    max_pid_entry_bytes: u64,
     tally: &mut PublishTally<'_>,
 ) -> Result<(), String> {
     let file = fs::File::open(&plant.full_path)
@@ -615,19 +678,22 @@ fn publish_zip(
         tally
             .entry_names
             .push(entry_key(&plant.file_name, &zip_entry));
-        let mut bytes = Vec::new();
-        if let Err(error) = entry.read_to_end(&mut bytes) {
-            tally
-                .problems
-                .push(format!("{} {zip_entry}: {error}", plant.file_name));
-            *tally.failed += 1;
-            tally.drawings.push(failed_drawing(
-                &plant.file_name,
-                &zip_entry,
-                &format!("read: {error}"),
-            ));
-            continue;
-        }
+        let stated = entry.size();
+        let bytes = match read_entry_within(&mut entry, stated, max_pid_entry_bytes) {
+            Ok(bytes) => bytes,
+            Err(detail) => {
+                tally
+                    .problems
+                    .push(format!("{} {zip_entry}: {detail}", plant.file_name));
+                *tally.failed += 1;
+                tally.drawings.push(failed_drawing(
+                    &plant.file_name,
+                    &zip_entry,
+                    &format!("read: {detail}"),
+                ));
+                continue;
+            }
+        };
         drop(entry);
         publish_one(
             plant, &zip_entry, &bytes, out_dir, plant_name, loaded, tally,
@@ -2515,5 +2581,298 @@ mod tests {
         assert!(error.contains("C03_Data.xml: "), "{error}");
         left.push("C03_Data.xml");
         assert_eq!(scratch.names(), left);
+    }
+
+    /// A zip of one deflated entry per pair, in the order given.
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buffer = io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            let options: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (name, bytes) in entries {
+                writer.start_file(*name, options).expect("start an entry");
+                writer.write_all(bytes).expect("the entry's bytes");
+            }
+            writer.finish().expect("finish the zip");
+        }
+        buffer.into_inner()
+    }
+
+    /// Make the entry `name` of `zip` state `size` as what it unpacks to,
+    /// in its local header and in the central directory alike. What the
+    /// entry holds stays as it is.
+    fn state_unpacked_size(zip: &mut [u8], name: &str, size: u32) {
+        // The signature of a header, and where in it the unpacked size,
+        // the length of the name and the name are.
+        let headers: [(&[u8], usize, usize, usize); 2] =
+            [(b"PK\x03\x04", 22, 26, 30), (b"PK\x01\x02", 24, 28, 46)];
+        let name_len = u16::try_from(name.len())
+            .expect("a short name")
+            .to_le_bytes();
+        for (signature, size_at, name_len_at, name_at) in headers {
+            let at = (0..zip.len())
+                .find(|&at| {
+                    zip[at..].starts_with(signature)
+                        && zip.get(at + name_len_at..at + name_len_at + 2) == Some(&name_len[..])
+                        && zip.get(at + name_at..at + name_at + name.len()) == Some(name.as_bytes())
+                })
+                .unwrap_or_else(|| panic!("a header of {name}"));
+            zip[at + size_at..at + size_at + 4].copy_from_slice(&size.to_le_bytes());
+        }
+    }
+
+    /// A committed `.pid`, by its path in the repository.
+    fn committed_pid(path: &str) -> Vec<u8> {
+        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("{path}: {error}"))
+    }
+
+    /// A package in `scratch` of the one `PlantData` zip and no dump.
+    fn package_of_one_zip(scratch: &WriteScratch, zip: &[u8]) -> PathBuf {
+        let package = scratch.0.join("package");
+        fs::create_dir_all(&package).expect("the package directory");
+        fs::write(package.join("Manifest.txt"), "BackupType<<|>>2\n").expect("the manifest");
+        fs::write(package.join("PlantData~2~1.zip"), zip).expect("the zip");
+        package
+    }
+
+    /// The `_Index.json` in `out`, and the sentences of its `problems`.
+    fn index_and_problems(out: &Path) -> (Value, Vec<String>) {
+        let index: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("_Index.json")).expect("_Index.json"),
+        )
+        .expect("index json");
+        let problems = index["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .map(|problem| problem.as_str().expect("a sentence").to_string())
+            .collect();
+        (index, problems)
+    }
+
+    /// A `.pid` entry that would unpack to more than the limit is a drawing
+    /// that fails by name, and the drawings after it are still published.
+    /// The limit is set here to the size of the third entry. The first
+    /// states more than that and is not unpacked; the second holds as much
+    /// as the first and states less, and is not read through; the third,
+    /// exactly at the limit, and the fourth are written. Under the limit
+    /// the publisher runs with, the first is a drawing like the others.
+    #[test]
+    fn a_pid_entry_over_the_limit_fails_by_name_and_the_rest_are_published() {
+        const ENTRIES: [&str; 4] = [
+            "U01/OVER.pid",
+            "U01/UNDERSTATED.pid",
+            "U01/AT-THE-LIMIT.pid",
+            "U01/UNDER.pid",
+        ];
+        let over = committed_pid("test-file/DWG-0201GP06-01.pid");
+        let at_the_limit = committed_pid("test-file/DWG-0202GP06-01.pid");
+        let under = committed_pid("test-file/D06.pid");
+        assert!(over.len() > at_the_limit.len() && at_the_limit.len() > under.len());
+        let limit = u64::try_from(at_the_limit.len()).expect("a size");
+
+        let mut zip = zip_of(&[
+            (ENTRIES[0], &over),
+            (ENTRIES[1], &over),
+            (ENTRIES[2], &at_the_limit),
+            (ENTRIES[3], &under),
+        ]);
+        state_unpacked_size(&mut zip, ENTRIES[1], 1000);
+        let scratch = WriteScratch::new("entry-limit");
+        let package = package_of_one_zip(&scratch, &zip);
+
+        let out = scratch.0.join("out");
+        let report =
+            publish_package(&package, &out, "P01", None, limit).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!((report.written, report.failed), (2, 2), "{index}");
+        assert_eq!(report.pid_entries, 4);
+        let refused = format!(
+            "would unpack to {} bytes, over the limit of {limit} for a .pid entry",
+            over.len()
+        );
+        let [stated_over, read_over] = problems.as_slice() else {
+            panic!("two problems: {problems:?}");
+        };
+        assert_eq!(
+            *stated_over,
+            format!("PlantData~2~1.zip {}: {refused}", ENTRIES[0])
+        );
+        // Whether the zip reader stops the second or this module does, it
+        // is named.
+        assert!(
+            read_over.starts_with(&format!("PlantData~2~1.zip {}: ", ENTRIES[1])),
+            "{read_over}"
+        );
+        let drawings = index["drawings"].as_array().expect("drawings");
+        assert_eq!(drawings.len(), 4, "{index}");
+        for (drawing, entry) in drawings.iter().zip(ENTRIES) {
+            assert_eq!(drawing["zip_entry"], entry, "{drawing}");
+        }
+        assert_eq!(
+            drawings[0]["problems"],
+            json!([format!("read: {refused}")]),
+            "{index}"
+        );
+        let mut held = vec!["_Index.json".to_string()];
+        for (drawing, written) in drawings.iter().zip([false, false, true, true]) {
+            let files = drawing["files"].as_array().expect("files");
+            let own = drawing["problems"].as_array().expect("its own problems");
+            if written {
+                assert_eq!((files.len(), own.len()), (3, 0), "{drawing}");
+                held.extend(
+                    files
+                        .iter()
+                        .map(|file| file.as_str().expect("a file name").to_string()),
+                );
+            } else {
+                assert_eq!((files.len(), own.len()), (0, 1), "{drawing}");
+                assert!(
+                    own[0]
+                        .as_str()
+                        .is_some_and(|said| said.starts_with("read: ")),
+                    "{drawing}"
+                );
+            }
+        }
+        held.sort();
+        assert_eq!(names_in(&out), held, "{index}");
+
+        let out = scratch.0.join("out-as-shipped");
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!((report.written, report.failed), (3, 1), "{index}");
+        let [read_over] = problems.as_slice() else {
+            panic!("one problem: {problems:?}");
+        };
+        assert!(
+            read_over.starts_with(&format!("PlantData~2~1.zip {}: ", ENTRIES[1])),
+            "{read_over}"
+        );
+    }
+
+    /// The limit a package is published with is 512 MiB. Two entries hold
+    /// the same drawing: the one that states a byte more than that is
+    /// refused, in a sentence that says both sizes, and the limit is not
+    /// what the one that states exactly that is held against.
+    #[test]
+    fn the_limit_a_package_is_published_with_is_512_mib() {
+        const LIMIT: u32 = 512 * 1024 * 1024;
+        let pid = committed_pid("test-file/D06.pid");
+        let mut zip = zip_of(&[
+            ("U01/A-BYTE-OVER.pid", &pid),
+            ("U01/AT-THE-LIMIT.pid", &pid),
+        ]);
+        state_unpacked_size(&mut zip, "U01/A-BYTE-OVER.pid", LIMIT + 1);
+        state_unpacked_size(&mut zip, "U01/AT-THE-LIMIT.pid", LIMIT);
+        let scratch = WriteScratch::new("entry-limit-shipped");
+        let package = package_of_one_zip(&scratch, &zip);
+        let out = scratch.0.join("out");
+
+        let report =
+            publish_backup_package(&package, &out, "P01", None).expect("the package publishes");
+        let (index, problems) = index_and_problems(&out);
+        assert_eq!(report.pid_entries, 2, "{index}");
+        let refused = format!(
+            "would unpack to {} bytes, over the limit of {LIMIT} for a .pid entry",
+            u64::from(LIMIT) + 1
+        );
+        assert_eq!(
+            problems.first(),
+            Some(&format!("PlantData~2~1.zip U01/A-BYTE-OVER.pid: {refused}")),
+            "{index}"
+        );
+        // The second holds less than it states. Whether the zip reader
+        // takes that is the zip reader's affair.
+        assert!(
+            problems.iter().skip(1).all(|said| !said.contains("limit")),
+            "{problems:?}"
+        );
+    }
+
+    /// A reader that counts the bytes it has handed out.
+    struct Counted<R> {
+        inner: R,
+        handed_out: usize,
+    }
+
+    impl<R: Read> Read for Counted<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let count = self.inner.read(buf)?;
+            self.handed_out += count;
+            Ok(count)
+        }
+    }
+
+    /// A reader that fails.
+    struct Broken;
+
+    impl Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("the disk is gone"))
+        }
+    }
+
+    /// What an entry states is looked at before a byte of it is read, and
+    /// what it holds is read to one byte past the limit and no further.
+    #[test]
+    fn an_entry_is_read_up_to_the_limit_and_not_past_it() {
+        // An entry that holds `held` sevens.
+        let entry = |held: u64| Counted {
+            inner: io::repeat(7).take(held),
+            handed_out: 0,
+        };
+
+        // At the limit and under it, the entry is read whole.
+        assert_eq!(
+            read_entry_within(&mut entry(100), 100, 100),
+            Ok(vec![7; 100])
+        );
+        assert_eq!(read_entry_within(&mut entry(99), 99, 100), Ok(vec![7; 99]));
+        assert_eq!(read_entry_within(&mut entry(0), 0, 100), Ok(Vec::new()));
+        assert_eq!(read_entry_within(&mut entry(0), 0, 0), Ok(Vec::new()));
+
+        // It states more than the limit: refused, and not a byte is read.
+        let mut over = entry(101);
+        assert_eq!(
+            read_entry_within(&mut over, 101, 100),
+            Err("would unpack to 101 bytes, over the limit of 100 for a .pid entry".to_string())
+        );
+        assert_eq!(over.handed_out, 0);
+
+        // It holds more than the limit and states less: the read stops a
+        // byte past the limit, and the entry is refused.
+        let mut understated = entry(1 << 20);
+        assert_eq!(
+            read_entry_within(&mut understated, 10, 100),
+            Err(
+                "states 10 bytes and unpacks to more than the limit of 100 for a .pid entry"
+                    .to_string()
+            )
+        );
+        assert_eq!(understated.handed_out, 101);
+        let mut a_byte_over = entry(1);
+        assert!(read_entry_within(&mut a_byte_over, 0, 0).is_err());
+        assert_eq!(a_byte_over.handed_out, 1);
+
+        // What it states and what it holds differ, within the limit: that
+        // is for the zip reader to say, and here the bytes are the answer.
+        assert_eq!(read_entry_within(&mut entry(60), 10, 100), Ok(vec![7; 60]));
+        assert_eq!(read_entry_within(&mut entry(10), 60, 100), Ok(vec![7; 10]));
+
+        // A limit of all there is does not wrap round to none.
+        assert_eq!(
+            read_entry_within(&mut entry(5), u64::MAX, u64::MAX),
+            Ok(vec![7; 5])
+        );
+
+        // A read that fails says so in its own words.
+        assert_eq!(
+            read_entry_within(&mut Broken, 1, 100),
+            Err("the disk is gone".to_string())
+        );
     }
 }
