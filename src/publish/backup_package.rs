@@ -18,10 +18,17 @@
 //! accounted in it exactly once — paired to a model row, classified as a
 //! template under a `Template Files` folder, or listed under
 //! `unmatched_pid_entries`.
+//!
+//! A drawing's three files are written all of them or none, and they and
+//! the index each take their name only once written whole
+//! ([`write_atomic`]), so a run that is stopped leaves no part of a
+//! document under a document's name. The output directory is not emptied
+//! first: files an earlier run left there are not removed, and
+//! `_Index.json` is what says which files this run wrote.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -475,7 +482,7 @@ pub fn publish_backup_package(
     let index_path = out_dir.join("_Index.json");
     let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
     text.push('\n');
-    fs::write(&index_path, text).map_err(|error| {
+    write_atomic(&index_path, text.as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
     })?;
     Ok(BackupPublishReport {
@@ -764,7 +771,6 @@ fn publish_one(
         };
     }
     let file_stem = output_stem(&drawing.drawing_name);
-    let data_path = out_dir.join(format!("{file_stem}_Data.xml"));
     if !tally.written_names.insert(file_stem.to_lowercase()) {
         let detail = format!("output name {file_stem} is already used");
         tally
@@ -808,7 +814,7 @@ fn publish_one(
         }
     };
     let (object_count, value_count, rel_count) = census.counts();
-    if let Err(error) = write_three(&data_path, &xml, &meta, &report, &file_stem) {
+    if let Err(error) = write_three(out_dir, &file_stem, &xml, &meta, &report) {
         tally
             .problems
             .push(format!("{} {zip_entry}: {error}", plant.file_name));
@@ -1059,26 +1065,130 @@ fn shell_drawing(uid: String, name: String) -> PidPublishDrawing {
     }
 }
 
-fn write_three(
-    data_path: &Path,
-    xml: &str,
-    meta: &str,
-    report: &str,
-    name: &str,
-) -> Result<(), String> {
-    let dir = data_path.parent().unwrap_or(Path::new("."));
-    write_file(data_path, xml)?;
-    write_file(&dir.join(format!("{name}_Meta.xml")), meta)?;
-    write_file(&dir.join(format!("{name}_Coverage.json")), report)?;
+/// Write a drawing's three files into `dir` under `stem`, all of them or
+/// none. Each is first written whole under a temporary name, so whatever
+/// fails while they are being written fails with the directory as it was.
+/// Then they take their names one after the other, and when one cannot,
+/// those that did are removed again. The error names the file that could
+/// not be written, and any of the three that could not be removed.
+///
+/// All three take their names by rename, whatever holds the names: they
+/// are names this run gives out inside its own output directory. Files an
+/// earlier run left under them are replaced one by one, so when a later
+/// name cannot be taken, the earlier run's files under the names already
+/// taken are gone with this run's, and those under the others stay.
+fn write_three(dir: &Path, stem: &str, xml: &str, meta: &str, report: &str) -> Result<(), String> {
+    let parts = [
+        ("_Data.xml", xml),
+        ("_Meta.xml", meta),
+        ("_Coverage.json", report),
+    ];
+    let mut staged = Vec::with_capacity(parts.len());
+    for (suffix, contents) in parts {
+        let path = dir.join(format!("{stem}{suffix}"));
+        let file = StagedFile::stage(&path, contents.as_bytes())
+            .map_err(|error| format!("write {}: {error}", path.display()))?;
+        staged.push(file);
+    }
+    let mut in_place: Vec<PathBuf> = Vec::with_capacity(staged.len());
+    for file in staged {
+        let path = file.target.clone();
+        if let Err(error) = file.commit() {
+            let mut detail = format!("write {}: {error}", path.display());
+            for earlier in &in_place {
+                if let Err(error) = fs::remove_file(earlier) {
+                    detail = format!("{detail}; {} is left behind: {error}", earlier.display());
+                }
+            }
+            return Err(detail);
+        }
+        in_place.push(path);
+    }
     Ok(())
 }
 
-fn write_file(path: &Path, contents: &str) -> Result<(), String> {
-    let mut file =
-        fs::File::create(path).map_err(|error| format!("create {}: {error}", path.display()))?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| format!("write {}: {error}", path.display()))?;
-    Ok(())
+/// Write `contents` to `path` so that `path` never holds a part of them:
+/// they are written to a file of another name beside it, which then takes
+/// the name. A run that fails or is stopped part-way leaves `path` as it
+/// was — absent, or whole with what an earlier run wrote — and what it may
+/// leave under the other name, `<file name>.<process id>.tmp`, ends in no
+/// suffix a document is looked for by. The contents are not flushed to the
+/// disk before they take the name, so this holds against a run that fails
+/// or is interrupted, not against a power cut.
+///
+/// A `path` that names something other than a plain file — a link, a
+/// device such as `NUL` or `/dev/null`, a directory — is written the way
+/// [`fs::write`] writes it: taking the name would put a file in the place
+/// of the link or the device, and a directory fails either way.
+///
+/// # Errors
+///
+/// The error of the step that failed: creating or writing the file beside
+/// `path`, or giving it the name. That file is removed again.
+pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+    if !takes_its_name_by_rename(path) {
+        return fs::write(path, contents);
+    }
+    StagedFile::stage(path, contents)?.commit()
+}
+
+/// Whether [`write_atomic`] writes `path` beside itself and renames: when
+/// nothing is there yet, or a plain file is.
+fn takes_its_name_by_rename(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(found) => found.is_file(),
+        // A device may refuse to say what it is, and is there all the same.
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
+    }
+}
+
+/// A file written whole under a temporary name beside the name it is to
+/// take. Dropped before [`StagedFile::commit`], it removes itself.
+struct StagedFile {
+    temp: PathBuf,
+    target: PathBuf,
+    in_place: bool,
+}
+
+impl StagedFile {
+    /// Write `contents` beside `target` as `<file name>.<process id>.tmp`:
+    /// in the directory `target` is in, so that taking the name is a rename
+    /// within one file system, and under a name that ends in none of the
+    /// suffixes a reader of the output directory looks for.
+    fn stage(target: &Path, contents: &[u8]) -> io::Result<Self> {
+        let mut name = target
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path names no file"))?
+            .to_os_string();
+        name.push(format!(".{}.tmp", std::process::id()));
+        let temp = target.with_file_name(name);
+        let mut file = fs::File::create(&temp)?;
+        // The file is there now: should the write fail, `staged` drops and
+        // the file goes with it, once it is closed.
+        let staged = Self {
+            temp,
+            target: target.to_path_buf(),
+            in_place: false,
+        };
+        let written = file.write_all(contents);
+        drop(file);
+        written.map(|()| staged)
+    }
+
+    /// Give the file its name, in the place of whatever file holds it.
+    fn commit(mut self) -> io::Result<()> {
+        fs::rename(&self.temp, &self.target)?;
+        self.in_place = true;
+        Ok(())
+    }
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        if !self.in_place {
+            let _ = fs::remove_file(&self.temp);
+        }
+    }
 }
 
 fn failed_drawing(zip_file: &str, zip_entry: &str, detail: &str) -> Value {
@@ -1446,10 +1556,7 @@ fn publish_staged_database(
         let source = PathBuf::from(format!("{zip_file}:{zip_entry}"));
         let report =
             super::pid_writer::write_database_coverage_json(&graph, &source, counts, &file_stem);
-        if let Err(detail) = write_file(&out_dir.join(format!("{file_stem}_Data.xml")), &xml)
-            .and_then(|()| write_file(&out_dir.join(format!("{file_stem}_Meta.xml")), &meta))
-            .and_then(|()| write_file(&out_dir.join(format!("{file_stem}_Coverage.json")), &report))
-        {
+        if let Err(detail) = write_three(out_dir, &file_stem, &xml, &meta, &report) {
             problems.push(format!("{name}: {detail}"));
             failed += 1;
             drawings.push(mtf_drawing_entry(
@@ -1553,7 +1660,7 @@ fn publish_staged_database(
     let index_path = out_dir.join("_Index.json");
     let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
     text.push('\n');
-    fs::write(&index_path, text).map_err(|error| {
+    write_atomic(&index_path, text.as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
     })?;
     Ok(BackupPublishReport {
@@ -1817,25 +1924,8 @@ mod tests {
     /// directory is empty, so no `.pid` entry pairs with the drawing.
     #[cfg(feature = "backup-mdf")]
     fn publish_staged(tag: &str, sql: &str) -> StagedRun {
-        let root =
-            std::env::temp_dir().join(format!("pid-parse-staged-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let package = root.join("package");
-        fs::create_dir_all(&package).expect("package dir");
-        let scan = scan_backup_folder(&package).expect("scan the empty package");
-        let conn = rusqlite::Connection::open_in_memory().expect("in-memory database");
-        conn.execute_batch(sql).expect("fixture sql");
+        let (root, report) = publish_staged_into(tag, sql, |_| {});
         let out = root.join("out");
-        let report = publish_staged_database(
-            &conn,
-            Path::new("Export.dmp"),
-            &package,
-            &out,
-            "P01",
-            &scan,
-            None,
-        )
-        .expect("the staged database publishes");
         let read = |file: &str| {
             fs::read_to_string(out.join(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
         };
@@ -1850,6 +1940,39 @@ mod tests {
         };
         let _ = fs::remove_dir_all(&root);
         run
+    }
+
+    /// [`publish_staged`] up to the reading of what it wrote. `prepare` is
+    /// handed the output directory before the run creates it; the caller
+    /// reads `<root>/out` and removes `<root>`, which is what comes back
+    /// with the report.
+    #[cfg(feature = "backup-mdf")]
+    fn publish_staged_into(
+        tag: &str,
+        sql: &str,
+        prepare: impl FnOnce(&Path),
+    ) -> (PathBuf, BackupPublishReport) {
+        let root =
+            std::env::temp_dir().join(format!("pid-parse-staged-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let package = root.join("package");
+        fs::create_dir_all(&package).expect("package dir");
+        let scan = scan_backup_folder(&package).expect("scan the empty package");
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(sql).expect("fixture sql");
+        let out = root.join("out");
+        prepare(&out);
+        let report = publish_staged_database(
+            &conn,
+            Path::new("Export.dmp"),
+            &package,
+            &out,
+            "P01",
+            &scan,
+            None,
+        )
+        .expect("the staged database publishes");
+        (root, report)
     }
 
     #[cfg(feature = "backup-mdf")]
@@ -2060,5 +2183,276 @@ mod tests {
             "D1: 2 UIDs written more than once: B ×3, A ×2"
         );
         assert_eq!(PackageDuplicateUids::of("DWG-1", "D1", &[]), None);
+    }
+
+    /// A staged drawing one of whose three files cannot be written leaves
+    /// none of them. The name of `SHORT-01`'s coverage report is taken by a
+    /// directory here, so the two files that reached their names are removed
+    /// again and nothing stays under a temporary name. The index says which
+    /// file it was and lists the drawing without files, and the drawing
+    /// after it is written.
+    #[cfg(feature = "backup-mdf")]
+    #[test]
+    fn a_staged_drawing_one_of_whose_files_cannot_be_written_leaves_none_of_them() {
+        // The fixture with a second drawing, which holds nothing.
+        let sql = format!(
+            "{SHORTFALLS_SQL}\n\
+             INSERT INTO T_Drawing VALUES ('DWG-OTHER-01', 'OTHER-01', 'P&ID Documents', \
+             'P&ID', 'A2-W-New.pid', '\\01\\01\\OTHER-01.pid', '2026/11/16 10:00:00');\n"
+        );
+        let (root, report) = publish_staged_into("unwritten", &sql, |out| {
+            fs::create_dir_all(out.join("SHORT-01_Coverage.json"))
+                .expect("a directory under the coverage report's name");
+        });
+        let out = root.join("out");
+        let mut held: Vec<String> = fs::read_dir(&out)
+            .expect("the output directory")
+            .map(|entry| {
+                entry
+                    .expect("a directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        held.sort();
+        let in_the_way = fs::read_dir(out.join("SHORT-01_Coverage.json"))
+            .map(Iterator::count)
+            .ok();
+        let index: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("_Index.json")).expect("_Index.json"),
+        )
+        .expect("index json");
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(
+            held,
+            [
+                "OTHER-01_Coverage.json",
+                "OTHER-01_Data.xml",
+                "OTHER-01_Meta.xml",
+                "SHORT-01_Coverage.json",
+                "_Index.json",
+            ],
+            "{index}"
+        );
+        assert_eq!(in_the_way, Some(0), "the directory in the way stays empty");
+        assert_eq!((report.written, report.failed), (1, 1));
+        assert_eq!(index["failed"], 1, "{index}");
+        let problems: Vec<&str> = index["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .map(|problem| problem.as_str().expect("a sentence"))
+            .collect();
+        let [problem] = problems.as_slice() else {
+            panic!("one problem: {problems:?}");
+        };
+        let detail = problem
+            .strip_prefix("SHORT-01: ")
+            .unwrap_or_else(|| panic!("the drawing is named: {problem}"));
+        assert!(
+            detail.starts_with("write ") && detail.contains("SHORT-01_Coverage.json: "),
+            "{problem}"
+        );
+        let drawings = index["drawings"].as_array().expect("drawings");
+        assert_eq!(drawings.len(), 2, "{index}");
+        assert_eq!(drawings[0]["name"], "SHORT-01");
+        assert_eq!(drawings[0]["files"], json!([]), "{index}");
+        assert_eq!(drawings[0]["problems"], json!([detail]), "{index}");
+        assert_eq!(drawings[1]["name"], "OTHER-01");
+        assert_eq!(
+            drawings[1]["files"],
+            json!([
+                "OTHER-01_Data.xml",
+                "OTHER-01_Meta.xml",
+                "OTHER-01_Coverage.json"
+            ]),
+            "{index}"
+        );
+        assert_eq!(drawings[1]["problems"], json!([]), "{index}");
+        // A drawing that failed is not also said to be written short.
+        assert!(report.shortfalls.is_empty());
+    }
+
+    /// A directory of one test's own under the system temp dir, removed
+    /// again when the value drops.
+    struct WriteScratch(PathBuf);
+
+    impl WriteScratch {
+        fn new(tag: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("pid-parse-write-{tag}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("scratch directory");
+            Self(dir)
+        }
+
+        /// The names the directory holds, sorted.
+        fn names(&self) -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(&self.0)
+                .expect("scratch directory")
+                .map(|entry| {
+                    entry
+                        .expect("a directory entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            names.sort();
+            names
+        }
+    }
+
+    impl Drop for WriteScratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// What a run stopped between the writing of a file and its taking its
+    /// name leaves: one file, beside the target, whose name ends in none of
+    /// the suffixes the output directory is read by.
+    #[test]
+    fn a_staged_file_waits_under_a_name_no_document_is_looked_for_by() {
+        let scratch = WriteScratch::new("staged");
+        for suffix in ["_Data.xml", "_Meta.xml", "_Coverage.json", "_Index.json"] {
+            let target = scratch.0.join(format!("A01{suffix}"));
+            let staged = StagedFile::stage(&target, b"whole").expect("staged");
+            let names = scratch.names();
+            let [name] = names.as_slice() else {
+                panic!("one file while staged: {names:?}");
+            };
+            assert_eq!(
+                *name,
+                format!("A01{suffix}.{}.tmp", std::process::id()),
+                "the target's name is not taken yet"
+            );
+            assert_eq!(staged.temp, scratch.0.join(name));
+            for looked_for in ["_Data.xml", "_Meta.xml", "_Coverage.json", "_Index.json"] {
+                assert!(!name.ends_with(looked_for), "{name}");
+            }
+            assert_eq!(fs::read(&staged.temp).expect("the staged file"), b"whole");
+
+            staged.commit().expect("the file takes its name");
+            assert_eq!(scratch.names(), [format!("A01{suffix}")]);
+            assert_eq!(fs::read(&target).expect("the target"), b"whole");
+            fs::remove_file(&target).expect("cleared for the next suffix");
+        }
+        // Dropped before it took its name, as when a later step of the run
+        // fails, it leaves nothing.
+        let target = scratch.0.join("A01_Data.xml");
+        drop(StagedFile::stage(&target, b"whole").expect("staged"));
+        assert_eq!(scratch.names(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn write_atomic_puts_the_whole_contents_in_the_place_of_a_file() {
+        let scratch = WriteScratch::new("atomic");
+        let path = scratch.0.join("_Index.json");
+        write_atomic(&path, b"first").expect("nothing is there yet");
+        assert_eq!(fs::read(&path).expect("the file"), b"first");
+        write_atomic(&path, b"second, and longer").expect("a file is there");
+        assert_eq!(fs::read(&path).expect("the file"), b"second, and longer");
+        write_atomic(&path, b"3").expect("a file is there");
+        assert_eq!(fs::read(&path).expect("the file"), b"3");
+        assert_eq!(
+            scratch.names(),
+            ["_Index.json"],
+            "nothing is left beside it"
+        );
+    }
+
+    #[test]
+    fn write_atomic_fails_without_leaving_a_file_behind() {
+        let scratch = WriteScratch::new("atomic-fails");
+        // The name is a directory's, so nothing can be written under it;
+        let taken = scratch.0.join("A01_Coverage.json");
+        fs::create_dir(&taken).expect("a directory under the name");
+        assert!(write_atomic(&taken, b"report").is_err());
+        // and there is no directory to write this one into.
+        let nowhere = scratch.0.join("missing").join("A01_Data.xml");
+        assert!(write_atomic(&nowhere, b"document").is_err());
+        assert_eq!(scratch.names(), ["A01_Coverage.json"]);
+        assert_eq!(
+            fs::read_dir(&taken).map(Iterator::count).ok(),
+            Some(0),
+            "the directory is left as it was"
+        );
+    }
+
+    #[cfg(windows)]
+    const NULL_DEVICE: &str = "NUL";
+    #[cfg(unix)]
+    const NULL_DEVICE: &str = "/dev/null";
+
+    /// Renaming over a name would put a plain file where a directory or a
+    /// device is, so only a free name and a plain file are renamed over.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn only_a_free_name_or_a_plain_file_is_renamed_over() {
+        let scratch = WriteScratch::new("route");
+        let file = scratch.0.join("A01_Data.xml");
+        fs::write(&file, b"earlier").expect("a file");
+        assert!(takes_its_name_by_rename(&file), "a plain file");
+        assert!(
+            takes_its_name_by_rename(&scratch.0.join("free")),
+            "a free name"
+        );
+        assert!(!takes_its_name_by_rename(&scratch.0), "a directory");
+        assert!(
+            !takes_its_name_by_rename(Path::new(NULL_DEVICE)),
+            "the null device"
+        );
+    }
+
+    /// The null device takes what is written to it, as it did while the
+    /// files were written in place: it is not a plain file, so nothing is
+    /// renamed over it.
+    #[cfg(windows)]
+    #[test]
+    fn write_atomic_writes_a_device_in_place() {
+        for device in [NULL_DEVICE, r"\\.\NUL"] {
+            let device = Path::new(device);
+            assert!(!takes_its_name_by_rename(device), "{}", device.display());
+            write_atomic(device, b"discarded").expect("the null device takes it");
+        }
+    }
+
+    #[test]
+    fn three_files_are_written_all_of_them_or_none() {
+        let scratch = WriteScratch::new("three");
+        write_three(&scratch.0, "A01", "data", "meta", "report").expect("all three");
+        let written = ["A01_Coverage.json", "A01_Data.xml", "A01_Meta.xml"];
+        assert_eq!(scratch.names(), written);
+        for (file, contents) in written.iter().zip(["report", "data", "meta"]) {
+            assert_eq!(
+                fs::read_to_string(scratch.0.join(file)).expect("a written file"),
+                contents
+            );
+        }
+
+        // The third name is a directory's: the two files that took their
+        // names are removed again, and nothing waits under another name.
+        fs::create_dir(scratch.0.join("B02_Coverage.json")).expect("a directory under the name");
+        let error = write_three(&scratch.0, "B02", "data", "meta", "report")
+            .expect_err("the third file cannot take its name");
+        assert!(
+            error.starts_with("write ") && error.contains("B02_Coverage.json: "),
+            "{error}"
+        );
+        assert!(!error.contains("left behind"), "{error}");
+        let mut left = written.to_vec();
+        left.push("B02_Coverage.json");
+        assert_eq!(scratch.names(), left);
+
+        // The first name is a directory's: no file took a name.
+        fs::create_dir(scratch.0.join("C03_Data.xml")).expect("a directory under the name");
+        let error = write_three(&scratch.0, "C03", "data", "meta", "report")
+            .expect_err("the first file cannot take its name");
+        assert!(error.contains("C03_Data.xml: "), "{error}");
+        left.push("C03_Data.xml");
+        assert_eq!(scratch.names(), left);
     }
 }

@@ -1851,3 +1851,110 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
     assert_eq!(data.matches("<PIDBranchPoint>").count(), 4, "{data}");
     assert!(!data.contains("<IOffpageConnector"), "{data}");
 }
+
+/// A drawing of the package one of whose three files cannot be written
+/// leaves none of them. The name of its coverage report is taken by a
+/// directory here, so the two files that reached their names are removed
+/// again, and nothing stays under a temporary name. The index says which
+/// file of which drawing it was and lists the drawing without files; the
+/// other six drawings are written, and the run exits 1.
+#[test]
+fn a_package_drawing_one_of_whose_files_cannot_be_written_leaves_none_of_them() {
+    const UNWRITTEN: &str = "DWG-0201GP06-01";
+    let out_dir = Scratch::unmade("dwg-package-unwritten");
+    let taken = out_dir.join(format!("{UNWRITTEN}_Coverage.json"));
+    std::fs::create_dir_all(&taken).expect("a directory under the coverage report's name");
+    let output = Command::new(CLI)
+        .arg(repo_path(DWG_PACKAGE))
+        .arg("--out-dir")
+        .arg(out_dir.path())
+        .output()
+        .expect("spawn pid_publish_xml <DWG package>");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Published 6 drawings")
+            && stderr.contains("(1 failed, 1 without a DrawingNo)"),
+        "{stderr}"
+    );
+
+    // The directory holds the other six drawings' files, the index and the
+    // directory that was in the way, as it was: nothing of the seventh
+    // drawing, and nothing under any other name.
+    let mut expected: Vec<String> = [
+        "001",
+        "002",
+        "222",
+        "DWG-0104GP01-08",
+        "DWG-0201GP01-01",
+        "DWG-0202GP06-01",
+    ]
+    .iter()
+    .flat_map(|name| {
+        ["_Coverage.json", "_Data.xml", "_Meta.xml"].map(|suffix| format!("{name}{suffix}"))
+    })
+    .chain([
+        "_Index.json".to_string(),
+        format!("{UNWRITTEN}_Coverage.json"),
+    ])
+    .collect();
+    expected.sort();
+    let mut held: Vec<String> = std::fs::read_dir(out_dir.path())
+        .expect("the output directory")
+        .map(|entry| {
+            entry
+                .expect("a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    held.sort();
+    assert_eq!(held, expected, "{stderr}");
+    assert!(taken.is_dir());
+    assert_eq!(
+        std::fs::read_dir(&taken)
+            .expect("the directory in the way")
+            .count(),
+        0
+    );
+
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("_Index.json")).expect("_Index.json"),
+    )
+    .expect("index json");
+    assert_index_shape(&index);
+    assert_eq!(index["failed"], 1, "{index}");
+    let problems: Vec<&str> = index["problems"]
+        .as_array()
+        .expect("problems")
+        .iter()
+        .map(|problem| problem.as_str().expect("a sentence"))
+        .collect();
+    let [problem] = problems.as_slice() else {
+        panic!("one problem: {problems:?}");
+    };
+    let detail = problem
+        .strip_prefix(&format!("PlantData~2~711.zip zcgc/A3jqz/{UNWRITTEN}.pid: "))
+        .unwrap_or_else(|| panic!("the entry is named: {problem}"));
+    assert!(
+        detail.starts_with("write ") && detail.contains(&format!("{UNWRITTEN}_Coverage.json: ")),
+        "{problem}"
+    );
+    let drawings = index["drawings"].as_array().expect("drawings");
+    assert_eq!(drawings.len(), 7, "{index}");
+    for drawing in drawings {
+        let files = drawing["files"].as_array().expect("files");
+        if drawing["name"] == UNWRITTEN {
+            assert!(files.is_empty(), "{drawing}");
+            assert_eq!(
+                drawing["problems"],
+                serde_json::json!([detail]),
+                "{drawing}"
+            );
+        } else {
+            assert_eq!(files.len(), 3, "{drawing}");
+            assert_eq!(drawing["problems"], serde_json::json!([]), "{drawing}");
+        }
+    }
+}

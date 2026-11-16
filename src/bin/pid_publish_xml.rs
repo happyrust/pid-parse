@@ -31,7 +31,8 @@
 //! dump that holds no `T_DRAWING` row for the `.pid`'s drawing.
 
 use pid_parse::publish::backup_package::{
-    BackupPublishReport, PackageChainFault, PackageDrawingShortfalls, PackageDuplicateUids,
+    write_atomic, BackupPublishReport, PackageChainFault, PackageDrawingShortfalls,
+    PackageDuplicateUids,
 };
 use pid_parse::publish::diff::diff_meta_xml;
 use pid_parse::publish::pid_writer::{
@@ -137,6 +138,16 @@ fn print_usage<W: std::io::Write>(mut out: W) {
          drawing that is dirty, of another revision than its reference, or has\n\
          no reference there exits 1. One drawing that fails\n\
          is recorded; the rest are still written; the process then exits 1.\n\n\
+         --out-dir is not emptied first: files an earlier run left there are\n\
+         not removed. For a backup package _Index.json is what says which\n\
+         files this run wrote; a drawing that fails this time may still have\n\
+         files of an earlier run there. When one of a package drawing's three\n\
+         files cannot be written, the others this run wrote for it are removed\n\
+         again.\n\n\
+         Every file is first written under a temporary name beside its own,\n\
+         <name>.<process id>.tmp, and renamed once it is whole. An interrupted\n\
+         run therefore leaves no partly written document, at most a file\n\
+         whose name ends in .tmp, which can be deleted.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -1292,13 +1303,14 @@ fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
 /// Write `contents` to `path`, creating the parent directory chain
 /// if needed. Pulled out so `_Data.xml` and `_Meta.xml` go through
 /// the same I/O path and surface the same `format!` error messages.
+/// The file takes its name once it is written whole ([`write_atomic`]).
 fn write_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         }
     }
-    std::fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
+    write_atomic(path, contents.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 #[cfg(test)]
