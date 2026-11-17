@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### CI：补一步只选根包的 `cargo check --examples`，把下一条改掉的那一样检查补回来（2026-11-17）
+
+**只改了 `.github/workflows/ci.yml`：在 examples 一步后面加一步 `cargo check --locked --examples`（`dcf9838`）。程序和测试没有动。下一条把 examples 一步改成 `--workspace` 之后，CI 上没有哪一步再查「依赖的特性只按根包自己声明的来的时候，example 编不编得过」；这一步补的就是它。`check` 只做类型检查、只写元数据，不会像原来的 `build` 那样把 example 再写一份到 runner 的磁盘上。推上去的那一次 CI（运行 44045056745）全绿；这一步 22 秒，查了 21 个包，没有警告；整次 13 分 06 秒。**
+
+- **它查的是什么。** 不带 `--workspace`，cargo 只选根包，13 个依赖（`anstream`、`clap`、`clap_builder`、`flate2`、`hashbrown`、`num-traits`、`rand`、`regex`、`regex-automata`、`serde`、`serde_core`、`simd-adler32`、`smallvec`）拿到的特性比整个工作区那一遍少。在仓库根目录下 `cargo run --example …` 用的就是这种选法：一个 example 要是靠的是只有工作区别的成员才打开的特性，改了 `--workspace` 的那一步看不出来，读者跑它会编不过；这一步按这种选法把依赖里特性不同的那些、库和 310 个 example 都查一遍。
+- **本机。** `pub-r` 的 `target` 下：stable 1.99.1、4 个作业，37.6 秒，退出 0，103 行 `Checking`、31 行 `Compiling`（构建脚本、构建脚本用到的包和过程宏），没有警告；nightly 1.101.0、默认作业数，1 分 17 秒，退出 0，没有警告。下一条记的 22 秒是在依赖已查过的缓存上量的，这次依赖都重新查了。
+- **CI（运行 44045056745，`dcf9838`）。** 全绿，整次 13 分 06 秒。新一步 22 秒：20 行 `Checking`、1 行 `Compiling`（`num-traits` 的构建脚本），最后一个是 `pid-parse`（库和 310 个 example），`Finished … in 21.47s`，没有警告。其余各步：构建 260 秒（缓存命中，8 行 `Compiling`）；测试 407 秒，2 634 通过、0 失败、3 忽略；examples 一步 0.55 秒；clippy 33 秒，没有警告；fmt 4 秒；缺文档检查 `current=0, baseline=0`；byte-audit 三份基线都是 `Regressions: 0`；`cargo audit` 过。CI 上的 stable 是 1.100.0。本机两遍把 100 多个包都重新查了，CI 上只查了 21 个：runner 的 `target` 是从上一次运行的缓存恢复的，加上这一次前面几步刚编的，能用上的就不再查；本机没有这些。没有逐个核对。
+- **没有改的。** byte-audit 一步仍只选根包、仍重编；工作流里没有量磁盘的一步；`AGENTS.md` 的门禁清单没有动，新的这一步本机门禁里也没有。这三样在计划 §9「等你定的」第 32–34 条。
+- **没有验到的。** runner 的磁盘还剩多少、这一步写了多少元数据，都没有量。它只查到类型检查这一层，按根包的选法生成目标码和链接，CI 上仍没有哪一步做。记这条的提交只改本文件和那份计划，没有再跑本机门禁。
+
 ### CI：examples 一步不再把依赖和 example 重编一遍；`main` 的 CI 自 2026-11-08 以来第一次全绿（2026-11-17）
 
 **只改了 `.github/workflows/ci.yml` 里一步的命令和它上面的注释：`cargo build --locked --examples` 加上 `--workspace`（`48b41ea`）。程序和测试没有动。`main` 的 CI 从 2026-11-08 的 `138d7a7` 之后连红 13 次，后 6 次都红在这一步：runner 的磁盘写满，不是编译错误。这一步一红，它后面的 clippy、fmt、缺文档检查、byte-audit 四步就被跳过，这四道从 11 月 8 日起在 CI 上没有跑过。改了之后的第一次运行全绿，四道都过。改了之后这一步查的东西比原来少一样，见下面第四条。**

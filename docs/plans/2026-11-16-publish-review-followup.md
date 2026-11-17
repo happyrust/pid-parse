@@ -3080,3 +3080,59 @@ CI 上的 stable 是 1.100.0，本机门禁用的是 1.99.1：clippy 和 fmt 两
 
 1. 推荐 push 之前先看 `gh run list --branch main`。这一次没有看，推完才知道 `main` 的 CI 已经连红 12 次。
 2. 这一节新写的脚本都在 `target/publish-audit/review/ci/` 下，不进仓库：`watch-run.ps1`（盯一次运行）、`run-steps.ps1`（各步起止）、`ci-history.ps1`（一个分支最近的运行各红在哪一步）、`ci-log-summary.ps1` 和 `ci-steps-from-log.ps1`（日志按步骤拆开数）、`ci-names-in-local.ps1`（CI 的用例名对本机日志）、`feature-diff.ps1`（两种选法的特性对比）、`examples-step-local.ps1` 和 `root-only-examples-check.ps1`（本机量这一步的两种选法）、`check-workflow.py`。`ci-vs-local-tests.ps1` 按测试程序逐个对，CI 的日志里两路输出是交错的，它对不准，没有用它的结果。存下来的日志在同一个目录：`run-<运行号>-<提交>-full.log`、`-failed.log`。
+
+### CI 补一步只选根包的检查（2026-11-17，`dcf9838`）
+
+上一节「等你定的」第 31 条你定了：按推荐补。第 32–34 条没有定，不动。这一节记这一步怎么补的、本机和 CI 的读数。
+
+**改法（`dcf9838`）。** 只改 `.github/workflows/ci.yml`：在 examples 一步（`cargo build --locked --workspace --examples`）后面加一步，命令 `cargo check --locked --examples`，名字 `cargo check --examples (root package alone)`。不带 `--workspace`，选的就是根包自己；`check` 只做类型检查，写的是元数据，不写目标码，所以依赖按根包的选法重查一遍也不会像原来的 `build` 那样把 example 再写一份。注释写的是这两点。改完的文件拿 PyYAML 读过：两个作业都在，`test` 作业 11 步，新的是第 7 步（GitHub 页面上的编号是第 8 步，它的第 1 步是 `Set up job`）。提交说明存在 `target/publish-audit/review/ci/check-step-message.txt`，程序和测试没有动。
+
+**本机量了两遍。** 都在 `pub-r` 自己的 `target` 下，`144d412` 加这一处改动。
+
+| 工具链 | 作业数 | 结果 | 用时 | 读数 |
+|---|---|---|---|---|
+| nightly 1.101.0（这个工作区的默认工具链） | 默认 | 退出 0 | cargo 报 1 分 17 秒，墙钟 114 秒 | 110 行 `Checking`，15 行 `Compiling`，0 条警告 |
+| stable 1.99.1（`root-only-examples-check.ps1`） | 4 | 退出 0 | 37.6 秒 | 103 行 `Checking`，31 行 `Compiling`，0 条警告 |
+
+两遍都把依赖重新查了一遍。上一节记的 22 秒是在依赖已经查过的缓存上量的；这次那份缓存已经不在，为什么不在没有查。nightly 那一遍结束时 cargo 自己的 `build.gc` 清了 `target` 里 17 个不再用的构建单元，报 14.9 GiB；是 cargo 的自动清理，不是手删的。`Compiling` 的行是构建脚本、构建脚本用到的包和过程宏，`check` 也要把它们编成可执行的。
+
+**push。** `main` 快进到 `dcf9838`，16:14 推上去（`144d412..dcf9838`，没有带 `--force`）。推之前 `git ls-remote` 读到远端 `main` 是 `144d412`，`gh run list --branch main` 最近三次是绿、绿、红（`144d412`、`48b41ea`、`f3da820`）。远端没有新建分支。
+
+**CI（运行 44045056745，`dcf9838`）：绿。**
+
+| 步骤 | 结果 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo audit` | 过 | 2 s | |
+| `cargo build --locked --workspace --all-targets` | 过 | 260 s | 缓存命中，8 行 `Compiling` |
+| `cargo test --locked --workspace --all-targets` | 过 | 407 s | 475 行 `test result:`，2 634 通过，0 失败，3 忽略 |
+| `cargo build --locked --workspace --examples` | 过 | 1 s | `Finished … in 0.55s` |
+| `cargo check --locked --examples`（新） | 过 | 22 s | `Finished … in 21.47s`；20 行 `Checking`、1 行 `Compiling`，最后一个是 `pid-parse`；0 条警告 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 过 | 33 s | 8 行 `Checking`，没有警告 |
+| `cargo fmt --all -- --check` | 过 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 过 | 5 s | `current=0, baseline=0` |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 过 | 26 s | `completed comparisons=3, skipped=0`，三份都是 `Regressions: 0` |
+
+整次 13 分 06 秒（08:14:34Z 到 08:27:40Z），`test` 作业 783 秒。CI 上的 stable 是 1.100.0。缓存命中，结束时 `Cache up-to-date`，没有另存一份。测试那一步的 `test result:` 行数，拿同样的数法数上一次（运行 44024720617）的日志也是 475；上一节写的「476 个测试程序」是怎么数的没有查。
+
+新一步在 CI 上查的 21 个包：`serde`、`regex-automata`、`clap_builder`、`clap`、`regex`、`rand` 这 6 个和 `num-traits` 的构建脚本（`Compiling` 那一行）是上一节列的 13 个里的，其余 14 个是靠它们的包：`schemars`、`chrono`、`rust_decimal`、`zip`、`rusqlite`、`oxidized-mdf`、`env_filter`、`env_logger`、`ciborium`、`tinytemplate`、`quick-xml`、`criterion`、`proptest`、`pid-parse`（库和 310 个 example 在这一行里）。13 个里另外 6 个（`serde_core`、`flate2`、`hashbrown`、`simd-adler32`、`smallvec`、`anstream`）没有出现。本机两遍查了 100 多个，CI 上只查了 21 个：runner 的 `target` 是从上一次运行的缓存恢复的，加上这一次前面几步刚编出来的，能用上的就不再查；本机 `pub-r` 的 `target` 里没有这些。哪一个包用的是哪一步的产物，没有逐个核对。
+
+**没有改的。**
+
+1. byte-audit 一步仍是 `cargo run --locked --bin pid_inspect`，只选根包，CI 上重编（第 32 条）。
+2. 工作流里没有量磁盘余量的一步（第 33 条）。
+3. `AGENTS.md`「Pre-commit gates (CI mirrors these)」一节没有动（第 34 条）；新的这一步本机门禁里也没有。
+4. 上一节和 `CHANGELOG.md` 上一条里「往后没有哪一步看着」「CI 上没有哪一步替 example 查」是当时的话，不回改；从 `dcf9838` 起有了。
+
+**没有验到的。**
+
+1. runner 的磁盘还剩多少，仍没有量；新的一步写了多少元数据也没有量，日志里不显示。
+2. 这一步只查到类型检查这一层：按根包的选法生成目标码、链接这两层，CI 上仍没有哪一步做。原来那一步红过的两种样子（磁盘写满、链接器收到 Bus error）都在这两层。
+3. CI 上这一步跑的是 stable 1.100.0（Linux），本机两遍是 1.99.1 和 nightly 1.101.0（Windows）。
+4. 本机那份类型检查缓存为什么没了，没有查。
+5. 记这一节的提交只改这份计划和 `CHANGELOG.md`，没有再跑本机门禁。推上去之后 CI 会整套再跑一遍，结果在给你的回复里。
+
+**等你定的。** 第 31 条了结。第 32、33、34 条照上一节的写法，还开着。
+
+**接下来。** 这一节提交之后 `main` 快进、push。那一次 push 的 CI 结果记在给你的回复里，不记在这里。
+
+**顺带记下的。** 这一节的脚本和日志都在 `target/publish-audit/review/ci/` 下，不进仓库：`check-step-message.txt`（提交说明）、`local-check-examples-root-only-2.log`（nightly 那一遍）、`local-root-only-examples-check.log`（stable 那一遍；上一节的同名日志另存为 `local-root-only-examples-check-48b41ea.log`）、`run-44045056745-dcf9838-full.log`（CI 的日志）。盯运行和取各步用时用的还是上一节的 `watch-run.ps1`、`run-steps.ps1`。
