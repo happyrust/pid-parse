@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### CI：examples 一步不再把依赖和 example 重编一遍；`main` 的 CI 自 2026-11-08 以来第一次全绿（2026-11-17）
+
+**只改了 `.github/workflows/ci.yml` 里一步的命令和它上面的注释：`cargo build --locked --examples` 加上 `--workspace`（`48b41ea`）。程序和测试没有动。`main` 的 CI 从 2026-11-08 的 `138d7a7` 之后连红 13 次，后 6 次都红在这一步：runner 的磁盘写满，不是编译错误。这一步一红，它后面的 clippy、fmt、缺文档检查、byte-audit 四步就被跳过，这四道从 11 月 8 日起在 CI 上没有跑过。改了之后的第一次运行全绿，四道都过。改了之后这一步查的东西比原来少一样，见下面第四条。**
+
+- **为什么会写满。** 这一步只选根包，它前面的构建、测试两步选的是整个工作区。两种选法下 cargo 给 13 个依赖选的特性不一样（`anstream`、`clap`、`clap_builder`、`flate2`、`hashbrown`、`num-traits`、`rand`、`regex`、`regex-automata`、`serde`、`serde_core`、`simd-adler32`、`smallvec`；`cargo tree` 带和不带 `--workspace` 各读一遍，Linux 和 Windows 两个平台读出来的是同一批），前面编好的用不上。红的那一次（运行 44015114451，`f3da820`）日志里这一步重编了 33 个 crate，最后一个是 `pid-parse` 自己，接着把 example 从头再编，编到中途 `No space left on device`。`examples/` 下的 `.rs` 文件上一次绿的时候 289 个，现在 310 个。上一次绿的那一次这一步已经用了 140 秒：那时就在重编，只是还写得下。
+- **红的 13 次。** 前 7 次红在 `cargo test`（`4674bf4`、`3bac34e`、`81920d4`、`18d3f90`、`b4db725`、`9f94aa3`、`11487b3`），后 6 次红在这一步（`1317c0b`、`2681ccd`、`1671dfc`、`7091e59`、`a4b490e`、`f3da820`）。后 6 次里 4 次的日志写着 `No space left on device`，另 2 次（`1671dfc`、`7091e59`）是链接器 `ld` 在链接 example 时收到 Bus error 退出。
+- **改了之后（运行 44021355841，`48b41ea`）。** 构建 395 秒；测试 248 秒，476 个测试程序，2 634 通过，0 失败，3 忽略；这一步 `Finished … in 0.22s`，没有重编任何东西；clippy 46 秒，没有警告；fmt 2 秒；缺文档检查 `current=0, baseline=0`；byte-audit 三份基线都比了，都是 `Regressions: 0`；`cargo audit` 过。整次 12 分 44 秒。CI 上的 stable 是 1.100.0，本机门禁用的是 1.99.1。
+- **这一步现在查的比原来少一样。** 改之前它只选根包去编 example，实际上多查了：依赖的特性只按根包自己声明的来的时候，example 编不编得过；在仓库根目录下 `cargo run --example …` 用的就是这种选法。改了之后它要的东西第一步都编过，第一步过了它就不会红；上面那一样，CI 上没有哪一步替 example 查（缺文档检查和 byte-audit 两步也只选根包，查到的是库和 `pid_inspect`）。本机补查了一遍：`cargo check --locked --examples`，`48b41ea`，stable 1.99.1，22 秒，退出 0，没有警告。要不要在 CI 里补这样一步，记在计划 §9 新加的一节「等你定的」里。
+- **推到远端。** 修这一步之前，两条线合并后的 `main`（`f3da820`，51 个提交）先推了上去，`a4b490e..f3da820`，快进。那一次的 CI 构建和测试都过，2 634 通过、0 失败、3 忽略，红在上面这一步。CI 的 2 637 个用例名都在本机 `9e2c1f8` 那一遍的日志里；本机多的 1 条 `write_atomic_writes_a_device_in_place` 只在 Windows 上编译。
+- **没有改的。**
+  - byte-audit 一步的脚本是 `cargo run --locked --bin pid_inspect`，同样只选根包，CI 上也重编：32 行 `Compiling`，22 秒。只为一个程序，写得下，没有动。
+  - 下面合并那一条里「CI 没有跑：没有 push」是当时的话，没有回头改。
+  - `48b41ea` 的提交说明写 13 个依赖的特性选得不一样。照上面的读法读出来是 14 个：多的 `fastrand` 是整个工作区那一遍多出一份，根包要的那一份两遍都有，不用重编。提交已经推上去，不改。
+- **没有验到的。**
+  - CI 上要本机语料的用例只是跳过；CI 不显示通过用例的输出，跳过了多少条数不出来。
+  - runner 的磁盘还剩多少没有量。
+  - 只选根包的那一遍只在本机 Windows 上做了类型检查，没有编目标码，也没有在 Linux 上做。
+  - 红在 `cargo test` 的 7 次，只读了最后一次（`11487b3`）的日志：`pid-plot/tests/cli_pid_plot.rs` 的 2 条用例失败。
+  - 记这些读数的提交只改本文件和那份计划，没有再跑本机门禁。
+
 ### publish：导出收口线并进来：名称与描述取自 dump，DWG 的 13 条门禁对入库的包真跑；合并后改对两处期望值和一批文档（2026-11-17）
 
 **导出收口线（`export-closeout-20261115`，11 个提交）和审核整改线并到了一起，合并提交 `4d92574`。它的 pid-plot 7 个提交记在下面「`pid_plot --batch`」「PDF 瘦身」两条里；publish 的 4 个提交当时没有写条目，记在这里。git 只报 `CHANGELOG.md` 一处冲突，两边的条目都留着。git 报不出来的有两样：两处写死的期望值（合并提交上 3 条用例红），和一批合并之后说得不对的文档；都在合并之后的那一个提交里改了。**

@@ -2977,3 +2977,106 @@ README 新写的话，用发布构建一句一句量（`t64-docs2.ps1`，`runs/t
 3. 内存：第一遍门禁没跑起来的那一次。这台机器白天开着的程序占着六十多 GB 的提交量，32 路并行编译的那一次顶到了上限；顶到上限的那十几秒里，别的程序也可能申请不到内存。往后白天在这台机器上跑整套，先设 `CARGO_BUILD_JOBS`。第二遍跑的中间每 10 秒记了一次（`runs/land2-mem.txt`）：144 次采样，已提交最高 80.2 GB（09:44，离上限 5.0 GB）。那一阵这一遍在跑的测试程序只占 0.1 GB，占着的是机器上别的项目的一个 release 构建（不是这个仓库的），它的一个 rustc 进程自己就到了 12.2 GB。这一遍的测试程序私有内存最高 5.9 GB（09:40）。第一遍失败的那一刻那个构建在不在跑，没有记下来。
 4. 软跳过的行数没有另跑一遍去量：门禁的测试一道本来就设了 `RUST_TEST_NOCAPTURE=1`，拿 `tools/soft_skips.py` 读它的日志就是。
 5. 这一节新写的脚本都在 `target/publish-audit/review/` 下，不进仓库：`gates-at.ps1`、`matrix-at.ps1`、`t64-readme-at.ps1`（原有的三个各多一个 `-Repo`）、`run-stable-at.ps1`、`merge-lineage.ps1`（四份矩阵的出身）、`fmt-check-at.ps1`（格式分批查）、`census-at.ps1`（验收图的运行相对参考还缺什么，按属性数）、`cite-map.ps1` 和 `merge1-fix/check-citations.ps1`（行号重对）、`mem-sample.ps1`。试并时的清单是 `merge1-checklist.md`。
+
+### 推到远端，CI 修绿（2026-11-17，`48b41ea`）
+
+上一节「等你定的」第 27、28 两条你定了：临时工作区删，`main` 推上去。推上去之后 CI 是红的，红在推之前就红着的一步；这一步修不修你也定了：修，不开 PR，直接进 `main`。这一节记这三件事。
+
+**第 27 条：两个临时工作区删了。** 删之前核过：`merge-trial` 里没提交的两处改动和 `9e2c1f8` 里的内容相同，此外只有构建目录 `target` 和指向主目录符号库的一个目录联接；`merge-trial-theirs` 里只有 `target`。联接先单独摘掉，它指的目录摘之前、之后各数了一遍：92 个目录、618 个文件、33 912 320 字节，没有变。工作区从 25 个变成 23 个。`304aee5` 现在没有引用指着，还在对象库里。
+
+上一节那一条写的「合计约 11 GB」不对。D 盘删之前剩 24.4 GB，删之后 29.8 GB，腾出来的是 5.4 GB。11 GB 是试并当时按文件大小加起来的数，删之前没有重量；差在哪里，目录已经没了，查不出来。
+
+**第 28 条：`main` 推上去了。** `git push origin main`，2026-11-17 12:08，`a4b490e..f3da820`，51 个提交，快进，没有带 `--force`。推之前 `git ls-remote` 读到远端 `main` 是 `a4b490e`，推之后是 `f3da820`。远端没有新建分支。
+
+**推上去的那一次 CI（运行 44015114451，`f3da820`）：红。**
+
+| 步骤 | 结果 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo audit` | 过 | | |
+| `cargo build --locked --workspace --all-targets` | 过 | 444 s | |
+| `cargo test --locked --workspace --all-targets` | 过 | 210 s | 476 个测试程序，2 634 通过，0 失败，3 忽略 |
+| `cargo build --locked --examples` | 红 | 88 s | `rustc-LLVM ERROR: IO failure on output stream: No space left on device` |
+| clippy、fmt、缺文档检查、byte-audit | 跳过 | | |
+
+和本机 `9e2c1f8` 那一遍（2 635 通过）对过用例名（`ci-names-in-local.ps1`）：CI 的 2 637 个用例名（2 634 通过加 3 忽略）都在本机那一遍的日志里。本机多的 1 条是 `publish::backup_package::tests::write_atomic_writes_a_device_in_place`，前面有 `#[cfg(windows)]`。
+
+**这一步在推之前就是红的。** 推荐 push 的时候没有去查 CI 的历史，推完才查。`main` 上上一次绿是 2026-11-08 的 `138d7a7`；从那以后到 `f3da820` 一共 13 次，全红（`ci-history.ps1`）：
+
+| 红在哪一步 | 次数 | 提交，按时间（日期是 UTC 的） |
+|---|---|---|
+| `cargo test` | 7 | `4674bf4`（11-09），`3bac34e`、`81920d4`、`18d3f90`、`b4db725`、`9f94aa3`、`11487b3`（11-14） |
+| `cargo build --examples` | 6 | `1317c0b`（11-14），`2681ccd`、`1671dfc`、`7091e59`、`a4b490e`（11-15），`f3da820`（11-17） |
+
+红在 `cargo test` 的 7 次，日志只读了最后一次（`11487b3`）的：`pid-plot/tests/cli_pid_plot.rs` 的 2 条用例失败。`4674bf4` 那一次 `cargo audit` 也红。
+
+红在 `cargo build --examples` 的 6 次，日志都存了（`target/publish-audit/review/ci/run-*-failed.log`）。4 次写着 `No space left on device`（`1317c0b`、`2681ccd`、`a4b490e`、`f3da820`）；另 2 次（`1671dfc`、`7091e59`）只有链接器 `ld` 收到 Bus error 退出，是在链接 example 的时候。6 次都没有编译错误。
+
+一步红了，它后面的步骤就被跳过。13 次里 clippy、fmt、缺文档检查、byte-audit 四步一次也没有跑：从 11 月 8 日起，这四道在 CI 上没有跑过。
+
+**为什么红。** 这一步的命令是 `cargo build --locked --examples`，只选了根包；它前面的构建、测试两步选的是整个工作区。两种选法下 cargo 给一部分依赖选的特性不一样，前面编好的东西这一步用不上，要重编。
+
+- 读法：`cargo tree --locked -e normal,build,dev --prefix none -f '{p} @@ {f}'`，带和不带 `--workspace` 各跑一遍，逐个包比特性（`feature-diff.ps1`，`48b41ea`，stable 1.99.1）。加 `--target x86_64-unknown-linux-gnu` 读 CI 那个平台：只选根包 132 个包，选整个工作区 231 个，132 个里特性不一样的 14 个。不加（Windows）是 134 个和 233 个，不一样的是同样的 14 个。
+- 14 个里的 13 个，根包要的那一组特性在整个工作区那一遍里没有，要重编：`anstream`、`clap`、`clap_builder`、`flate2`、`hashbrown`、`num-traits`、`rand`、`regex`、`regex-automata`、`serde`、`serde_core`、`simd-adler32`、`smallvec`。第 14 个是 `fastrand`：整个工作区那一遍多出一份不带特性的，根包要的那一份两遍都有，不用重编。
+- CI 的日志对得上（`run-44015114451-f3da820-full.log`）：这一步里 `Compiling` 的有 33 个 crate，上面 13 个都在里面，没有 `fastrand`，最后一个是 `pid-parse` 自己。接着 example 从头再编，编到中途磁盘写满，报错的是 `probe_text_height_fallback`。
+- `examples/` 下的 `.rs` 文件：`138d7a7` 上 289 个，`a4b490e` 上 309 个，现在 310 个。
+- 上一次绿的那一次（`138d7a7`，运行 42503649694）这一步用了 140 秒：那时已经在重编，只是还写得下。工作流里这一步的注释说前面编过了、这里几乎不花时间；这一步进 CI 的时候量的是「缓存后 ~1–2 秒」（`CHANGELOG.md`「`cargo build --examples` 进 CI」一条）。从哪个提交起不再是这样，没有查。
+- 本机的八道门禁里没有这一步，所以本机看不到。
+
+**改法（`48b41ea`）。** 只改 `.github/workflows/ci.yml`：这一步的命令加 `--workspace`，成了 `cargo build --locked --workspace --examples`，注释跟着改，步骤的名字没有改。改完的文件拿 PyYAML 读过一遍（`check-workflow.py`），两个作业和各步的命令都在。
+
+本机量过两次。推之前，`f3da820`，整个工作区编过之后跑这一步的新命令：0.93 秒，什么都不编。`48b41ea` 上又量了一遍（`examples-step-local.ps1`，stable 1.99.1）：先 `cargo build --locked --workspace --all-targets`，1.92 秒，重编了根包的 3 个程序（`pid_inspect`、`pid_backup_extract`、`pid_publish_xml`；为什么这 3 个要重编没有查）；再跑新命令，0.51 秒，什么都不编。
+
+`main` 快进到 `48b41ea`，13:03 推上去（`f3da820..48b41ea`，没有带 `--force`）。
+
+**修了之后的 CI（运行 44021355841，`48b41ea`）：绿。** 11 月 8 日之后第一次。
+
+| 步骤 | 结果 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo audit` | 过 | 3 s | |
+| `cargo build --locked --workspace --all-targets` | 过 | 395 s | 231 行 `Compiling` |
+| `cargo test --locked --workspace --all-targets` | 过 | 248 s | 476 个测试程序，2 634 通过，0 失败，3 忽略 |
+| `cargo build --locked --workspace --examples` | 过 | 不到 1 s | `Finished … in 0.22s`，没有一行 `Compiling` |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 过 | 46 s | 没有警告 |
+| `cargo fmt --all -- --check` | 过 | 2 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 过 | 8 s | `current=0, baseline=0` |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 过 | 23 s | `completed comparisons=3, skipped=0`，三份都是 `Regressions: 0` |
+
+整次 12 分 44 秒。作业开始时没有缓存可用（`No cache found.`），结束时存了一份 506 MB；失败的作业不存缓存。
+
+CI 上的 stable 是 1.100.0，本机门禁用的是 1.99.1：clippy 和 fmt 两道，本机过的是 1.99.1 的，CI 上过的是 1.100.0 的。
+
+**改了之后这一步查的东西比原来少。** 这一条在给你的建议里没有说到，是推上去之后才想到的。改之前这一步只选根包去编 example，实际上多查了一样：依赖的特性只按根包自己声明的来的时候，example 编不编得过。在仓库根目录下 `cargo run --example …` 用的就是这种选法。改成 `--workspace` 之后，这一步要的东西第一步都编过，第一步过了它就不会红；上面那一样，CI 上现在没有哪一步替 example 查。缺文档检查和 byte-audit 两步也只选根包，查到的是库和 `pid_inspect`。
+
+本机补查了一遍（`root-only-examples-check.ps1`）：`cargo check --locked --examples`，只选根包，只做类型检查，不写目标码；`48b41ea`，stable 1.99.1，22 秒，退出 0，没有警告。现在这种选法下 example 是查得过的。往后没有哪一步看着，要不要补见「等你定的」第 31 条。
+
+**顺带看到的：byte-audit 一步也重编。** 它的脚本是 `cargo run --locked --bin pid_inspect`，同样只选根包。CI 的日志里这一步做第一次比较时先有 32 行 `Compiling`，编了 22 秒；后两次比较编译都不到 0.1 秒。只为一个程序重编，占的地方小，过了。上一次绿的那一次这一步也是 22 秒。没有改。
+
+**没有改的。**
+
+1. 上一节的话：第 27 条的「约 11 GB」，「没有验到的」第 1 条「CI 没有跑：没有 push」，`CHANGELOG.md` 合并那一条里的同一句。都是当时的话；更正和后来的情形记在这一节。
+2. `48b41ea` 的提交说明写的是 13 个依赖的特性选得不一样。按上面的读法是 14 个，多的 `fastrand` 不用重编；要重编的 13 个就是提交说明里列的那 13 个。提交已经推上去，不改。
+3. byte-audit 一步（上面一段）。
+4. `CHANGELOG.md`「`cargo build --examples` 进 CI」一条里的 `cargo build --locked --examples` 和「缓存后 ~1–2 秒」：是当时的命令和读数。
+
+**没有验到的。**
+
+1. CI 上要本机语料的用例：没有语料，它们打一行 `skipping` 就算过。CI 不显示通过用例的输出，那里软跳过了多少条数不出来。
+2. runner 的磁盘现在还剩多少，没有量。这一步不再多写一份；第一步的整工作区构建自己写的那一份，还会随着 example 变多而变大。
+3. 只选根包的那一遍（上面补查的）只在本机 Windows 上用 1.99.1 做了类型检查，没有编目标码，没有链接，也没有在 Linux 上做。
+4. 红在 `cargo test` 的 7 次，前 6 次的日志没有读。
+5. 这一步从哪个提交起开始重编，没有查。
+6. 记这一节的提交只改这份计划和 `CHANGELOG.md`，没有再跑本机门禁。推上去之后 CI 会整套再跑一遍，结果在给你的回复里。
+
+**等你定的。** 第 27、28 两条了结了。新加的接着往下编号：
+
+31. 要不要在 CI 里补一步只选根包的检查，比如 `cargo check --locked --examples`。它只做类型检查，不写目标码，不会像原来那样把 example 再写一份。本机 22 秒；CI 上还要先把依赖按根包的选法查一遍，要多久没有量。
+32. byte-audit 一步要不要也改成不重编，比如直接跑第一步编好的 `target/debug/pid_inspect`。现在 23 秒，不碍事。
+33. 要不要在工作流里量一下磁盘余量（加一步 `df -h`）。现在不知道离写满还有多远；`examples/` 九天里从 289 个涨到 310 个。
+34. `AGENTS.md`「Pre-commit gates (CI mirrors these)」一节列的是五条命令，另加只对根包的两条。CI 多出 examples、byte-audit 两步，少那两条只对根包的。这一次的红就落在本机不跑的那一步上。要不要对齐，往哪边对。
+
+**接下来。** 这一节提交之后 `main` 快进、push。那一次 push 的 CI 结果记在给你的回复里，不记在这里。
+
+**顺带记下的。**
+
+1. 推荐 push 之前先看 `gh run list --branch main`。这一次没有看，推完才知道 `main` 的 CI 已经连红 12 次。
+2. 这一节新写的脚本都在 `target/publish-audit/review/ci/` 下，不进仓库：`watch-run.ps1`（盯一次运行）、`run-steps.ps1`（各步起止）、`ci-history.ps1`（一个分支最近的运行各红在哪一步）、`ci-log-summary.ps1` 和 `ci-steps-from-log.ps1`（日志按步骤拆开数）、`ci-names-in-local.ps1`（CI 的用例名对本机日志）、`feature-diff.ps1`（两种选法的特性对比）、`examples-step-local.ps1` 和 `root-only-examples-check.ps1`（本机量这一步的两种选法）、`check-workflow.py`。`ci-vs-local-tests.ps1` 按测试程序逐个对，CI 的日志里两路输出是交错的，它对不准，没有用它的结果。存下来的日志在同一个目录：`run-<运行号>-<提交>-full.log`、`-failed.log`。
