@@ -2855,3 +2855,125 @@ README 新写的话，用发布构建一句一句量（`t64-docs2.ps1`，`runs/t
 3. 工作区里没提交的文件数，日志开头记的：`post64` 矩阵 0，这一遍门禁 0。门禁跑的中间改的三份文档，现在 `git status` 里就是这三份。
 4. `skipping: ` 的行不能拿整行去比：同一个测试程序里几条用例并行着打印，这一句会和别的用例的 `test … ...` 接在同一行上，两遍接的地方不一样。这一回是按「出自哪个程序、说的是哪个文件或哪个类」来对的。
 5. 这一节用的三个新脚本都只读，在 `target/publish-audit/review/` 下，不进仓库：`cp6-lineage.ps1`（矩阵两头不一样的文件是哪一遍变的），`test-log-diff.ps1`（两份测试日志按程序比通过数），`gate-readings.ps1`（一遍门禁的读数）。后一个先在检查点 5 的日志上跑过，读出来的数和检查点 5 记的一样。
+
+### 两条线合并（2026-11-17，`4d92574`、`9e2c1f8`）
+
+检查点 6「等你定的」第 1 条你定了：两条线一起落。先在临时工作区里试并，把 git 报不出来的事找全；再把合并提交接到这条分支上，加一个提交改对期望值和文档；在这个工作区里整套门禁和对照矩阵都过了，`main` 再快进到这条分支的尖上。没有 push；那条线的分支（`export-closeout-20261115`，`d329c2f`）和它所在的主目录没有动。
+
+**怎么并的。** 分叉点是 `a4b490e`（`main`，也是 `origin/main`）。这条分支在 `2057f28`，比分叉点多 37 个提交；那条线在 `d329c2f`，多 11 个（pid-plot 7 个，publish 4 个）。
+
+试并在临时工作区 `pid-parse-wt/merge-trial` 的游离 HEAD 上做，得到 `304aee5`；另开的 `pid-parse-wt/merge-trial-theirs`（游离 `d329c2f`）只用来构建那条线自己的发布程序。git 报的冲突只有 `CHANGELOG.md`：两边都在 `[Unreleased]` 下面加了条目，两边都整段留着，这条分支的 8 条在前，那条线的 2 条（`pid_plot --batch`、PDF 瘦身）在后。另外 9 个两边都改过的文件 git 自己并好了，就是检查点 6 试并时列的那 9 个。
+
+落到分支上的合并提交是 `4d92574`，不是 `304aee5`。试并的提交说明写的是「试并，在游离 HEAD 上」，所以用 `git commit-tree` 拿同一棵树（`4a31f9b`）、同样的两个父提交另做了一个，说明里写了冲突怎么解的、这棵树上哪 3 条用例是红的、在哪个提交里改。两个提交的树拿 `git rev-parse` 对过，是同一个。这条分支用 `git merge --ff-only` 接到 `4d92574` 上，再提交 `9e2c1f8`。
+
+**合并提交上红的 3 条。** 两处，都是一条线写死了一个数，另一条线把这个数改了。
+
+1. `tests/publish_from_pid.rs` 的 `DWG_EXP_SAYS` 第四句。T5.1 钉的是 `oracle-exp stored values: 28 written, 17 labels confirmed, 2 labels kept where the dump says otherwise, 0 left out unspelled`；合并后的程序说的是 `oracle-exp stored values: 28 written, 21 labels confirmed, 4 labels kept where the dump says otherwise, 6 left out unspelled, 3 names left out because a label disagrees with the dump`。`f4c7763` 不只加了半句，前面三个数也变了。红的是 `a_dump_run_says_every_stage_once_and_in_one_order` 和 `a_dump_run_says_each_stored_column_it_could_not_read`。新钉的这一行和那条线自己构建的程序打出来的逐字节相同。
+2. `docs/baselines/publish-diff-accepted.json` 里 I井场 `oracle-exp` 一段的 `alias_summary`：`values 6506` → `values 6673`。那条线把同一段的 `clean_summary` 改成了 6673，没有动这一项：它那一版的 `the_ijingchang_alias_stem_reproduces_the_registered_item` 只在 `pid-alone` 模式下读 `alias_summary`，`oracle-exp` 的这一项在它那边没有哪条用例走得到。T1.2（`acc3f09`）把这条用例改成了两个模式都断言，并到一起才红。这一条要本机的 I井场 语料；没有语料的机器上它打一行 `skipping` 就算过，CI 上红不出来。
+
+检查点 5、检查点 6 预料到的是第 1 处的两条，说的是那条线「加的半句」；前面三个数也变、第 2 处会红，都没有预料到。那两节是当时的话，没有回头改。
+
+**试并的树上的门禁（`304aee5`）。** `gates-at.ps1 -Label merge1`：`gates.ps1` 的一份拷贝，多一个 `-Repo`，在别的工作区里跑同样八道，测试两道带 `--no-fail-fast`。06:52 开跑，07:26 跑完；开跑时工作区是干净的，`target` 是空的。构建 0（131 s）；clippy 0（44 s）；缺文档检查 0（13 s，`current=0, baseline=0`）；不带默认特性 0（33 s，985 通过）；wasm32 0（35 s）；byte-audit 0（28 s，各 `Regressions: 0`）。测试退出 101（1 777 s）：2 632 通过、3 失败、3 忽略，失败的就是上面 3 条。`cargo fmt --all -- --check` 退出 1，不是格式问题，见下面「`cargo fmt --all` 的命令行」。
+
+打上两处期望值之后，在试并的工作区里重跑了 `publish_from_pid`（27 条）和 `publish_diff_accepted_baseline`（22 条），全过；格式分批查 0 处差异，clippy 0 条警告（`runs/merge1-fix-tests.log`、`runs/merge1-fix-clippy.log`）。
+
+**`9e2c1f8` 上的门禁。** 跑了两遍，第一遍的测试一道没有跑起来。
+
+第一遍 `gates-at.ps1 -Label land1`，09:18 开跑，工作区干净。构建 0（123 s）。测试一道 12 秒就退出 101：不是用例失败，是编译测试程序时 rustc 报 `memory allocation of 2097152 bytes failed`，后面跟着一串 `only metadata stub found`、`required to be available in rlib format` 之类连带的错，一条用例都没有跑。紧接着量的：这台机器已提交的内存 66.0 GB，上限 85.1 GB（物理内存 63.1 GB，页面文件 22 GB），占着的是你开着的程序（Cursor、chrome、Devin 等，全部进程的私有内存合计 53.5 GB），那时在跑的是后面几道轻的门禁，没有 rustc 进程；cargo 默认按 32 个逻辑处理器并行编译，能用的只有剩下的 19 GB；是它自己用完的，还是当时机器上别的构建也在占，没有记下来（「顺带记下的」第 3 条）。这一遍另外六道都过了。
+
+第二遍 `gates-at.ps1 -Label land2`，09:22 开跑，工作区干净，环境里多设了 `CARGO_BUILD_JOBS=8`，把并行编译数限到 8。八道的命令行没有改；这个变量只管编译，用例怎么跑不受它影响。09:48 跑完，八道都退出 0。跑的中间工作区没有动：读了它自己的日志，跑了只读的 git 查询和一个每 10 秒记一次内存的脚本（`mem-sample.ps1`），在 `target/publish-audit/review/` 下起草了这一节；cargo 没有另跑，发布程序没有再跑。日志在 `target/publish-audit/review/gates/land2/`。
+
+| 门禁 | 退出码 | 用时 | 读数 |
+|---|---|---|---|
+| `cargo build --locked --workspace --all-targets` | 0 | 1 s | 第一遍已经编过 |
+| `cargo test --locked --workspace --all-targets --no-fail-fast` | 0 | 1 540 s | 476 个测试程序；2 635 通过，0 失败，3 忽略；`skipping: ` 提示 1 行 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 0 | 1 s | 0 条警告 |
+| `cargo fmt --all -- --check` | 0 | 4 s | |
+| `bash .github/scripts/check-missing-docs.sh` | 0 | 1 s | `current=0, baseline=0` |
+| `cargo test --locked -p pid-parse --no-default-features --lib --no-fail-fast` | 0 | 2 s | 985 通过 |
+| `cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` | 0 | 0 s | |
+| `bash .github/scripts/check-byte-audit-baselines.sh` | 0 | 3 s | 3 份基线都比了，各 `Regressions: 0`，跳过 0 |
+
+这一遍 clippy、缺文档检查、byte-audit 用时短，是因为要编的东西第一遍已经编过：第一遍里这三道是 22 s、9 s、20 s，也都退出 0，clippy 0 条警告。不带默认特性的那一道和 wasm32 的检查在这个工作区里两遍都没有重编（第一遍的日志里是 `Finished … in 0.31s`、`0.22s`）：`src/publish` 整个在 `backup-exp` 特性后面，这两道不编它，而合并前后根包 `src/` 下变过的只有 `src/publish/` 的四个文件和 `src/bin/pid_publish_xml.rs`。试并那一遍 `target` 是空的，这两道是从头编的。
+
+**测试数。** 和检查点 6 那一遍（`gates/cp6`，2 613 通过）按测试程序逐个比（`test-log-diff.ps1`）：
+
+| 测试程序 | 检查点 6 | 这一遍 | 来自 |
+|---|---|---|---|
+| `publish_diff_accepted_baseline` | 19 | 22 | `2f0a4ef` 加 3 条 |
+| `publish_dwg_mirror` | 5 | 4 | `9ccd65c` 改写了这个文件，去掉 `dwg_mirror_presence_smoke` |
+| `publish_missing_data` | 没有 | 5 | `d329c2f` 新加 |
+| pid-plot 库的单元测试 | 375 | 379 | 那条线 |
+| `pid_plot` 程序自己的单元测试 | 0 | 2 | 那条线 |
+| `cli_pid_plot` | 48 | 57 | 那条线 |
+
+合计 2 613 → 2 635（+3、−1、+5、+4、+2、+9），别的程序的数没有变。测试程序 475 → 476 个，多的是 `publish_missing_data`；`test result:` 474 → 475 行，都是 `ok`。和试并那一遍（`gates/merge1`）比，变的只有原来红的两个程序：`publish_diff_accepted_baseline` 从 21 过 1 红到 22 过，`publish_from_pid` 从 25 过 2 红到 27 过。
+
+**软跳过。** `skipping: ` 的行从 21 行变成 1 行；`python tools/soft_skips.py` 读这一遍的日志，读数是 1 条：`parse_real_files` 里的 `skipping: no controlled PID diff pairs found under test-file/controlled-diff`。少的 20 行：13 行是 DWG 的十三条门禁，现在对入库的包真跑，所在的四个程序 `publish_dwg_mirror`（4）、`publish_dwg_generated_parity`（4）、`publish_meta_parity`（6）、`publish_rel_parity`（9）全过；7 行是 `publish_interface_parity` 的 A23，A01 参考里没有的七个类改成对 DWG 的参考比。`AGENTS.md` 软跳过一节里本机那一栏照这个读数改了；「只有仓库」那一栏没有重读。
+
+**对照矩阵。** 分两步。
+
+合并之前，四份逐个文件比 SHA-256（`merge-lineage.ps1`，报告在 `runs/merge1-lineage.txt`）：分叉点（`base`）、这条分支最后一遍（`post64`）、那条线自己构建的程序（`merge1-theirs`，`d329c2f`）、合并后的程序（`merge1`，`304aee5`）。后两个程序都是 stable 的 release 构建。合并后是 61 项、717 个文件；四份里出现过的路径一共 720 个。
+
+| 类别 | 路径数 | |
+|---|---|---|
+| 四份都一样 | 429 | |
+| 只有那条线改过 | 262 | 合并后和那条线自己构建的逐字节相同 |
+| 只有这条分支改过 | 19 | 合并后和这条分支逐字节相同；其中 3 个是 T1.1 之后不再写出的 `IB031~1_*` |
+| 带 `--strict` 的两项各 4 个：`command.txt`、`stdout.bin`、`exit.txt`、`stderr.bin` | 8 | 分叉点的矩阵没有这两项；这个开关只有这条分支有，那条线的程序不认它，退出 2；合并后和这条分支相同 |
+| `ij-short-diff/stdout.bin` | 1 | 两边都改过，见下 |
+| `summary.txt` | 1 | 矩阵自己的汇总表 |
+
+`ij-short-diff/stdout.bin` 是唯一一个两边都改过的产物。那条线改的是差异报告里「item identity columns」那一类的一句说明，一行。分叉点上用短路径调用时这一遍不是干净的（T1.1 修的就是这个），打的是整份报告，65 行，退出 1，那句说明在里面；T1.1 之后这一遍是干净的，只打一行摘要，退出 0。合并后也是这一行，和这条分支逐字节相同。那句改过的说明合并后的程序是带着的：`dwg-diff-only` 一项打出来的就是它，算在那 262 个里。所以没有哪个文件要把两边的改动拼起来；61 项的退出码和这条分支最后一遍逐项相同。
+
+那 262 个落在：`acc-*-exp` 7 项各 3 个，`acc-*-exp-diff` 7 项各 4 个，`dwg-diff-only` 1 个，`dwg-exp` 1 个，`dwg-exp-diff` 2 个，`pkg-dwg` 7 个，`pkg-dwg-gate` 7 个，`pkg-full` 97 个，`pkg-full-gate` 98 个。除 `dwg-diff-only` 那一个之外都是 `--oracle-exp` 和带 dump 的整包运行，多写的是取自 dump 的名称和描述：I井场 `values 6506` → `6673`，`1130 written` → `1297 written`；DWG 那个包 `_Index.json` 的 `values` 1 492 → 1 502；`pkg-full-gate` 每张图仍是 `clean`。和 §6 的表对：那张表说的是这条分支自己的任务，那条线带来的这 262 个不在表里。
+
+`9e2c1f8` 上又跑了一遍，用的是检查点一直用的 `cp-matrix.ps1`（`-Label land2 -Against merge1`；stable 的 release 构建，开跑时工作区干净）：61 项，和 `merge1` 比 717 个文件全部相同，`summary.txt` 也在内（`runs/land2-matrix.log`）。`4d92574` 到 `9e2c1f8` 没有动程序的代码行，这一遍验的就是这句话。
+
+**README 的命令。** 试并的树上照 README 原文跑过一遍（`t64-readme-at.ps1`，11 次运行，记录在 `runs/merge1-readme/`）：11 次的退出码和 T6.4 最后一遍（`runs/t64-readme4`）逐个相同，每一条核对项的结论也相同。第 7 条（`drawing.pid --oracle-exp …`）写出的 3 个文件逐字节相同，stderr 只有 stored values 那一行不同，就是上面第 1 处那一行。第 8 条（整包）stderr 相同，22 个文件，`_Index.json` 的 `values` 1 492 → 1 502，`002`、`222`、`DWG-0201GP01-01` 三张图的 `_Data.xml` 变了。README 没有写这几个数。
+
+`9e2c1f8` 改了 README 的一段话，命令块没有动；照样又跑了一遍（`runs/land2-readme/`）：11 次的退出码和每一条核对项的结论都和试并那一遍相同，11 份 stdout 逐字节相同，跑完工作区是干净的。
+
+**文档。** 不改不红、合并之后说得不对的，都在 `9e2c1f8` 里改了，逐处的改法在 `CHANGELOG.md` 这一次的条目里。每一处改之前对着合并后的代码核过。按来由分：
+
+- 合并造成的：`docs/analysis/2026-11-15-what-the-export-lines-still-wait-on.md` 和 `tests/publish_missing_data.rs` 的注释里引的 `文件:行号`（这条分支在那些文件里加过代码，行号整体偏移），以及那一页的 S12 一段：它说的那次筛选原来在两个调用方各写一遍，T5.1 收进了 `oracle_exp::attach_dump` 一处。那一页的 63 处引用拿 `merge1-fix/check-citations.ps1` 逐个把行上的字读出来对过。
+- 那条线自己没有跟着改的：`src/publish/mod.rs` 的 Outstanding 一节（`f4c7763` 之后名称和描述已经写了；T6.4 核这一节时对的是这条分支自己的树，那时确实还不写）；`AGENTS.md` 软跳过一节、测试表里的两格，`README.md` 讲 DWG 测试的一段，`tests/backup_manifest_real_file.rs` 的一处注释（`9ccd65c` 之后十三条 DWG 门禁真跑，`DWG_MDF_MISSING_HINT` 这个常量没有了）；`cli_pid_plot` 的条数（`0f29418` 加了第 9 条 batch 用例，数没有跟）和「这几条不需要字体」的说法；`CHANGELOG.md` 里 `pid_plot --batch` 一条的退出码；那一页引自己那份测试文件的行号和 `pid_load.rs` 的一处。`CHANGELOG.md` 原来没有那条线 publish 4 个提交的条目，这一次的条目里补了。
+- 分叉点上就不对的：`AGENTS.md` 里 DWG 那个包的合计 `1 379 values`。那时钉的是 1 492，现在是 1 502。
+
+为了把 `cli_pid_plot` 没有字体目录时的几个数写准，在合并后的树上把 `PID_PARSE_SELF_CHECK_DIR` 指到不存在的目录量了一遍：57 条全过，54 行 `<case>: no font directory is present` 加 1 行 `skipping the D06 export`，54 行里 4 行出自 batch 的用例（`runs/merge1-cli-pid-plot-nofonts.log`）。
+
+**`cargo fmt --all` 的命令行。** 试并那一遍的格式检查退出 1，报的是 Windows 的 `os error 206`（文件名或扩展名太长）。`cargo fmt --all` 把同一个 edition 的目标文件用完整路径拼在一条命令行上；合并后根包有 372 个目标，临时工作区的目录名比这个工作区长 6 个字符，那一行算下来约 33 055 个字符，过了 32 767 的上限。拿同一个 rustfmt 分批查（`fmt-check-at.ps1`）：476 个目标，0 处差异。同样算，这个工作区里那一行约 30 823 个字符，离上限约 1 900；主目录约 27 475，离上限约 5 300。这个工作区里这一道是照原样过的（上表）。再加二十来个测试或 example 文件，这个工作区里也会过不去；CI 在 Linux 上，没有这个上限。
+
+**没有改的。**
+
+1. `src/publish/stored_values.rs` 里一句注释说「下面四个」，下面列的是三个；`f4c7763` 的提交说明也说四个。那条线自己的话，没有动。
+2. `f4c7763` 的提交说明写七张验收图多 968 个值（851 + 117）；按它自己改的 `tests/publish_completeness.rs` 的钉子加起来是 970。差的 2 个没有追。
+3. 带日期的读数，没有重量：`AGENTS.md` 讲 `cargo fmt --all` 命令行长度的那一段，和它数根包 example、测试文件个数的那一句（写的是 305 和 51，合并后是 310 和 54）；`docs/analysis/2026-11-12-what-the-root-crates-tests-skip.md`；`README.md` 末尾「Final format-analysis and validation status (2026-06-19)」里说 DWG 的 `Export.mdf` 不在、软跳过的那一句。
+4. 读过、现在仍然成立的：`src/publish/xml_writer.rs`、`catalog.rs` 里说分支点的映射要等 DWG 的数据库夹具的几句；`docs/prd-pid-parse-current-state.md` 待办里的「落位 DWG `Export.mdf` fixture」；`tests/publish_attribute_parity.rs` 一处注释说 DWG 的库不在仓库里；`docs/pid-export-bundle-contract.md` 里没有 DWG 夹具时 bundle 该写的状态示例。说的都是数据库线，DWG 上它仍然没有夹具。
+5. 这份计划里检查点 5、检查点 6 说「会红两条」的两句。
+
+**没有验到的。**
+
+1. CI 没有跑：没有 push。上面第 2 处的那条用例要本机的语料，CI 上红不出来，也绿不出来。
+2. 「只有仓库」那一栏的软跳过数没有重读：那要把本机 `D:\work\…` 下的语料挪开。
+3. 那条线自己的树（`d329c2f`）没有跑门禁，只构建了它的发布程序、跑了矩阵。
+4. pid-plot 的 7 个提交只经过测试门禁，没有另外看导出的 PDF。
+5. 只在这台 Windows 机器上跑过。
+6. 记这一节的提交只改这份计划和 `CHANGELOG.md`，没有再跑门禁；这两份文档没有哪段代码去读：检查点 6 的那个式子在合并后的树上重查过，10 行，不是注释的 2 行是 pid-plot 的两条提示语，说的是 `docs/baselines/README.md`。`main` 的尖和过了门禁的 `9e2c1f8` 之间只差这两份文档。
+
+**等你定的。** 检查点 6 的第 1 条（两条线怎么合）了结了，另 25 条还开着。新加的接着往下编号：
+
+27. 两个临时工作区（`pid-parse-wt/merge-trial`、`pid-parse-wt/merge-trial-theirs`）删不删。合计约 11 GB，D 盘现在剩 25.7 GB。删了之后 `304aee5` 不再被任何引用指着；它的树就是 `4d92574` 的树。
+28. push 不 push，往哪里 push。`main` 只在本机快进，`origin/main` 还在 `a4b490e`。
+29. `cargo fmt --all -- --check` 在这个工作区里离 Windows 的命令行上限只剩约 1 900 个字符（上面一段）。和第 26 条是同一件事，现在近了。
+30. 上面「没有改的」第 1、第 2 条要不要改：注释里的「四个」好改；提交说明里的 968 要改就得改写历史。
+
+**接下来。** 这一节提交之后，把 `main` 快进到这条分支的尖上（`git fetch . publish-review-followup-20261116:main`；`main` 没有检出在哪个工作区里）。快进之后的情形记在给你的回复里，不记在这里。
+
+**顺带记下的。**
+
+1. 红的条数：预料 2 条，实际 3 条。多的那一条两条线各自都是绿的，并起来才红；这一类读差异找不全，要在合并出来的树上整套跑一遍才看得到。
+2. 工具链：这台机器 `PATH` 上排在前面的 `cargo` 是另一份 1.102 的构建，默认工具链是 nightly；门禁用的是 stable 1.99.1。量 `cli_pid_plot` 没有字体目录的那一遍，第一次是拿默认的那个跑的（在试并的工作区里，多编出来的东西只在它自己的 `target` 下），发现之后拿 stable 重跑，读数相同，记的是 stable 的那一遍。
+3. 内存：第一遍门禁没跑起来的那一次。这台机器白天开着的程序占着六十多 GB 的提交量，32 路并行编译的那一次顶到了上限；顶到上限的那十几秒里，别的程序也可能申请不到内存。往后白天在这台机器上跑整套，先设 `CARGO_BUILD_JOBS`。第二遍跑的中间每 10 秒记了一次（`runs/land2-mem.txt`）：144 次采样，已提交最高 80.2 GB（09:44，离上限 5.0 GB）。那一阵这一遍在跑的测试程序只占 0.1 GB，占着的是机器上别的项目的一个 release 构建（不是这个仓库的），它的一个 rustc 进程自己就到了 12.2 GB。这一遍的测试程序私有内存最高 5.9 GB（09:40）。第一遍失败的那一刻那个构建在不在跑，没有记下来。
+4. 软跳过的行数没有另跑一遍去量：门禁的测试一道本来就设了 `RUST_TEST_NOCAPTURE=1`，拿 `tools/soft_skips.py` 读它的日志就是。
+5. 这一节新写的脚本都在 `target/publish-audit/review/` 下，不进仓库：`gates-at.ps1`、`matrix-at.ps1`、`t64-readme-at.ps1`（原有的三个各多一个 `-Repo`）、`run-stable-at.ps1`、`merge-lineage.ps1`（四份矩阵的出身）、`fmt-check-at.ps1`（格式分批查）、`census-at.ps1`（验收图的运行相对参考还缺什么，按属性数）、`cite-map.ps1` 和 `merge1-fix/check-citations.ps1`（行号重对）、`mem-sample.ps1`。试并时的清单是 `merge1-checklist.md`。

@@ -7,7 +7,7 @@
 **导出收口线（`export-closeout-20261115`，11 个提交）和审核整改线并到了一起，合并提交 `4d92574`。它的 pid-plot 7 个提交记在下面「`pid_plot --batch`」「PDF 瘦身」两条里；publish 的 4 个提交当时没有写条目，记在这里。git 只报 `CHANGELOG.md` 一处冲突，两边的条目都留着。git 报不出来的有两样：两处写死的期望值（合并提交上 3 条用例红），和一批合并之后说得不对的文档；都在合并之后的那一个提交里改了。**
 
 - **名称和描述取自 dump（`f4c7763`）。** `--oracle-exp` 和带 dump 的整包运行，给图上标签没有说到的对象从 dump 写 `IObject.Name` 和 `IObject.Description`（`stored_values::IDENTITY_PROPERTIES`）。一张图要么都取、要么都不取：只要有一个标签和 dump 说的不一样，这张图就一个也不从 dump 取，stderr 上 `oracle-exp stored values` 那一行末尾新加的半句 `N names left out because a label disagrees with the dump` 数的就是它们；图纸自己那一块的名字是文件名，不算标签。管段的名字按数据表里的模板（`EFAdapter.PpConnNameConv`）拼，模板填不出来的不写，数在 `left out unspelled` 里。注释的 `Description` 不读。另外三个照原样存着的属性也从 dump 写：仪表的 `InstrTagSequenceNo`、`MeasuredVariable`，设备的 `EquipPrefix`。
-- **输出的变化。** 对照矩阵 61 项、717 个文件，四份逐个文件比 SHA-256：分叉点、整改线最后一遍、导出线自己构建的程序、合并后的程序。429 个四份都一样；262 个只有导出线改过，合并后和导出线自己构建的逐字节相同；19 个只有整改线改过，合并后和整改线逐字节相同；没有哪个文件是两边都改、要拼起来的；61 项的退出码和整改线最后一遍逐项相同。那 262 个除一个之外都在 `--oracle-exp` 和带 dump 的整包两类运行里：
+- **输出的变化。** 对照矩阵 61 项、717 个文件，四份逐个文件比 SHA-256：分叉点、整改线最后一遍、导出线自己构建的程序、合并后的程序；四份里出现过的路径一共 720 个。429 个四份都一样；262 个只有导出线改过，合并后和导出线自己构建的逐字节相同；19 个只有整改线改过，合并后和整改线相同（16 个逐字节相同，3 个是 T1.1 之后不再写出的 `IB031~1_*`）。另外 10 个：带 `--strict` 的两项记命令、退出码和两路输出的 8 个，这个开关只有整改线有，导出线的程序不认它、退出 2，合并后和整改线相同；`ij-short-diff` 的 stdout 1 个，两边都改过：导出线改的是整份差异报告里的一句说明，整改线 T1.1 之后这一遍是干净的、只打一行摘要，合并后就是这一行，和整改线逐字节相同；矩阵自己的汇总表 1 个。没有哪个文件要把两边的改动拼起来；61 项的退出码和整改线最后一遍逐项相同。那 262 个除一个之外都在 `--oracle-exp` 和带 dump 的整包两类运行里：
   - 七张验收图带 dump 时说出的参考值，按 `tests/publish_completeness.rs` 的钉子一共多 970 个：I井场 6 483 → 6 650，J K井场 9 721 → 9 956，L M井场 11 467 → 11 749，轻烃分离器I 2 479 → 2 549，空冷器A 2 633 → 2 714，空冷器B 2 588 → 2 656，空冷器C 2 540 → 2 607；和参考写得不一样的值没有多。
   - 仓库里 DWG 那个包：`_Index.json` 的 `values` 1 492 → 1 502，变的是 `002`、`222`、`DWG-0201GP01-01` 三张图。`DWG-0202GP06-01` 自己那张图写出的文件没有变：它的包比图新，有 4 个标签和 dump 对不上，名称一个不取；stderr 那一行从 `28 written, 17 labels confirmed, 2 labels kept where the dump says otherwise, 0 left out unspelled` 变成 `28 written, 21 labels confirmed, 4 labels kept where the dump says otherwise, 6 left out unspelled, 3 names left out because a label disagrees with the dump`。
   - 那一个例外是只带 `.pid` 的 `--diff-against` 报告：「item identity columns」那一类的说明多了一句。不带 dump 的运行和数据库线写出的文件没有变。
@@ -24,7 +24,7 @@
   - `docs/analysis/2026-11-15-what-the-export-lines-still-wait-on.md` 和 `tests/publish_missing_data.rs` 的注释：引的 `文件:行号` 按合并后的树重对了一遍，那一页的 63 处逐个看过行上的字。S12 说的那次筛选原来在两个调用方各写一遍，整改线 T5.1 收进了 `oracle_exp::attach_dump` 一处，那一段照现在的样子写。那一页引自己那份测试文件的行号和 `pid_load.rs` 的一处，在导出线自己的树上就对不上，一起改了。
   - `tests/backup_manifest_real_file.rs` 一处注释里的 `DWG_MDF_MISSING_HINT` 改成 `DWG_PACKAGE_MISSING_HINT`。
 - **`cli_pid_plot` 没有字体目录时重量了一遍。** 合并后的树上，`PID_PARSE_SELF_CHECK_DIR` 指到不存在的目录：57 条全过，54 行 `<case>: no font directory is present` 加一行 `skipping the D06 export`；54 行里 4 行出自 `--batch` 的用例。`AGENTS.md` 表里的 56 条出自这一次。
-- **门禁。** 合并之前在试并的树上（`304aee5`，和 `4d92574` 是同一棵树）跑过全套 8 道：构建、clippy、缺文档检查、不带默认特性的 985 条、wasm32、byte-audit 都过；测试 475 个程序，2 632 通过、3 失败、3 忽略，失败的就是上面 3 条；`cargo fmt --all -- --check` 在那个临时工作区里退出 1，是 Windows 的命令行太长（os error 206），不是格式问题，用同一个 rustfmt 分批查过，476 个目标 0 处差异。打上两处期望值之后重跑了受影响的两个测试程序（27 条、22 条全过）、格式检查和 clippy。这一个提交之后在整改线的工作区里跑的全套门禁和对照矩阵，记在 `docs/plans/2026-11-16-publish-review-followup.md` §9「两条线合并」一节。
+- **门禁。** 合并之前在试并的树上（`304aee5`，和 `4d92574` 是同一棵树）跑过全套 8 道：构建、clippy、缺文档检查、不带默认特性的 985 条、wasm32、byte-audit 都过；测试 476 个程序，2 632 通过、3 失败、3 忽略，失败的就是上面 3 条；`cargo fmt --all -- --check` 在那个临时工作区里退出 1，是 Windows 的命令行太长（os error 206），不是格式问题，用同一个 rustfmt 分批查过，476 个目标 0 处差异。打上两处期望值之后重跑了受影响的两个测试程序（27 条、22 条全过）、格式检查和 clippy。这一个提交（`9e2c1f8`）上在整改线的工作区里又跑了全套，8 道都退出 0：测试 476 个程序，2 635 通过、0 失败、3 忽略，`skipping: ` 1 行；clippy 0 条警告；缺文档检查 `current=0, baseline=0`；不带默认特性 985 条；wasm32 过；byte-audit 3 份基线各 `Regressions: 0`。这是第二遍：第一遍编译测试程序时机器的内存不够（rustc 报 `memory allocation of 2097152 bytes failed`），测试一道一条用例都没有跑；第二遍多设了 `CARGO_BUILD_JOBS=8`，把并行编译数限到 8，八道的命令行没有改。对照矩阵在 `9e2c1f8` 上又跑了一遍，和试并的树上那一遍 717 个文件全部相同；README 的命令照原文又跑了一遍，11 次的退出码和 stdout 都相同。细账在 `docs/plans/2026-11-16-publish-review-followup.md` §9「两条线合并」一节。
 - **没有改的。**
   - `src/publish/stored_values.rs` 里一句注释说「下面四个」，下面列的是三个（没有 `ReliefPressure`）；`f4c7763` 的提交说明也是「四个」。是导出线自己的话，没有动。
   - `f4c7763` 的提交说明写七张验收图多 968 个值（851 + 117）；按它自己改的钉子加起来是 970。差的 2 个没有去追。
@@ -32,10 +32,12 @@
   - `src/publish/xml_writer.rs`、`catalog.rs` 里说分支点的映射要等 DWG 的数据库夹具确认的几句：现在仍然成立。
   - 计划里检查点 5、6 说「会红两条」的那两句是当时的话，没有回头改；实际的情形记在 §9 新加的一节。
 - **没有验到的。**
-  - CI 没有跑：没有 push。
+  - CI 没有跑：没有 push。`alias_summary` 那一条用例要本机的 I井场 语料，没有语料的机器上它打一行 `skipping` 就算过，CI 上红不出来。
   - 「只有仓库」那一栏的软跳过数没有重读：那要把本机 `D:\work\…` 下的语料挪开。
+  - 导出线自己的树（`d329c2f`）没有跑门禁，只构建了它的发布程序、跑了矩阵。
   - pid-plot 的 7 个提交只经过测试门禁，没有另外看导出的 PDF。
   - 只在这台 Windows 机器上跑过。
+  - 记 `9e2c1f8` 上这些读数的那个提交只改本文件和那份计划，没有再跑门禁；这两份文档没有哪段代码去读。
 
 ### publish：文档照现状补齐：`--strict`、`shortfalls`、文件整份到位；README 的命令照原文跑过，改对两处（审核整改 T6.4，2026-11-17）
 
