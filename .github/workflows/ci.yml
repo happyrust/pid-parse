@@ -63,8 +63,14 @@ jobs:
         # them, but we keep an explicit step so CI failures point
         # clearly at the examples layer (compared to library build
         # failures further up). Runtime is near-zero because `build
-        # --all-targets` warmed the cache.
-        run: cargo build --locked --examples
+        # --all-targets` warmed the cache, and `--workspace` is what
+        # lets this step use that cache. Without it cargo selects the
+        # root package alone and resolves the features of a dozen
+        # dependencies differently (`serde`, `clap`, `regex`, ...), so
+        # it rebuilds them, the crate, and every example a second
+        # time; with some 300 examples that second copy no longer fits
+        # on the runner's disk.
+        run: cargo build --locked --workspace --examples
 
       - name: cargo clippy (workspace, fail on any warning)
         # --workspace makes the vendored crate a hard gate alongside the
