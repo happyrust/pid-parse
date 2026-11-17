@@ -898,11 +898,13 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         if let Some(stored) = &attached.stored_values {
             eprintln!(
                 "oracle-exp stored values: {} written, {} labels confirmed, {} labels kept \
-                 where the dump says otherwise, {} left out unspelled",
+                 where the dump says otherwise, {} left out unspelled, {} names left out \
+                 because a label disagrees with the dump",
                 stored.written,
                 stored.confirmed_labels,
                 stored.disagreeing_labels,
                 stored.unspelled,
+                stored.withheld,
             );
             for reason in &stored.unread {
                 eprintln!("oracle-exp stored values: not read: {reason}");

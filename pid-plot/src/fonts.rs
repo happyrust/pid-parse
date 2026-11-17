@@ -515,10 +515,10 @@ fn subset_or_whole(key: &str, bytes: &[u8], text: &str) -> Result<(Vec<u8>, bool
     Ok((bytes.to_vec(), false))
 }
 
-/// `fontcull`'s own plan with one fix: the name table stays whole — the
-/// public [`fontcull::subset_font_data`] plans an empty name-ID set,
-/// which drops `name` entirely and leaves the subset unnameable, and a
-/// face pdfcraft cannot name cannot embed.
+/// `fontcull`'s own plan with one fix: the name table keeps the records
+/// that name the face — the public [`fontcull::subset_font_data`] plans an
+/// empty name-ID set, which drops `name` entirely and leaves the subset
+/// unnameable, and a face pdfcraft cannot name cannot embed.
 fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, String> {
     use fontcull_klippa::{Plan, SubsetFlags, subset_font};
     use fontcull_read_fonts::collections::IntSet;
@@ -543,14 +543,32 @@ fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, Strin
     //   embedder names `Identity-H` and writes no `WMode`, `DW2` or `W2`;
     // - the signature, which a subset no longer matches, and `TSIV`, the
     //   private source of the hinting tool: 9 264 and 39 780 of the 90 972
-    //   bytes of an Arial Narrow subset.
+    //   bytes of an Arial Narrow subset;
+    // - `VDMX`, `hdmx` and `LTSH`, what GDI caches for its own hinted
+    //   rendering (234 388 of the 2 528 396 bytes the programs of the
+    //   eleven reference sheets decode to), and `PCLT`, which only a PCL
+    //   printer reads. A reader scales the outline and takes every width
+    //   from the font dictionary;
+    // - the layout tables, `kern`, `GPOS`, `GSUB`, `GDEF` and `JSTF`, and
+    //   `MERG` and `meta`, which only other tools read. A PDF states each
+    //   glyph and where it goes, so the reader shapes, kerns and justifies
+    //   nothing, and the writer takes every advance from `hmtx`, or for
+    //   Arial's printable ASCII from the GDI widths it holds, never from
+    //   these.
     let unread_tables: IntSet<Tag> = [
-        b"EBDT", b"EBLC", b"EBSC", b"vmtx", b"vhea", b"DSIG", b"TSIV",
+        b"EBDT", b"EBLC", b"EBSC", b"vmtx", b"vhea", b"DSIG", b"TSIV", b"VDMX", b"hdmx", b"LTSH",
+        b"PCLT", b"kern", b"GPOS", b"GSUB", b"GDEF", b"JSTF", b"MERG", b"meta",
     ]
     .into_iter()
     .map(Tag::new)
     .collect();
-    let name_ids: IntSet<NameId> = IntSet::all();
+    // The name table keeps the records `0..=6`, the IDs HarfBuzz keeps by
+    // default (copyright, family, subfamily, unique ID, full name, version
+    // and PostScript name), in every language the face holds them in, so
+    // pdfcraft names the program from the record it always did. The
+    // licence text alone was 114 490 of the 195 496 bytes of the eleven
+    // sheets' name tables.
+    let name_ids: IntSet<NameId> = (0..=6).map(NameId::new).collect();
     let langs: IntSet<u16> = IntSet::all();
     let layout_scripts: IntSet<Tag> = IntSet::all();
     let layout_features: IntSet<Tag> =
@@ -803,23 +821,28 @@ mod tests {
     /// A subset carries none of the tables a page never reads. NSimSun's
     /// vertical metrics came through whole — 115 488 bytes of `vmtx` in a
     /// subset of 97 glyphs — and so did Arial Narrow's signature and the
-    /// private table of its hinting tool; the page sets every font
-    /// horizontally (`Identity-H`), a subset no longer matches its
-    /// signature, and no reader opens `TSIV`.
+    /// private table of its hinting tool, and every face's GDI device
+    /// metrics, layout tables and the tables of other tools; the page sets
+    /// every font horizontally (`Identity-H`), a subset no longer matches
+    /// its signature, and no PDF reader opens the rest.
     ///
-    /// Inter carries none of the four, so they are put in by hand: what
-    /// matters is that a table of that tag does not come out, whatever it
-    /// holds.
+    /// A table Inter lacks is put in by hand: what matters is that a table
+    /// of that tag does not come out, whatever it holds.
     #[test]
     fn a_subset_carries_no_table_a_page_never_reads() {
         use fontcull_skrifa::{FontRef, Tag};
         use fontcull_write_fonts::FontBuilder;
 
-        let unread = [b"vmtx", b"vhea", b"DSIG", b"TSIV"];
+        let unread = [
+            b"vmtx", b"vhea", b"DSIG", b"TSIV", b"VDMX", b"hdmx", b"LTSH", b"PCLT", b"kern",
+            b"GPOS", b"GSUB", b"GDEF", b"JSTF", b"MERG", b"meta",
+        ];
         let inter = FontRef::new(pdfcraft_fonts::INTER_REGULAR).expect("Inter parses");
         let mut builder = FontBuilder::new();
         for tag in unread {
-            builder.add_raw(Tag::new(tag), vec![0u8; 64]);
+            if inter.table_data(Tag::new(tag)).is_none() {
+                builder.add_raw(Tag::new(tag), vec![0u8; 64]);
+            }
         }
         let face = builder.copy_missing_tables(inter).build();
         let carried = FontRef::new(&face).expect("the face parses");
@@ -845,6 +868,43 @@ mod tests {
         assert!(
             came_through.is_empty(),
             "the subset still carries {came_through:?}"
+        );
+    }
+
+    /// A subset's name table keeps the records `0..=6` the face holds and
+    /// no other, and pdfcraft names the subset as it names the face:
+    /// Inter's licence text and its URLs do not come out.
+    #[test]
+    fn a_subset_keeps_only_the_name_records_that_name_the_face() {
+        use fontcull_read_fonts::{FontRef, TableProvider};
+
+        let ids = |bytes: &[u8]| -> Vec<u16> {
+            let font = FontRef::new(bytes).expect("the program parses");
+            let mut ids: Vec<u16> = font
+                .name()
+                .expect("a name table")
+                .name_record()
+                .iter()
+                .map(|record| record.name_id().to_u16())
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        let face = pdfcraft_fonts::INTER_REGULAR;
+        assert!(
+            ids(face).iter().any(|id| *id > 6),
+            "Inter holds no record past the PostScript name, so nothing is left out"
+        );
+        let chars = "AB".chars().collect();
+        let subset = super::subset_face(face, &chars).expect("the face subsets");
+        let kept: Vec<u16> = ids(face).into_iter().filter(|id| *id <= 6).collect();
+        assert_eq!(ids(subset.as_slice()), kept, "the subset's name records");
+        let named = pdfcraft_fonts::embedding::names(face).expect("pdfcraft names the face");
+        assert_eq!(
+            pdfcraft_fonts::embedding::names(&subset),
+            Ok(named),
+            "pdfcraft names the subset otherwise than the face it was cut from"
         );
     }
 

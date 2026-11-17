@@ -1,72 +1,55 @@
-//! DWG plant MDF smoke + blockage-visibility gate.
+//! DWG end-to-end publish gate — the committed backup package.
 //!
-//! Stage-1 of the publish XML "DWG MDF onboarding" plan.
-//! The suite formerly used the A01 / TEST02 source as a
-//! stand-in whenever a test *wanted* DWG-shape coverage. This
-//! file is the single test entry that binds the DWG reference
-//! `_Data.xml` / `_Meta.xml` to the DWG MDF fixture at
-//! [`common::DWG_MDF_PATH`].
+//! The DWG plant is committed as a whole backup package
+//! (`test-file/backup-test/DWG-0202GP06-01_p`): an Oracle `exp` dump
+//! (`Export.dmp`), the `SPPIDDataMap.xml` inside `RefData~4~804.zip`,
+//! and the drawing's own `.pid`. There is no `Export.mdf` — the
+//! database line cannot read this plant, and the thirteen gates that
+//! used to wait for one never ran.
 //!
-//! When the MDF fixture is absent every test in this file
-//! soft-skips through [`common::DWG_MDF_MISSING_HINT`] so
-//! the blockage is surfaced in test output, NOT silently
-//! ignored. The hint explicitly tells the reader that
-//! Stage 2–4 verification (loader canonical-field
-//! enrichment, A24 / A27b whitelist closure,
-//! `PIDBranchPoint` / `PIDPipingBranchPoint` parity) is NOT
-//! validated on this run.
+//! They now run on the Oracle line the CLI's `--oracle-exp` takes:
+//! the committed `.pid` published against its package's own dump and
+//! data map. `common::generate_dwg_data_xml` / `generate_dwg_meta_xml`
+//! run exactly that and hand back the documents a delivery writes.
 //!
-//! When the MDF fixture is present:
+//! What this file holds:
 //!
-//! 1. The loader must succeed on [`common::DWG_DRAWING_UID`].
-//! 2. The writer must produce a non-empty `_Data.xml` and a
-//!    `_Meta.xml` whose `DocUID` / `Plant` attributes agree
-//!    with [`common::DWG_DRAWING_UID`] /
-//!    [`common::DWG_PLANT_NAME`] (which, in turn, were
-//!    sourced from the reference fixture — so this is a
-//!    transitively-grounded sanity check on the fixture's
-//!    drawing UID too).
-//! 3. The writer's DWG-style `_Data.xml` must follow the A29
-//!    convention of emitting `Name` (not `ItemTag`) on
-//!    `<PIDPipeline><IObject>`. This is the smallest
-//!    end-to-end guarantee that [`PublishStyle::Dwg`] is
-//!    actually in effect and the helper wired it up.
+//! 1. The `_Meta.xml` carries the reference's `DocUID` / `Plant` /
+//!    `DocName`.
+//! 2. The `_Data.xml` follows the DWG convention of naming a
+//!    `<PIDPipeline><IObject>` by `Name` and not `ItemTag`.
+//! 3. The two branch-point tags are counted against the reference,
+//!    with the registered difference stated: the Oracle line writes
+//!    four `PIDBranchPoint` where the reference carries five (the
+//!    fifth is the OPC point whose representation this drawing's
+//!    `.pid` does not place), and four `PIDPipingBranchPoint`, which
+//!    is the reference's count.
 
 mod common;
 use common::{
     generate_dwg_data_xml, generate_dwg_meta_xml, load_reference_dwg_xml, DWG_DRAWING_UID,
-    DWG_MDF_PATH, DWG_PLANT_NAME,
+    DWG_PLANT_NAME,
 };
 
-/// Surface MDF presence in test output so a reader can see
-/// at a glance whether the DWG-dependent gates ran or
-/// soft-skipped. This test never fails — its job is purely
-/// diagnostic; it's the human-readable complement to the
-/// soft-skip messages the helpers print.
-#[test]
-fn dwg_mirror_presence_smoke() {
-    let present = std::path::Path::new(DWG_MDF_PATH).exists();
-    if present {
-        eprintln!("DWG MDF fixture present at `{DWG_MDF_PATH}` — Stage 2-4 gates CAN run.");
-    } else {
-        eprintln!(
-            "DWG MDF fixture absent at `{DWG_MDF_PATH}` — Stage 2-4 gates WILL NOT run. \
-             See other tests in this file for the soft-skip message."
-        );
-    }
-}
+/// The branch points the Oracle line writes, and what the reference
+/// carries. The gap is the OPC point on a representation the `.pid`
+/// does not hold: `oracle-exp opc:` on the run says `4 PIDBranchPoint
+/// written`, and the reference's fifth (`799B9008DB6848F28127C78AC745C5A8`,
+/// name `278`) sits on a representation this drawing never places.
+const DWG_PID_BRANCH_POINTS: usize = 4;
+const DWG_REFERENCE_PID_BRANCH_POINTS: usize = 5;
+const DWG_PIPING_BRANCH_POINTS: usize = 4;
+const DWG_REFERENCE_PIPING_BRANCH_POINTS: usize = 4;
 
-/// When the MDF fixture lands, the loader must produce a drawing
-/// whose emitted `_Meta.xml` carries the same `DocUID` /
-/// `Plant` as the reference fixture. Keeps the constants in
-/// [`common`] honest — the moment either drifts, this gate
-/// fires.
+/// The emitted `_Meta.xml` must carry the reference fixture's
+/// `DocUID` / `Plant` / `DocName`. Keeps the constants in [`common`]
+/// honest — the moment either drifts, this gate fires.
 #[test]
-fn dwg_mirror_end_to_end_meta_xml_agrees_with_reference_identifiers() {
+fn dwg_meta_xml_agrees_with_reference_identifiers() {
     let Some(generated_result) = generate_dwg_meta_xml() else {
         return;
     };
-    let generated = generated_result.expect("write_meta_xml should succeed on DWG MDF");
+    let generated = generated_result.expect("the package's meta document renders");
     assert!(
         generated.contains(&format!("DocUID=\"{DWG_DRAWING_UID}\"")),
         "DWG _Meta.xml must carry the reference DocUID; emitted:\n{generated}"
@@ -81,17 +64,14 @@ fn dwg_mirror_end_to_end_meta_xml_agrees_with_reference_identifiers() {
     );
 }
 
-/// Ditto for `_Data.xml`: MDF-driven writer output must be
-/// non-empty and must follow the DWG-style `IObject`
-/// convention (A29) on `<PIDPipeline>` — this is the
-/// smallest end-to-end assertion that
-/// [`PublishStyle::Dwg`] was actually applied.
+/// The `_Data.xml` must be non-empty and must follow the DWG-style
+/// `IObject` convention on `<PIDPipeline>`: `Name`, no `ItemTag`.
 #[test]
-fn dwg_mirror_end_to_end_data_xml_follows_dwg_style_on_pipeline() {
+fn dwg_data_xml_follows_dwg_style_on_pipeline() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    let generated = generated_result.expect("write_data_xml should succeed on DWG MDF");
+    let generated = generated_result.expect("the package's data document renders");
     assert!(
         !generated.is_empty(),
         "DWG _Data.xml writer output must not be empty"
@@ -101,9 +81,6 @@ fn dwg_mirror_end_to_end_data_xml_follows_dwg_style_on_pipeline() {
         "DWG _Data.xml must contain at least one PIDPipeline; got:\n{generated}"
     );
 
-    // A29 DWG convention: PIDPipeline IObject uses Name and
-    // drops ItemTag. We look at the first PIDPipeline IObject
-    // line and assert the shape.
     let first_pipeline_iobject = generated
         .split("<PIDPipeline>")
         .nth(1)
@@ -115,52 +92,73 @@ fn dwg_mirror_end_to_end_data_xml_follows_dwg_style_on_pipeline() {
         "DWG _Data.xml should have at least one PIDPipeline IObject"
     );
     assert!(
+        first_pipeline_iobject.contains("Name="),
+        "DWG-style PIDPipeline IObject must state Name; got:\n{first_pipeline_iobject}"
+    );
+    assert!(
         !first_pipeline_iobject.contains("ItemTag="),
         "DWG-style PIDPipeline IObject must drop ItemTag; got:\n{first_pipeline_iobject}"
     );
 }
 
-// -----------------------------------------------------------------
-// Stage-4 — PIDBranchPoint + PIDPipingBranchPoint end-to-end gates
-// -----------------------------------------------------------------
-
-/// When the MDF fixture is present and the loader surfaces
-/// BranchPoint-typed model items, the writer must emit
-/// `<PIDBranchPoint>` blocks with the canonical 8-interface
-/// shape and Name attribute. Count must match the DWG reference
-/// (5 instances). Soft-skips when the MDF fixture is absent.
+/// `<PIDBranchPoint>` is written once per OPC point the drawing
+/// places. The reference carries one more, on a representation this
+/// `.pid` does not hold; the difference is registered above.
 #[test]
-fn dwg_mirror_emits_pid_branch_point_matching_reference_count() {
+fn dwg_emits_the_pid_branch_points_the_drawing_places() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    let generated = generated_result.expect("write_data_xml should succeed on DWG MDF");
+    let generated = generated_result.expect("the package's data document renders");
     let Some(reference) = load_reference_dwg_xml() else {
         return;
     };
     let gen_count = generated.matches("<PIDBranchPoint>").count();
     let ref_count = reference.matches("<PIDBranchPoint>").count();
     assert_eq!(
-        gen_count, ref_count,
-        "PIDBranchPoint count must match reference ({ref_count}); generated {gen_count}"
+        (gen_count, ref_count),
+        (DWG_PID_BRANCH_POINTS, DWG_REFERENCE_PID_BRANCH_POINTS),
+        "PIDBranchPoint: the Oracle line writes {gen_count}, the reference carries {ref_count}"
     );
 }
 
-/// Ditto for `<PIDPipingBranchPoint>` — 4 instances in the
-/// reference, each carrying the `.BPT` UID suffix.
+/// `<PIDPipingBranchPoint>` — four in the reference, each carrying
+/// the `.BPT` UID suffix, and four from the Oracle line.
 #[test]
-fn dwg_mirror_emits_piping_branch_point_matching_reference_count() {
+fn dwg_emits_the_piping_branch_points_the_reference_carries() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    let generated = generated_result.expect("write_data_xml should succeed on DWG MDF");
+    let generated = generated_result.expect("the package's data document renders");
     let Some(reference) = load_reference_dwg_xml() else {
         return;
     };
     let gen_count = generated.matches("<PIDPipingBranchPoint>").count();
     let ref_count = reference.matches("<PIDPipingBranchPoint>").count();
     assert_eq!(
-        gen_count, ref_count,
-        "PIDPipingBranchPoint count must match reference ({ref_count}); generated {gen_count}"
+        (gen_count, ref_count),
+        (DWG_PIPING_BRANCH_POINTS, DWG_REFERENCE_PIPING_BRANCH_POINTS),
+        "PIDPipingBranchPoint: the Oracle line writes {gen_count}, the reference carries \
+         {ref_count}"
+    );
+    let bpt_uids: Vec<&str> = generated
+        .split("<PIDPipingBranchPoint>")
+        .skip(1)
+        .filter_map(|rest| {
+            let uid_line = rest.split('\n').find(|line| line.contains("<IObject"))?;
+            let start = uid_line.find("UID=\"")? + 5;
+            let end = start + uid_line[start..].find('"')?;
+            Some(&uid_line[start..end])
+        })
+        .collect();
+    assert_eq!(bpt_uids.len(), DWG_PIPING_BRANCH_POINTS);
+    let bad: Vec<&str> = bpt_uids
+        .iter()
+        .copied()
+        .filter(|uid| !uid.ends_with(".BPT"))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "every PIDPipingBranchPoint IObject UID must end in `.BPT`; offending: {bad:?}"
     );
 }

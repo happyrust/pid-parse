@@ -711,7 +711,10 @@ fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
 /// objects are the reference's `LongMaterialDescription3`. The heat
 /// exchanger, mechanical and note branches have no sample of any kind, and
 /// nothing in the corpus contradicts a branch.
-fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn published_attribute(
+    property: &str,
+    class: &str,
+) -> Option<(&'static str, &'static str)> {
     let instrument = INSTRUMENT_CLASSES.contains(&class);
     let equipment = EQUIPMENT_CLASSES.contains(&class);
     match property {

@@ -1,46 +1,117 @@
-//! Mirror-backed DWG generated-vs-reference `_Data.xml` parity gates.
+//! DWG generated-vs-reference `_Data.xml` parity gates, on the Oracle
+//! line.
 //!
-//! A24 / A27b document how the bundled A01 and DWG reference
-//! fixtures differ from each other. They are useful as fixture
-//! facts, but they are NOT the same thing as "did our generated
-//! DWG XML match the DWG reference once a real DWG MDF fixture
-//! was available?".
+//! The DWG plant is committed as a whole backup package: an Oracle
+//! `exp` dump and the `SPPIDDataMap.xml` beside the drawing's `.pid`.
+//! `common::generate_dwg_data_xml` publishes the `.pid` against them,
+//! which is the CLI's `--oracle-exp` line, and this file scores that
+//! document against the bundled `DWG-0202GP06-01_Data.xml`.
 //!
-//! This file adds that missing acceptance layer:
-//!
-//! * generated DWG `_Data.xml` must emit at least the same
-//!   interface set as the DWG reference for every in-scope tag,
-//! * generated DWG `_Data.xml` must emit at least the same
-//!   attribute set per `(tag, interface)` pair as the reference,
-//! * the two branch-point tags must match the reference not only
-//!   on count but also on first-occurrence shape and UID
-//!   conventions.
-//!
-//! All tests soft-skip through `common::generate_dwg_data_xml()`
-//! when the DWG MDF fixture is absent.
+//! What the Oracle line states and the reference does not, and the
+//! reverse, is pinned below with the reason each gap has. The gaps are
+//! content the `.pid` + dump pair cannot state — the plant register's
+//! columns, the codelist levels above an enum's leaf, the vendor's
+//! composed tags — or content this drawing's `.pid` does not place.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pid_parse::publish::{parse_attrs_per_interface_per_tag, parse_interfaces_per_tag};
 
 mod common;
 use common::{generate_dwg_data_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY};
 
+/// Interfaces the reference states on a tag and the Oracle line does
+/// not. One entry, the A25 vessel variant: `SmartPlant` writes
+/// `ILowPressureTank` + `ILowPressureTankOcc` on the reference's
+/// open-top-tank vessel; the writer emits the horizontal-drum shape on
+/// every vessel until a conditional emit path reads the vessel type.
+const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[(
+    "PIDProcessVessel",
+    &["ILowPressureTank", "ILowPressureTankOcc"],
+)];
+
+/// `(tag, interface, attribute)` the reference states and the Oracle
+/// line does not, each with what it is:
+///
+/// * `PIDDrawing/IDocument.DocTitle` — the document register's title;
+///   the `.pid` states the drawing's name and UID, not the register
+///   row (the CLI prints it among its excused classes).
+/// * `PIDPipeline/IFluidSystem.FluidCode` — the reference's first
+///   pipeline carries a fluid code the dump's data map does not map.
+/// * `PIDPipingComponent/IPipingComponent.PipingComponentType1..3` —
+///   the component type triple, on a component whose class the dump
+///   does not state them for.
+/// * `PIDPipingConnector/IObject.Name` — the vendor's composed tag
+///   (`BV1001406A`, `-PG-1001105-F9--F9--`, `FT-753`); the line states
+///   the UID and the derived interfaces, not the composed name.
+/// * `PIDPipingConnector/IInsulatedItem.InsulThickSrc`,
+///   `ISlopedPipingItem.SlopedPipeDirection` — the insulation and
+///   slope source references, which the dump stores on the pipe run
+///   and the reference states on the connector.
+/// * `PIDProcessVessel/IObject.Description`,
+///   `IEquipment.EqType0..3`, `IEquipment.EquipmentTrimSpec` — the
+///   equipment register's columns.
+const ATTRIBUTES_THE_LINE_LEAVES_OUT: &[(&str, &str, &[&str])] = &[
+    ("PIDDrawing", "IDocument", &["DocTitle"]),
+    ("PIDPipeline", "IFluidSystem", &["FluidCode"]),
+    (
+        "PIDPipingComponent",
+        "IPipingComponent",
+        &[
+            "PipingComponentType1",
+            "PipingComponentType2",
+            "PipingComponentType3",
+        ],
+    ),
+    ("PIDPipingConnector", "IObject", &["Name"]),
+    (
+        "PIDPipingConnector",
+        "ISlopedPipingItem",
+        &["SlopedPipeDirection"],
+    ),
+    ("PIDPipingConnector", "IInsulatedItem", &["InsulThickSrc"]),
+    ("PIDProcessVessel", "IObject", &["Description"]),
+    (
+        "PIDProcessVessel",
+        "IEquipment",
+        &[
+            "EqType0",
+            "EqType1",
+            "EqType2",
+            "EqType3",
+            "EquipmentTrimSpec",
+        ],
+    ),
+];
+
+/// `PIDBranchPoint` — the Oracle line writes one per OPC point the
+/// drawing places (4); the reference carries 5. The fifth
+/// (`799B9008DB6848F28127C78AC745C5A8`, name `278`) hangs on a
+/// representation this `.pid` does not hold.
+const DWG_PID_BRANCH_POINTS: usize = 4;
+const DWG_REFERENCE_PID_BRANCH_POINTS: usize = 5;
+
+/// The generated DWG `_Data.xml` must state every interface the
+/// reference states, except the one registered vessel variant.
 #[test]
-fn generated_dwg_interface_parity_matches_reference_superset_when_mirror_available() {
+fn dwg_generated_interface_parity_is_the_reference_less_the_registered_variant() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
     let Some(reference_xml) = load_reference_dwg_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
 
     let generated_ifaces = parse_interfaces_per_tag(&generated_xml);
     let reference_ifaces = parse_interfaces_per_tag(&reference_xml);
 
+    let registered: BTreeMap<&str, BTreeSet<&str>> = INTERFACES_THE_LINE_LEAVES_OUT
+        .iter()
+        .map(|(tag, ifaces)| (*tag, ifaces.iter().copied().collect()))
+        .collect();
+
     let mut missing_per_tag: Vec<(String, Vec<String>)> = Vec::new();
-    let mut extra_per_tag: Vec<(String, Vec<String>)> = Vec::new();
     let mut checked_tags: Vec<String> = Vec::new();
 
     for tag in TAGS_UNDER_PARITY {
@@ -48,29 +119,23 @@ fn generated_dwg_interface_parity_matches_reference_superset_when_mirror_availab
         let Some(ref_set) = reference_ifaces.get(tag) else {
             continue;
         };
+        checked_tags.push(tag.to_string());
         let Some(gen_set) = generated_ifaces.get(tag) else {
             missing_per_tag.push((tag.to_string(), ref_set.iter().cloned().collect()));
             continue;
         };
-        let missing: Vec<String> = ref_set.difference(gen_set).cloned().collect();
-        let extra: Vec<String> = gen_set.difference(ref_set).cloned().collect();
+        let mut missing: Vec<String> = ref_set.difference(gen_set).cloned().collect();
+        if let Some(excused) = registered.get(tag) {
+            missing.retain(|iface| !excused.contains(iface.as_str()));
+        }
         if !missing.is_empty() {
             missing_per_tag.push((tag.to_string(), missing));
         }
-        if !extra.is_empty() {
-            extra_per_tag.push((tag.to_string(), extra));
-        }
-        checked_tags.push(tag.to_string());
     }
 
-    eprintln!("--- DWG generated-vs-reference interface parity ---");
+    eprintln!("--- DWG generated-vs-reference interface parity (oracle-exp) ---");
     eprintln!("Checked tags: {checked_tags:?}");
-    if !extra_per_tag.is_empty() {
-        eprintln!("Extra interfaces on generated DWG XML (informational, tolerated):");
-        for (tag, extra) in &extra_per_tag {
-            eprintln!("  [{tag}] extra: {extra:?}");
-        }
-    }
+    eprintln!("Registered variant: {INTERFACES_THE_LINE_LEAVES_OUT:?}");
     if !missing_per_tag.is_empty() {
         eprintln!("Missing interfaces on generated DWG XML (HARD CONTRACT):");
         for (tag, missing) in &missing_per_tag {
@@ -80,26 +145,34 @@ fn generated_dwg_interface_parity_matches_reference_superset_when_mirror_availab
 
     assert!(
         missing_per_tag.is_empty(),
-        "DWG generated interface parity regression: writer is missing interfaces \
-         present in the SmartPlant DWG reference:\n{missing_per_tag:#?}",
+        "DWG generated interface parity regression: the Oracle line is missing interfaces \
+         the SmartPlant DWG reference states, beyond the registered A25 vessel variant:\n\
+         {missing_per_tag:#?}",
     );
 }
 
+/// The generated DWG `_Data.xml` must state every attribute the
+/// reference states on an interface both documents carry, except the
+/// pinned register / codelist / composed-tag set.
 #[test]
-fn generated_dwg_attribute_parity_matches_reference_superset_when_mirror_available() {
+fn dwg_generated_attribute_parity_is_the_reference_less_the_registered_columns() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
     let Some(reference_xml) = load_reference_dwg_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
 
     let generated_attrs = parse_attrs_per_interface_per_tag(&generated_xml);
     let reference_attrs = parse_attrs_per_interface_per_tag(&reference_xml);
 
+    let registered: BTreeMap<(&str, &str), BTreeSet<&str>> = ATTRIBUTES_THE_LINE_LEAVES_OUT
+        .iter()
+        .map(|(tag, iface, attrs)| ((*tag, *iface), attrs.iter().copied().collect()))
+        .collect();
+
     let mut missing: Vec<(String, String, Vec<String>)> = Vec::new();
-    let mut extras: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut checked_pairs = 0usize;
 
     for tag in TAGS_UNDER_PARITY {
@@ -115,25 +188,18 @@ fn generated_dwg_attribute_parity_matches_reference_superset_when_mirror_availab
                 continue;
             };
             checked_pairs += 1;
-            let miss: Vec<String> = ref_attrs.difference(gen_attrs).cloned().collect();
-            let ext: Vec<String> = gen_attrs.difference(ref_attrs).cloned().collect();
+            let mut miss: Vec<String> = ref_attrs.difference(gen_attrs).cloned().collect();
+            if let Some(excused) = registered.get(&(tag, iface.as_str())) {
+                miss.retain(|attr| !excused.contains(attr.as_str()));
+            }
             if !miss.is_empty() {
                 missing.push((tag.to_string(), iface.clone(), miss));
-            }
-            if !ext.is_empty() {
-                extras.push((tag.to_string(), iface.clone(), ext));
             }
         }
     }
 
-    eprintln!("--- DWG generated-vs-reference attribute parity ---");
+    eprintln!("--- DWG generated-vs-reference attribute parity (oracle-exp) ---");
     eprintln!("Checked (tag, interface) pairs: {checked_pairs}");
-    if !extras.is_empty() {
-        eprintln!("Extra attrs on generated DWG XML (informational, tolerated):");
-        for (tag, iface, ext) in &extras {
-            eprintln!("  [{tag} / {iface}] extra: {ext:?}");
-        }
-    }
     if !missing.is_empty() {
         eprintln!("Missing attrs on generated DWG XML (HARD CONTRACT):");
         for (tag, iface, miss) in &missing {
@@ -143,45 +209,55 @@ fn generated_dwg_attribute_parity_matches_reference_superset_when_mirror_availab
 
     assert!(
         missing.is_empty(),
-        "DWG generated attribute parity regression: writer is missing attributes \
-         the SmartPlant DWG reference declares. Each entry is one \
-         `(PID tag, interface, attr_name[s])` triplet:\n{missing:#?}",
+        "DWG generated attribute parity regression: the Oracle line is missing attributes \
+         the SmartPlant DWG reference declares, beyond the registered register / codelist / \
+         composed-tag columns. Each entry is one `(PID tag, interface, attr_name[s])` \
+         triplet:\n{missing:#?}",
     );
 }
 
+/// `PIDBranchPoint` shape and count: the count is the OPC points this
+/// drawing places (4 against the reference's 5); the interface set and
+/// attribute shape of the first occurrence are the reference's.
 #[test]
-fn generated_dwg_pid_branch_point_shape_matches_reference_when_mirror_available() {
+fn dwg_generated_pid_branch_point_shape_matches_the_reference() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
     let Some(reference_xml) = load_reference_dwg_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
 
     assert_branch_point_shape_matches_reference(
         &generated_xml,
         &reference_xml,
         "PIDBranchPoint",
         false,
+        DWG_PID_BRANCH_POINTS,
+        DWG_REFERENCE_PID_BRANCH_POINTS,
     );
 }
 
+/// `PIDPipingBranchPoint` shape and count: 4 on both sides, each
+/// `.BPT` UID.
 #[test]
-fn generated_dwg_piping_branch_point_shape_matches_reference_when_mirror_available() {
+fn dwg_generated_piping_branch_point_shape_matches_the_reference() {
     let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
     let Some(reference_xml) = load_reference_dwg_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("the package's data document renders");
 
     assert_branch_point_shape_matches_reference(
         &generated_xml,
         &reference_xml,
         "PIDPipingBranchPoint",
         true,
+        4,
+        4,
     );
 }
 
@@ -190,12 +266,18 @@ fn assert_branch_point_shape_matches_reference(
     reference_xml: &str,
     tag: &str,
     require_bpt_suffix: bool,
+    generated_count: usize,
+    reference_count: usize,
 ) {
-    let generated_count = generated_xml.matches(&format!("<{tag}>")).count();
-    let reference_count = reference_xml.matches(&format!("<{tag}>")).count();
     assert_eq!(
-        generated_count, reference_count,
-        "{tag} count must match reference ({reference_count}); generated {generated_count}",
+        generated_xml.matches(&format!("<{tag}>")).count(),
+        generated_count,
+        "{tag} count on the Oracle line",
+    );
+    assert_eq!(
+        reference_xml.matches(&format!("<{tag}>")).count(),
+        reference_count,
+        "{tag} count in the DWG reference",
     );
 
     let generated_ifaces = parse_interfaces_per_tag(generated_xml);
@@ -223,10 +305,7 @@ fn assert_branch_point_shape_matches_reference(
 
     if require_bpt_suffix {
         let uids = collect_iobject_uids_for_tag(generated_xml, tag);
-        assert!(
-            !uids.is_empty(),
-            "{tag} should emit at least one IObject UID on DWG output",
-        );
+        assert_eq!(uids.len(), generated_count, "{tag} IObject count");
         let bad: Vec<String> = uids
             .into_iter()
             .filter(|uid| !uid.ends_with(".BPT"))
@@ -280,17 +359,12 @@ fn extract_quoted_attr(inside: &[u8], needle: &[u8]) -> Option<String> {
                 return None;
             }
             let quote = inside[after_eq];
-            if quote != b'"' && quote != b'\'' {
-                return None;
-            }
             let value_start = after_eq + 1;
-            let close = inside[value_start..]
+            let end = inside[value_start..]
                 .iter()
-                .position(|&b| b == quote)
+                .position(|&byte| byte == quote)
                 .map(|off| value_start + off)?;
-            return std::str::from_utf8(&inside[value_start..close])
-                .ok()
-                .map(str::to_string);
+            return String::from_utf8(inside[value_start..end].to_vec()).ok();
         }
         i += 1;
     }

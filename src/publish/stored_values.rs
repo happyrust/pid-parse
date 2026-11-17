@@ -21,14 +21,16 @@
 //! later revision than the sheet and its reference, two runs' sequence
 //! numbers do (`0401` / `0301` on the sheet and in the reference, `01` /
 //! `565` in the dump): an item the sheet does not label cannot be checked
-//! that way, and is written from the dump.
+//! that way, and is written from the dump. The item's identity
+//! ([`IDENTITY_PROPERTIES`]) is not: a dump that any label of the drawing
+//! contradicts gives no item its name.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::oracle_exp::{backup_uid_key, nominal_spelling, ExpTables, StoredCell};
-use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidValueSource};
+use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidPublishItem, PidValueSource};
 use super::placement::{place_property, DumpColumn, Unplaced};
-use crate::backup::DataMap;
+use crate::backup::{DataMap, MapProperty};
 
 /// One published property this stage reads from the dump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +72,55 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IInlineComponent",
         property: "IsFlowDirectional",
     },
+    // The four below are the values the references state on an object the
+    // sheet's labels do not name: an instrument's sequence number and its
+    // measured variable, an equipment item's tag prefix, and an inline
+    // instrument's relief pressure. The map places each in a table the
+    // dump holds, under an item type that is the object's own (`Instrument`,
+    // `EquipmentOther` / `Mechanical` / `Vessel`) or one the map spells and
+    // the dump does not (`InstrumentInline`, read under `Instrument`).
+    StoredProperty {
+        interface: "INamedInstrument",
+        property: "InstrTagSequenceNo",
+    },
+    StoredProperty {
+        interface: "INamedInstrument",
+        property: "MeasuredVariable",
+    },
+    StoredProperty {
+        interface: "INamedEquipment",
+        property: "EquipPrefix",
+    },
+];
+
+/// The item's own identity: written only from a dump that no label of the
+/// drawing contradicts.
+///
+/// A tag is what a later revision renumbers. `DWG-0202GP06-01`'s package
+/// dump is such a revision: the sheet's labels and its reference give two
+/// runs sequence numbers the dump does not, and two instrument functions
+/// tags without the `A3-` the dump gives them, and the dump tags a
+/// component and the vessel the reference names nothing. A label checks
+/// only the item it sits on, so where any label disagrees, no item takes
+/// its identity from the dump.
+///
+/// `Description` is the second half of the same identity, and the map
+/// sends it from the same place as `Name`: an equipment item's
+/// `IObject.Description` is its item type's `Name` (`Vessel.Name`,
+/// `EquipmentOther.Name`, `Mechanical.Name` → `T_PlantItem.Name`) while
+/// its `Name` is the item type's `ItemTag`, and an off-page connector's
+/// `Description` is `OPC.Description` (`T_ModelItem.Description`). The
+/// two therefore stand or fall together: a drawing whose dump renumbers
+/// the tags has no `Description` to state either.
+pub const IDENTITY_PROPERTIES: &[StoredProperty] = &[
+    StoredProperty {
+        interface: "IObject",
+        property: "Name",
+    },
+    StoredProperty {
+        interface: "IObject",
+        property: "Description",
+    },
 ];
 
 /// What [`attach_stored_values`] did to one drawing.
@@ -83,6 +134,9 @@ pub struct StoredValues {
     pub disagreeing_labels: usize,
     /// Cells left out because [`spell`] does not spell them.
     pub unspelled: usize,
+    /// [`IDENTITY_PROPERTIES`] values no label gave, left out because a
+    /// label of the drawing disagrees with the dump.
+    pub withheld: usize,
     /// Placed columns this dump does not let the stage read, each with the
     /// reason, sorted.
     pub unread: BTreeSet<String>,
@@ -155,9 +209,9 @@ fn attribute_read<'a>(criteria: Option<&str>, attribute: &'a str) -> &'a str {
 /// conversion the map names for it.
 type Source = Option<(DumpColumn, Option<String>)>;
 
-/// Write [`STORED_PROPERTIES`] on the published items of `drawing` from
-/// the dump behind `tables`, keeping each item's attributes ordered by
-/// interface and name.
+/// Write [`STORED_PROPERTIES`] and [`IDENTITY_PROPERTIES`] on the published
+/// items of `drawing` from the dump behind `tables`, keeping each item's
+/// attributes ordered by interface and name.
 ///
 /// A column the dump does not let the stage read is reported in
 /// [`StoredValues::unread`], and the drawing is published without it.
@@ -167,79 +221,297 @@ pub fn attach_stored_values(
     map: &DataMap,
 ) -> StoredValues {
     let mut report = StoredValues::default();
-    let mut sources: HashMap<(&'static str, &'static str, String), Source> = HashMap::new();
-    let mut columns: HashMap<DumpColumn, Option<HashMap<String, StoredCell>>> = HashMap::new();
-    let mut rows: HashMap<String, HashSet<String>> = HashMap::new();
-    for item in &mut drawing.items {
-        let Some(class) = item.class else {
-            continue;
-        };
-        let key = backup_uid_key(&item.uid);
+    let mut reader = Reader {
+        tables,
+        map,
+        sources: HashMap::new(),
+        columns: HashMap::new(),
+        rows: HashMap::new(),
+    };
+    let mut identity = Vec::new();
+    for (index, item) in drawing.items.iter_mut().enumerate() {
         for stored in STORED_PROPERTIES {
-            let source = sources
-                .entry((class, stored.property, item.model_item_type.clone()))
-                .or_insert_with(|| {
-                    source_of(map, tables, class, stored.property, &item.model_item_type)
-                });
-            let Some((column, criteria)) = source else {
-                continue;
-            };
-            let cells = columns.entry(column.clone()).or_insert_with(|| {
-                match tables.stored_column(column) {
-                    Ok(Some(cells)) => Some(cells),
-                    Ok(None) => {
-                        report
-                            .unread
-                            .insert(format!("{column}: the dump holds no such column"));
-                        None
-                    }
-                    Err(error) => {
-                        report.unread.insert(format!("{column}: {error}"));
-                        None
-                    }
-                }
-            });
-            let Some(cells) = cells.as_ref() else {
-                continue;
-            };
-            let value = if let Some(cell) = cells.get(&key) {
-                let Some(value) = spell(criteria.as_deref(), cell) else {
-                    report.unspelled += 1;
-                    continue;
-                };
-                value
-            } else {
-                let Some(null) = spell_null(criteria.as_deref()) else {
-                    continue;
-                };
-                let held = rows
-                    .entry(column.table.clone())
-                    .or_insert_with(|| rows_of(tables, &column.table));
-                if !held.contains(&key) {
-                    continue;
-                }
-                null.to_string()
-            };
-            match item.attributes.iter().find(|existing| {
-                existing.interface == stored.interface && existing.name == stored.property
-            }) {
-                Some(existing) if existing.value == value => report.confirmed_labels += 1,
-                Some(_) => report.disagreeing_labels += 1,
-                None => {
-                    report.written += 1;
-                    item.attributes.push(PidPublishAttribute {
-                        interface: stored.interface,
-                        name: stored.property,
-                        value,
-                        source: PidValueSource::PlacedColumn(column.clone()),
-                    });
-                }
+            if let Some((value, column)) = reader.read(item, stored, &mut report) {
+                state(item, stored, value, column, true, &mut report);
             }
         }
+        for stored in IDENTITY_PROPERTIES {
+            if !states_identity(item, stored) {
+                continue;
+            }
+            if let Some((value, column)) = reader.read(item, stored, &mut report) {
+                identity.push((index, stored, value, column));
+            }
+        }
+    }
+    // A label of the drawing is what says whether the dump is this
+    // revision. The drawing's own block is not one of them: its
+    // `IObject.Name` is the file's name (the publish line derives it, and
+    // a run given an 8.3 alias reads `IB031~1`), not a tag the sheet
+    // letters, so it cannot contradict the register.
+    let contradicted = report.disagreeing_labels > 0
+        || identity.iter().any(|(index, stored, value, _)| {
+            let item = &drawing.items[*index];
+            item.class != Some("PIDDrawing")
+                && label(item, stored).is_some_and(|label| label != value)
+        });
+    for (index, stored, value, column) in identity {
+        state(
+            &mut drawing.items[index],
+            stored,
+            value,
+            column,
+            !contradicted,
+            &mut report,
+        );
+    }
+    for item in &mut drawing.items {
         item.attributes
             .sort_by(|left, right| (left.interface, left.name).cmp(&(right.interface, right.name)));
     }
     report
+}
+
+/// The value a label already gives `item` for `stored`.
+fn label<'a>(item: &'a PidPublishItem, stored: &StoredProperty) -> Option<&'a str> {
+    item.attributes
+        .iter()
+        .find(|existing| existing.interface == stored.interface && existing.name == stored.property)
+        .map(|existing| existing.value.as_str())
+}
+
+/// Whether `item`'s class states `stored` at all.
+///
+/// A note's `Description` is mapped by the plant's data map
+/// (`PIDNote.Description`, from the item type's `Description`), but this
+/// line publishes no note description — `pid_load::published_attribute`
+/// answers `None` for `PIDNote` — and no reference drawing states one: a
+/// note's block carries its uid and nothing else. Reading the column the
+/// map sends it from would report a column the dump does not hold for a
+/// value nothing asks for, so a note is passed over.
+fn states_identity(item: &PidPublishItem, stored: &StoredProperty) -> bool {
+    if stored.interface == "IObject" && stored.property == "Description" {
+        return item.class != Some("PIDNote");
+    }
+    true
+}
+
+/// Hold `value` against the label that gives `item` the property, or write
+/// it where none does and `write` allows.
+fn state(
+    item: &mut PidPublishItem,
+    stored: &StoredProperty,
+    value: String,
+    column: DumpColumn,
+    write: bool,
+    report: &mut StoredValues,
+) {
+    match label(item, stored) {
+        Some(label) if label == value => report.confirmed_labels += 1,
+        Some(_) => report.disagreeing_labels += 1,
+        None if !write => report.withheld += 1,
+        None => {
+            report.written += 1;
+            item.attributes.push(PidPublishAttribute {
+                interface: stored.interface,
+                name: stored.property,
+                value,
+                source: PidValueSource::PlacedColumn(column),
+            });
+        }
+    }
+}
+
+/// The dump's columns, read once each, and where each property of each
+/// item type is placed in them.
+struct Reader<'a> {
+    tables: &'a ExpTables,
+    map: &'a DataMap,
+    sources: HashMap<(&'static str, &'static str, String), Source>,
+    columns: HashMap<DumpColumn, Option<HashMap<String, StoredCell>>>,
+    rows: HashMap<String, HashSet<String>>,
+}
+
+impl Reader<'_> {
+    /// `stored` of `item` as the reference spells it, and the column it is
+    /// read from; `None` when the dump states nothing this stage spells.
+    fn read(
+        &mut self,
+        item: &PidPublishItem,
+        stored: &StoredProperty,
+        report: &mut StoredValues,
+    ) -> Option<(String, DumpColumn)> {
+        let class = item.class?;
+        let (map, tables) = (self.map, self.tables);
+        let (column, criteria) = self
+            .sources
+            .entry((class, stored.property, item.model_item_type.clone()))
+            .or_insert_with(|| {
+                source_of(map, tables, class, stored.property, &item.model_item_type)
+            })
+            .clone()?;
+        let key = backup_uid_key(&item.uid);
+        if let Some(template) = criteria.as_deref().and_then(name_template) {
+            let name = self.compose(item, &key, template, report)?;
+            return Some((name, column));
+        }
+        let value = if let Some(cell) = self.cell(&column, &key, report)? {
+            let Some(value) = spell(criteria.as_deref(), &cell) else {
+                report.unspelled += 1;
+                return None;
+            };
+            value
+        } else {
+            let null = spell_null(criteria.as_deref())?;
+            let held = self
+                .rows
+                .entry(column.table.clone())
+                .or_insert_with(|| rows_of(tables, &column.table));
+            if !held.contains(&key) {
+                return None;
+            }
+            null.to_string()
+        };
+        Some((value, column))
+    }
+
+    /// The cell of `column` in the row `key`: `None` when the column is not
+    /// read, `Some(None)` when the row holds none.
+    fn cell(
+        &mut self,
+        column: &DumpColumn,
+        key: &str,
+        report: &mut StoredValues,
+    ) -> Option<Option<StoredCell>> {
+        let tables = self.tables;
+        let cells = self
+            .columns
+            .entry(column.clone())
+            .or_insert_with(|| match tables.stored_column(column) {
+                Ok(Some(cells)) => Some(cells),
+                Ok(None) => {
+                    report
+                        .unread
+                        .insert(format!("{column}: the dump holds no such column"));
+                    None
+                }
+                Err(error) => {
+                    report.unread.insert(format!("{column}: {error}"));
+                    None
+                }
+            })
+            .as_ref()?;
+        Some(cells.get(key).cloned())
+    }
+
+    /// A name composed by `template` out of the item's own attributes, each
+    /// placed under the item's type. A part the map lists in an enum list
+    /// is that enum's name (`25 mm`, `6"`, `1-1/2"`: the codelist's display
+    /// text, not the published `6 in`); any other is spelled under the
+    /// conversion the map names for it.
+    ///
+    /// A run whose `ItemTag` is NULL has no name: none of the 382 such
+    /// connectors of the seven acceptance references is named. The two
+    /// [`ONLY_EMPTY`] parts are written empty when NULL and leave the name
+    /// out when stated; every other part has to be stated. A part that is
+    /// not spelled or not placed leaves the name out unspelled.
+    fn compose(
+        &mut self,
+        item: &PidPublishItem,
+        key: &str,
+        template: &str,
+        report: &mut StoredValues,
+    ) -> Option<String> {
+        let mut name = String::new();
+        let mut rest = template;
+        let mut first = true;
+        while let Some(open) = rest.find('<') {
+            name.push_str(&rest[..open]);
+            let Some(close) = rest[open..].find('>').map(|close| open + close) else {
+                report.unspelled += 1;
+                return None;
+            };
+            let attribute = &rest[open + 1..close];
+            rest = &rest[close + 1..];
+            let Ok(column) = self
+                .tables
+                .dictionary()
+                .place(&item.model_item_type, attribute)
+            else {
+                report.unspelled += 1;
+                return None;
+            };
+            let property = attribute_property(self.map, &item.model_item_type, attribute);
+            match self.cell(&column, key, report)? {
+                Some(_) if ONLY_EMPTY.contains(&attribute) => {
+                    report.unspelled += 1;
+                    return None;
+                }
+                Some(cell) => {
+                    let Some(part) = spell_part(self.map, property, &cell) else {
+                        report.unspelled += 1;
+                        return None;
+                    };
+                    name.push_str(&part);
+                }
+                None if first => return None,
+                None if ONLY_EMPTY.contains(&attribute) => {}
+                None => {
+                    report.unspelled += 1;
+                    return None;
+                }
+            }
+            first = false;
+        }
+        name.push_str(rest);
+        Some(name)
+    }
+}
+
+/// The conversion that composes a run's name out of its attributes, by the
+/// template the map writes after it (`EFAdapter.PpConnNameConv,
+/// <ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`).
+const COMPOSED_NAME: &str = "EFAdapter.PpConnNameConv";
+
+/// The parts of a composed name the references show only empty: every one
+/// of the 631 names the seven acceptance references compose ends in `--`.
+/// The plant's dump states an insulation purpose on 21 runs (code 10003,
+/// which the map names `IC`) and no thickness; no reference shows how a
+/// stated one reads in a name.
+const ONLY_EMPTY: [&str; 2] = ["InsulPurpose", "InsulThick"];
+
+/// The template of a [`COMPOSED_NAME`] conversion.
+fn name_template(criteria: &str) -> Option<&str> {
+    let (conversion, template) = criteria.split_once(',')?;
+    (conversion.trim() == COMPOSED_NAME).then(|| template.trim())
+}
+
+/// The map's entry for `item_type`'s `attribute`.
+fn attribute_property<'a>(
+    map: &'a DataMap,
+    item_type: &str,
+    attribute: &str,
+) -> Option<&'a MapProperty> {
+    let class = map.classes.iter().find(|class| class.name == item_type)?;
+    map.properties
+        .iter()
+        .find(|property| property.class_uid == class.uid && property.name == attribute)
+}
+
+/// One part of a composed name: a code of an enum list is the enum's name,
+/// anything else is spelled under the attribute's own conversion.
+fn spell_part(map: &DataMap, property: Option<&MapProperty>, cell: &StoredCell) -> Option<String> {
+    let list = property.and_then(|property| property.value_list.as_deref());
+    if let (Some(list), StoredCell::Integer(code)) = (list, cell) {
+        if map.enum_list_members.contains_key(list) {
+            let name = &map.enums.get(map.enum_numbered(list, *code)?)?.name;
+            return (!name.is_empty()).then(|| name.clone());
+        }
+    }
+    let criteria = property
+        .and_then(|property| property.process_criteria.as_deref())
+        .filter(|criteria| name_template(criteria).is_none());
+    spell(criteria, cell)
 }
 
 /// The `SP_ID`s of the rows of `table`, folded like [`backup_uid_key`];
@@ -365,12 +637,20 @@ mod tests {
         assert_eq!(nozzle.interface, "IPipingSpecifiedItem");
         assert_eq!(nozzle.value, "1.6AR12");
         assert_eq!(nozzle.source, placed("T_Nozzle", "PipingMaterialsClass"));
+        // The package's dump is a later revision than the sheet: four labels
+        // of the drawing disagree with it, six cells it holds are not spelled
+        // by a conversion this stage runs, and the two identity values of an
+        // item no label gives are withheld because of the disagreement. The
+        // four properties the map places in a table the dump holds are
+        // confirmed by the sheet's own labels where the sheet states them.
         assert_eq!(
             report,
             StoredValues {
                 written: 28,
-                confirmed_labels: 17,
-                disagreeing_labels: 2,
+                confirmed_labels: 21,
+                disagreeing_labels: 4,
+                unspelled: 6,
+                withheld: 3,
                 ..StoredValues::default()
             }
         );
@@ -470,7 +750,7 @@ mod tests {
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
         assert_eq!(report.written, 25);
-        assert_eq!(report.disagreeing_labels, 3);
+        assert_eq!(report.disagreeing_labels, 5);
         let run = stated(
             &drawing,
             "4C2F232018CE42E8B7FFCABD553BDBC4",
@@ -517,11 +797,15 @@ mod tests {
 
     /// A property no label gives is one the diff holds a run that states it
     /// on some object to on every object; a labelled one is held by the
-    /// labels' rule instead.
+    /// labels' rule instead. The two identity properties are the exception
+    /// the other way round: a label gives them where the sheet labels the
+    /// item, and this stage writes them where it does not, so they are
+    /// excused in a run without the dump and held in a run with it.
     #[test]
     fn the_properties_no_label_gives_are_the_ones_the_diff_holds_a_dump_run_to() {
         let unlabelled: BTreeSet<(&str, &str)> = STORED_PROPERTIES
             .iter()
+            .chain(IDENTITY_PROPERTIES)
             .map(|stored| (stored.interface, stored.property))
             .filter(|pair| !crate::publish::catalog::LABELLED_ATTRIBUTES.contains(pair))
             .collect();
@@ -529,7 +813,15 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(unlabelled, held);
+        // `IObject.Name` is excused in a run without the dump by the
+        // vendor's composed-name rule (source 5 of `diff_exclusions`), not
+        // by an exclusion class: the comment on
+        // `EXCLUDED_ATTRIBUTE_CLASSES` keeps `Name` and `UID` out of every
+        // member list so that a differing name stays in the diff.
         for (interface, attribute) in held {
+            if (interface, attribute) == ("IObject", "Name") {
+                continue;
+            }
             assert!(
                 crate::publish::catalog::excluded_attribute(interface, attribute).is_some(),
                 "{interface}.{attribute} is excused in a run without the dump"

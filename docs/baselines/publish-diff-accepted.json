@@ -362,7 +362,7 @@
         "oracle-exp": {
           "command": "pid_publish_xml.exe \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图.pid\" --diff-against \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图_Data.xml\" --plant P01 --oracle-exp D:\\work\\cad\\pid-test-data\\Export.dmp --datamap D:\\work\\cad\\pid-test-data\\RefData~4~804.zip",
           "clean_exit_code": 0,
-          "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 0, not in reference 0), rels 4107 (not in reference 0)",
+          "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6673 (different 0, not in reference 0), rels 4107 (not in reference 0)",
           "alias_exit_code": 1,
           "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 1, not in reference 0), rels 4107 (not in reference 0)",
           "informational_line": "按名配对 79 个 PIDPipeline，106 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 23（登记上界 23）"
@@ -882,6 +882,142 @@
         "The interface is IDrawingRepresentation.GraphicOID on <PIDRepresentation>, not IDrawingPresentation.",
         "This figure exits 1 on purpose. The baseline records the differences; it does not make them go away."
       ]
+    },
+    "DWG-0202GP06-01 · .pid": {
+      "what": "The single-`.pid` publish of test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid against the reference DWG-0202GP06-01_Data.xml, which is the same revision as the sheet. Exits 1 by design: the 17 values below are accepted and recorded, not suppressed.",
+      "command": "pid_publish_xml.exe test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid --diff-against test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Data.xml --plant P01",
+      "why": "A `.pid` file states what the sheet draws, not what the plant database registers: the six runs' insulation thickness, slope and thickness source, the vessel's height and volumetric capacity, one component's catalog part number and the vessel's `IObject.Description` all come from the dump. The same drawing with its package's dump is the figure `tests/publish_completeness.rs` pins as `DWG-0202GP06-01 · --oracle-exp`, and it states 197 of the reference's 236 values instead of these 71.",
+      "exit_code": 1,
+      "summary": "pid export diff: objects 78 (extra 0, wrong class 0), values 71 (different 0, not in reference 0), rels 81 (not in reference 0)",
+      "differences": {
+        "missing_object": {
+          "count": 17,
+          "items": [
+            {
+              "line": "missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "4C2F232018CE42E8B7FFCABD553BDBC4",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "4C2F232018CE42E8B7FFCABD553BDBC4",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipeDirection: \"@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "4C2F232018CE42E8B7FFCABD553BDBC4",
+              "interface_attribute": "ISlopedPipingItem.SlopedPipeDirection",
+              "reference": "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}"
+            },
+            {
+              "line": "missing value PIDPipingConnector 4C2F232018CE42E8B7FFCABD553BDBC4 ISlopedPipingItem.SlopedPipingAngle: \"2.9999910000486E-03 rad\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "4C2F232018CE42E8B7FFCABD553BDBC4",
+              "interface_attribute": "ISlopedPipingItem.SlopedPipingAngle",
+              "reference": "2.9999910000486E-03 rad"
+            },
+            {
+              "line": "missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "61BA43D9FA854B8EBE6E0FACBCBC64BD",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector 61BA43D9FA854B8EBE6E0FACBCBC64BD IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "61BA43D9FA854B8EBE6E0FACBCBC64BD",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDPipingComponent 6CC683FA4C6A409D8CB4D3F22BBE194E IPartOcc.CatalogPartNumber: \"A3\" not in generated",
+              "class_name": "PIDPipingComponent",
+              "uid": "6CC683FA4C6A409D8CB4D3F22BBE194E",
+              "interface_attribute": "IPartOcc.CatalogPartNumber",
+              "reference": "A3"
+            },
+            {
+              "line": "missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "7042E6B0A1A944E390A08A5A44771C46",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector 7042E6B0A1A944E390A08A5A44771C46 IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "7042E6B0A1A944E390A08A5A44771C46",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "9CE3F6FAD0F949DDBE8630B0A0DB5993",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector 9CE3F6FAD0F949DDBE8630B0A0DB5993 IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "9CE3F6FAD0F949DDBE8630B0A0DB5993",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "C7C3E09265174C91AC008F3CE02E9653",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector C7C3E09265174C91AC008F3CE02E9653 IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "C7C3E09265174C91AC008F3CE02E9653",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.InsulThickSrc: \"@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "ED053C1B662D45F887952F3C5968A094",
+              "interface_attribute": "IInsulatedItem.InsulThickSrc",
+              "reference": "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+            },
+            {
+              "line": "missing value PIDPipingConnector ED053C1B662D45F887952F3C5968A094 IInsulatedItem.TotalInsulThick: \"50 mm\" not in generated",
+              "class_name": "PIDPipingConnector",
+              "uid": "ED053C1B662D45F887952F3C5968A094",
+              "interface_attribute": "IInsulatedItem.TotalInsulThick",
+              "reference": "50 mm"
+            },
+            {
+              "line": "missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IPBSItem.HeightRelativeToGrade: \"3 m\" not in generated",
+              "class_name": "PIDProcessVessel",
+              "uid": "F1081777313D41ABB14B7B18FA210D83",
+              "interface_attribute": "IPBSItem.HeightRelativeToGrade",
+              "reference": "3 m"
+            },
+            {
+              "line": "missing value PIDProcessVessel F1081777313D41ABB14B7B18FA210D83 IProcessVessel.ProcessVessel_VesselVolumetricCapacity: \"27 m^3\" not in generated",
+              "class_name": "PIDProcessVessel",
+              "uid": "F1081777313D41ABB14B7B18FA210D83",
+              "interface_attribute": "IProcessVessel.ProcessVessel_VesselVolumetricCapacity",
+              "reference": "27 m^3"
+            }
+          ]
+        }
+      },
+      "category_counts": {
+        "missing_object": 17
+      }
     }
   },
   "acceptance_figures": {
@@ -935,7 +1071,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 4655 (extra 0, wrong class 0), values 9755 (different 0, not in reference 0), rels 6175 (not in reference 0)",
+            "summary": "pid export diff: objects 4655 (extra 0, wrong class 0), values 9990 (different 0, not in reference 0), rels 6175 (not in reference 0)",
             "informational_line": "按名配对 123 个 PIDPipeline，163 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 34（登记上界 34）"
           }
         }
@@ -950,7 +1086,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 5493 (extra 0, wrong class 0), values 11509 (different 0, not in reference 0), rels 7274 (not in reference 0)",
+            "summary": "pid export diff: objects 5493 (extra 0, wrong class 0), values 11791 (different 0, not in reference 0), rels 7274 (not in reference 0)",
             "informational_line": "按名配对 141 个 PIDPipeline，192 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 42（登记上界 42）"
           }
         }
@@ -965,7 +1101,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1219 (extra 0, wrong class 0), values 2479 (different 0, not in reference 0), rels 1685 (not in reference 0)",
+            "summary": "pid export diff: objects 1219 (extra 0, wrong class 0), values 2549 (different 0, not in reference 0), rels 1685 (not in reference 0)",
             "informational_line": "按名配对 31 个 PIDPipeline，47 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 0（登记上界 0）"
           }
         }
@@ -980,7 +1116,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1260 (extra 0, wrong class 0), values 2636 (different 0, not in reference 0), rels 1652 (not in reference 0)",
+            "summary": "pid export diff: objects 1260 (extra 0, wrong class 0), values 2717 (different 0, not in reference 0), rels 1652 (not in reference 0)",
             "informational_line": "按名配对 47 个 PIDPipeline，56 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }
@@ -995,7 +1131,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1248 (extra 0, wrong class 0), values 2591 (different 0, not in reference 0), rels 1636 (not in reference 0)",
+            "summary": "pid export diff: objects 1248 (extra 0, wrong class 0), values 2659 (different 0, not in reference 0), rels 1636 (not in reference 0)",
             "informational_line": "按名配对 30 个 PIDPipeline，33 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }
@@ -1010,7 +1146,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1229 (extra 0, wrong class 0), values 2543 (different 0, not in reference 0), rels 1614 (not in reference 0)",
+            "summary": "pid export diff: objects 1229 (extra 0, wrong class 0), values 2610 (different 0, not in reference 0), rels 1614 (not in reference 0)",
             "informational_line": "按名配对 28 个 PIDPipeline，32 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }

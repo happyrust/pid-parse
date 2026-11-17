@@ -429,6 +429,10 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
         Some(&datamap),
     )
     .expect("pipelines");
+    // The stored cells the dump holds, the item's own identity among them:
+    // the CLI's `--oracle-exp` run attaches them, so a test that stops short
+    // of them would compare a document the CLI never writes.
+    pid_parse::publish::stored_values::attach_stored_values(&mut drawing, &exp_tables, &datamap);
     let generated_xml = write_pid_data_xml(&drawing, "P01");
     let reference_text = std::fs::read_to_string(reference_xml).expect("reference");
     let diff = pid_parse::publish::diff_pid_export(&generated_xml, &reference_text)
@@ -436,7 +440,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert!(diff.is_clean(), "{diff}");
     assert_eq!(
         (diff.objects, diff.values, diff.rels),
-        (3_093, 3_346, 4_107)
+        (3_093, 4_643, 4_107)
     );
     // G2 (census `contract-work/g2-evidence/devin/ref-only-inventory.log`):
     // nothing the reference carries is missing from the generated side; the
@@ -448,7 +452,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(diff.rels_not_in_generated, 0);
     assert_eq!(diff.objects_excused_by_design, 0);
     assert_eq!(diff.objects_paired_by_name, 79);
-    assert_eq!(diff.values_excused_by_design, 3_379);
+    assert_eq!(diff.values_excused_by_design, 2_082);
     assert_eq!(diff.rels_excused_by_design, 0);
     assert_eq!(diff.rels_paired_by_name, 106);
     assert_eq!(diff.pipelines_paired_by_name, 79);
@@ -1001,7 +1005,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_179);
-    assert_eq!(index["values"], 172_427);
+    assert_eq!(index["values"], 176_940);
     assert_eq!(index["relationships"], 106_812);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
@@ -2204,16 +2208,16 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
         stated,
         [
             ("001", 1, 1, 0),
-            ("002", 3, 9, 2),
-            ("222", 3, 9, 2),
-            ("DWG-0201GP01-01", 492, 878, 688),
+            ("002", 3, 10, 2),
+            ("222", 3, 10, 2),
+            ("DWG-0201GP01-01", 492, 886, 688),
             ("DWG-0201GP06-01", 170, 356, 233),
             ("DWG-0202GP06-01", 113, 226, 141),
             ("DWG-0104GP01-08", 5, 14, 4),
         ]
     );
     assert_eq!(index["objects"], 786);
-    assert_eq!(index["values"], 1_492);
+    assert_eq!(index["values"], 1_502);
     assert_eq!(index["relationships"], 1_070);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

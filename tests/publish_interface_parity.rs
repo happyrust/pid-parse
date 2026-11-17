@@ -24,6 +24,12 @@
 //!
 //! Both inputs skip cleanly when missing so CI workers without
 //! the `SmartPlant` TEST02 backup bundle continue to pass.
+//!
+//! The A01 reference exercises 8 of the 15 tags under parity. For the
+//! other seven the A01 drawing places no object at all, so the DWG
+//! reference is the shape authority: this test asks the writer not to
+//! emit a shape different from it, and `publish_dwg_generated_parity.rs`
+//! makes the real assertion on the DWG package the writer does publish.
 
 use std::collections::BTreeSet;
 
@@ -45,16 +51,51 @@ fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
     let generated_ifaces = parse_interfaces_per_tag(&generated_xml);
     let reference_ifaces = parse_interfaces_per_tag(&reference_xml);
 
+    // The A01 reference exercises 8 of the 15 tags under parity. A tag
+    // it does not carry is scored against the DWG reference instead —
+    // that fixture is committed and holds the other seven
+    // (`PIDBranchPoint`, `PIDPipingBranchPoint`, `PIDPipingComponent`,
+    // `PIDNote`, `PIDSignalConnector`, `PIDSignalPort`,
+    // `PIDControlSystemFunction`). The A01 drawing places none of those
+    // seven objects, so its generated document emits none of them:
+    // there the DWG reference is the shape authority and the check is
+    // that the writer does not emit a *different* shape — which is what
+    // `publish_dwg_generated_parity.rs` asserts for real, on the DWG
+    // package the writer does publish. Only a tag neither reference
+    // carries is passed over, and that is said.
+    let dwg_reference_xml = load_reference_dwg_xml();
+    let dwg_ifaces = dwg_reference_xml
+        .as_deref()
+        .map(parse_interfaces_per_tag)
+        .unwrap_or_default();
+
     let mut missing_per_tag: Vec<(String, Vec<String>)> = Vec::new();
     let mut extra_per_tag: Vec<(String, Vec<String>)> = Vec::new();
     let mut checked_tags = Vec::new();
+    let mut from_dwg = Vec::new();
+    let mut not_placed_here = Vec::new();
 
     for tag in TAGS_UNDER_PARITY {
         let tag = *tag;
         let Some(ref_set) = reference_ifaces.get(tag) else {
-            // A01 fixture doesn't exercise this tag — no parity
-            // to check. Still log it for diagnostic visibility.
-            eprintln!("skipping: [A23] tag `{tag}`: not present in the A01 reference");
+            let Some(dwg_set) = dwg_ifaces.get(tag) else {
+                eprintln!(
+                    "skipping: [A23] tag `{tag}`: present in neither the A01 nor the DWG \
+                     reference"
+                );
+                continue;
+            };
+            from_dwg.push(tag.to_string());
+            match generated_ifaces.get(tag) {
+                Some(gen_set) => {
+                    let missing: Vec<String> = dwg_set.difference(gen_set).cloned().collect();
+                    if !missing.is_empty() {
+                        missing_per_tag.push((tag.to_string(), missing));
+                    }
+                    checked_tags.push(tag.to_string());
+                }
+                None => not_placed_here.push(tag.to_string()),
+            }
             continue;
         };
         let Some(gen_set) = generated_ifaces.get(tag) else {
@@ -78,7 +119,9 @@ fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
     // Emit a diagnostic summary before any panic so the report
     // surfaces the full picture instead of the first failing tag.
     eprintln!("--- A23 interface-parity summary ---");
-    eprintln!("Checked tags: {checked_tags:?}");
+    eprintln!("Checked against the A01 reference: {checked_tags:?}");
+    eprintln!("Shape authority is the DWG reference for: {from_dwg:?}");
+    eprintln!("Of those, tags this drawing places none of: {not_placed_here:?}");
     if !missing_per_tag.is_empty() {
         eprintln!("Missing interfaces (reference has, generated lacks):");
         for (tag, miss) in &missing_per_tag {

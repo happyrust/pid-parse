@@ -1290,7 +1290,11 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
     ExcludedAttributeClass {
         class: "item identity columns",
         reason: "the item's own identity columns the plant database supplies: a differing \
-                 IObject.Name or IObject.UID stays in the diff.",
+                 IObject.Name or IObject.UID stays in the diff. A .pid file states neither an \
+                 item's own name nor its description — the sheet labels a tag, not the \
+                 register's identity — so a run without the dump leaves both out; an \
+                 --oracle-exp run states IObject.Name and IObject.Description from the dump's \
+                 own row, and withholds both where a label of the drawing disagrees with it.",
         members: &[("IObject", &["Description", "ItemTag"])],
     },
 ];
@@ -1350,10 +1354,21 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 25] = [
 /// Excluded attributes an `--oracle-exp` run states from the cells the dump
 /// stores them in (`stored_values`) and no label on the sheet gives: held
 /// like [`DUMP_CODELIST_ATTRIBUTES`].
-pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 3] = [
+///
+/// `IObject.Name` and `IObject.Description` are the item's own identity:
+/// the map publishes them from the item type's `Name` and `ItemTag`, which
+/// only the dump holds. A `.pid` run states neither on any object, so both
+/// stay excused there; a run with the dump states them where a label does
+/// not disagree with it, so a reference value it leaves out on another
+/// object is a finding. The two are named here rather than in
+/// [`STORED_PROPERTIES`] because a label, not this stage, is what fills them
+/// on a drawing that has one.
+pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 5] = [
     ("IConnector", "RepresentationsAreAllZeroLength"),
     ("IInlineComponent", "IsFlowDirectional"),
     ("IPIDTypical", "IsTypical"),
+    ("IObject", "Description"),
+    ("IObject", "Name"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

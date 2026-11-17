@@ -12,9 +12,10 @@
 //!   helper UIDs,
 //! * repeated emits of the same drawing must stay byte-identical,
 //! * the writer's generated DWG `_Meta.xml` matches the DWG
-//!   reference under the same semantic-field contract —
-//!   soft-skipped until the DWG MDF fixture lands (see
-//!   [`common::DWG_MDF_MISSING_HINT`]).
+//!   reference under the same semantic-field contract. The DWG
+//!   drawing is published through the Oracle line — its committed
+//!   `.pid` against the package's own `Export.dmp` and data map —
+//!   which is the only line the DWG plant has in the repository.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -448,39 +449,56 @@ fn generated_a01_meta_is_byte_stable_across_repeated_emits() {
     );
 }
 
-/// DWG-side sibling of the A01 parity gate. When the DWG
-/// MDF fixture is bundled, the writer's generated
-/// `_Meta.xml` must carry the same canonical shape as the
-/// bundled DWG reference (sans derived UIDs, per the same
-/// contract as A01). Soft-skipped until the MDF lands —
-/// see `DWG_MDF_MISSING_HINT` for the rationale message
-/// the helper logs.
+/// DWG-side sibling of the A01 parity gate: the writer's generated
+/// `_Meta.xml` must carry the same canonical shape as the bundled DWG
+/// reference.
 ///
-/// This is the test entry point that binds the DWG reference
-/// XML to the DWG MDF fixture; callers no longer need to
-/// fall back to the A01 fixture as a DWG-shape stand-in.
+/// Two fields are registered differences rather than drift, the same
+/// pair `publish::diff::META_ACCEPTED_DIFFERENCES` names for the CLI's
+/// meta gate: `DocVersionDate` (the `.pid` states no publish date, so
+/// the writer leaves the attribute empty) and `IFile.FilePath` (the
+/// reference stamps the publishing machine's share path). Everything
+/// else — the container attributes, the block order, the version and
+/// revision names and numbers, the file name and the three rel edges
+/// by role — must agree.
 #[test]
-fn generated_dwg_meta_matches_reference_summary_when_mirror_available() {
+fn generated_dwg_meta_matches_reference_summary() {
     let Some(reference_xml) = load_reference_dwg_meta_xml() else {
         return;
     };
     let Some(generated_result) = generate_dwg_meta_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG");
+    let generated_xml = generated_result.expect("the package's meta document renders");
 
     let reference = parse_meta_xml(&reference_xml);
     let generated = parse_meta_xml(&generated_xml);
 
+    // The registered differences, held to what the writer states.
     assert_eq!(
-        canonical_summary(&generated),
-        canonical_summary(&reference),
+        generated.document_version.doc_version_date, "",
+        "the `.pid` states no publish date; DocVersionDate stays empty"
+    );
+    assert_eq!(
+        generated.file.file_path, "",
+        "the writer states no FilePath; the reference stamps its own machine's"
+    );
+
+    let mut generated_summary = canonical_summary(&generated);
+    let mut reference_summary = canonical_summary(&reference);
+    generated_summary.version_date = String::new();
+    reference_summary.version_date = String::new();
+    generated_summary.file_path = String::new();
+    reference_summary.file_path = String::new();
+
+    assert_eq!(
+        generated_summary, reference_summary,
         "writer-generated DWG _Meta.xml drifted from the reference on semantic fields"
     );
 }
 
-/// Byte-stability for DWG `_Meta.xml`, mirror-gated the same
-/// way as the semantic parity test above.
+/// Byte-stability for DWG `_Meta.xml`: two publishes of the same
+/// package write the same bytes.
 #[test]
 fn generated_dwg_meta_is_byte_stable_across_repeated_emits() {
     let Some(first_result) = generate_dwg_meta_xml() else {

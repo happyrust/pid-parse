@@ -6,7 +6,7 @@ use std::process::Command;
 use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
-use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
+use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot_titled};
 
 #[path = "support/exported_page.rs"]
 mod exported_page;
@@ -67,7 +67,9 @@ fn five_drawings_round_trip_through_pdf() {
                 subset: face.subset,
             })
             .collect();
-        let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let pdf = write_plot_titled(model, &fonts, Some(*name))
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
+            .pdf;
         let exported = exported_page::pid_plot_page(
             &corpus.join(format!("{name}.pid")),
             &corpus,

@@ -272,6 +272,10 @@ name = "publish_meta_parity"
 required-features = ["backup"]
 
 [[test]]
+name = "publish_missing_data"
+required-features = ["backup"]
+
+[[test]]
 name = "publish_rel_parity"
 required-features = ["backup"]
 

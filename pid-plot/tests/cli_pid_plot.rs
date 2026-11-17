@@ -99,6 +99,17 @@
 //! value on — the symbol library this process would search — because it holds
 //! the child's layout against one made here; the symbol-file cases name a
 //! library of their own making.
+//!
+//! `--batch` is held to being the single exports of its drawings one after
+//! another: each page the bytes the single export writes, stdout and stderr
+//! what the single exports say, each page's account its own, a drawing that
+//! cannot be read failing alone with exit 1, and a batch with nothing it can
+//! export — too few arguments, no directory, a corpus that is not one, no
+//! `.pid` under the directory — exit 2 with nothing written. A page whose
+//! account does not balance is a fifth: exit 1 and a `drawing <path>
+//! unattributed <n>` line. No drawing in reach leaves a remainder, so that
+//! verdict is held in `pid_plot`'s own unit tests, and the case here holds a
+//! balanced batch to exit 0 and to name no page.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -5506,5 +5517,582 @@ fn a_refused_record_in_a_cached_symbol_body_warns_and_raises_suspect() {
             ledger.summary().suspect,
             "{said}"
         );
+    }
+}
+
+/// The usage's second line: the batch form.
+const BATCH_USAGE: &str = "pid_plot --batch <directory> <out-directory> [corpus]";
+
+/// The account a batch leaves in its out-directory.
+const BATCH_ACCOUNT: &str = "pid_plot-batch.json";
+
+/// `dir` removed, with whatever an earlier run left in it.
+fn gone(dir: &Path) -> PathBuf {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("remove {}: {error}", dir.display()),
+    }
+    dir.to_path_buf()
+}
+
+/// `dir`, made empty.
+fn fresh(dir: &Path) -> PathBuf {
+    gone(dir);
+    std::fs::create_dir_all(dir).unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    dir.to_path_buf()
+}
+
+/// Copy `from` to `to`, making the directory it goes in.
+fn copy_to(from: &Path, to: &Path) {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", parent.display()));
+    }
+    std::fs::copy(from, to)
+        .unwrap_or_else(|error| panic!("copy {} to {}: {error}", from.display(), to.display()));
+}
+
+/// Write `bytes` to `path`.
+fn write_to(path: &Path, bytes: &[u8]) {
+    std::fs::write(path, bytes).unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+}
+
+/// `pid_plot` handed this machine's font directory where it has one, and the
+/// symbol library this process would search, so that what a batch writes can
+/// be held against single exports, and layouts, made here.
+fn batch_child(fonts: &Result<OsString, String>) -> Command {
+    let mut command = pid_plot();
+    if let Ok(fonts) = fonts {
+        command.env("PID_PLOT_FONTS", fonts);
+    }
+    if let Some(library) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+        command.env("PID_SYMBOL_LIBRARY", library);
+    }
+    command
+}
+
+/// The account a batch left in `out`, read back.
+fn batch_account(out: &Path, outcome: &Outcome) -> serde_json::Value {
+    let path = out.join(BATCH_ACCOUNT);
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}\n{outcome}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("{}: {error}\n{outcome}", path.display()))
+}
+
+/// `--batch` without both of its directories is the usage and exit 2, with
+/// nothing on stdout.
+#[test]
+fn a_batch_without_its_two_directories_prints_the_usage_and_exits_2() {
+    let dir = scratch("batch-usage");
+    for outcome in [
+        run(pid_plot().arg("--batch")),
+        run(pid_plot().arg("--batch").arg(&dir)),
+    ] {
+        assert_eq!(outcome.code, Some(2), "{outcome}");
+        assert!(outcome.stderr.contains(USAGE), "{outcome}");
+        assert!(outcome.stderr.contains(BATCH_USAGE), "{outcome}");
+        assert!(outcome.stdout.is_empty(), "{outcome}");
+    }
+}
+
+/// A batch of a directory that is not there, or of a file, has nothing to
+/// export: exit 2, the path named, and nothing written.
+#[test]
+fn a_batch_of_what_is_not_a_directory_exits_2_and_writes_nothing() {
+    let dir = scratch("batch-not-a-directory");
+    let out = gone(&dir.join("out"));
+    for directory in [dir.join("no such directory"), d06()] {
+        let outcome = run(pid_plot()
+            .arg("--batch")
+            .arg(&directory)
+            .arg(&out)
+            .arg(fixtures()));
+        assert_eq!(outcome.code, Some(2), "{outcome}");
+        assert!(
+            outcome.stderr.contains(&format!(
+                "batch directory {} is not a directory",
+                directory.display()
+            )),
+            "{outcome}"
+        );
+        assert!(outcome.stderr.contains(USAGE), "{outcome}");
+        assert!(outcome.stdout.is_empty(), "{outcome}");
+        assert!(
+            !out.exists(),
+            "{} was made by a batch with nothing to export\n{outcome}",
+            out.display()
+        );
+    }
+}
+
+/// A batch takes its `[corpus]` as a single export does: one that is not a
+/// directory is refused before a drawing is exported.
+#[test]
+fn a_batch_against_a_corpus_that_is_not_a_directory_exits_2_and_writes_nothing() {
+    let dir = scratch("batch-corpus-not-a-directory");
+    let input = fresh(&dir.join("in"));
+    copy_to(&d06(), &input.join("D06.pid"));
+    let out = gone(&dir.join("out"));
+    let corpus = dir.join("no such corpus");
+    let outcome = run(pid_plot().arg("--batch").arg(&input).arg(&out).arg(&corpus));
+    assert_eq!(outcome.code, Some(2), "{outcome}");
+    assert!(
+        outcome
+            .stderr
+            .contains(&format!("corpus {} is not a directory", corpus.display())),
+        "{outcome}"
+    );
+    assert!(outcome.stderr.contains(USAGE), "{outcome}");
+    assert!(outcome.stdout.is_empty(), "{outcome}");
+    assert!(!out.exists(), "{} was made\n{outcome}", out.display());
+}
+
+/// A directory with no `.pid` under it at any depth is a batch with nothing
+/// to export: exit 2, and no account written that would read as an export
+/// of nothing.
+#[test]
+fn a_batch_of_a_directory_with_no_drawing_under_it_exits_2() {
+    let dir = scratch("batch-no-drawing");
+    let input = fresh(&dir.join("in"));
+    fresh(&input.join("empty"));
+    write_to(&input.join("notes.txt"), b"not a drawing");
+    let out = gone(&dir.join("out"));
+    let outcome = run(pid_plot()
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    assert_eq!(outcome.code, Some(2), "{outcome}");
+    assert!(
+        outcome
+            .stderr
+            .contains(&format!("no .pid drawing under {}", input.display())),
+        "{outcome}"
+    );
+    assert!(outcome.stdout.is_empty(), "{outcome}");
+    assert!(!out.exists(), "{} was made\n{outcome}", out.display());
+}
+
+/// A batch is the single exports of its drawings, one after another. Each
+/// page is the bytes `pid_plot <drawing.pid> <out.pdf> [corpus]` writes of
+/// the drawing where it sits; stderr is what the single exports say, in path
+/// order; stdout is what they print, each under the line that names the
+/// drawing and its page, and then the totals; and the account holds each
+/// page's ledger summary as its export printed it, its warnings, and the
+/// templates and symbols the layout here finds missing. A drawing in a
+/// subdirectory has its page in the same subdirectory of the out-directory,
+/// and a file that is not a `.pid` is passed over. Where no font directory
+/// is present every export stops at the first face, in the batch as alone,
+/// and the batch is held to failing each drawing as its single export does.
+#[test]
+fn a_batch_writes_each_page_as_its_single_export_does() {
+    let dir = scratch("batch-as-single");
+    let input = fresh(&dir.join("in"));
+    let out = gone(&dir.join("out"));
+    let alone = fresh(&dir.join("alone"));
+    let drawings = [input.join("D06.pid"), input.join("sub").join("A01.pid")];
+    let pages = [PathBuf::from("D06.pdf"), Path::new("sub").join("A01.pdf")];
+    copy_to(&d06(), &drawings[0]);
+    copy_to(&a01(), &drawings[1]);
+    write_to(&input.join("notes.txt"), b"not a drawing");
+    let fonts = fonts_for_a_child();
+    if let Err(searched) = &fonts {
+        eprintln!(
+            "batch-as-single: no font directory is present (searched {searched}), so every \
+             export can only get as far as the first missing face"
+        );
+    }
+    let batch = run(batch_child(&fonts)
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    let singles: Vec<Outcome> = drawings
+        .iter()
+        .zip(&pages)
+        .map(|(drawing, page)| {
+            run(batch_child(&fonts)
+                .arg(drawing)
+                .arg(alone.join(page))
+                .arg(fixtures()))
+        })
+        .collect();
+    let mut stdout = String::new();
+    for ((drawing, page), single) in drawings.iter().zip(&pages).zip(&singles) {
+        if single.code == Some(0) {
+            stdout.push_str(&format!(
+                "exported {} -> {}\n{}",
+                drawing.display(),
+                out.join(page).display(),
+                single.stdout
+            ));
+            let batched = std::fs::read(out.join(page))
+                .unwrap_or_else(|error| panic!("{}: {error}\n{batch}", page.display()));
+            let exported = std::fs::read(alone.join(page))
+                .unwrap_or_else(|error| panic!("{}: {error}\n{single}", page.display()));
+            assert!(
+                batched == exported,
+                "{}: the batch wrote other bytes than the single export\n{batch}",
+                page.display()
+            );
+        } else {
+            assert_eq!(single.code, Some(1), "{single}");
+            stdout.push_str(&format!("failed {}\n", drawing.display()));
+            assert!(
+                !out.join(page).exists(),
+                "{} was written for a drawing whose export failed\n{batch}",
+                page.display()
+            );
+        }
+    }
+    assert!(
+        batch.stdout.starts_with(&stdout),
+        "the batch's stdout is not its single exports', which begin\n{stdout}\n{batch}"
+    );
+    assert!(
+        batch
+            .stdout
+            .ends_with(&format!("summary {}\n", out.join(BATCH_ACCOUNT).display())),
+        "{batch}"
+    );
+    assert_eq!(
+        batch.stderr,
+        singles
+            .iter()
+            .map(|single| single.stderr.as_str())
+            .collect::<String>(),
+        "the batch's stderr is not its single exports'\n{batch}"
+    );
+    let exported = singles
+        .iter()
+        .filter(|single| single.code == Some(0))
+        .count();
+    let all = if exported == singles.len() { 0 } else { 1 };
+    assert_eq!(batch.code, Some(all), "{batch}");
+    let account = batch_account(&out, &batch);
+    assert_eq!(account["drawings"], 2, "{account:#}");
+    assert_eq!(account["exported"], exported, "{account:#}");
+    assert_eq!(account["failed"], singles.len() - exported, "{account:#}");
+    let entries = account["pages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the account lists no pages\n{account:#}"));
+    assert_eq!(entries.len(), 2, "{account:#}");
+    let mut suspect = 0;
+    for (((entry, drawing), page), single) in
+        entries.iter().zip(&drawings).zip(&pages).zip(&singles)
+    {
+        let relative = drawing
+            .strip_prefix(&input)
+            .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+        assert_eq!(
+            entry["drawing"],
+            relative.display().to_string(),
+            "{account:#}"
+        );
+        assert_eq!(
+            entry["warnings"],
+            serde_json::json!(warnings(&single.stderr)),
+            "{account:#}"
+        );
+        let model = lay_out_drawing(drawing, &fixtures())
+            .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+        assert_eq!(
+            entry["missing_templates"],
+            serde_json::json!(model.missing_templates),
+            "{account:#}"
+        );
+        assert_eq!(
+            entry["missing_symbols"],
+            serde_json::json!(model.missing_symbols),
+            "{account:#}"
+        );
+        if single.code == Some(0) {
+            assert_eq!(entry["pdf"], page.display().to_string(), "{account:#}");
+            assert!(entry["error"].is_null(), "{account:#}");
+            let bytes = std::fs::metadata(alone.join(page))
+                .unwrap_or_else(|error| panic!("{}: {error}", page.display()))
+                .len();
+            assert_eq!(entry["bytes"], bytes, "{account:#}");
+            for word in [
+                "entities",
+                "on_page",
+                "intentional",
+                "suspect",
+                "unattributed",
+            ] {
+                assert_eq!(
+                    entry["ledger"][word],
+                    ledger_count(single, word),
+                    "{word}\n{account:#}"
+                );
+            }
+            suspect += ledger_count(single, "suspect");
+        } else {
+            assert!(entry["pdf"].is_null(), "{account:#}");
+            let said: Vec<&str> = single
+                .stderr
+                .lines()
+                .filter(|line| !line.starts_with("warning:"))
+                .collect();
+            assert_eq!(entry["error"], said.join("\n"), "{account:#}");
+        }
+    }
+    assert_eq!(account["suspect"], suspect, "{account:#}");
+}
+
+/// A drawing that cannot be read fails alone. The batch goes on to the next
+/// drawing, exits 1, writes no page for it, and says why where a single
+/// export would — and again among its totals and in its account.
+#[test]
+fn a_drawing_that_cannot_be_read_fails_alone_and_the_batch_exits_1() {
+    let dir = scratch("batch-unreadable");
+    let input = fresh(&dir.join("in"));
+    let out = gone(&dir.join("out"));
+    let broken = input.join("A-broken.pid");
+    write_to(&broken, b"not a drawing");
+    let drawing = input.join("D06.pid");
+    copy_to(&d06(), &drawing);
+    let fonts = fonts_for_a_child();
+    let batch = run(batch_child(&fonts)
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    let alone = run(pid_plot()
+        .arg(&broken)
+        .arg(unwritten(&dir, "A-broken.pdf"))
+        .arg(fixtures()));
+    assert_eq!(alone.code, Some(1), "{alone}");
+    let reason = alone.stderr.trim_end();
+    assert!(!reason.is_empty(), "{alone}");
+    assert_eq!(batch.code, Some(1), "{batch}");
+    assert!(batch.stderr.starts_with(&alone.stderr), "{batch}");
+    assert!(
+        batch
+            .stdout
+            .starts_with(&format!("failed {}\n", broken.display())),
+        "{batch}"
+    );
+    assert!(
+        batch.stdout.contains(&format!("\nerror {reason}\n")),
+        "{batch}"
+    );
+    assert!(
+        !out.join("A-broken.pdf").exists(),
+        "a page was written for a drawing that cannot be read\n{batch}"
+    );
+    let account = batch_account(&out, &batch);
+    assert_eq!(
+        account["pages"][0]["drawing"], "A-broken.pid",
+        "{account:#}"
+    );
+    assert!(account["pages"][0]["pdf"].is_null(), "{account:#}");
+    assert_eq!(account["pages"][0]["error"], reason, "{account:#}");
+    assert_eq!(account["pages"][1]["drawing"], "D06.pid", "{account:#}");
+    match fonts {
+        Ok(_) => {
+            assert!(
+                batch.stdout.contains(&format!(
+                    "exported {} -> {}\n",
+                    drawing.display(),
+                    out.join("D06.pdf").display()
+                )),
+                "{batch}"
+            );
+            assert!(out.join("D06.pdf").exists(), "{batch}");
+            assert_eq!(account["exported"], 1, "{account:#}");
+            assert_eq!(account["failed"], 1, "{account:#}");
+        }
+        Err(searched) => {
+            eprintln!(
+                "batch-unreadable: no font directory is present (searched {searched}), so \
+                 D06 can only get as far as the first missing face"
+            );
+            assert_eq!(account["exported"], 0, "{account:#}");
+            assert_eq!(account["failed"], 2, "{account:#}");
+        }
+    }
+}
+
+/// What a page lacks is counted as its single export says it. Against a
+/// corpus with no templates, `D06`'s two template stems are the account's
+/// missing templates and stdout's `drawing` line counts them beside the
+/// symbols the layout here finds missing; the one warning is the single
+/// export's. All of it is said before a typeface is asked for, so it holds
+/// on every machine.
+#[test]
+fn a_batch_counts_the_templates_a_page_lacks() {
+    let dir = scratch("batch-template-absent");
+    let input = fresh(&dir.join("in"));
+    let corpus = fresh(&dir.join("corpus"));
+    let out = gone(&dir.join("out"));
+    let drawing = input.join("D06.pid");
+    copy_to(&d06(), &drawing);
+    let fonts = fonts_for_a_child();
+    let batch = run(batch_child(&fonts)
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(&corpus));
+    let model = lay_out_drawing(&drawing, &corpus)
+        .unwrap_or_else(|error| panic!("{}: {error}", drawing.display()));
+    assert_eq!(model.missing_templates, ["CPECCH", "CPECCHB-SQ-A2"]);
+    let warned = warnings(&batch.stderr);
+    assert_eq!(warned.len(), 1, "{batch}");
+    assert!(
+        warned[0].starts_with(&format!(
+            "warning: {} names its border template (CPECCH*.igr, CPECCHB-SQ-A2*.igr)",
+            drawing.display()
+        )),
+        "{batch}"
+    );
+    assert!(
+        batch.stdout.contains(&format!(
+            "\ndrawing {} missing_templates 2 missing_symbols {} chain_breaks 0 \
+             other_warnings 0\n",
+            drawing.display(),
+            model.missing_symbols.len()
+        )),
+        "{batch}"
+    );
+    let account = batch_account(&out, &batch);
+    assert_eq!(account["missing_templates"], 2, "{account:#}");
+    assert_eq!(
+        account["missing_symbols"],
+        model.missing_symbols.len(),
+        "{account:#}"
+    );
+    let entry = &account["pages"][0];
+    assert_eq!(
+        entry["missing_templates"],
+        serde_json::json!(["CPECCH", "CPECCHB-SQ-A2"]),
+        "{account:#}"
+    );
+    assert_eq!(
+        entry["missing_symbols"],
+        serde_json::json!(model.missing_symbols),
+        "{account:#}"
+    );
+    assert_eq!(entry["warnings"], serde_json::json!(warned), "{account:#}");
+    match fonts {
+        Ok(_) => {
+            assert_eq!(batch.code, Some(0), "{batch}");
+            assert_eq!(account["exported"], 1, "{account:#}");
+        }
+        Err(searched) => {
+            eprintln!(
+                "batch-template-absent: no font directory is present (searched {searched}), \
+                 so the run can only get as far as the first missing face"
+            );
+            assert_eq!(batch.code, Some(1), "{batch}");
+            assert_eq!(account["failed"], 1, "{account:#}");
+        }
+    }
+}
+
+/// Two drawings whose names differ only in the case of `.pid`, where the
+/// file system tells them apart, would have one page: the second is refused
+/// and named, and the batch exits 1, rather than write over the first.
+#[test]
+fn two_drawings_that_would_have_one_page_are_not_both_written() {
+    let dir = scratch("batch-one-page-name");
+    let input = fresh(&dir.join("in"));
+    for name in ["x.PID", "x.pid"] {
+        write_to(&input.join(name), b"not a drawing");
+    }
+    let names = std::fs::read_dir(&input)
+        .unwrap_or_else(|error| panic!("{}: {error}", input.display()))
+        .count();
+    if names < 2 {
+        eprintln!(
+            "skipping two_drawings_that_would_have_one_page_are_not_both_written; \
+             this file system holds x.PID and x.pid as one file"
+        );
+        return;
+    }
+    let out = gone(&dir.join("out"));
+    let batch = run(pid_plot()
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    assert_eq!(batch.code, Some(1), "{batch}");
+    assert!(
+        batch.stderr.contains(&format!(
+            "{}: its page would overwrite the page of {} at {}",
+            input.join("x.pid").display(),
+            input.join("x.PID").display(),
+            out.join("x.pdf").display()
+        )),
+        "{batch}"
+    );
+}
+
+/// A page's account that does not balance fails the batch, and the line that
+/// says so names the drawing.
+///
+/// `unattributed` is the one number of a page's account no reason covers: the
+/// export dropped something and nothing said what. A page that carries one is
+/// not a page to hand on, so `--batch` exits 1 for it as it does for a
+/// drawing it could not read, and says which drawing and how much is left
+/// over in a `drawing <path> unattributed <n>` line.
+///
+/// No drawing in reach leaves a remainder — the seven fixtures and the
+/// acceptance corpus all read `unattributed 0` — so the input that produces
+/// one cannot be made by damaging a drawing here. The verdict is therefore
+/// held at the unit that decides it: `pid_plot`'s own `#[cfg(test)]` cases
+/// (`a_page_whose_account_does_not_balance_fails_the_batch` and
+/// `a_balanced_batch_exits_0_and_names_no_page`) build the summary a batch of
+/// such a page comes to and assert the exit code and the line. This case
+/// holds the other half of it at the process level: a batch whose pages do
+/// balance exits 0 and prints no such line, so the line cannot be always
+/// present and the rule cannot be always-on.
+#[test]
+fn a_batch_whose_pages_balance_says_no_page_is_unattributed() {
+    let dir = scratch("batch-balanced");
+    let input = fresh(&dir.join("in"));
+    let out = gone(&dir.join("out"));
+    let drawing = input.join("D06.pid");
+    copy_to(&d06(), &drawing);
+    let fonts = fonts_for_a_child();
+    let batch = run(batch_child(&fonts)
+        .arg("--batch")
+        .arg(&input)
+        .arg(&out)
+        .arg(fixtures()));
+    assert!(
+        !batch.stdout.contains("unattributed ")
+            || batch.stdout.contains("suspect 0 unattributed 0"),
+        "a batch printed a remainder line\n{batch}"
+    );
+    let said: Vec<&str> = batch
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("drawing ") && line.contains(" unattributed "))
+        .collect();
+    assert!(
+        said.is_empty(),
+        "a batch named a page as unattributed although every page balanced: {said:?}\n{batch}"
+    );
+    let account = batch_account(&out, &batch);
+    assert_eq!(account["unattributed"], 0, "{account:#}");
+    match fonts {
+        Ok(_) => {
+            assert_eq!(batch.code, Some(0), "{batch}");
+            assert_eq!(account["exported"], 1, "{account:#}");
+            assert!(
+                batch.stdout.contains("suspect 0 unattributed 0"),
+                "the totals line does not state a balanced remainder\n{batch}"
+            );
+        }
+        Err(searched) => {
+            eprintln!(
+                "batch-balanced: no font directory is present (searched {searched}), so the \
+                 run can only get as far as the first missing face"
+            );
+            assert_eq!(batch.code, Some(1), "{batch}");
+        }
     }
 }
