@@ -72,6 +72,19 @@ jobs:
         # on the runner's disk.
         run: cargo build --locked --workspace --examples
 
+      - name: cargo check --examples (root package alone)
+        # The step above reuses the workspace build, which means it no
+        # longer checks that the examples compile with the features the
+        # root package selects on its own -- the selection a reader gets
+        # from `cargo run --example ...` in the repo root, where a dozen
+        # dependencies come with fewer features than the workspace build
+        # gives them. This step compiles the examples against exactly
+        # that selection. `check` stops before codegen, so it re-checks
+        # those dependencies and the examples without writing a second
+        # copy of object code to the runner's disk (which is what sank
+        # the old `cargo build --examples`).
+        run: cargo check --locked --examples
+
       - name: cargo clippy (workspace, fail on any warning)
         # --workspace makes the vendored crate a hard gate alongside the
         # parent crate; -D warnings keeps the bar at zero.
