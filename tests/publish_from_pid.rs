@@ -1829,8 +1829,9 @@ const DWG_EXP_SAYS: [&str; 7] = [
     "oracle-exp codelists: 61 enumerated values",
     "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, 5 fluid codes \
      missing, 0 fluid systems unmapped",
-    "oracle-exp stored values: 28 written, 17 labels confirmed, 2 labels kept where the dump \
-     says otherwise, 0 left out unspelled",
+    "oracle-exp stored values: 28 written, 21 labels confirmed, 4 labels kept where the dump \
+     says otherwise, 6 left out unspelled, 3 names left out because a label disagrees with the \
+     dump",
     "oracle-exp connectivity: 20 pairs, 19 written as <Rel>, 1 left out because an end is not \
      a published object",
     "oracle-exp compositions: 10 nozzle pairs, 3 EquipmentComponentComposition written; 2 note \

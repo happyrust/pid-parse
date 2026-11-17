@@ -73,8 +73,15 @@
 //! (`--oracle-exp`, and its whole package); what the `.pid` + exp line
 //! still leaves out is in `docs/plans/2026-11-10-publish-export-completion.md`:
 //!
-//! * two of the properties stored as they are (S7): `IObject.Name` and
-//!   `IObject.Description`, which [`stored_values`] does not write yet;
+//! * what [`stored_values`] holds back of an item's identity
+//!   (`IObject.Name` and `IObject.Description`, S7). A drawing takes it
+//!   from the dump only where no label of the sheet disagrees with the
+//!   dump: this fixture's package dump is a later revision, four labels
+//!   disagree with it, and its own run leaves out the three such values
+//!   the dump would have given. A pipe run's name is composed by the
+//!   map's template, and one the template cannot fill as the references
+//!   show it is left out and counted: 249 of the 631 run names the seven
+//!   acceptance references state;
 //! * the hierarchical levels of an enumeration whose leaf no reference
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state
@@ -83,9 +90,9 @@
 //!   `IInsulatedItem.InsulThickSrc` and
 //!   `ISlopedPipingItem.SlopedPipeDirection`, which the fixture's own
 //!   `--diff-against` reports as missing values;
-//! * a few scattered values (instrument tag parts,
-//!   `LongMaterialDescription3`, `EquipPrefix`, `ReliefPressure`,
-//!   `EquipmentTrimSpec`) and the interfaces stated only beside them;
+//! * three scattered values, `LongMaterialDescription3`, `ReliefPressure`
+//!   and `EquipmentTrimSpec`, and the interface stated only beside the
+//!   first of them, `ISpecifiedMatlItem`;
 //! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
 //!   off-page connectors in a drawing's stockpile (S12), and objects other
 //!   than piping components the database draws on a sheet its `.pid` does
@@ -111,9 +118,11 @@
 //! `-v` names it, and neither that account nor `--strict` counts it.
 //!
 //! That line has been checked on A01 alone. No DWG `Export.mdf` is in the
-//! repository, so its DWG-side tests soft-skip through
-//! `common::DWG_MDF_MISSING_HINT`, and its `item_type_name` mapping for
-//! `PIDBranchPoint` / `PIDPipingBranchPoint` stays provisional.
+//! repository, and no test runs that line on a DWG drawing: the thirteen
+//! DWG gates publish the committed `DWG-0202GP06-01` package through the
+//! `.pid` + exp line (`common::generate_dwg_data_xml`). Its
+//! `item_type_name` mapping for `PIDBranchPoint` / `PIDPipingBranchPoint`
+//! stays provisional.
 //!
 //! What the review of 2026-11-16 found and left as it was (the limits of
 //! the vendored `.mdf` reader, what an interrupted run leaves on disk, the

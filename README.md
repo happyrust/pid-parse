@@ -235,13 +235,15 @@ ignored 探针会用 Rust MDF reader 枚举 TEST02 MDF 全表；当前实测
 UTF-16LE / UUID byte-form 扫描中均无命中，因此 delivery contract
 只对这 3 类 slot 做窄归一化。
 
-DWG plant 的 loader / branch-point 回归目前只依赖一份 compare-only 的
-MDF 样板：
-`test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`。
-这份样板仅用于 DWG `Export.mdf` 对比验证，不要求也不绑定其对应数据库。
-仓内已带 `tests/publish_dwg_mirror.rs` 与 `tests/publish_meta_parity.rs`
-作为入口；若该 MDF 缺失，这两组 DWG 侧测试会 soft-skip，并在
-输出中明确提示“DWG canonical-field enrichment / branch-point parity 未验证”。
+DWG plant（`DWG-0202GP06-01`）在仓库里是一整个备份包
+`test-file/backup-test/DWG-0202GP06-01_p`：Oracle `exp` dump（`Export.dmp`）、
+`RefData~4~804.zip` 里的 `SPPIDDataMap.xml`，加上这张图自己的 `.pid`。包里没有
+`Export.mdf`，数据库线读不了这个 plant。DWG 侧的 13 条门禁
+（`tests/publish_dwg_mirror.rs`、`tests/publish_dwg_generated_parity.rs`，以及
+`tests/publish_meta_parity.rs`、`tests/publish_rel_parity.rs` 里 DWG 的那几条）走的是
+`.pid` + `--oracle-exp` 这条线，对入库的包真跑，不依赖仓库以外的数据。
+数据库线在 DWG 上还没有可跑的夹具，`PIDBranchPoint` / `PIDPipingBranchPoint` 的
+`item_type_name` 映射因此仍是 provisional。
 
 ## 库调用
 

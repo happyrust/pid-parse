@@ -28,7 +28,7 @@ use pid_parse::backup::parse_manifest_bytes;
 const MANIFEST_PATH: &str = "test-file/backup-test/TEST02_p/Manifest.txt";
 
 /// Soft-skip hint emitted when the fixture is missing. Mirrors the
-/// pattern of [`tests/common::DWG_MDF_MISSING_HINT`] so the suite
+/// pattern of [`tests/common::DWG_PACKAGE_MISSING_HINT`] so the suite
 /// stays green for a fresh checkout but the blockage is visible
 /// in the test log.
 const MANIFEST_MISSING_HINT: &str = "skipping: TEST02_p/Manifest.txt fixture not found at \

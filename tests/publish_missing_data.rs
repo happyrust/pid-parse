@@ -114,9 +114,9 @@ fn pipeline_uids_and_names(xml: &str) -> Vec<(String, String)> {
 
 /// S10 · 管线 UID 由 plant + 名字合成，不取库里的 `T_PIPELINE.SP_ID`。
 ///
-/// 现在：`pipeline_uid()`（`src/publish/pipeline.rs:202`）是 UUID v5 ——
+/// 现在：`pipeline_uid()`（`src/publish/pipeline.rs:205`）是 UUID v5 ——
 /// 命名空间 `pid-parse/pipeline` 混 plant，再混管线名；`attach_pipelines`
-/// （同文件 `:103`）只拿它当 UID，dump 的 `T_PIPELINE` 一行都不读。
+/// （同文件 `:99`）只拿它当 UID，dump 的 `T_PIPELINE` 一行都不读。
 ///
 /// 数据到位后（DWG 同版发布件）：这条要改成断言每条管线的 UID 等于参考里
 /// 那条管线的 UID（`2D010BCE…` 一类），今天这两个集合不相交，一改就红。
@@ -163,9 +163,9 @@ fn s10_a_pipeline_uid_is_composed_from_the_plant_and_the_name_not_from_the_dump(
 
 /// S12 · 本图 stockpile 里的 OPC 不发。
 ///
-/// 现在：`opc_points()`（`src/publish/oracle_exp.rs:2144`）按
-/// `T_REPRESENTATION` 取本图的 OPC，UID 取配对里较小的那个；调用方
-/// （`src/bin/pid_publish_xml.rs:711`）再按「表示在 `.pid` 里」筛一次，
+/// 现在：`opc_points()`（`src/publish/oracle_exp.rs:2276`）按
+/// `T_REPRESENTATION` 取本图的 OPC，UID 取配对里较小的那个；`attach_dump`
+/// （同文件 `:1568`）再按「表示在 `.pid` 里」筛一次，
 /// 于是只有一条表示不在 `.pid` 的 OPC 被丢掉。
 ///
 /// 数据到位后（第二例 stockpile OPC 的发布件）：这条要改成断言它被发出来、
@@ -237,11 +237,11 @@ fn s12_a_stockpiled_opc_is_read_from_the_dump_and_then_dropped_for_having_no_rep
 /// S15 · 数据库线：带正文的注释写成空 `<INote/>`，有 `ToFromText` 的 OPC 缺
 /// `IOffpageConnector`。
 ///
-/// 现在：`xml_writer::write_item_note`（`src/publish/xml_writer.rs:1456`）
+/// 现在：`xml_writer::write_item_note`（`src/publish/xml_writer.rs:1509`）
 /// 取 `NoteText` 字段，没有就取 `T_ModelItem.Description`；库里正文在
 /// `T_NOTE.BODY`，`mdf_load` 暂存的 24 张表里没有 `T_NOTE`，于是正文为空。
-/// `catalog::run_branch_point`（`src/publish/catalog.rs:193`）走
-/// `write_pid_branch_point`（`src/publish/xml_writer.rs:1916`），它从不写
+/// `catalog::run_branch_point`（`src/publish/catalog.rs:196`）走
+/// `write_pid_branch_point`（`src/publish/xml_writer.rs:1969`），它从不写
 /// `IOffpageConnector`，而 `T_OPC` 也不在暂存的表里。
 ///
 /// 数据到位后（一份带注释正文与 OPC 的 MDF / MTF 备份）：这条要改成断言
@@ -296,8 +296,8 @@ fn s15_a_database_note_has_no_body_and_a_database_branch_point_has_no_offpage_co
 /// S16 · 管线名回退拼名时流体那一格是空的：19 号代码表只读
 /// `CODELIST_SHORT_TEXT`。
 ///
-/// 现在：`attach_pipelines`（`src/publish/pipeline.rs:55`）调
-/// `codelist_short_text(19)`（`src/publish/oracle_exp.rs:780`），它只读
+/// 现在：`attach_pipelines`（`src/publish/pipeline.rs:51`）调
+/// `codelist_short_text(19)`（`src/publish/oracle_exp.rs:791`），它只读
 /// `CODELIST_SHORT_TEXT` 一列；出厂自带的代号只填 `CODELIST_TEXT`，于是
 /// `fluid_slot` 认为这个代号不在表里，名字里少一格并计入 `fluid_code_missing`。
 ///
@@ -354,9 +354,9 @@ fn s16_a_fluid_code_that_only_states_codelist_text_is_left_out_of_a_spelled_pipe
 
 /// S17 · 库里画在图上、`.pid` 没画的非管件对象不发。
 ///
-/// 现在：`dump_only_piping_components`（`src/publish/oracle_exp.rs:667`）只
-/// 认 `T_MODELITEM.ITEMTYPENAME = "PipingComp"`（同文件 `:681`）的行，
-/// `attach_dump_only_components`（同文件 `:1386`）只把它的返回值挂上去；
+/// 现在：`dump_only_piping_components`（`src/publish/oracle_exp.rs:678`）只
+/// 认 `T_MODELITEM.ITEMTYPENAME = "PipingComp"`（同文件 `:692`）的行，
+/// `attach_dump_only_components`（同文件 `:1398`）只把它的返回值挂上去；
 /// 仪表、注释、管嘴、机械设备、容器都没有这条规则。
 ///
 /// 这一条钉的是那个投影的**范围**：入库包上它只回来 `PipingComp`，

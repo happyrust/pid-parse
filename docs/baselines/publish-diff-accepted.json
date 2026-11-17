@@ -364,7 +364,7 @@
           "clean_exit_code": 0,
           "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6673 (different 0, not in reference 0), rels 4107 (not in reference 0)",
           "alias_exit_code": 1,
-          "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6506 (different 1, not in reference 0), rels 4107 (not in reference 0)",
+          "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6673 (different 1, not in reference 0), rels 4107 (not in reference 0)",
           "informational_line": "按名配对 79 个 PIDPipeline，106 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 23（登记上界 23）"
         }
       },
