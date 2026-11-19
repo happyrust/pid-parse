@@ -1020,7 +1020,7 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             by_equipment_type("IAirCooledExchanger", AIR_COOLER),
             by_equipment_type("IAirCooledExchangerOcc", AIR_COOLER),
             always("IShellAndTubeHeatExchanger"),
-            with_attributes(always("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
+            with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
             always("IPIDTypical"),
         ],
     },
@@ -1197,7 +1197,7 @@ pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
             (
                 "IEquipment",
                 &[
-                    "EqType0", "EqType1", "EqType2", "EqType3", "EqType4", "EqType5",
+                    "EqType0", "EqType1", "EqType2", "EqType3", "EqType4", "EqType5", "EqType6",
                 ],
             ),
             ("IEquipmentComponent", &["ProcessEqCompType1"]),
@@ -1323,7 +1323,7 @@ pub(crate) const LABELLED_ATTRIBUTES: [(&str, &str); 7] = [
 /// `LEAF_LEVELS`): a run that states one on some object had the dump, so a
 /// reference value it leaves out on another object is a finding; a run that
 /// states it nowhere is excused as before.
-pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 25] = [
+pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 26] = [
     ("IConnector", "FlowDirection"),
     ("IDocument", "DocCategory"),
     ("IDocument", "DocType"),
@@ -1333,6 +1333,7 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 25] = [
     ("IEquipment", "EqType3"),
     ("IEquipment", "EqType4"),
     ("IEquipment", "EqType5"),
+    ("IEquipment", "EqType6"),
     ("IEquipment", "EqTypeDescription"),
     ("IEquipmentComponent", "ProcEqpCompTypeDescription"),
     ("IEquipmentComponent", "ProcessEqCompType1"),

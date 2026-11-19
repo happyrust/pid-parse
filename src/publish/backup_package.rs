@@ -971,15 +971,56 @@ fn publish_one(
 /// 把一次整包发布写出的每张图与一个 `<图名>_Data.xml` 参考目录打分。
 struct PackageGate {
     reference_dir: PathBuf,
+    by_stem: HashMap<String, Option<PathBuf>>,
+    by_doc_uid: HashMap<String, Option<PathBuf>>,
     report: PackageGateReport,
 }
 
 impl PackageGate {
     fn new(reference_dir: &Path) -> Self {
+        let mut files = Vec::new();
+        collect_reference_data_xmls(reference_dir, &mut files);
+        files.sort();
+        let mut by_stem: HashMap<String, Option<PathBuf>> = HashMap::new();
+        let mut by_doc_uid: HashMap<String, Option<PathBuf>> = HashMap::new();
+        for path in files {
+            if let Some(stem) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix("_Data.xml"))
+            {
+                by_stem
+                    .entry(stem.to_string())
+                    .and_modify(|slot| *slot = None)
+                    .or_insert_with(|| Some(path.clone()));
+            }
+            if let Some(uid) = peek_reference_doc_uid(&path) {
+                by_doc_uid
+                    .entry(backup_uid_key(&uid))
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(Some(path));
+            }
+        }
         Self {
             reference_dir: reference_dir.to_path_buf(),
+            by_stem,
+            by_doc_uid,
             report: PackageGateReport::default(),
         }
+    }
+
+    fn resolve_reference_path(&self, name: &str, xml: &str) -> Option<PathBuf> {
+        let direct = self.reference_dir.join(format!("{name}_Data.xml"));
+        if direct.is_file() {
+            return Some(direct);
+        }
+        if let Some(found) = self.by_stem.get(name).and_then(Clone::clone) {
+            return Some(found);
+        }
+        let uid = super::diff::publish_container_doc_uid(xml)?;
+        self.by_doc_uid
+            .get(&backup_uid_key(&uid))
+            .and_then(Clone::clone)
     }
 
     /// 给一张刚写出的图打分；结论行进 `report`。
@@ -992,15 +1033,15 @@ impl PackageGate {
     /// 豁免的类算 finding，与单图 `--oracle-exp` 同一判定
     /// （[`super::diff::PidExportDiff::is_clean_with_dump`]）。
     fn score(&mut self, name: &str, xml: &str, dump_in_run: bool) {
-        let reference_path = self.reference_dir.join(format!("{name}_Data.xml"));
-        if !reference_path.is_file() {
+        let Some(reference_path) = self.resolve_reference_path(name, xml) else {
+            let expected = self.reference_dir.join(format!("{name}_Data.xml"));
             self.report.unpaired += 1;
             self.report.lines.push(format!(
                 "{name}: unpaired — no reference file {}; the drawing was not compared",
-                reference_path.display()
+                expected.display()
             ));
             return;
-        }
+        };
         let reference = match fs::read_to_string(&reference_path) {
             Ok(reference) => reference,
             Err(error) => {
@@ -1031,13 +1072,13 @@ impl PackageGate {
                 } else {
                     &[]
                 };
+                let fluid_exceeded = diff.fluid_system_allowance_exceeded();
+                let finding_count =
+                    diff.findings.len() + dump_findings.len() + usize::from(fluid_exceeded);
                 self.report.dirty += 1;
                 self.report.lines.push(format!(
-                    "{name}: dirty (objects {}, values {}, rels {}, findings {})",
-                    diff.objects,
-                    diff.values,
-                    diff.rels,
-                    diff.findings.len() + dump_findings.len()
+                    "{name}: dirty (objects {}, values {}, rels {}, findings {finding_count})",
+                    diff.objects, diff.values, diff.rels,
                 ));
                 for finding in &diff.findings {
                     self.report.lines.push(format!("  {name}: {finding}"));
@@ -1045,6 +1086,12 @@ impl PackageGate {
                 for (class, count) in dump_findings {
                     self.report.lines.push(format!(
                         "  {name}: excused {class} ×{count} the dump should supply"
+                    ));
+                }
+                if fluid_exceeded {
+                    self.report.lines.push(format!(
+                        "  {name}: excused FluidSystem {} exceeds the registered allowance {}",
+                        diff.fluid_system_reference_empty, diff.fluid_system_allowance
                     ));
                 }
             }
@@ -1056,6 +1103,37 @@ impl PackageGate {
             }
         }
     }
+}
+
+fn collect_reference_data_xmls(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            collect_reference_data_xmls(&path, out);
+        } else if ft.is_file()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("_Data.xml"))
+        {
+            out.push(path);
+        }
+    }
+}
+
+fn peek_reference_doc_uid(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let mut file = fs::File::open(path).ok()?;
+    let mut head = [0u8; 2048];
+    let n = file.read(&mut head).ok()?;
+    let prefix = String::from_utf8_lossy(&head[..n]);
+    super::diff::publish_container_doc_uid(&prefix)
 }
 
 /// The `revision_mismatch` verdict line, or `None` when the pair is one
@@ -1881,6 +1959,74 @@ mod tests {
                 .any(|line| line.ends_with("excused PIDSignalPort ×1 the dump should supply")),
             "{:?}",
             with_dump.report.lines
+        );
+    }
+
+    #[test]
+    fn the_package_gate_pairs_nested_and_renamed_references_and_names_fluid_system_overflow() {
+        let dir =
+            std::env::temp_dir().join(format!("pid-parse-gate-nested-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("01")).expect("nested batch");
+        fs::create_dir_all(dir.join("02")).expect("nested batch 2");
+        fs::write(
+            dir.join("01").join("Nested_Data.xml"),
+            r#"<Container DocUID="UID-NESTED">
+                <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            </Container>"#,
+        )
+        .expect("nested ref");
+        fs::write(
+            dir.join("02").join("Unit Prefix Renamed_Data.xml"),
+            r#"<Container DocUID="UID-RENAMED">
+                <PIDPipeline>
+                    <IObject UID="P-REF" Name="50 mm-PG-101-A2"/>
+                    <IFluidSystem FluidCode="@{104E7730-99EF-49C6-A928-D8CD78394381}"/>
+                </PIDPipeline>
+            </Container>"#,
+        )
+        .expect("renamed ref");
+
+        let mut gate = PackageGate::new(&dir);
+        gate.score(
+            "Nested",
+            r#"<Container DocUID="UID-NESTED">
+                <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            </Container>"#,
+            true,
+        );
+        gate.score(
+            "Renamed",
+            r#"<Container DocUID="UID-RENAMED">
+                <PIDPipeline>
+                    <IObject UID="P-GEN" Name="50 mm-PG-101-A2"/>
+                    <IFluidSystem FluidCode="@{104E7730-99EF-49C6-A928-D8CD78394381}" FluidSystem="@{A729B087-24B7-4418-A185-53CAA90C2286}"/>
+                </PIDPipeline>
+            </Container>"#,
+            true,
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            (gate.report.clean, gate.report.dirty, gate.report.unpaired),
+            (1, 1, 0)
+        );
+        assert!(
+            gate.report
+                .lines
+                .iter()
+                .any(|line| line.contains("findings 1)")),
+            "{:?}",
+            gate.report.lines
+        );
+        assert!(
+            gate.report
+                .lines
+                .iter()
+                .any(|line| line
+                    .ends_with("excused FluidSystem 1 exceeds the registered allowance 0")),
+            "{:?}",
+            gate.report.lines
         );
     }
 

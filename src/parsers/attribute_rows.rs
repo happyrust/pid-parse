@@ -135,9 +135,16 @@ fn ascii_name(data: &[u8], at: usize, end: usize) -> Option<(String, usize)> {
 }
 
 fn text_of(bytes: &[u8]) -> String {
+    if bytes.is_ascii() {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let (decoded, _, had_errors) = encoding_rs::GBK.decode(bytes);
+    if !had_errors {
+        return decoded.into_owned();
+    }
     match std::str::from_utf8(bytes) {
         Ok(text) => text.to_string(),
-        Err(_) => encoding_rs::GBK.decode(bytes).0.into_owned(),
+        Err(_) => decoded.into_owned(),
     }
 }
 
@@ -283,6 +290,17 @@ mod tests {
         let payload = row(1, 2, &[header("_Name"), text("ItemValue", &gbk)]);
         let decoded = decode_attribute_row(&payload).expect("decodes");
         assert_eq!(decoded.text("ItemValue"), Some("集注站"));
+    }
+
+    #[test]
+    fn a_gbk_text_whose_bytes_also_form_two_byte_utf8_is_still_read_as_gbk() {
+        // "停止" in GBK is [0xCD, 0xA3, 0xD6, 0xB9], which also forms two valid
+        // 2-byte UTF-8 sequences ("\u{0363}\u{05b9}") if UTF-8 is tried ahead of GBK.
+        let (gbk, _, _) = encoding_rs::GBK.encode("停止");
+        assert_eq!(gbk.as_ref(), &[0xCD, 0xA3, 0xD6, 0xB9]);
+        let payload = row(1, 2, &[header("_SmartText"), text("FormatString", &gbk)]);
+        let decoded = decode_attribute_row(&payload).expect("decodes");
+        assert_eq!(decoded.text("FormatString"), Some("停止"));
     }
 
     #[test]

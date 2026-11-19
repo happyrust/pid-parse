@@ -1102,6 +1102,11 @@ mod tests {
         drawing.items = vec![
             item("V1", "PIDProcessVessel", &[]),
             item("E1", "PIDHeatTransferEquipment", &[]),
+            item(
+                "E2",
+                "PIDHeatTransferEquipment",
+                &[("INamedEquipment", "EquipPrefix", "E")],
+            ),
         ];
         let xml = write_pid_data_xml(&drawing, "P01");
         let vessel = interfaces_of(&xml, "V1");
@@ -1111,15 +1116,21 @@ mod tests {
         assert!(!vessel.iter().any(|name| name == "INamedEquipment"));
         let exchanger = interfaces_of(&xml, "E1");
         assert!(!exchanger.iter().any(|name| name.starts_with("IAirCool")));
+        assert!(!exchanger.iter().any(|name| name == "INamedEquipment"));
         assert_eq!(
-            exchanger[exchanger.len() - 3..],
+            exchanger[exchanger.len() - 2..],
+            ["IShellAndTubeHeatExchanger", "IPIDTypical"]
+        );
+        let named_exchanger = interfaces_of(&xml, "E2");
+        assert_eq!(
+            named_exchanger[named_exchanger.len() - 3..],
             [
                 "IShellAndTubeHeatExchanger",
                 "INamedEquipment",
                 "IPIDTypical"
             ]
         );
-        assert!(xml.contains(r#"      <INamedEquipment EquipSuff=""/>"#));
+        assert!(xml.contains(r#"      <INamedEquipment EquipPrefix="E" EquipSuff=""/>"#));
     }
 
     #[test]

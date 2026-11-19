@@ -425,7 +425,7 @@ fn excluded_attribute_classes_are_the_measured_union() {
             }
         }
     }
-    assert_eq!(pairs.len(), 41);
+    assert_eq!(pairs.len(), 42);
     let mut unique = pairs.clone();
     unique.sort_unstable();
     unique.dedup();

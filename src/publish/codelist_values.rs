@@ -155,7 +155,44 @@ const HIERARCHIES: [Hierarchy; 4] = [
 /// vendor's: the dump keeps the leaf's index, the map publishes the leaf,
 /// and the schema that hangs the levels above it is not at hand. A value
 /// the references show only above a leaf is not a leaf here.
-pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
+pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 58] = [
+    (
+        "IPipingComponent",
+        &[(
+            "PipingComponentType1",
+            "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+        )],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92AE-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92AE-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD9302-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
     (
         "IPipingComponent",
         &[
@@ -170,6 +207,40 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             (
                 "PipingComponentType3",
                 "@{81CD934A-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92CC-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{8196A540-A612-4678-9B8E-2499A8D75F8E}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92CC-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD93BC-BC07-11D6-BDBC-00104BCC2B69}",
             ),
         ],
     ),
@@ -220,6 +291,40 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             ),
             (
                 "PipingComponentType3",
+                "@{5F7F8FB4-BC29-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{5F7F9234-BC29-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
                 "@{5F7F923A-BC29-11D6-BDBC-00104BCC2B69}",
             ),
         ],
@@ -246,11 +351,86 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
         &[
             (
                 "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD9440-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD94C2-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[(
+            "PipingComponentType1",
+            "@{81CD928A-BC07-11D6-BDBC-00104BCC2B69}",
+        )],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
                 "@{81CD928A-BC07-11D6-BDBC-00104BCC2B69}",
             ),
             (
                 "PipingComponentType2",
                 "@{81CD9834-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD928A-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD9864-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD98B8-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD928A-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD9864-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD98BE-BC07-11D6-BDBC-00104BCC2B69}",
             ),
         ],
     ),
@@ -302,6 +482,23 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             (
                 "PipingComponentType3",
                 "@{7488D8C3-BC43-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD928A-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD9888-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{7488D8C9-BC43-11D6-BDBC-00104BCC2B69}",
             ),
         ],
     ),
@@ -385,7 +582,41 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             ),
             (
                 "PipingComponentType3",
+                "@{81CD9B2E-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD92A8-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD9A86-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
                 "@{81CD9B4C-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+        ],
+    ),
+    (
+        "IPipingComponent",
+        &[
+            (
+                "PipingComponentType1",
+                "@{81CD92A8-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType2",
+                "@{81CD9A86-BC07-11D6-BDBC-00104BCC2B69}",
+            ),
+            (
+                "PipingComponentType3",
+                "@{81CD9B58-BC07-11D6-BDBC-00104BCC2B69}",
             ),
         ],
     ),
@@ -410,6 +641,15 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
         "IEquipment",
         &[
             ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE6D5"),
+            ("EqType2", "@EE6DA"),
+            ("EqType3", "@{BF05A8C9-C535-43F5-9FEB-BA6546097051}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
             ("EqType1", "@EE790"),
         ],
     ),
@@ -420,6 +660,53 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             ("EqType1", "@EE790"),
             ("EqType2", "@EE796"),
             ("EqType3", "@{85654F01-498D-45B9-8524-05FBFC800AAA}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE790"),
+            ("EqType2", "@EE797"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE790"),
+            ("EqType2", "@EE7AC"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE791"),
+            ("EqType2", "@EE7A1"),
+            ("EqType3", "@EE7B3"),
+            ("EqType4", "@EE7BF"),
+            ("EqType5", "@EE7CB"),
+            ("EqType6", "@EE7D0"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE791"),
+            ("EqType2", "@EE7A1"),
+            ("EqType3", "@EE7B9"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE791"),
+            ("EqType2", "@EE7A1"),
+            ("EqType3", "@EE7B9"),
+            ("EqType4", "@EE7C2"),
         ],
     ),
     (
@@ -439,6 +726,98 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
             ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
             ("EqType1", "@EE792"),
             ("EqType2", "@EE79D"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE792"),
+            ("EqType2", "@EE79E"),
+            ("EqType3", "@{939BC97A-2080-49A7-BD16-B6227FFF3695}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE792"),
+            ("EqType2", "@EE7AF"),
+            ("EqType3", "@EE7B4"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@EE7A6"),
+            ("EqType3", "@{38610F36-E76D-4B80-A7AC-EA54A21A26F3}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@EE7A6"),
+            ("EqType3", "@{4B6B0241-A15D-400A-B392-DF98C8EA5167}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@EE7A6"),
+            ("EqType3", "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@EE7A6"),
+            ("EqType3", "@{A1E64755-66A8-4884-9A6E-F5142292D805}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@{40444CCF-1021-4882-B2FF-2000ECAE92F5}"),
+            ("EqType3", "@{657FB924-E5E9-4851-934E-39C277C11667}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@{40444CCF-1021-4882-B2FF-2000ECAE92F5}"),
+            ("EqType3", "@{657FB924-E5E9-4851-934E-39C277C11667}"),
+            ("EqType4", "@{A1413DB3-EAFE-4F60-8F50-099DFF01F154}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@{40444CCF-1021-4882-B2FF-2000ECAE92F5}"),
+            ("EqType3", "@{A371290D-127F-41AD-80E4-0F110C54E848}"),
+        ],
+    ),
+    (
+        "IEquipment",
+        &[
+            ("EqType0", "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"),
+            ("EqType1", "@EE793"),
+            ("EqType2", "@{40444CCF-1021-4882-B2FF-2000ECAE92F5}"),
+            ("EqType3", "@{A371290D-127F-41AD-80E4-0F110C54E848}"),
+            ("EqType4", "@{79F36493-7E48-402F-B342-D621DDEB34A5}"),
         ],
     ),
     (
@@ -470,6 +849,13 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 26] = [
         &[
             ("InstrumentType", "@EE3F8.1"),
             ("InstrumentType3", "@EE425"),
+        ],
+    ),
+    (
+        "IInstrument",
+        &[
+            ("InstrumentType", "@EE3F8.1"),
+            ("InstrumentType3", "@EE426"),
         ],
     ),
     (
@@ -994,6 +1380,18 @@ mod tests {
                 ("IConnector.FlowDirection", 5, "@EE872"),
                 ("IDocument.DocCategory", 1, "P&ID Documents"),
                 ("IDocument.DocType", 1, "P&ID"),
+                (
+                    "IEquipment.EqType0",
+                    1,
+                    "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}"
+                ),
+                ("IEquipment.EqType1", 1, "@EE793"),
+                ("IEquipment.EqType2", 1, "@EE7A6"),
+                (
+                    "IEquipment.EqType3",
+                    1,
+                    "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}"
+                ),
                 ("IEquipment.EqTypeDescription", 1, "Open top tank"),
                 (
                     "IEquipmentComponent.ProcEqpCompTypeDescription",
@@ -1020,18 +1418,18 @@ mod tests {
                 ("IPipingComponent.PipModelCode", 2, "Conduit gate valve"),
                 (
                     "IPipingComponent.PipingComponentType1",
-                    1,
-                    "@{81CD929C-BC07-11D6-BDBC-00104BCC2B69}"
+                    2,
+                    "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}"
                 ),
                 (
                     "IPipingComponent.PipingComponentType2",
-                    1,
-                    "@{81CD9804-BC07-11D6-BDBC-00104BCC2B69}"
+                    2,
+                    "@{81CD92D2-BC07-11D6-BDBC-00104BCC2B69}"
                 ),
                 (
                     "IPipingComponent.PipingComponentType3",
-                    1,
-                    "@{81CD9816-BC07-11D6-BDBC-00104BCC2B69}"
+                    2,
+                    "@{81CD9440-BC07-11D6-BDBC-00104BCC2B69}"
                 ),
                 ("IPipingConnector.PipingConnectorType", 7, "@EE690"),
             ]
