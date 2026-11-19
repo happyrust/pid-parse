@@ -1046,14 +1046,16 @@ fn load_from_records(
             .entry(model.to_string())
             .or_default()
             .push(row.described);
-        // A `Symbol` row on a `DependencyObject` is a run's piece that
-        // `SmartPlant` does not publish (518 / 518 over the corpus; every
+        // A `Symbol` row on a `DependencyObject` is a run's piece, and a
+        // `Symbol` placement (`SYMBOL`) whose model item is a `PipeRun` is a
+        // line-crossing gap (`Piping\Gaps\gap-curves.sym`): `SmartPlant`
+        // publishes neither (518 / 518 and 13 / 13 over the corpus; every
         // other representation is published).
         let symbol_on = |family| {
             row.text("DrawingItemType") == Some("Symbol")
                 && records.families.get(&row.described) == Some(&family)
         };
-        let unpublished = symbol_on(DEPENDENCY);
+        let unpublished = symbol_on(DEPENDENCY) || (item_type == "PipeRun" && symbol_on(SYMBOL));
         let branch_point = symbol_on(POINT);
         if let Some(uid) = row
             .text("DrawingID")
@@ -1677,5 +1679,90 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_symbol_placement_on_a_pipe_run_is_not_published_as_a_representation() {
+        use crate::parsers::attribute_rows::{AttributeField, AttributeValue};
+        let attr_row = |oid: u32, described: u32, pairs: &[(&str, &str)]| AttributeRow {
+            oid,
+            described,
+            class: "P&IDAttributes".to_string(),
+            fields: pairs
+                .iter()
+                .map(|(k, v)| AttributeField {
+                    name: (*k).to_string(),
+                    value: AttributeValue::Text((*v).to_string()),
+                })
+                .collect(),
+        };
+        let mut records = Records::default();
+        records.families.insert(10, 0x0013); // connector graphic
+        records.families.insert(20, SYMBOL); // gap-curves.sym placement on PipeRun
+        records.families.insert(30, POINT); // branch point on PipeRun
+        records.families.insert(40, SYMBOL); // normal valve symbol on PipingComp
+        records.rows.insert(
+            1,
+            attr_row(
+                1,
+                10,
+                &[
+                    ("DrawingNo", "DWG-UID"),
+                    ("DrawingItemType", "Connector"),
+                    ("DrawingID", "REP-CONN"),
+                    ("ModelItemType", "PipeRun"),
+                    ("ModelID", "RUN-1"),
+                ],
+            ),
+        );
+        records.rows.insert(
+            2,
+            attr_row(
+                2,
+                20,
+                &[
+                    ("DrawingNo", "DWG-UID"),
+                    ("DrawingItemType", "Symbol"),
+                    ("DrawingID", "REP-GAP"),
+                    ("ModelItemType", "PipeRun"),
+                    ("ModelID", "RUN-1"),
+                ],
+            ),
+        );
+        records.rows.insert(
+            3,
+            attr_row(
+                3,
+                30,
+                &[
+                    ("DrawingNo", "DWG-UID"),
+                    ("DrawingItemType", "Symbol"),
+                    ("DrawingID", "REP-BPT"),
+                    ("ModelItemType", "PipeRun"),
+                    ("ModelID", "RUN-1"),
+                ],
+            ),
+        );
+        records.rows.insert(
+            4,
+            attr_row(
+                4,
+                40,
+                &[
+                    ("DrawingNo", "DWG-UID"),
+                    ("DrawingItemType", "Symbol"),
+                    ("DrawingID", "REP-VALVE"),
+                    ("ModelItemType", "PipingComp"),
+                    ("ModelID", "VALVE-1"),
+                ],
+            ),
+        );
+        let drawing = load_from_records(records, "Test").expect("loads");
+        let rep_uids: Vec<&str> = drawing
+            .representations
+            .iter()
+            .map(|r| r.uid.as_str())
+            .collect();
+        assert_eq!(rep_uids, ["REP-BPT", "REP-CONN", "REP-VALVE"]);
     }
 }
