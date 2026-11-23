@@ -5189,7 +5189,8 @@
   ],
   "off_sheet_primitives": 0,
   "skipped_endpoint_pairs": 0,
-  "missing_symbols": [
+  "missing_symbols": [],
+  "library_gaps": [
     "equipment/vessels/tanks/cone roof parametric tank.sym"
   ],
   "missing_boxes": [],

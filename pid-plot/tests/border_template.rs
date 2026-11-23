@@ -254,9 +254,11 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
         !model
             .missing_symbols
             .iter()
+            .chain(&model.library_gaps)
             .any(|missing| missing.to_ascii_lowercase().contains("blfh")),
-        "the template's absent .sym leaked into missing_symbols: {:?}",
-        model.missing_symbols
+        "the template's absent .sym leaked into missing_symbols/library_gaps: {:?} / {:?}",
+        model.missing_symbols,
+        model.library_gaps
     );
 
     // The two frames: the outer one runs along the page edge, the inner one
@@ -508,9 +510,11 @@ fn the_a0_sheet_draws_the_frame_title_block_and_the_same_wave() {
         !model
             .missing_symbols
             .iter()
+            .chain(&model.library_gaps)
             .any(|missing| missing.to_ascii_lowercase().contains("blfh")),
-        "the template's absent .sym leaked into missing_symbols: {:?}",
-        model.missing_symbols
+        "the template's absent .sym leaked into missing_symbols/library_gaps: {:?} / {:?}",
+        model.missing_symbols,
+        model.library_gaps
     );
     assert!(
         model.missing_boxes.is_empty(),
@@ -938,16 +942,21 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
     ];
     let bundled_library = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols-full");
     let is_bundled_only = |name: &str| bundled_only.contains(&name);
+    assert!(
+        model.missing_symbols.is_empty(),
+        "undrawn missing symbols on D06: {:?}",
+        model.missing_symbols
+    );
     let unbundled: Vec<&String> = model
-        .missing_symbols
+        .library_gaps
         .iter()
         .filter(|missing| !is_bundled_only(missing))
         .collect();
     assert!(
         unbundled.is_empty(),
         "the template's own gaps entered the drawing's report: {unbundled:?} \
-         (all missing: {:?})",
-        model.missing_symbols
+         (all library_gaps: {:?})",
+        model.library_gaps
     );
     let unbundled_boxes: Vec<&str> = model
         .missing_boxes
@@ -969,8 +978,8 @@ fn an_a2_sheet_draws_its_linked_a2_template() {
             "note: {} is absent from this checkout, so the {} bundled-only \
              symbol(s) above cannot be resolved: {:?}",
             bundled_library.display(),
-            model.missing_symbols.len(),
-            model.missing_symbols
+            model.library_gaps.len(),
+            model.library_gaps
         );
     }
 
@@ -1340,9 +1349,11 @@ fn the_a01_sheets_embedded_frame_draws_the_a2_template_it_states() {
         !model
             .missing_symbols
             .iter()
+            .chain(&model.library_gaps)
             .any(|missing| missing.to_ascii_lowercase().contains("blfh")),
-        "the template's absent .sym leaked into missing_symbols: {:?}",
-        model.missing_symbols
+        "the template's absent .sym leaked into missing_symbols/library_gaps: {:?} / {:?}",
+        model.missing_symbols,
+        model.library_gaps
     );
     assert!(
         model.missing_boxes.is_empty(),

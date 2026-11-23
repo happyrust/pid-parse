@@ -653,12 +653,17 @@ fn every_fixture_drawing_exports_a_pdf() {
         // A name the committed sources lack is a gap in those sources, not an
         // export failure — the placement drew, as `missing_boxes` says above —
         // so it is reported and not asserted.
-        if !model.missing_symbols.is_empty() {
+        assert!(
+            model.missing_symbols.is_empty(),
+            "{name}: undrawn missing symbols: {:?}",
+            model.missing_symbols
+        );
+        if !model.library_gaps.is_empty() {
             eprintln!(
                 "{name}: {} symbol file(s) the committed sources do not carry, each drawn \
                  from the drawing's own body: {:?}",
-                model.missing_symbols.len(),
-                model.missing_symbols
+                model.library_gaps.len(),
+                model.library_gaps
             );
         }
     }
@@ -705,11 +710,16 @@ fn every_fixture_drawing_exports_a_pdf() {
         })
         .collect();
     for (name, model) in &searched {
-        if !model.missing_symbols.is_empty() {
+        assert!(
+            model.missing_symbols.is_empty(),
+            "{name}: undrawn missing symbols: {:?}",
+            model.missing_symbols
+        );
+        if !model.library_gaps.is_empty() {
             eprintln!(
                 "{name}: {} symbol files no library carries: {:?}",
-                model.missing_symbols.len(),
-                model.missing_symbols
+                model.library_gaps.len(),
+                model.library_gaps
             );
         }
     }
@@ -717,7 +727,7 @@ fn every_fixture_drawing_exports_a_pdf() {
     if !bundled_library.is_dir() {
         let gaps: usize = searched
             .iter()
-            .map(|(_, model)| model.missing_symbols.len())
+            .map(|(_, model)| model.library_gaps.len())
             .sum();
         eprintln!(
             "note: {} is absent from this checkout, so the {gaps} unanswered \
@@ -728,9 +738,9 @@ fn every_fixture_drawing_exports_a_pdf() {
     }
     for (name, model) in &searched {
         assert!(
-            model.missing_symbols.is_empty(),
+            model.library_gaps.is_empty(),
             "{name}: symbols no library carries: {:?}",
-            model.missing_symbols
+            model.library_gaps
         );
     }
 }

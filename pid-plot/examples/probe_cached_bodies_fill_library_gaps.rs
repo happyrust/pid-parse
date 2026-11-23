@@ -2,9 +2,10 @@
 //!
 //! `lay_out_drawing` prefers the body a `.pid` carries over the one in a
 //! `.sym` library, so a placement can draw fine while still being counted as a
-//! library gap. `PaperModel::missing_symbols` is the set the library could not
-//! answer; `missing_boxes` is the set nothing could draw — the drawing has no
-//! cached body either, so the page shows a placeholder box.
+//! library gap. `PaperModel::library_gaps` is the set the library could not
+//! answer while the `.pid` cache drew them; `missing_symbols` / `missing_boxes`
+//! is the set nothing could draw — the drawing has no cached body either, so
+//! the page shows a placeholder box.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_cached_bodies_fill_library_gaps -- <a.pid> [b.pid ...]
@@ -60,16 +61,16 @@ fn main() -> ExitCode {
         match lay_out_drawing(path, &corpus) {
             Ok(model) => {
                 primitives += model.primitives.len();
-                gaps += model.missing_symbols.len();
+                gaps += model.library_gaps.len();
                 undrawn += model.missing_boxes.len();
                 println!(
                     "{} primitives={} library_gaps={} undrawn={}",
                     path.file_name().unwrap_or_default().to_string_lossy(),
                     model.primitives.len(),
-                    model.missing_symbols.len(),
+                    model.library_gaps.len(),
                     model.missing_boxes.len()
                 );
-                for key in &model.missing_symbols {
+                for key in &model.library_gaps {
                     println!("    gap  {key}");
                 }
                 for key in &model.missing_boxes {

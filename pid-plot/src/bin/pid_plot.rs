@@ -222,7 +222,8 @@ struct Page {
     /// The border template stems no file in reach answered, so the page is
     /// bare.
     missing_templates: Vec<String>,
-    /// The symbol files the library lacks or holds damaged.
+    /// The symbol files the drawing could not draw (neither cached in the
+    /// `.pid` nor usable from the external library).
     missing_symbols: Vec<String>,
     /// Streams of the drawing, its template or a symbol file whose record
     /// chain does not hold.

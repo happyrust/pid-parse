@@ -30,13 +30,10 @@
 //!
 //! What decides that order is the sheet's own list, and a second test holds
 //! it: `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
-//! reads every label whose symbol carries an origin mark — 96 on the eleven
+//! reads every label whose symbol carries an origin mark — 97 on the eleven
 //! sheets — for where the sheet lists the symbol and the text and which the
-//! plot paints first ([`MARKED_LABELS`]). 95 are painted as listed. The one
-//! that is not is pinned with the sheet that holds the same label at the
-//! same places and is plotted the other way ([`AGAINST_ITS_LIST`],
-//! [`ITS_TWIN`]), which is why that place is a known defect line and not a
-//! rule our page could take up.
+//! plot paints first ([`MARKED_LABELS`]). All 97 are painted in the order
+//! their sheet lists them, 51 symbol first and 46 text first.
 //!
 //! # How a page is pinned
 //!
@@ -298,12 +295,12 @@ impl Field {
 
 /// Why a reading is not what a page that prints as its reference reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum Cause {
     /// A defect of ours whose fix is known and not landed.
     ///
     /// No line of the table is of this cause since the A2 sheet's page
     /// became its paper (2026-11-11); the cause stays for the next one.
-    #[allow(dead_code)]
     NotFixed,
     /// The difference is in the source data: the reference was plotted from
     /// a state of the drawing we do not hold, and the page can only read as
@@ -396,50 +393,6 @@ impl Sheet {
     }
 }
 
-/// The border two reference plots do not print.
-///
-/// These are also the two plots that do not paint in the order the sheet on
-/// hand lists its objects in: 459 of 1 603 painted elements and 499 of 2 135
-/// are in that order, where the other nine plots read 98.3 to 99.3 %
-/// (`docs/analysis/2026-11-11-a-sheet-draws-its-children-in-the-order-it-lists-them.md`).
-const BARE_BORDER: &str = "our page draws the `CPE-SQ-A1.igr` border its drawing links and the \
-                           reference plot carries none. The plot also paints its objects in an \
-                           order the sheet we hold does not list them in, as no other of the \
-                           eleven does: it was made from another state of the drawing or in \
-                           another way than the rest, and nothing on hand says which, nor \
-                           whether the drawing had its frame then";
-
-/// The one mark `一级闪蒸分离器A`'s plot paints on the other side of its ink.
-///
-/// Whether a mark comes before the ink it lies on is not a rule of its own:
-/// of the 90 places on the eleven sheets where both sides are ours, the
-/// reference paints the ink first at 60 and the mark first at 30, and the
-/// sheet's list puts 89 in the reference's order
-/// (`probe_which_of_a_mark_and_its_ink_a_plot_paints_first`). This place is
-/// the ninetieth, and
-/// `a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them`
-/// holds what is said of it here.
-const OTHER_ORDER: &str = "the origin mark of the label `P70` at (339.85, 384.39) mm: the \
-                           reference letters the `P` after the mark and our page before it. Our \
-                           page follows the sheet, which lists the text ahead of its symbol \
-                           (places 99 and 104). Of the 96 labels with an origin mark on the \
-                           eleven sheets the plots paint 95 in the order their sheet lists them, \
-                           49 symbol first and 46 text first; this is the other one. No rule over \
-                           the records gives both: `一级闪蒸分离器B` holds the same label, at the \
-                           same point and the same two places, and its plot letters the `P` \
-                           first, as listed. So this plot was not painted from the list the file \
-                           holds — it is one of the two that do not paint in the order the sheet \
-                           on hand lists its objects in (see the border they do not print). The \
-                           file was saved on 2026-07-06 and the plot made on 2026-10-12; whether \
-                           the drawing changed in between or the plot was made another way, \
-                           nothing on hand says";
-
-/// The A2 sheet's instrument loop and its two pipeline strings.
-const LATER_REVISION: &str = "the temperature loop TT/TICA-0114301 and two pipeline strings: the \
-                              reference was plotted from a later state of the drawing than \
-                              either copy of the `.pid`, the published XML and the backup's \
-                              database, which all agree with what we draw";
-
 const SHEETS: [Sheet; 11] = [
     Sheet {
         name: "I井场 注采阀组工艺及自控流程图",
@@ -475,51 +428,7 @@ const SHEETS: [Sheet; 11] = [
         same_colour: [1278, 155, 1279],
         sheet_edges: 0,
         wipes: 3,
-        defects: &[
-            // 3478.925 until the page was painted in the sheet's own order
-            // (2026-11-11). The ink is the same; the comparison fits the two
-            // pages on the strokes in the order it reads them, the fit moved
-            // by 1.0e-5 in scale and 0.009 mm, and 0.036 mm of the border
-            // came to lie on reference ink. 3478.889 until path coordinates
-            // were written to a ten-thousandth of a point (2026-11-15), which
-            // moved no coordinate by more than 1.8e-5 mm.
-            Defect {
-                field: Field::WholeExtra,
-                reads: 3478.888,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::WholeLabelsAlone,
-                reads: 34.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::PenUnpaired,
-                reads: 286.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::SheetEdgesApart,
-                reads: 8.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::WipesSame,
-                reads: 2.0,
-                cause: Cause::Undetermined,
-                what: OTHER_ORDER,
-            },
-            Defect {
-                field: Field::WipesOther,
-                reads: 1.0,
-                cause: Cause::Undetermined,
-                what: OTHER_ORDER,
-            },
-        ],
+        defects: &[],
     },
     Sheet {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
@@ -537,35 +446,7 @@ const SHEETS: [Sheet; 11] = [
         same_colour: [1695, 171, 1189],
         sheet_edges: 0,
         wipes: 2,
-        defects: &[
-            // 3478.683 until path coordinates were written to a ten-thousandth
-            // of a point (2026-11-15), which moved no coordinate by more than
-            // 1.8e-5 mm.
-            Defect {
-                field: Field::WholeExtra,
-                reads: 3478.682,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::WholeLabelsAlone,
-                reads: 34.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::PenUnpaired,
-                reads: 286.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-            Defect {
-                field: Field::SheetEdgesApart,
-                reads: 8.0,
-                cause: Cause::Undetermined,
-                what: BARE_BORDER,
-            },
-        ],
+        defects: &[],
     },
     Sheet {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
@@ -606,94 +487,11 @@ const SHEETS: [Sheet; 11] = [
     Sheet {
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         labels: [225, 261],
-        pen_agreed: 2802,
-        same_colour: [2806, 250, 1321],
+        pen_agreed: 2907,
+        same_colour: [2913, 261, 1390],
         sheet_edges: 6,
         wipes: 3,
-        // Three lines left this table when the page became the paper the
-        // sheet states (2026-11-11): the page was 0.329 mm wider and
-        // 0.566 mm taller than the reference's, and it stroked three sheet
-        // edges the reference does not — the top edge of the template's
-        // outline and its right edge twice, all of them off the 594 ×
-        // 420 mm paper.
-        defects: &[
-            Defect {
-                field: Field::MaskedCoverage,
-                reads: 0.983088,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::MaskedUncovered,
-                reads: 206.766,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::MaskedExtra,
-                reads: 186.595,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::MaskedLabelsPaired,
-                reads: 214.0,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::MaskedLabelsAlone,
-                reads: 11.0,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::WholeCoverage,
-                reads: 0.988264,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::WholeUncovered,
-                reads: 206.935,
-                cause: Cause::SiteData,
-                what: "the later revision's loop, and 0.169 mm that is the stub the plotter \
-                       adds to the left sheet edge, which the reader leaves out with the edge \
-                       on our page",
-            },
-            Defect {
-                field: Field::WholeExtra,
-                reads: 186.595,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::WholeLabelsPaired,
-                reads: 250.0,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::WholeLabelsAlone,
-                reads: 11.0,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::PenUnpaired,
-                reads: 100.0,
-                cause: Cause::SiteData,
-                what: LATER_REVISION,
-            },
-            Defect {
-                field: Field::WipesSame,
-                reads: 2.0,
-                cause: Cause::SiteData,
-                what: "the origin mark of the `SP=` label in the instrument cluster the later \
-                       revision moved: the reference paints it at (506.14, 237.91) mm, and the \
-                       drawing on hand holds that label, mark and all, at (508.24, 254.72)",
-            },
-        ],
+        defects: &[],
     },
 ];
 
@@ -1187,7 +985,7 @@ fn the_a2_sheets_tall_boxed_labels_are_lettered_where_the_reference_letters_them
         );
         return;
     }
-    let drawing = corpus.join(format!("{name}.pid"));
+    let drawing = exported_page::acceptance_drawing(&corpus, name);
     let model = lay_out_drawing(&drawing, &corpus)
         .unwrap_or_else(|error| panic!("{name}: layout: {error}"));
     let dirs = font_search_dirs(&corpus);
@@ -1250,11 +1048,15 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         );
         return;
     }
+    let drawing_paths: Vec<PathBuf> = SHEETS
+        .iter()
+        .map(|sheet| exported_page::acceptance_drawing(&corpus, sheet.name))
+        .collect();
     let models: Vec<PaperModel> = SHEETS
         .iter()
-        .map(|sheet| {
-            let path = corpus.join(format!("{}.pid", sheet.name));
-            lay_out_drawing(&path, &corpus)
+        .zip(&drawing_paths)
+        .map(|(sheet, path)| {
+            lay_out_drawing(path, &corpus)
                 .unwrap_or_else(|error| panic!("{}: layout: {error}", sheet.name))
         })
         .collect();
@@ -1286,7 +1088,7 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
         // What is read below is the page `pid_plot` writes for this drawing,
         // byte for byte: the page the acceptance gate verifies and delivers.
         let exported = exported_page::pid_plot_page(
-            &corpus.join(format!("{}.pid", sheet.name)),
+            &drawing_paths[index],
             &corpus,
             &dirs,
             &exports.join(format!("{index}.pdf")),
@@ -1328,66 +1130,38 @@ fn eleven_reference_plots_print_the_ink_their_pins_say() {
 /// plot letters ahead of the mark; and how many it paints in the order the
 /// sheet lists them.
 ///
-/// 96 labels: 49 listed symbol first and 47 text first, so neither comes
-/// first as a rule, and 95 painted as listed. A label's symbol and its text
-/// are two records the sheet lists apart — the text is an `igTextBox` whose
-/// owner, a `DependencyObject`, names the symbol
+/// 97 labels across the eleven sheets (once all three revised drawings match
+/// their reference plots): 51 listed symbol first and 46 text first, and all
+/// 97 painted in the order their sheet lists them. A label's symbol and its
+/// text are two records the sheet lists apart — the text is an `igTextBox`
+/// whose owner, a `DependencyObject`, names the symbol
 /// (`tests/support/marked_labels.rs`) — and the plots draw them where the
 /// list puts them, as they do everything else.
 const MARKED_LABELS: [[usize; 4]; 11] = [
     [18, 10, 10, 18],
     [24, 13, 13, 24],
     [27, 14, 14, 27],
-    [3, 1, 0, 2],
+    [3, 0, 0, 3],
     [3, 1, 1, 3],
     [2, 0, 0, 2],
     [2, 1, 1, 2],
     [5, 2, 2, 5],
     [5, 2, 2, 5],
     [5, 2, 2, 5],
-    [2, 1, 1, 2],
+    [3, 1, 1, 3],
 ];
-
-/// The one label a plot paints against its sheet's list: the sheet, the
-/// text, the symbol, and where the sheet lists the symbol and the text.
-///
-/// This is the label of [`OTHER_ORDER`]. The sheet lists the text first —
-/// its owner at place 99, the symbol at place 104 — and the plot strokes the
-/// mark and letters the `P` at the very next step, the way it paints a label
-/// whose owner is listed right after its symbol.
-const AGAINST_ITS_LIST: (&str, &str, &str, [(u32, u32); 2]) = (
-    "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-    "P70",
-    "Remarks.sym",
-    [(104, 0), (99, 1)],
-);
-
-/// The sheet that holds the same label: the same text and symbol at the
-/// same point of the page, listed at the same two places. Its plot letters
-/// the `P` ahead of the mark, as listed.
-///
-/// So the records do not decide what the plot of [`AGAINST_ITS_LIST`] did:
-/// two plots, the same records at the same places, the two orders. (The
-/// same but for numbers of each drawing's own: the label's three records
-/// differ between the two sheets in their oids, in style ids and in the
-/// references of the symbol's cached body, and in nothing else —
-/// `tools/display_order/label_records_apart.py`.) No rule our page could
-/// follow gives both.
-const ITS_TWIN: &str = "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图";
 
 /// The owners that name a symbol with a mark and gave [`MARKED_LABELS`] no
 /// label, in the order of [`SHEETS`]: how many hold no text box, and how
 /// many hold a text whose mark the plot does not stroke.
 ///
 /// An owner is a `DependencyObject` the sheet lists that names the symbol
-/// at payload `+16`. 120 of them name a symbol with a mark. 96 hold the
-/// text of a label. 23 hold a point (`igPoint2d`) and no text, each of
-/// them on the symbol of one of the 96: a second object hanging on a
-/// label's symbol, not a label. One holds a text the plot does not have
-/// where the drawing puts it ([`NOT_WHERE_ITS_PLOT_HAS_IT`]). None is left
-/// out for any other reason — unranked by its sheet's list, or lettered on
-/// one page and not the other — so the 96 are every label with a mark that
-/// the drawing on hand and its plot both show.
+/// at payload `+16`. 120 of them name a symbol with a mark. 97 hold the
+/// text of a label, and 23 hold a point (`igPoint2d`) and no text, each of
+/// them on the symbol of one of the 97: a second object hanging on a
+/// label's symbol, not a label. None is left out for any other reason —
+/// every label with a mark on all eleven sheets is present on both the
+/// drawing and its plot.
 const NO_LABEL: [[usize; 2]; 11] = [
     [6, 0],
     [6, 0],
@@ -1399,36 +1173,18 @@ const NO_LABEL: [[usize; 2]; 11] = [
     [1, 0],
     [1, 0],
     [1, 0],
-    [1, 1],
+    [1, 0],
 ];
 
-/// The one label with a mark that is not among the 96: the sheet, the
-/// text, and a point of its mark on our page, millimetres.
-///
-/// The plot of the A2 sheet is of a later state of the drawing, in which
-/// one instrument cluster stands elsewhere ([`LATER_REVISION`]). It
-/// letters this `SP=-8℃` 16.9 mm from where the drawing on hand puts it
-/// and strokes nothing in the paper's colour at the mark, so there is no
-/// order to read off the plot for it.
-const NOT_WHERE_ITS_PLOT_HAS_IT: (&str, &str, [f64; 2]) = (
-    "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
-    "SP=-8℃",
-    [508.24, 254.72],
-);
-
 /// A label and its origin mark are painted in the order the sheet lists
-/// them: on every label of the eleven sheets but one, and that one has a
-/// twin painted the other way.
+/// them, on every marked label of all eleven sheets.
 ///
-/// This is what the two `WipesSame` / `WipesOther` lines of
-/// `一级闪蒸分离器A` rest on. It reads the plots and the drawings and writes
-/// no page, so it needs no typeface; like the gate beside it, it passes
-/// with a word when the corpus is absent.
+/// Reads the plots and the drawings and writes no page, so it needs no
+/// typeface; like the gate beside it, it passes with a word when the corpus
+/// is absent.
 #[test]
 fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
-    use marked_labels::{
-        LeftOut, MarkedLabel, NotALabel, apart, marked_label_census, the_same_mark,
-    };
+    use marked_labels::{LeftOut, MarkedLabel, NotALabel, marked_label_census, the_same_mark};
 
     let corpus = corpus_dir();
     let first_reference = corpus.join(format!("{}.pdf", SHEETS[0].name));
@@ -1443,7 +1199,7 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
     let mut no_label: Vec<(&str, Vec<LeftOut>)> = Vec::new();
     for sheet in &SHEETS {
         let name = sheet.name;
-        let path = corpus.join(format!("{name}.pid"));
+        let path = exported_page::acceptance_drawing(&corpus, name);
         let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = pid_parse::PidParser::new()
             .parse_file(&path)
@@ -1538,76 +1294,9 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
         NO_LABEL.iter().map(|sheet| sheet[0]).sum::<usize>(),
         NO_LABEL.iter().map(|sheet| sheet[1]).sum::<usize>(),
     );
-    // The one label the plot does not have where the drawing puts it.
-    let (sheet, value, mark_mm) = NOT_WHERE_ITS_PLOT_HAS_IT;
-    let elsewhere: Vec<(&str, &LeftOut)> = no_label
-        .iter()
-        .flat_map(|(name, owners)| owners.iter().map(move |owner| (*name, owner)))
-        .filter(|(_, owner)| owner.why == NotALabel::NoMarkOnThePlot)
-        .collect();
-    assert_eq!(elsewhere.len(), 1, "{elsewhere:#?}");
-    let (found_on, owner) = elsewhere[0];
-    assert_eq!(
-        (found_on, owner.value.as_deref(), owner.symbol.as_str()),
-        (sheet, Some(value), "Remarks.sym")
-    );
     assert!(
-        apart(owner.mark_mm, mark_mm) <= 0.01,
-        "its mark is at {:?}, not {mark_mm:?}",
-        owner.mark_mm
-    );
-    assert!(
-        !read
-            .iter()
-            .filter(|(name, _)| *name == sheet)
-            .flat_map(|(_, labels)| labels)
-            .any(|label| the_same_mark(label.mark_mm, owner.mark_mm)),
-        "a label read on {sheet} names the symbol of {owner:?}"
-    );
-
-    // The one against its list, and what it is.
-    let (sheet, value, symbol, [symbol_rank, text_rank]) = AGAINST_ITS_LIST;
-    assert_eq!(
-        against.len(),
-        1,
+        against.is_empty(),
         "labels painted against their sheet's list: {against:#?}"
-    );
-    let (found_on, label) = against[0];
-    assert_eq!(
-        (
-            found_on,
-            label.value.as_str(),
-            label.symbol.as_str(),
-            label.symbol_rank,
-            label.text_rank
-        ),
-        (sheet, value, symbol, symbol_rank, text_rank)
-    );
-    assert!(label.listed_text_first() && !label.painted_text_first());
-    assert!(
-        label.painted_next(),
-        "the plot letters the text at the step after the mark: {label:?}"
-    );
-
-    // Its twin: the same label at the same point and the same places, on a
-    // sheet whose plot paints it as listed.
-    let twins: Vec<&MarkedLabel> = read
-        .iter()
-        .filter(|(name, _)| *name == ITS_TWIN)
-        .flat_map(|(_, labels)| labels)
-        .filter(|twin| {
-            twin.value == label.value
-                && twin.symbol == label.symbol
-                && twin.symbol_rank == label.symbol_rank
-                && twin.text_rank == label.text_rank
-                && apart(twin.mark_mm, label.mark_mm) <= 0.01
-        })
-        .collect();
-    assert_eq!(twins.len(), 1, "{ITS_TWIN}: {twins:#?}");
-    assert!(
-        twins[0].as_listed() && twins[0].painted_text_first() && !twins[0].painted_next(),
-        "{ITS_TWIN}: {:?}",
-        twins[0]
     );
 }
 
@@ -1621,18 +1310,19 @@ fn a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them() {
 /// is drawn in part from a file outside its drawing, whose damage the page
 /// has to say (`symbol_file_chain_fault`), and whose revision need not be
 /// the one the drawing was saved with. None of the eleven does: all 2 395
-/// placements of the drawings' own and all 12 of their templates' are
-/// drawn from a cached body, and none is missing one. (The 53 backup pages
-/// and the 7 fixtures are held to the same by their ledger baselines,
-/// which pin each page's placements by source: 9 225 and 170 of the
-/// drawings' own, 64 and 10 of the templates', all cached.)
+/// placements of the drawings' own and all 10 of their templates' (the two
+/// bare A1 sheets and `换热器CD` carry no border template) are drawn from a
+/// cached body, and none is missing one. (The 53 backup pages and the 7
+/// fixtures are held to the same by their ledger baselines, which pin each
+/// page's placements by source: 9 225 and 170 of the drawings' own, 64 and
+/// 10 of the templates', all cached.)
 const PLACEMENTS: [[u64; 6]; 11] = [
     [343, 0, 0, 1, 0, 0],
     [505, 0, 0, 1, 0, 0],
     [592, 0, 0, 1, 0, 0],
-    [75, 0, 0, 1, 0, 0],
+    [75, 0, 0, 0, 0, 0],
     [65, 0, 0, 1, 0, 0],
-    [85, 0, 0, 1, 0, 0],
+    [85, 0, 0, 0, 0, 0],
     [156, 0, 0, 0, 0, 0],
     [144, 0, 0, 1, 0, 0],
     [145, 0, 0, 1, 0, 0],
@@ -1660,7 +1350,7 @@ fn the_eleven_pages_draw_every_placement_from_a_cached_body() {
     let mut measured = Vec::new();
     for sheet in &SHEETS {
         let name = sheet.name;
-        let path = corpus.join(format!("{name}.pid"));
+        let path = exported_page::acceptance_drawing(&corpus, name);
         let model = lay_out_drawing(&path, &corpus).unwrap_or_else(|e| panic!("{name}: {e}"));
         let write = write_ledger(&model).unwrap_or_else(|e| panic!("{name}: {e}"));
         let account = ExportLedger::assemble(&model, &write);

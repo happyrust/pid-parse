@@ -112,10 +112,18 @@ pub struct PaperModel {
     /// The parser keeps those as inferred lines because they are the evidence
     /// for how the record reads at all; a page draws what the drawing states.
     pub skipped_endpoint_pairs: usize,
-    /// Symbol files the drawing names and the library does not have — or
-    /// has in a file too damaged to draw from, which the name then says:
-    /// `… (the library's file is damaged and is not drawn from)`.
+    /// Symbol files the drawing names that could not be drawn at all — neither
+    /// a usable body cached in the `.pid` nor a usable `.sym` in the library
+    /// answered them — producing placeholder boxes in [`Self::missing_boxes`].
+    /// When a library file exists but is too damaged to draw from, the entry
+    /// says `… (the library's file is damaged and is not drawn from)`.
     pub missing_symbols: Vec<String>,
+    /// Symbol files the drawing names whose `.sym` file is absent from the
+    /// external symbol library, while the placement itself was drawn from the
+    /// body cached in the `.pid` (so nothing is missing from the page and no
+    /// placeholder appears in [`Self::missing_boxes`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library_gaps: Vec<String>,
     /// Template stems the drawing's frame links that this corpus could not put
     /// furniture behind.
     ///
@@ -1749,6 +1757,7 @@ pub fn lay_out_with_symbol_roots(
         off_sheet_primitives: off_sheet,
         skipped_endpoint_pairs,
         missing_symbols: placements.missing.into_iter().collect(),
+        library_gaps: placements.library_gaps.into_iter().collect(),
         missing_templates,
         missing_boxes: placements.missing_boxes,
         symbols_found: placements.found.len(),
@@ -2467,6 +2476,7 @@ struct SymbolPlacements {
     referenced: std::collections::BTreeSet<String>,
     found: std::collections::BTreeSet<String>,
     missing: std::collections::BTreeSet<String>,
+    library_gaps: std::collections::BTreeSet<String>,
     missing_boxes: Vec<MissingSymbolBox>,
     /// One entry per placement expanded, in page order: what drew it and where
     /// its strokes reached. Only a template's are read back
@@ -2587,7 +2597,7 @@ fn push_symbol_instance(
             && body.is_none()
             && let Some(key) = key.clone()
         {
-            tally.missing.insert(missing_name(&key));
+            tally.library_gaps.insert(missing_name(&key));
         }
         let body_primitives = definition.primitives.len();
         let visible = definition.visible_styled().collect::<Vec<_>>();
@@ -5960,6 +5970,7 @@ mod tests {
                 text([100.0, 30.0], "PT-101"),
             ],
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
@@ -6533,6 +6544,7 @@ mod tests {
             skipped_endpoint_pairs: 0,
             primitives: out,
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
@@ -6966,6 +6978,7 @@ mod tests {
             frame_mm: None,
             skipped_endpoint_pairs: 0,
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
@@ -7145,6 +7158,7 @@ mod tests {
                 frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
                 missing_templates: Vec::new(),
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
@@ -7405,6 +7419,11 @@ mod tests {
                 !model.missing_symbols.iter().any(|missing| missing == own),
                 "{own} is still missing: {:?}",
                 model.missing_symbols
+            );
+            assert!(
+                !model.library_gaps.iter().any(|gap| gap == own),
+                "{own} is still a library gap: {:?}",
+                model.library_gaps
             );
         }
     }
@@ -8596,6 +8615,77 @@ mod tests {
         assert!(tally.faulted().is_empty(), "{:?}", tally.faulted());
     }
 
+    #[test]
+    fn a_cached_placement_absent_from_library_is_a_library_gap_not_missing() {
+        let cached = geometry_with(
+            vec![definition(
+                vec![SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (0.001, 0.001),
+                }],
+                Some(true),
+            )],
+            Vec::new(),
+        );
+        let placement = symbol_placement(
+            Some(GAUGE_AS_PLACED),
+            Some(PidSymbolDefinitionRef { site: 12, sheet: 1 }),
+        );
+        let mut empty_library = SymbolLibrary::with_roots(Vec::<std::path::PathBuf>::new());
+        let mut tally = super::SymbolPlacements::default();
+        let source = placed_from(&placement, &cached, &mut empty_library, &mut tally);
+        assert_eq!(source, PlacementSource::Cached);
+        assert_eq!(
+            tally.library_gaps.iter().collect::<Vec<_>>(),
+            [&GAUGE.join("\\").to_ascii_lowercase()]
+        );
+        assert!(
+            tally.missing.is_empty(),
+            "cached placement must not enter missing_symbols: {:?}",
+            tally.missing
+        );
+        assert!(
+            tally.missing_boxes.is_empty(),
+            "cached placement must not emit a missing box: {:?}",
+            tally.missing_boxes
+        );
+    }
+
+    #[test]
+    fn an_uncached_placement_without_a_usable_library_body_is_missing_not_a_library_gap() {
+        let nothing_cached = NormalizedPidGeometry::default();
+        let placement = symbol_placement(Some(GAUGE_AS_PLACED), None);
+
+        // Absent from the external library and no cached body: truly undrawn.
+        let mut empty_library = SymbolLibrary::with_roots(Vec::<std::path::PathBuf>::new());
+        let mut tally = super::SymbolPlacements::default();
+        let source = placed_from(&placement, &nothing_cached, &mut empty_library, &mut tally);
+        assert_eq!(source, PlacementSource::Missing);
+        assert_eq!(
+            tally.missing.iter().collect::<Vec<_>>(),
+            [&GAUGE.join("\\").to_ascii_lowercase()]
+        );
+        assert_eq!(tally.missing_boxes.len(), 1);
+        assert!(
+            tally.library_gaps.is_empty(),
+            "undrawn placement must not enter library_gaps: {:?}",
+            tally.library_gaps
+        );
+
+        // Damaged library file with nothing drawable and no cached body: also truly undrawn.
+        let (mut unreadable, _kept) = a_library_of_the_gauge("a-gauge-unreadable-gap", Some(0));
+        let mut tally = super::SymbolPlacements::default();
+        let source = placed_from(&placement, &nothing_cached, &mut unreadable, &mut tally);
+        assert_eq!(source, PlacementSource::Missing);
+        assert_eq!(tally.missing.len(), 1);
+        assert_eq!(tally.missing_boxes.len(), 1);
+        assert!(
+            tally.library_gaps.is_empty(),
+            "damaged uncached placement must not enter library_gaps: {:?}",
+            tally.library_gaps
+        );
+    }
+
     /// The reason `reason` names, recorded from an input built to trip it.
     ///
     /// Exhaustive over [`DropReason`]: a new code without a case here does not
@@ -9397,6 +9487,7 @@ mod tests {
             skipped_endpoint_pairs: 0,
             primitives: vec![stroke],
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
@@ -9653,6 +9744,7 @@ mod tests {
             skipped_endpoint_pairs: 0,
             primitives: vec![write_label([10.0, 10.0], Some(2.5), "PT-101")],
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,
@@ -9735,6 +9827,7 @@ mod tests {
                     skipped_endpoint_pairs: 0,
                     primitives: vec![write_label([50.0, 100.9], Some(2.5), "PT-101")],
                     missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
                     missing_templates: Vec::new(),
                     missing_boxes: Vec::new(),
                     symbols_found: 0,

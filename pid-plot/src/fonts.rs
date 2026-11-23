@@ -940,6 +940,7 @@ mod tests {
                 furniture: false,
             }],
             missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
             missing_templates: Vec::new(),
             missing_boxes: Vec::new(),
             symbols_found: 0,

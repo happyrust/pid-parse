@@ -633,29 +633,80 @@ impl<'a> Device<'a> for InkDevice {
         // What this path prints: its length in points, and each piece.
         let mut printed_pt = 0.0;
         let mut printed: Vec<InkSegment> = Vec::new();
+        // A sheet edge just emitted in the current subpath, so a collinear
+        // same-direction tail (such as the 1-device-unit stub Amyuni/GDI
+        // appends to a polyline) extends that edge instead of leaking into
+        // ordinary ink segments.
+        struct ActiveEdge {
+            end: Point,
+            dir: [f64; 2],
+            indices: Option<(usize, usize)>,
+        }
+        let mut active_edge: Option<ActiveEdge> = None;
         let piece = |piece_start: Point, piece_end: Point| InkSegment {
             start_mm: view_pt_to_paper_mm(piece_start.x, piece_start.y, page_h),
             end_mm: view_pt_to_paper_mm(piece_end.x, piece_end.y, page_h),
             width_mm: width_pt.abs() * MM_PER_PT,
         };
-        let mut run = |device: &mut Self, from: Point, to: Point, dash: &mut DashWalk| {
+        let mut run = |device: &mut Self,
+                       from: Point,
+                       to: Point,
+                       dash: &mut DashWalk,
+                       active_edge: &mut Option<ActiveEdge>| {
             let pieces = dash.split([from.x, from.y], [to.x, to.y]);
             if is_sheet_edge(from, to, page_w, page_h) {
                 // Listed whole, a dashed one too: what is asked of a stroke
                 // this long is where it lies and how wide it is.
-                if let Some((edge_start, edge_end)) = device.printed_edge(from, to, width_pt) {
+                let delta = to - from;
+                let len = delta.hypot();
+                let indices = if let Some((edge_start, edge_end)) =
+                    device.printed_edge(from, to, width_pt)
+                {
                     printed_pt += (edge_end - edge_start).hypot();
                     let edge = piece(edge_start, edge_end);
+                    let edge_idx = device.edges.len();
                     device.edges.push(SheetEdge {
                         start_mm: edge.start_mm,
                         end_mm: edge.end_mm,
                         width_mm: edge.width_mm,
                         paper,
                     });
+                    let printed_idx = printed.len();
                     printed.push(edge);
-                }
+                    Some((edge_idx, printed_idx))
+                } else {
+                    None
+                };
+                *active_edge = (len > 0.0).then_some(ActiveEdge {
+                    end: to,
+                    dir: [delta.x / len, delta.y / len],
+                    indices,
+                });
                 return;
             }
+            if let Some(active) = active_edge.as_mut()
+                && (from - active.end).hypot() < 1e-6
+            {
+                let delta = to - from;
+                let len = delta.hypot();
+                if len > 0.0 {
+                    let dot = (delta.x * active.dir[0] + delta.y * active.dir[1]) / len;
+                    if dot > 0.9999 {
+                        active.end = to;
+                        if let (Some((edge_idx, printed_idx)), Some((clipped_start, clipped_end))) =
+                            (active.indices, device.printed(from, to))
+                        {
+                            let end_mm =
+                                view_pt_to_paper_mm(clipped_end.x, clipped_end.y, page_h);
+                            printed_pt += (clipped_end - clipped_start).hypot();
+                            device.edges[edge_idx].end_mm = end_mm;
+                            printed[printed_idx].end_mm = end_mm;
+                        }
+                        return;
+                    }
+                }
+            }
+            *active_edge = None;
             for (piece_start, piece_end) in pieces {
                 let Some((piece_start, piece_end)) = device.printed(
                     Point::new(piece_start[0], piece_start[1]),
@@ -674,11 +725,12 @@ impl<'a> Device<'a> for InkDevice {
             PathEl::MoveTo(point) => {
                 start = Some(point);
                 current = Some(point);
+                active_edge = None;
                 dash.restart();
             }
             PathEl::LineTo(point) => {
                 if let Some(from) = current {
-                    run(self, from, point, &mut dash);
+                    run(self, from, point, &mut dash, &mut active_edge);
                 }
                 current = Some(point);
             }
@@ -686,9 +738,10 @@ impl<'a> Device<'a> for InkDevice {
                 if let (Some(from), Some(origin)) = (current, start)
                     && (from - origin).hypot() > 1e-6
                 {
-                    run(self, from, origin, &mut dash);
+                    run(self, from, origin, &mut dash, &mut active_edge);
                 }
                 current = start;
+                active_edge = None;
             }
             PathEl::QuadTo(_, _) | PathEl::CurveTo(_, _, _) => {}
         });
@@ -1413,6 +1466,83 @@ mod tests {
         let outside = format!("{clip} 0 98 m 0 2 l S Q");
         let pens = read_plot_pens(&one_page_pdf(&outside, 100.0)).expect("read");
         assert!(pens.sheet_edges.is_empty(), "{:?}", pens.sheet_edges);
+    }
+
+    #[test]
+    fn a_collinear_tail_inside_the_clip_extends_its_sheet_edge() {
+        // The A2 reference's left sheet edge runs down at x = 0.48 pt and
+        // ends with a 1-device-unit (0.48 pt) collinear stub inside the clip.
+        // The stub must extend the SheetEdge rather than leak into ordinary
+        // ink segments.
+        let content = "q 0.48 0 99.52 100 re W n 0.48 w 0 G \
+            0.48 98 m 0.48 1.44 l 0.48 0.96 l S Q";
+        let pdf = one_page_pdf(content, 100.0);
+        let mm = 25.4 / 72.0;
+
+        let ink = read_plot(&pdf).expect("read");
+        assert!(ink.segments.is_empty(), "{:?}", ink.segments);
+
+        let pens = read_plot_pens(&pdf).expect("read");
+        assert_eq!(pens.sheet_edges.len(), 1, "{:?}", pens.sheet_edges);
+        let edge = &pens.sheet_edges[0];
+        assert!((edge.start_mm[0] - 0.48 * mm).abs() < 1e-6, "{edge:?}");
+        assert!((edge.start_mm[1] - 98.0 * mm).abs() < 1e-6, "{edge:?}");
+        assert!((edge.end_mm[0] - 0.48 * mm).abs() < 1e-6, "{edge:?}");
+        assert!((edge.end_mm[1] - 0.96 * mm).abs() < 1e-6, "{edge:?}");
+        assert_eq!(pens.ends.len(), 1, "{:?}", pens.ends);
+        assert!(
+            (pens.ends[0].length_mm - (98.0 - 0.96) * mm).abs() < 1e-5,
+            "{:?}",
+            pens.ends[0]
+        );
+    }
+
+    #[test]
+    fn a_collinear_tail_outside_the_clip_leaves_edge_and_segments_unchanged() {
+        // On the CPE-SQ sheets, the 1-device-unit collinear tail falls wholly
+        // outside the clip rectangle; both sheet_edges and segments must match
+        // the same stroke without the tail.
+        let with_tail = one_page_pdf(
+            "q 0 1.44 100 98.56 re W n 0.48 w 0 G \
+             0.48 98 m 0.48 1.44 l 0.48 0.96 l S Q",
+            100.0,
+        );
+        let without_tail = one_page_pdf(
+            "q 0 1.44 100 98.56 re W n 0.48 w 0 G \
+             0.48 98 m 0.48 1.44 l S Q",
+            100.0,
+        );
+        let ink_with = read_plot(&with_tail).expect("read");
+        let ink_without = read_plot(&without_tail).expect("read");
+        assert!(ink_with.segments.is_empty(), "{:?}", ink_with.segments);
+        assert_eq!(ink_with.segments, ink_without.segments);
+
+        let pens_with = read_plot_pens(&with_tail).expect("read");
+        let pens_without = read_plot_pens(&without_tail).expect("read");
+        assert_eq!(pens_with.sheet_edges, pens_without.sheet_edges);
+        assert_eq!(pens_with.ends, pens_without.ends);
+    }
+
+    #[test]
+    fn a_perpendicular_turn_after_a_sheet_edge_is_still_an_ordinary_segment() {
+        // A corner turning 90 degrees onto a short stroke after a sheet edge
+        // is not a collinear continuation and must remain an ordinary segment.
+        let pdf = one_page_pdf("0.48 w 0 G 2 98 m 2 2 l 20 2 l S", 100.0);
+        let mm = 25.4 / 72.0;
+
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.segments.len(), 1, "{:?}", ink.segments);
+        let seg = &ink.segments[0];
+        assert!((seg.start_mm[0] - 2.0 * mm).abs() < 1e-6, "{seg:?}");
+        assert!((seg.start_mm[1] - 2.0 * mm).abs() < 1e-6, "{seg:?}");
+        assert!((seg.end_mm[0] - 20.0 * mm).abs() < 1e-6, "{seg:?}");
+        assert!((seg.end_mm[1] - 2.0 * mm).abs() < 1e-6, "{seg:?}");
+
+        let pens = read_plot_pens(&pdf).expect("read");
+        assert_eq!(pens.sheet_edges.len(), 1, "{:?}", pens.sheet_edges);
+        let edge = &pens.sheet_edges[0];
+        assert!((edge.start_mm[1] - 98.0 * mm).abs() < 1e-6, "{edge:?}");
+        assert!((edge.end_mm[1] - 2.0 * mm).abs() < 1e-6, "{edge:?}");
     }
 
     #[test]

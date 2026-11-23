@@ -1,12 +1,12 @@
 //! Is a symbol the library does not carry missing from the page, or only
 //! from the library?
 //!
-//! `PaperModel::missing_symbols` lists every symbol file a drawing names that
-//! no library source answers. It is an account of the *library*: a placement
-//! is drawn from the body the `.pid` itself carries first, so a name can be
-//! on that list and its symbol on the page. What is missing from the page is
-//! `PaperModel::missing_boxes` — a placement neither source could draw — and
-//! only those are masked out of the acceptance comparison.
+//! `PaperModel::library_gaps` lists every symbol file a drawing names that
+//! no library source answers while the placement was drawn from its cached
+//! body in the `.pid`. What is missing from the page is
+//! `PaperModel::missing_symbols` / `PaperModel::missing_boxes` — a placement
+//! neither source could draw — and only those are masked out of the acceptance
+//! comparison.
 //!
 //! The three A0 wellsites of `验收数据` list `pulsation damper.sym`. This
 //! prints, for every acceptance sheet that lists a symbol, each placement of
@@ -54,7 +54,7 @@ fn main() -> ExitCode {
     let (mut listed, mut placements, mut ink_total) = (0usize, 0usize, 0.0f64);
     for page in &pages {
         let model = &page.model;
-        if model.missing_symbols.is_empty() {
+        if model.library_gaps.is_empty() {
             println!(
                 "== {}: the library answers every symbol the sheet names; {} missing-symbol box(es)",
                 short(page.name),
@@ -76,14 +76,14 @@ fn main() -> ExitCode {
             "== {}: the library lacks {:?}; {} missing-symbol box(es); fit scale {:.7}, translation \
              ({:+.4}, {:+.4}) mm",
             short(page.name),
-            model.missing_symbols,
+            model.library_gaps,
             model.missing_boxes.len(),
             whole.fit.scale,
             whole.fit.translation_mm[0],
             whole.fit.translation_mm[1],
         );
         clean &= model.missing_boxes.is_empty();
-        for name in &model.missing_symbols {
+        for name in &model.library_gaps {
             listed += 1;
             // The key is the library-relative path, lower case; a primitive
             // carries the path as the drawing spells it.

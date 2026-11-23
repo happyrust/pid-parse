@@ -21961,7 +21961,8 @@
   ],
   "off_sheet_primitives": 0,
   "skipped_endpoint_pairs": 0,
-  "missing_symbols": [
+  "missing_symbols": [],
+  "library_gaps": [
     "instrumentation/off-line/without implied components/general/i-p converter.sym",
     "piping/fittings/flanges and unions/flange type 2.sym",
     "piping/piping opc's/ off-unit sq.sym",

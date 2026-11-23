@@ -68,18 +68,28 @@ fn five_drawings_match_the_symbol_gap() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(
             model.symbols_found, found,
-            "{name} found; missing: {:?}; library: {:?}",
-            model.missing_symbols, model.library
+            "{name} found; library_gaps: {:?}; missing: {:?}; library: {:?}",
+            model.library_gaps, model.missing_symbols, model.library
         );
         assert_eq!(model.symbols_referenced, referenced, "{name} referenced");
+        assert!(
+            model.missing_symbols.is_empty(),
+            "{name} undrawn missing symbols: {:?}",
+            model.missing_symbols
+        );
+        assert!(
+            model.missing_boxes.is_empty(),
+            "{name} missing boxes: {:?}",
+            model.missing_boxes
+        );
         assert_eq!(
-            model.missing_symbols.len(),
+            model.library_gaps.len(),
             referenced - found,
-            "{name} missing"
+            "{name} library_gaps"
         );
         if name == samples[0].0 {
             assert_eq!(
-                model.missing_symbols,
+                model.library_gaps,
                 [r"piping\specialty components\misc\pulsation damper.sym"],
                 "{name} known library gap"
             );

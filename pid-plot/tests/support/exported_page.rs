@@ -21,6 +21,47 @@
 
 use std::path::{Path, PathBuf};
 
+/// The default directory carrying the three same-revision `.pid` exports whose
+/// reference PDFs live in `验收数据`.
+const DEFAULT_ACCEPTANCE_EXPORT_DIR: &str =
+    r"D:\work\plant-code\cad\pid-test-data\publish\sppid导出\sppid导出格式.pid+xml";
+
+/// The three acceptance drawings whose reference PDFs in `验收数据` were
+/// plotted from a matching revision in `sppid导出格式.pid+xml`: `(name, subdir)`.
+const SAME_REVISION_DRAWINGS: [(&str, &str); 3] = [
+    ("集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图", "01"),
+    ("集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图", "01"),
+    ("集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图", "02"),
+];
+
+/// Resolve the `.pid` file for an acceptance sheet `name`.
+///
+/// The three sheets in [`SAME_REVISION_DRAWINGS`] have their reference-matching
+/// `.pid` revisions in `PID_ACCEPTANCE_EXPORT_DIR` (default
+/// [`DEFAULT_ACCEPTANCE_EXPORT_DIR`]), while `验收数据` itself keeps the
+/// earlier `.pid` + `_Data.xml` pairs pinned by the publish gates. When
+/// `PID_ACCEPTANCE_EXPORT_DIR` is explicitly set to empty, or the file does
+/// not exist there, this falls back to `corpus/<name>.pid`.
+pub fn acceptance_drawing(corpus: &Path, name: &str) -> PathBuf {
+    let export_dir = match std::env::var_os("PID_ACCEPTANCE_EXPORT_DIR") {
+        Some(value) if value.is_empty() => None,
+        Some(value) => Some(PathBuf::from(value)),
+        None => Some(PathBuf::from(DEFAULT_ACCEPTANCE_EXPORT_DIR)),
+    };
+    if let (Some(dir), Some((_, subdir))) = (
+        export_dir,
+        SAME_REVISION_DRAWINGS
+            .iter()
+            .find(|(drawing, _)| *drawing == name),
+    ) {
+        let candidate = dir.join(subdir).join(format!("{name}.pid"));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    corpus.join(format!("{name}.pid"))
+}
+
 /// The page `pid_plot` writes for `drawing` laid out against `corpus`, read
 /// back from `out`: the program run as a process, the way a sheet is
 /// exported.

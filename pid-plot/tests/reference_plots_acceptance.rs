@@ -146,10 +146,11 @@
 //! there as the one class past the width threshold, 64 labels were past the
 //! two limits, and two of the fourteen runs were in the reference's family.
 
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use pid_plot::compare::{
-    CompareReport, MaskRect, TextOffsetClass, UnpairedReason, UnpairedStroke,
+    CompareReport, MaskRect, TextOffsetClass, TextPair, UnpairedReason, UnpairedStroke,
     compare_plots_with_model, template_masks, write_overlay, write_report,
 };
 use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
@@ -158,6 +159,8 @@ use pid_plot::read::{PlotInk, read_plot_with_faces};
 use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
 use pid_plot::write::{PlotFont, write_plot_titled};
 
+#[path = "support/exported_page.rs"]
+mod exported_page;
 #[path = "../src/scratch.rs"]
 mod scratch;
 
@@ -180,9 +183,13 @@ struct Pin {
     max_pen_differed: usize,
     /// Our strokes the pen pairing leaves unpaired, by why.
     unpaired: Unpaired,
-    /// Symbols the corpus cannot draw. The A0 wellsites both place a
-    /// `pulsation damper.sym` the reference corpus never ships.
+    /// Symbols that could not be drawn at all (neither `.pid` cache nor
+    /// external library answered them). Empty on all eleven sheets.
     missing_symbols: &'static [&'static str],
+    /// Symbols drawn from their `.pid` cache whose `.sym` file is absent from
+    /// the external symbol library. The three A0 wellsites place
+    /// `pulsation damper.sym`, which the reference corpus does not ship.
+    library_gaps: &'static [&'static str],
     /// The same page with no template mask.
     whole: WholePage,
 }
@@ -354,7 +361,8 @@ const PINS: [Pin; 11] = [
             partly: 0,
             beside: 0,
         },
-        missing_symbols: &[PULSATION_DAMPER],
+        missing_symbols: &[],
+        library_gaps: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -385,7 +393,8 @@ const PINS: [Pin; 11] = [
             partly: 0,
             beside: 0,
         },
-        missing_symbols: &[PULSATION_DAMPER],
+        missing_symbols: &[],
+        library_gaps: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -420,7 +429,8 @@ const PINS: [Pin; 11] = [
             partly: 0,
             beside: 0,
         },
-        missing_symbols: &[PULSATION_DAMPER],
+        missing_symbols: &[],
+        library_gaps: &[PULSATION_DAMPER],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -445,16 +455,17 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 1278,
         max_pen_differed: 0,
         unpaired: Unpaired {
-            template: 286,
+            template: 0,
             bare: 0,
             partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
-            max_extra_mm: 3478.898 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 155,
             text_reference: 155,
             text_off: 0,
@@ -480,6 +491,7 @@ const PINS: [Pin; 11] = [
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -504,16 +516,17 @@ const PINS: [Pin; 11] = [
         min_pen_agreed: 1695,
         max_pen_differed: 0,
         unpaired: Unpaired {
-            template: 286,
+            template: 0,
             bare: 0,
             partly: 0,
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
-            max_extra_mm: 3478.694 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
             min_text_matched: 171,
             text_reference: 171,
             text_off: 0,
@@ -539,6 +552,7 @@ const PINS: [Pin; 11] = [
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -574,6 +588,7 @@ const PINS: [Pin; 11] = [
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -609,6 +624,7 @@ const PINS: [Pin; 11] = [
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -642,6 +658,7 @@ const PINS: [Pin; 11] = [
             beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
             min_coverage: 0.9999,
             max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
@@ -673,25 +690,26 @@ const PINS: [Pin; 11] = [
         // company name on the line its paragraph sets.
         name: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
         page_mm: [594.0, 420.0],
-        min_coverage: 0.9829,
-        max_extra_mm: 187.091 + EXTRA_SLACK_MM,
-        max_uncovered_mm: 208.671 + EXTRA_SLACK_MM,
-        min_text_matched: 214,
+        min_coverage: 0.9999,
+        max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+        max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
+        min_text_matched: 225,
         text_reference: 225,
-        min_pen_agreed: 2806,
+        min_pen_agreed: 2913,
         max_pen_differed: 0,
         unpaired: Unpaired {
             template: 0,
-            bare: 70,
-            partly: 26,
-            beside: 6,
+            bare: 0,
+            partly: 0,
+            beside: 0,
         },
         missing_symbols: &[],
+        library_gaps: &[],
         whole: WholePage {
-            min_coverage: 0.9881,
-            max_uncovered_mm: 208.840 + EXTRA_SLACK_MM,
-            max_extra_mm: 187.091 + EXTRA_SLACK_MM,
-            min_text_matched: 250,
+            min_coverage: 0.9999,
+            max_uncovered_mm: 0.0 + EXTRA_SLACK_MM,
+            max_extra_mm: 0.0 + EXTRA_SLACK_MM,
+            min_text_matched: 261,
             text_reference: 261,
             // Two of the four were the company name's two lines, stated in
             // the driver's 256ths now. The other two were the boxed
@@ -699,9 +717,9 @@ const PINS: [Pin; 11] = [
             // and the line hangs from its top, 0.173 mm above where a box
             // of the line's own 3.689 mm puts it.
             text_off: 0,
-            borrowed: 3,
-            borrowed_in_family: 3,
-            pieces: 2,
+            borrowed: 5,
+            borrowed_in_family: 5,
+            pieces: 6,
         },
     },
 ];
@@ -787,33 +805,6 @@ fn deliver_plots(corpus: &std::path::Path, delivered: &[(&str, Vec<u8>)]) {
     std::fs::write(plot_dir.join("BUILD.txt"), build).expect("write BUILD.txt");
 }
 
-/// The page `pid_plot` writes for the drawing `name` of `corpus`, read back
-/// from `out`: the program run as a process, the way a sheet is exported.
-///
-/// The program looks for its faces in `PID_PLOT_FONTS` and then in the
-/// corpus, which is the order `dirs` is already in, so it is handed the
-/// whole list and reads the files this gate reads. `PID_PLOT_CJK_FONT`,
-/// which has it embed one face more, is taken out of its environment: the
-/// page delivered is the one the program writes with no such face named.
-fn pid_plot_page(corpus: &Path, name: &str, dirs: &[PathBuf], out: &Path) -> Vec<u8> {
-    let fonts = std::env::join_paths(dirs).expect("the font directories as one list");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pid_plot"))
-        .arg(corpus.join(format!("{name}.pid")))
-        .arg(out)
-        .arg(corpus)
-        .env("PID_PLOT_FONTS", fonts)
-        .env_remove("PID_PLOT_CJK_FONT")
-        .output()
-        .unwrap_or_else(|error| panic!("{name}: pid_plot did not start: {error}"));
-    assert!(
-        output.status.success(),
-        "{name}: pid_plot exited {:?}:\n{}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::fs::read(out).unwrap_or_else(|error| panic!("{name}: {}: {error}", out.display()))
-}
-
 /// A page that matches no surveyed sheet gets no masks at all.
 #[test]
 fn only_the_surveyed_sheets_carry_furniture_masks() {
@@ -850,11 +841,15 @@ fn eleven_reference_plots_hold_their_readings() {
     let whole_dir = out_dir.join("whole-page");
     std::fs::create_dir_all(&whole_dir).expect("mkdir acceptance");
 
+    let drawing_paths: Vec<PathBuf> = PINS
+        .iter()
+        .map(|pin| exported_page::acceptance_drawing(&corpus, pin.name))
+        .collect();
     let models: Vec<PaperModel> = PINS
         .iter()
-        .map(|pin| {
-            let path = corpus.join(format!("{}.pid", pin.name));
-            lay_out_drawing(&path, &corpus).unwrap_or_else(|error| {
+        .zip(&drawing_paths)
+        .map(|(pin, path)| {
+            lay_out_drawing(path, &corpus).unwrap_or_else(|error| {
                 panic!("{}: layout: {error}", pin.name);
             })
         })
@@ -957,18 +952,17 @@ fn eleven_reference_plots_hold_their_readings() {
             .pdf;
         // What is verified below, and delivered after it, is the page
         // `pid_plot` writes for this drawing, byte for byte.
-        let exported = pid_plot_page(&corpus, name, &dirs, &exports.join(format!("{index}.pdf")));
-        assert!(
-            our_bytes == exported,
-            "{name}: the page this gate verifies and delivers is not the bytes pid_plot writes \
-             for the drawing: {} bytes here, {} from pid_plot, first apart at byte {}",
-            our_bytes.len(),
-            exported.len(),
-            our_bytes
-                .iter()
-                .zip(&exported)
-                .position(|(ours, theirs)| ours != theirs)
-                .unwrap_or_else(|| our_bytes.len().min(exported.len()))
+        let exported = exported_page::pid_plot_page(
+            &drawing_paths[index],
+            &corpus,
+            &dirs,
+            &exports.join(format!("{index}.pdf")),
+        );
+        exported_page::assert_is_the_page_pid_plot_writes(
+            name,
+            "verifies and delivers",
+            &our_bytes,
+            &exported,
         );
         delivered.push((name, our_bytes.clone()));
         let (ours, our_faces) = read_plot_with_faces(&our_bytes).expect("read ours");
@@ -1089,11 +1083,30 @@ fn eleven_reference_plots_hold_their_readings() {
             0,
             "{name} an unpaired stroke lies in a missing-symbol box"
         );
-        assert_classes_hold(name, "masked", &report.text_offsets);
+        let lettered_on = model.frame_mm.unwrap_or(page);
+        let on_device_grid = (lettered_on[0] - pin.page_mm[0]).abs() < 1e-3
+            && (lettered_on[1] - pin.page_mm[1]).abs() < 1e-3;
+        assert_classes_hold(
+            name,
+            "masked",
+            &report.text_offsets,
+            &report.text_pairs,
+            on_device_grid,
+        );
         let missing_now: Vec<&str> = model.missing_symbols.iter().map(String::as_str).collect();
         assert_eq!(
             missing_now, pin.missing_symbols,
             "{name} missing symbol list moved"
+        );
+        let library_gaps_now: Vec<&str> = model.library_gaps.iter().map(String::as_str).collect();
+        assert_eq!(
+            library_gaps_now, pin.library_gaps,
+            "{name} library gap list moved"
+        );
+        assert!(
+            model.missing_boxes.is_empty(),
+            "{name} drew placeholder boxes: {:?}",
+            model.missing_boxes
         );
 
         let whole = compare_plots_with_model(&reference, &ours, &[], &missing, model);
@@ -1129,7 +1142,13 @@ fn eleven_reference_plots_hold_their_readings() {
         );
         // The furniture's lettering is in no class of the masked view at all,
         // so the same two thresholds are held again here, where it is.
-        assert_classes_hold(name, "whole-page", &whole.text_offsets);
+        assert_classes_hold(
+            name,
+            "whole-page",
+            &whole.text_offsets,
+            &whole.text_pairs,
+            on_device_grid,
+        );
         let pieces: usize = whole
             .text_offsets
             .iter()
@@ -1215,7 +1234,20 @@ fn eleven_reference_plots_hold_their_readings() {
 /// No class is left out for being small or for being `unknown`: a class of
 /// one label is that label's own reading, and the thresholds are wide of
 /// every one of them.
-fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
+///
+/// For ` part` classes (a label split across a face change, such as `L=35` +
+/// `℃`), every sheet is held to the relative piece-to-piece shift (`<=
+/// PIECE_SHIFT_MM`), directly guarding `borrowed::steps_before_lone` even on
+/// off-grid sheets like A2 (`frame_mm = [594.328, 420.566]`). On sheets on
+/// the 150 dpi device grid, each piece's absolute shift is also held to `<=
+/// PIECE_SHIFT_MM`.
+fn assert_classes_hold(
+    name: &str,
+    view: &str,
+    classes: &[TextOffsetClass],
+    pairs: &[TextPair],
+    on_device_grid: bool,
+) {
     for class in classes {
         assert!(
             class.mean_down_heights.abs() <= CLASS_DOWN_HEIGHTS,
@@ -1232,8 +1264,9 @@ fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
             class.mean_advance_heights,
             class.count
         );
-        // A piece of a label is held to its place as well as to the means.
-        if is_piece_class(class) {
+        // On device-grid sheets, a piece of a label is also held to its
+        // absolute place.
+        if is_piece_class(class) && on_device_grid {
             assert!(
                 class.max_shift_mm <= PIECE_SHIFT_MM,
                 "{name} {view} {}: a piece of a label starts {:.4} mm from the reference's, \
@@ -1241,6 +1274,45 @@ fn assert_classes_hold(name: &str, view: &str, classes: &[TextOffsetClass]) {
                 class.class,
                 class.max_shift_mm,
                 class.count
+            );
+        }
+    }
+
+    // On every sheet (including off-grid A2), group pieces by their label
+    // source and hold the relative shift between pieces of the same label to
+    // `PIECE_SHIFT_MM`.
+    type PieceKey<'a> = (Option<&'a str>, Option<[usize; 2]>, &'a str);
+    let mut groups: BTreeMap<PieceKey<'_>, Vec<&TextPair>> = BTreeMap::new();
+    for pair in pairs.iter().filter(|pair| pair.class.ends_with(" part")) {
+        let source = pair.source.as_ref().unwrap_or_else(|| {
+            panic!(
+                "{name} {view} {}: piece pair carries no TextSource",
+                pair.class
+            )
+        });
+        groups
+            .entry((
+                source.stream_path.as_deref(),
+                source.byte_range,
+                source.text.as_str(),
+            ))
+            .or_default()
+            .push(pair);
+    }
+    for ((_, _, text), group) in groups {
+        assert!(
+            group.len() >= 2,
+            "{name} {view}: piece group for {text:?} has only {} piece(s), expected >= 2",
+            group.len()
+        );
+        let first = group[0];
+        for other in &group[1..] {
+            let relative_mm = (other.along_mm - first.along_mm).hypot(other.down_mm - first.down_mm);
+            assert!(
+                relative_mm <= PIECE_SHIFT_MM,
+                "{name} {view} {}: pieces of {text:?} shift {relative_mm:.4} mm relative to \
+                 each other, past {PIECE_SHIFT_MM} mm",
+                other.class
             );
         }
     }

@@ -1761,9 +1761,11 @@ fn every_backup_drawing_exports_a_readable_page() {
             !model
                 .missing_symbols
                 .iter()
+                .chain(&model.library_gaps)
                 .any(|missing| missing.to_ascii_lowercase().ends_with("blfh.sym")),
-            "{name}: the template's own gap entered the drawing's report: {:?}",
-            model.missing_symbols
+            "{name}: the template's own gap entered the drawing's report: missing={:?} gaps={:?}",
+            model.missing_symbols,
+            model.library_gaps
         );
         let Some(template) = model.template.as_ref() else {
             bare.push((page_key(path, &backup), model.missing_templates.as_slice()));
@@ -2228,12 +2230,18 @@ fn every_backup_drawing_exports_a_readable_page() {
                 );
             }
         }
-        for missing in &model.missing_symbols {
+        for gap in &model.library_gaps {
             assert!(
-                KNOWN_LIBRARY_GAPS.contains(&missing.as_str()),
-                "{name}: a symbol no library carries entered the set: {missing}"
+                KNOWN_LIBRARY_GAPS.contains(&gap.as_str()),
+                "{name}: a symbol no library carries entered the set: {gap}"
             );
         }
+        assert!(
+            model.missing_symbols.is_empty(),
+            "{name}: {} symbol(s) had neither a library body nor a body of the drawing's own: {:?}",
+            model.missing_symbols.len(),
+            model.missing_symbols
+        );
         assert!(
             model.missing_boxes.is_empty(),
             "{name}: {} placement(s) had neither a library body nor a body of the \
