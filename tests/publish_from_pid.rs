@@ -684,7 +684,7 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
 }
 
 /// `_Index.json` 的顶层键集合 —— 两个整包分支必须一致。
-const INDEX_KEYS: [&str; 24] = [
+const INDEX_KEYS: [&str; 27] = [
     "package",
     "export",
     "pid_entries",
@@ -707,6 +707,9 @@ const INDEX_KEYS: [&str; 24] = [
     "pipeline_uids",
     "template_pid_entries",
     "unmatched_pid_entries",
+    "unmapped_leaf_levels",
+    "unmapped_specialty_codes",
+    "plant_added_instruments_skipped",
     "drawings",
     "problems",
 ];

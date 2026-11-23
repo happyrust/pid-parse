@@ -46,9 +46,14 @@
 //! item's leaf is what `MapEnumToEnum` publishes the deepest cell of its
 //! hierarchy as, and [`LEAF_LEVELS`] holds the levels the reference drawings
 //! state for that leaf. An item whose leaf they do not show takes no level,
-//! and neither does an instrument of a type the plant added.
+//! and neither does an instrument of a type the plant added. Each of those
+//! omissions is counted on [`CodelistGaps`] — objects whose leaf is not in
+//! [`LEAF_LEVELS`], `SP_ISSPECIALTYITEM` codes outside [`SPECIALTY_ITEM`],
+//! and instruments skipped because `INSTRUMENTTYPE` is at least
+//! [`PLANT_ADDED_INSTRUMENT_TYPE`] — and the count does not change a value
+//! the tables do hold.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::oracle_exp::{backup_uid_key, ExpError, ExpTables, ItemTable};
 use super::pid_load::{PidPublishAttribute, PidPublishDrawing, PidValueSource};
@@ -99,7 +104,175 @@ pub const DRAWING_CONSTANTS: [(&str, &str); 2] =
 /// states `ProcFunc`. Read off the seven reference drawings, not off a
 /// rule of the vendor's: 136 of 136 `InstrumentType3` and 154 of 154
 /// `ProcFunc` follow it.
-const PLANT_ADDED_INSTRUMENT_TYPE: i64 = 10_000;
+pub const PLANT_ADDED_INSTRUMENT_TYPE: i64 = 10_000;
+
+/// What a publish left unwritten because a built-in table does not hold it.
+///
+/// Every count is zero when nothing was left out. Callers still emit the
+/// three fields: a later plant can see that the tables covered this one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodelistGaps {
+    leaves: BTreeMap<LeafKey, usize>,
+    specialty: BTreeMap<i64, usize>,
+    plant_added: usize,
+}
+
+/// One published leaf that [`LEAF_LEVELS`] does not hold, and how many
+/// objects carried it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmappedLeaf {
+    /// The object's published class (`PIDPipingComponent`).
+    pub class: &'static str,
+    /// The interface the hierarchy hangs on (`IPipingComponent`).
+    pub interface: &'static str,
+    /// The leaf the map published, as [`LEAF_LEVELS`] would have stored it.
+    pub leaf: String,
+    /// How many objects carried this class, interface and leaf.
+    pub count: usize,
+}
+
+/// One `SP_ISSPECIALTYITEM` code outside [`SPECIALTY_ITEM`], and how many
+/// components stored it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmappedSpecialtyCode {
+    /// The code the dump stored.
+    pub code: i64,
+    /// How many components stored it.
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LeafKey {
+    class: &'static str,
+    interface: &'static str,
+    leaf: String,
+}
+
+impl CodelistGaps {
+    /// Objects whose published leaf is not a row of [`LEAF_LEVELS`].
+    #[must_use]
+    pub fn unmapped_leaf_total(&self) -> usize {
+        self.leaves.values().sum()
+    }
+
+    /// Those objects, one row per class, interface and leaf, ordered by
+    /// those three.
+    #[must_use]
+    pub fn unmapped_leaves(&self) -> Vec<UnmappedLeaf> {
+        self.leaves
+            .iter()
+            .map(|(key, count)| UnmappedLeaf {
+                class: key.class,
+                interface: key.interface,
+                leaf: key.leaf.clone(),
+                count: *count,
+            })
+            .collect()
+    }
+
+    /// Components whose `SP_ISSPECIALTYITEM` is not 1 or 2.
+    #[must_use]
+    pub fn unmapped_specialty_total(&self) -> usize {
+        self.specialty.values().sum()
+    }
+
+    /// Those codes, ordered by the code.
+    #[must_use]
+    pub fn unmapped_specialty_codes(&self) -> Vec<UnmappedSpecialtyCode> {
+        self.specialty
+            .iter()
+            .map(|(&code, &count)| UnmappedSpecialtyCode { code, count })
+            .collect()
+    }
+
+    /// Instruments that state no hierarchy level because `INSTRUMENTTYPE`
+    /// is at least [`PLANT_ADDED_INSTRUMENT_TYPE`].
+    #[must_use]
+    pub fn plant_added_instruments_skipped(&self) -> usize {
+        self.plant_added
+    }
+
+    /// Add `other` into this tally. Rows that name the same leaf or the
+    /// same specialty code add their counts.
+    pub fn merge(&mut self, other: &Self) {
+        for (key, count) in &other.leaves {
+            *self.leaves.entry(key.clone()).or_default() += *count;
+        }
+        for (code, count) in &other.specialty {
+            *self.specialty.entry(*code).or_default() += *count;
+        }
+        self.plant_added += other.plant_added;
+    }
+
+    fn note_unmapped_leaf(&mut self, class: &'static str, interface: &'static str, leaf: String) {
+        *self
+            .leaves
+            .entry(LeafKey {
+                class,
+                interface,
+                leaf,
+            })
+            .or_default() += 1;
+    }
+
+    fn note_specialty(&mut self, code: i64) {
+        *self.specialty.entry(code).or_default() += 1;
+    }
+
+    /// The three `_Index.json` fields, present even when every count is
+    /// zero: `unmapped_leaf_levels`, `unmapped_specialty_codes`,
+    /// `plant_added_instruments_skipped`.
+    #[must_use]
+    pub fn index_fields(&self) -> [(&'static str, serde_json::Value); 3] {
+        let by_type: Vec<serde_json::Value> = self
+            .unmapped_leaves()
+            .into_iter()
+            .map(|row| {
+                serde_json::json!({
+                    "class": row.class,
+                    "interface": row.interface,
+                    "leaf": row.leaf,
+                    "count": row.count,
+                })
+            })
+            .collect();
+        let by_code: Vec<serde_json::Value> = self
+            .unmapped_specialty_codes()
+            .into_iter()
+            .map(|row| serde_json::json!({ "code": row.code, "count": row.count }))
+            .collect();
+        [
+            (
+                "unmapped_leaf_levels",
+                serde_json::json!({
+                    "total": self.unmapped_leaf_total(),
+                    "by_type": by_type,
+                }),
+            ),
+            (
+                "unmapped_specialty_codes",
+                serde_json::json!({
+                    "total": self.unmapped_specialty_total(),
+                    "by_code": by_code,
+                }),
+            ),
+            (
+                "plant_added_instruments_skipped",
+                serde_json::json!(self.plant_added_instruments_skipped()),
+            ),
+        ]
+    }
+}
+
+/// How many values [`attach_codelist_values`] added, and what it left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodelistAttachment {
+    /// Values added to the drawing.
+    pub added: usize,
+    /// What the built-in tables did not hold. Empty when they held every
+    /// leaf, specialty code and instrument type the drawing asked for.
+    pub gaps: CodelistGaps,
+}
 
 /// A hierarchical enumeration: the classes that carry it, and the codelist
 /// columns of the item's table, the shallowest first, whose deepest cell
@@ -1123,35 +1296,68 @@ fn instrument_rule_holds(rule: &Rule, key: &str, cells: &Cells, map: Option<&Dat
 /// The `(attribute, value)` levels of one leaf of [`LEAF_LEVELS`].
 type Levels = &'static [(&'static str, &'static str)];
 
-/// The hierarchy of `class`, the column whose cell names the item's leaf
-/// and that leaf's [`LEAF_LEVELS`]; `None` when the class carries no
-/// hierarchy, no cell names a leaf the references show, or the item is an
-/// instrument of a type the plant added, which states no level either
-/// ([`PLANT_ADDED_INSTRUMENT_TYPE`]).
-fn leaf_levels(
-    class: &str,
-    key: &str,
-    cells: &Cells,
-    map: &DataMap,
-) -> Option<(Hierarchy, &'static str, Levels)> {
-    let hierarchy = HIERARCHIES
+/// What the hierarchy of one object comes to.
+enum LeafResolution {
+    /// The class carries no hierarchy, or no cell names a published leaf.
+    Absent,
+    /// An instrument of a plant-added type: it states no level.
+    PlantAdded,
+    /// The published leaf is not a row of [`LEAF_LEVELS`].
+    Unmapped {
+        interface: &'static str,
+        leaf: String,
+    },
+    /// The levels [`LEAF_LEVELS`] states for the leaf.
+    Mapped {
+        hierarchy: Hierarchy,
+        column: &'static str,
+        levels: Levels,
+    },
+}
+
+/// The hierarchy of `class`. A plant-added instrument
+/// ([`PLANT_ADDED_INSTRUMENT_TYPE`]) is [`LeafResolution::PlantAdded`]
+/// whether or not a map is at hand: that is the skip, and it is counted.
+/// A leaf the map publishes and [`LEAF_LEVELS`] does not hold is
+/// [`LeafResolution::Unmapped`]. Without a map a leaf cannot be named, so
+/// that case is [`LeafResolution::Absent`] rather than an unmapped leaf.
+fn resolve_leaf(class: &str, key: &str, cells: &Cells, map: Option<&DataMap>) -> LeafResolution {
+    let Some(hierarchy) = HIERARCHIES
         .iter()
         .find(|hierarchy| hierarchy.classes.contains(&class))
-        .copied()?;
+        .copied()
+    else {
+        return LeafResolution::Absent;
+    };
     if hierarchy.table == ItemTable::Instrument
         && cell(cells, ItemTable::Instrument, "INSTRUMENTTYPE", key)
             .is_some_and(|kind| kind >= PLANT_ADDED_INSTRUMENT_TYPE)
     {
-        return None;
+        return LeafResolution::PlantAdded;
     }
-    let (column, leaf) = hierarchy.columns.iter().rev().find_map(|&(column, list)| {
+    let Some(map) = map else {
+        return LeafResolution::Absent;
+    };
+    let Some((column, leaf)) = hierarchy.columns.iter().rev().find_map(|&(column, list)| {
         let code = cell(cells, hierarchy.table, column, key)?;
         Some((column, map.enum_target(list, code)?))
-    })?;
-    let &(_, levels) = LEAF_LEVELS.iter().find(|(interface, levels)| {
+    }) else {
+        return LeafResolution::Absent;
+    };
+    if let Some(&(_, levels)) = LEAF_LEVELS.iter().find(|(interface, levels)| {
         *interface == hierarchy.interface && levels.last().is_some_and(|(_, value)| *value == leaf)
-    })?;
-    Some((hierarchy, column, levels))
+    }) {
+        LeafResolution::Mapped {
+            hierarchy,
+            column,
+            levels,
+        }
+    } else {
+        LeafResolution::Unmapped {
+            interface: hierarchy.interface,
+            leaf,
+        }
+    }
 }
 
 /// State the enumerated values of every item the drawing publishes, with
@@ -1160,7 +1366,9 @@ fn leaf_levels(
 ///
 /// Without `datamap` only the values that need no map are stated: the
 /// specialty flag and the drawing's constants. A value the item already
-/// states is kept. Returns how many values were added.
+/// states is kept. The returned [`CodelistAttachment::added`] is how many
+/// values were added. [`CodelistAttachment::gaps`] counts what was left
+/// out; it does not add, drop, or rewrite a value the tables hold.
 ///
 /// # Errors
 ///
@@ -1170,12 +1378,23 @@ pub fn attach_codelist_values(
     drawing: &mut PidPublishDrawing,
     tables: &ExpTables,
     datamap: Option<&DataMap>,
-) -> Result<usize, ExpError> {
+) -> Result<CodelistAttachment, ExpError> {
     let cells = read_cells(tables)?;
+    Ok(state_codelist_values(drawing, &cells, datamap))
+}
+
+/// [`attach_codelist_values`] once the dump's cells are in hand, so a test
+/// can state a miss without building a dump.
+fn state_codelist_values(
+    drawing: &mut PidPublishDrawing,
+    cells: &Cells,
+    datamap: Option<&DataMap>,
+) -> CodelistAttachment {
     let retrieved = datamap
         .map(DataMap::enums_retrieved_only)
         .unwrap_or_default();
     let mut added = 0;
+    let mut gaps = CodelistGaps::default();
     for item in &mut drawing.items {
         let Some(class) = item.class else {
             continue;
@@ -1191,14 +1410,17 @@ pub fn attach_codelist_values(
                 continue;
             }
             if rule.table == ItemTable::Instrument
-                && !instrument_rule_holds(&rule, &key, &cells, datamap)
+                && !instrument_rule_holds(&rule, &key, cells, datamap)
             {
                 continue;
             }
-            let Some(code) = cell(&cells, rule.table, rule.column, &key) else {
+            let Some(code) = cell(cells, rule.table, rule.column, &key) else {
                 continue;
             };
             let Some(value) = spell(&rule, code, datamap, &retrieved) else {
+                if let Spelling::SpecialtyItem = rule.spelling {
+                    gaps.note_specialty(code);
+                }
                 continue;
             };
             item.attributes.push(PidPublishAttribute {
@@ -1212,28 +1434,35 @@ pub fn attach_codelist_values(
                 },
             });
         }
-        if let Some((hierarchy, column, levels)) =
-            datamap.and_then(|map| leaf_levels(class, &key, &cells, map))
-        {
-            for &(name, value) in levels {
-                if item
-                    .attributes
-                    .iter()
-                    .any(|stated| stated.interface == hierarchy.interface && stated.name == name)
-                {
-                    continue;
+        match resolve_leaf(class, &key, cells, datamap) {
+            LeafResolution::Mapped {
+                hierarchy,
+                column,
+                levels,
+            } => {
+                for &(name, value) in levels {
+                    if item.attributes.iter().any(|stated| {
+                        stated.interface == hierarchy.interface && stated.name == name
+                    }) {
+                        continue;
+                    }
+                    item.attributes.push(PidPublishAttribute {
+                        interface: hierarchy.interface,
+                        name,
+                        value: value.to_string(),
+                        source: PidValueSource::CodelistCell {
+                            table: hierarchy.table.name(),
+                            column,
+                            spelling: "codelist_values::LEAF_LEVELS",
+                        },
+                    });
                 }
-                item.attributes.push(PidPublishAttribute {
-                    interface: hierarchy.interface,
-                    name,
-                    value: value.to_string(),
-                    source: PidValueSource::CodelistCell {
-                        table: hierarchy.table.name(),
-                        column,
-                        spelling: "codelist_values::LEAF_LEVELS",
-                    },
-                });
             }
+            LeafResolution::PlantAdded => gaps.plant_added += 1,
+            LeafResolution::Unmapped { interface, leaf } => {
+                gaps.note_unmapped_leaf(class, interface, leaf);
+            }
+            LeafResolution::Absent => {}
         }
         if item.attributes.len() > before {
             added += item.attributes.len() - before;
@@ -1257,7 +1486,7 @@ pub fn attach_codelist_values(
         });
         added += 1;
     }
-    Ok(added)
+    CodelistAttachment { added, gaps }
 }
 
 #[cfg(test)]
@@ -1267,6 +1496,7 @@ mod tests {
 
     use super::*;
     use crate::publish::catalog;
+    use crate::publish::pid_load::{PidPublishDrawing, PidPublishItem};
 
     const CLASSES: [&str; 11] = [
         "PIDControlSystemFunction",
@@ -1348,7 +1578,9 @@ mod tests {
                 .expect("the drawing loads");
         super::super::oracle_exp::attach_dump_only_components(&mut drawing, &tables)
             .expect("components");
-        let added = attach_codelist_values(&mut drawing, &tables, Some(&map)).expect("values");
+        let added = attach_codelist_values(&mut drawing, &tables, Some(&map))
+            .expect("values")
+            .added;
 
         let mut by_attribute = BTreeMap::<String, (usize, String)>::new();
         for attribute in drawing
@@ -1439,7 +1671,9 @@ mod tests {
         let mut bare =
             crate::publish::load_publish_from_pid(&committed("test-file/DWG-0202GP06-01.pid"))
                 .expect("the drawing loads");
-        let without = attach_codelist_values(&mut bare, &tables, None).expect("values");
+        let without = attach_codelist_values(&mut bare, &tables, None)
+            .expect("values")
+            .added;
         let specialty = bare
             .items
             .iter()
@@ -1447,5 +1681,268 @@ mod tests {
             .filter(|attribute| attribute.name == "CommoditySpecialtyType")
             .count();
         assert_eq!(without, specialty + DRAWING_CONSTANTS.len());
+    }
+
+    /// The committed drawing's XML, with and without the map, byte for
+    /// byte as it was before the gap counters. Length and FNV-1a were
+    /// taken at `a85fa10`.
+    #[test]
+    fn known_fixture_xml_bytes_do_not_change_when_gaps_are_counted() {
+        let dump = std::fs::read(committed(
+            "test-file/backup-test/DWG-0202GP06-01_p/Export.dmp",
+        ))
+        .expect("the committed dump");
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let map = crate::backup::read_datamap(&committed(
+            "test-file/backup-test/DWG-0202GP06-01_p/RefData~4~804.zip",
+        ))
+        .expect("the committed map");
+        let mut drawing =
+            crate::publish::load_publish_from_pid(&committed("test-file/DWG-0202GP06-01.pid"))
+                .expect("the drawing loads");
+        super::super::oracle_exp::attach_dump_only_components(&mut drawing, &tables)
+            .expect("components");
+        let attached = attach_codelist_values(&mut drawing, &tables, Some(&map)).expect("values");
+        let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
+        assert_eq!(
+            (xml.len(), fnv1a(xml.as_bytes())),
+            (44_981, 0xed7c_94a2_500b_39cc),
+            "in-table values changed the fixture XML"
+        );
+        assert_eq!(attached.gaps.unmapped_leaf_total(), 0);
+        assert_eq!(attached.gaps.unmapped_specialty_total(), 0);
+        assert_eq!(attached.gaps.plant_added_instruments_skipped(), 0);
+        for (key, value) in attached.gaps.index_fields() {
+            assert!(
+                value.get("total").is_some() || value.as_u64() == Some(0),
+                "{key} is missing from a zero report: {value}"
+            );
+        }
+
+        let mut bare =
+            crate::publish::load_publish_from_pid(&committed("test-file/DWG-0202GP06-01.pid"))
+                .expect("the drawing loads");
+        super::super::oracle_exp::attach_dump_only_components(&mut bare, &tables)
+            .expect("components");
+        attach_codelist_values(&mut bare, &tables, None).expect("values");
+        let bare_xml = crate::publish::pid_writer::write_pid_data_xml(&bare, "PLANT");
+        assert_eq!(
+            (bare_xml.len(), fnv1a(bare_xml.as_bytes())),
+            (42_159, 0x409a_9a47_64b6_eef4),
+            "in-table values changed the fixture XML without the map"
+        );
+    }
+
+    /// A piping component whose leaf the map publishes and [`LEAF_LEVELS`]
+    /// does not hold is left without levels, and the report names the leaf.
+    /// A component whose leaf is in the table still takes that level.
+    #[test]
+    fn an_unmapped_leaf_is_on_the_report_and_not_in_the_xml() {
+        const IN_TABLE: &str = "@{81CD9284-BC07-11D6-BDBC-00104BCC2B69}";
+        const OUTSIDE: &str = "@NOT-IN-LEAF-LEVELS";
+        let map = enum_map(&[("SP_25", 1, IN_TABLE), ("SP_25", 2, OUTSIDE)]);
+        let mut cells = Cells::new();
+        put(&mut cells, ItemTable::PipingComp, "PIPINGCOMPTYPE", "IN", 1);
+        put(
+            &mut cells,
+            ItemTable::PipingComp,
+            "PIPINGCOMPTYPE",
+            "OUT",
+            2,
+        );
+        let mut drawing = drawing(vec![
+            item("IN", "PIDPipingComponent"),
+            item("OUT", "PIDPipingComponent"),
+        ]);
+        let attached = state_codelist_values(&mut drawing, &cells, Some(&map));
+        assert_eq!(
+            values_named(&drawing.items[0], "PipingComponentType1"),
+            [IN_TABLE]
+        );
+        assert!(
+            values_named(&drawing.items[1], "PipingComponentType1").is_empty(),
+            "an unmapped leaf must not be written"
+        );
+        assert_eq!(attached.gaps.unmapped_leaf_total(), 1);
+        let rows = attached.gaps.unmapped_leaves();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].class, "PIDPipingComponent");
+        assert_eq!(rows[0].interface, "IPipingComponent");
+        assert_eq!(rows[0].leaf, OUTSIDE);
+        assert_eq!(rows[0].count, 1);
+        let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
+        assert!(xml.contains(IN_TABLE), "the in-table level must stay");
+        assert!(!xml.contains(OUTSIDE), "the unmapped leaf must stay out");
+        let fields = attached.gaps.index_fields();
+        assert_eq!(fields[0].0, "unmapped_leaf_levels");
+        assert_eq!(fields[0].1["total"], 1);
+        assert_eq!(fields[0].1["by_type"][0]["leaf"], OUTSIDE);
+        assert_eq!(fields[0].1["by_type"][0]["count"], 1);
+    }
+
+    /// `SP_ISSPECIALTYITEM` 1 is still the in-table spelling. A code outside
+    /// {1, 2} is not written, and the report names the code.
+    #[test]
+    fn a_specialty_code_outside_the_table_is_on_the_report_and_not_in_the_xml() {
+        let mut cells = Cells::new();
+        put(
+            &mut cells,
+            ItemTable::PipingComp,
+            "SP_ISSPECIALTYITEM",
+            "IN",
+            1,
+        );
+        put(
+            &mut cells,
+            ItemTable::PipingComp,
+            "SP_ISSPECIALTYITEM",
+            "OUT",
+            9,
+        );
+        let mut drawing = drawing(vec![
+            item("IN", "PIDPipingComponent"),
+            item("OUT", "PIDPipingComponent"),
+        ]);
+        let attached = state_codelist_values(&mut drawing, &cells, None);
+        assert_eq!(
+            values_named(&drawing.items[0], "CommoditySpecialtyType"),
+            [SPECIALTY_ITEM[0].1]
+        );
+        assert!(values_named(&drawing.items[1], "CommoditySpecialtyType").is_empty());
+        assert_eq!(attached.gaps.unmapped_specialty_total(), 1);
+        let codes = attached.gaps.unmapped_specialty_codes();
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[0].code, 9);
+        assert_eq!(codes[0].count, 1);
+        let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
+        assert!(xml.contains(SPECIALTY_ITEM[0].1));
+        assert!(!xml.contains("SP_ISSPECIALTYITEM"));
+        let fields = attached.gaps.index_fields();
+        assert_eq!(fields[1].0, "unmapped_specialty_codes");
+        assert_eq!(fields[1].1["total"], 1);
+        assert_eq!(fields[1].1["by_code"][0]["code"], 9);
+    }
+
+    /// An instrument whose type is in [`LEAF_LEVELS`] still takes that
+    /// level. One at or above [`PLANT_ADDED_INSTRUMENT_TYPE`] takes none,
+    /// and the report counts it.
+    #[test]
+    fn a_plant_added_instrument_is_skipped_and_counted() {
+        const IN_TABLE: &str = "@EE425";
+        let map = enum_map(&[("SP_28", 5, IN_TABLE), ("SP_28", 10_000, "@PLANT-ADDED")]);
+        let mut cells = Cells::new();
+        put(&mut cells, ItemTable::Instrument, "INSTRUMENTTYPE", "IN", 5);
+        put(
+            &mut cells,
+            ItemTable::Instrument,
+            "INSTRUMENTTYPE",
+            "OUT",
+            PLANT_ADDED_INSTRUMENT_TYPE,
+        );
+        let mut drawing = drawing(vec![
+            item("IN", "PIDInstrument"),
+            item("OUT", "PIDInstrument"),
+        ]);
+        let attached = state_codelist_values(&mut drawing, &cells, Some(&map));
+        assert_eq!(
+            values_named(&drawing.items[0], "InstrumentType3"),
+            [IN_TABLE]
+        );
+        assert!(values_named(&drawing.items[1], "InstrumentType3").is_empty());
+        assert!(values_named(&drawing.items[1], "InstrumentType").is_empty());
+        assert_eq!(attached.gaps.plant_added_instruments_skipped(), 1);
+        assert_eq!(attached.gaps.unmapped_leaf_total(), 0);
+        let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
+        assert!(xml.contains(IN_TABLE));
+        assert!(!xml.contains("@PLANT-ADDED"));
+        let fields = attached.gaps.index_fields();
+        assert_eq!(fields[2].0, "plant_added_instruments_skipped");
+        assert_eq!(fields[2].1, 1);
+    }
+
+    /// A report with nothing left out still states all three fields.
+    #[test]
+    fn zero_gaps_are_still_three_index_fields() {
+        let fields = CodelistGaps::default().index_fields();
+        assert_eq!(fields[0].1, serde_json::json!({"total": 0, "by_type": []}));
+        assert_eq!(fields[1].1, serde_json::json!({"total": 0, "by_code": []}));
+        assert_eq!(fields[2].1, 0);
+    }
+
+    fn fnv1a(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for &byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+
+    fn item(uid: &str, class: &'static str) -> PidPublishItem {
+        PidPublishItem {
+            uid: uid.to_string(),
+            model_item_type: String::new(),
+            class: Some(class),
+            attributes: Vec::new(),
+        }
+    }
+
+    fn drawing(items: Vec<PidPublishItem>) -> PidPublishDrawing {
+        PidPublishDrawing {
+            drawing_uid: "D1".to_string(),
+            drawing_name: "D".to_string(),
+            drawing_attributes: Vec::new(),
+            items,
+            process_points: Vec::new(),
+            branch_points: Vec::new(),
+            ports: Vec::new(),
+            connectivity_ends: Vec::new(),
+            exp_relations: Vec::new(),
+            opc_points: Vec::new(),
+            exp: None,
+            pipelines: Vec::new(),
+            pipelines_attempted: false,
+            pipeline_synthesis: crate::publish::pid_load::PipelineSynthesis::default(),
+            representations: Vec::new(),
+            stats: crate::publish::pid_load::PidPublishStats::default(),
+        }
+    }
+
+    fn put(cells: &mut Cells, table: ItemTable, column: &'static str, uid: &str, code: i64) {
+        cells
+            .entry((table, column))
+            .or_default()
+            .insert(backup_uid_key(uid), code);
+    }
+
+    /// `entries` are `(list, number, published spelling)`. The spelling may
+    /// already start with `@`; [`DataMap::enum_target`] adds that prefix.
+    fn enum_map(entries: &[(&str, i64, &str)]) -> crate::backup::DataMap {
+        let mut map = crate::backup::DataMap::default();
+        for (index, (list, number, spelling)) in entries.iter().enumerate() {
+            let uid = format!("E{index}");
+            map.enum_list_members
+                .entry((*list).to_string())
+                .or_default()
+                .push(uid.clone());
+            map.enums.insert(
+                uid.clone(),
+                crate::backup::MapEnum {
+                    number: Some(*number),
+                    ..crate::backup::MapEnum::default()
+                },
+            );
+            let bare = spelling.strip_prefix('@').unwrap_or(spelling);
+            map.enum_targets.insert(uid, vec![bare.to_string()]);
+        }
+        map
+    }
+
+    fn values_named<'a>(item: &'a PidPublishItem, name: &str) -> Vec<&'a str> {
+        item.attributes
+            .iter()
+            .filter(|attribute| attribute.name == name)
+            .map(|attribute| attribute.value.as_str())
+            .collect()
     }
 }

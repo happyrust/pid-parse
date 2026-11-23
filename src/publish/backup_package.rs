@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use super::codelist_values::CodelistGaps;
 use super::diff::pid_publish_census;
 use super::model::DatabaseShortfalls;
 use super::oracle_exp::{
@@ -146,6 +147,11 @@ pub struct BackupPublishReport {
     /// makes a finding of each such UID as well, and the drawing is one of
     /// [`PackageGateReport::dirty`].
     pub duplicate_uids: Vec<PackageDuplicateUids>,
+    /// Codelist values left unwritten because a built-in table does not
+    /// hold them. Zero when none were. `_Index.json` states the same three
+    /// counts, including when they are zero. A SQL Server package does not
+    /// read those tables, so its counts stay zero.
+    pub codelist_gaps: CodelistGaps,
 }
 
 /// A chain stream of one drawing of a backup package whose record chain
@@ -454,7 +460,7 @@ fn publish_package(
         .cloned()
         .collect();
     unmatched_pid_entries.sort();
-    let index = json!({
+    let mut index = json!({
         "package": package_dir.display().to_string(),
         "export": export_kind,
         "pid_entries": tally.pid_entries,
@@ -484,6 +490,7 @@ fn publish_package(
         "drawings": tally.drawings,
         "problems": tally.problems,
     });
+    insert_codelist_gaps(&mut index, &tally.gaps);
     let index_path = out_dir.join("_Index.json");
     write_atomic(&index_path, json_file_text(&index).as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
@@ -499,6 +506,7 @@ fn publish_package(
         // No drawing of this branch goes through the database line.
         shortfalls: Vec::new(),
         duplicate_uids: tally.duplicate_uids,
+        codelist_gaps: tally.gaps,
     })
 }
 
@@ -609,6 +617,9 @@ struct PublishTally {
     /// report. Each is also one of `problems`.
     duplicate_uids: Vec<PackageDuplicateUids>,
     gate: Option<PackageGate>,
+    /// Codelist values left unwritten, merged from each drawing the dump
+    /// was attached to.
+    gaps: CodelistGaps,
 }
 
 impl PublishTally {
@@ -697,6 +708,17 @@ impl PublishTally {
             self.pipelines += json_usize(oracle, "pipelines");
             self.piping_connectors += json_usize(oracle, "piping_connectors");
         }
+    }
+}
+
+/// State [`CodelistGaps`] on `_Index.json`, including when every count is
+/// zero. Both package branches call this so the index has one shape.
+fn insert_codelist_gaps(index: &mut Value, gaps: &CodelistGaps) {
+    let Some(object) = index.as_object_mut() else {
+        return;
+    };
+    for (key, value) in gaps.index_fields() {
+        object.insert(key.to_string(), value);
     }
 }
 
@@ -867,6 +889,7 @@ fn publish_one(
     // pipelines that are not its own, so it is published from the `.pid` alone.
     let dump_in_run = loaded.is_some() && uid_from == UidFrom::DumpSpId;
     let mut notes = Vec::new();
+    let mut codelist_gaps = CodelistGaps::default();
     if loaded.is_some() && uid_from == UidFrom::DrawingNo {
         let note = format!(
             "DocUID {} has no T_DRAWING row: the dump is another revision of this sheet, \
@@ -888,6 +911,9 @@ fn publish_one(
         );
         if let Err(error) = attached {
             return Err(error.to_string());
+        }
+        if let Some(gaps) = done.codelist_gaps {
+            codelist_gaps = gaps;
         }
         if let Some(stored) = done.stored_values {
             for reason in stored.unread {
@@ -936,6 +962,7 @@ fn publish_one(
         (object_count, value_count, rel_count),
         oracle.as_ref(),
     );
+    tally.gaps.merge(&codelist_gaps);
     let groups = if let Some(loaded) = loaded {
         loaded.groups.as_slice()
     } else {
@@ -1766,7 +1793,7 @@ fn publish_staged_database(
     unmatched.sort();
 
     let excluded_from_totals = excluded_from_totals(&drawings);
-    let index = json!({
+    let mut index = json!({
         "package": package_dir.display().to_string(),
         "export": "SqlServerMtf",
         "pid_entries": pid_entries,
@@ -1792,6 +1819,8 @@ fn publish_staged_database(
         "drawings": drawings,
         "problems": problems,
     });
+    // This branch does not read the Oracle codelist tables.
+    insert_codelist_gaps(&mut index, &CodelistGaps::default());
     let index_path = out_dir.join("_Index.json");
     write_atomic(&index_path, json_file_text(&index).as_bytes()).map_err(|error| {
         BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
@@ -1808,6 +1837,7 @@ fn publish_staged_database(
         chain_faults: Vec::new(),
         shortfalls,
         duplicate_uids,
+        codelist_gaps: CodelistGaps::default(),
     })
 }
 
@@ -3256,6 +3286,27 @@ mod tests {
             assert_eq!(index[key], count, "{key}: {index}");
         }
         assert_eq!(index["unmatched_pid_entries"], json!([]), "{index}");
+        assert_eq!(
+            index["unmapped_leaf_levels"],
+            json!({"total": report.codelist_gaps.unmapped_leaf_total(), "by_type": []}),
+            "{index}"
+        );
+        assert_eq!(
+            index["unmapped_specialty_codes"],
+            json!({"total": report.codelist_gaps.unmapped_specialty_total(), "by_code": []}),
+            "{index}"
+        );
+        assert_eq!(
+            index["plant_added_instruments_skipped"],
+            json!(report.codelist_gaps.plant_added_instruments_skipped()),
+            "{index}"
+        );
+        assert_eq!(report.codelist_gaps.unmapped_leaf_total(), 0, "{index}");
+        assert_eq!(
+            report.codelist_gaps.unmapped_specialty_total(),
+            0,
+            "{index}"
+        );
         let drawings = index["drawings"].as_array().expect("drawings");
         assert_eq!(drawings.len(), ROWS.len(), "{index}");
         for (drawing, [entry, uid, name, number, template, uid_from]) in drawings.iter().zip(ROWS) {

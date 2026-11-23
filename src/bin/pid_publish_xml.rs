@@ -1384,6 +1384,7 @@ mod tests {
                 })
                 .collect(),
             duplicate_uids: Vec::new(),
+            codelist_gaps: pid_parse::publish::codelist_values::CodelistGaps::default(),
         }
     }
 

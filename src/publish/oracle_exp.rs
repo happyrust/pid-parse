@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::codelist_values::attach_codelist_values;
+use super::codelist_values::{attach_codelist_values, CodelistGaps};
 use super::pid_load::{
     ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidValueSource,
@@ -1473,6 +1473,10 @@ pub struct DumpAttachment {
     /// How many enumerated values were added
     /// ([`attach_codelist_values`]).
     pub codelist_values: Option<usize>,
+    /// What that stage left unwritten. `None` until the stage has finished.
+    /// Zero counts are still `Some`: a drawing the tables covered is not
+    /// the same as a stage that did not run.
+    pub codelist_gaps: Option<CodelistGaps>,
     /// What [`attach_stored_values`] did. `None` as well in a run without
     /// a data map, which has no such stage.
     pub stored_values: Option<StoredValues>,
@@ -1571,7 +1575,9 @@ where
     let datamap = datamap().map_err(DumpAttachError::DataMap)?;
     let datamap: Option<&DataMap> = datamap.as_ref().map(std::borrow::Borrow::borrow);
     attach_pipelines(drawing, tables, plant, datamap)?;
-    done.codelist_values = Some(attach_codelist_values(drawing, tables, datamap)?);
+    let attached = attach_codelist_values(drawing, tables, datamap)?;
+    done.codelist_values = Some(attached.added);
+    done.codelist_gaps = Some(attached.gaps);
     if let Some(map) = datamap {
         done.stored_values = Some(attach_stored_values(drawing, tables, map));
     }
@@ -6158,6 +6164,7 @@ mod tests {
             attached.done,
             DumpAttachment {
                 codelist_values: Some(2),
+                codelist_gaps: Some(CodelistGaps::default()),
                 stored_values: Some(StoredValues::default()),
                 ..done_after_unit_values()
             }
@@ -6193,6 +6200,7 @@ mod tests {
             attached.done,
             DumpAttachment {
                 codelist_values: Some(2),
+                codelist_gaps: Some(CodelistGaps::default()),
                 ..done_after_unit_values()
             }
         );
