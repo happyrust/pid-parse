@@ -23,41 +23,44 @@
 //!   stroke 1 mm away. The three A1 sheets' shared 8.210 mm residue
 //!   was a lone complex-dash glyph at the run's midpoint, and they now read
 //!   extra 0.000 mm (`docs/plans/2026-11-02-the-a1-stem.md`).
-//!   Those ten now read coverage 1.000000 and uncovered 0.000 mm: what was
+//!   Those ten came to read coverage 1.000000 and uncovered 0.000 mm: what was
 //!   left on them was the tip of a signal-line dash, and it closed once that
 //!   pattern (`JStyleSimpleDashType` fit mode 2) is restarted on every vertex
 //!   and stretched to each straight piece the way `style.dll` lays it out
 //!   (`docs/analysis/2026-11-08-the-signal-dash-is-fitted-to-every-piece.md`).
-//! * The A2 sheet read 0.9819 / 210.712 mm on that date (it is pinned below at
-//!   the 0.9829 / 187.091 mm it reads today) because it is the first A2 page
-//!   this crate has ever had a reference for, and its furniture is a third
-//!   template family (`CPECCHB-SQ-A2.igr`, the one its own link record names).
+//! * The A2 sheet read 0.9819 / 210.712 mm on that date (later pinned at
+//!   0.9829 / 187.091 mm, which is what it read until `b5dfb5a`) because it is
+//!   the first A2 page this crate has ever had a reference for, and its
+//!   furniture is a third template family (`CPECCHB-SQ-A2.igr`, the one its
+//!   own link record names).
 //!   `pid-plot/assets/template-masks.json` had no A2 entry before this round,
 //!   so the whole title block and sign-off column were charged as drawing ink:
 //!   0.9379 / 1132.334 mm. The surveyed A2 masks are what closed that gap, and
-//!   what is left is one instrument cluster drawn ~16.9 mm high and ~1.9 mm
-//!   right of where the reference prints it — `TICA` and `H=-15℃` are both
+//!   what was left was one instrument cluster drawn ~16.9 mm high and ~1.9 mm
+//!   right of where the reference prints it — `TICA` and `H=-15℃` were both
 //!   decoded and laid out, at 500.8/256.3 and 507.8/260.8 mm. Eleven reference
-//!   labels still miss: nine are that cluster, and two are pipeline strings
+//!   labels still missed: nine were that cluster, and two were pipeline strings
 //!   whose text is the `.pid`'s own. The two `动火点` labels pair, and so does
 //!   the mirrored valve's `D` now that a symbol top hangs from the ascender
-//!   line, so the text pin is 214 of 225
+//!   line, so the text pin was 214 of 225
 //!   (`docs/analysis/2026-11-04-the-a2-five-labels-outside-the-bubble.md`,
 //!   `docs/analysis/2026-11-05-a-symbol-top-is-the-ascender-line.md`).
-//!   The 55.980 mm grouped as `/Sheet6` is that leader at `x 500.69`, 2.00 mm
+//!   The 55.980 mm grouped as `/Sheet6` was that leader at `x 500.69`, 2.00 mm
 //!   beside the reference leader, not frame ink
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-extra-is-the-leader.md`).
-//!   The 109.285 mm of uncovered `/Sheet6` is the same leader's reference copy,
+//!   The 109.285 mm of uncovered `/Sheet6` was the same leader's reference copy,
 //!   the TT balloon at `(498.70, 220.37)`, and dash tips
 //!   (`docs/analysis/2026-11-04-the-a2-sheet6-uncovered-is-the-reference-leader.md`).
-//!   The cluster is the same body at
+//!   The cluster was the same body at
 //!   the same size — 12.698 mm across against the reference's 12.869, one pen
-//!   apart — simply translated, and its leader's far end stays put at `y≈342.4`
-//!   while the near end follows the bubble: the `.pid` records the bubble dragged
-//!   along its line, so no renderer change recovers the reference's position
-//!   (`docs/analysis/2026-11-02-the-a2-labels-were-already-drawn.md`). The pins
-//!   below are the reading, and raising them is a code change, not a threshold
-//!   change.
+//!   apart — simply translated, and its leader's far end stayed put at `y≈342.4`
+//!   while the near end followed the bubble: the `.pid` then on hand recorded the
+//!   bubble dragged along its line, so no renderer change recovered the
+//!   reference's position
+//!   (`docs/analysis/2026-11-02-the-a2-labels-were-already-drawn.md`). That was
+//!   the reading. As of `b5dfb5a` the sheet is compared with the drawing its
+//!   reference plot was made from, and it reads coverage 1.000000, uncovered
+//!   0.000 mm and extra 0.000 mm.
 //!
 //! The pen column is the reading of `CompareReport::pen`: how many of our
 //! strokes the reference prints at the width we print them. It reached zero
@@ -70,11 +73,12 @@
 //! `docs/analysis/2026-11-07-every-unpaired-pen-stroke-has-a-reason.md`). A
 //! curve the two pages cut at different vertices, or a short stroke the
 //! plotter snapped to its 1/150 in grid, pairs along the reference's chain,
-//! so what is left is ink the reference lacks or lays differently: the
-//! `CPE-SQ-A1.igr` border on `一级闪蒸分离器A` / `低温分离器A` (286 strokes,
-//! exactly their whole-page extra ink) and the A2 instrument cluster with its
-//! leader. Every other page used to leave the signal line's dash tail as
-//! well, which was our plot misread, not misdrawn: `DashWalk` gave up on a
+//! so what was left, until `b5dfb5a`, was ink the reference lacked or laid
+//! differently: the `CPE-SQ-A1.igr` border on `一级闪蒸分离器A` /
+//! `低温分离器A` (286 strokes, exactly their whole-page extra ink) and the A2
+//! instrument cluster with its leader. Every other page used to leave the
+//! signal line's dash tail as well, which was our plot misread, not misdrawn:
+//! `DashWalk` gave up on a
 //! dash after eight periods and read the rest of a long fitted piece as one
 //! solid stroke, and now walks it to the end. No unpaired stroke lies in a
 //! missing-symbol box.
@@ -87,12 +91,16 @@
 //! wholly outside that frame's own clip: it never printed, and the reader now
 //! keeps only ink inside the clip
 //! (`docs/analysis/2026-11-07-the-corner-tail-is-outside-its-clip.md`).
-//! `一级闪蒸分离器A` and `低温分离器A` carry 3478.9 / 3478.7 mm of extra
-//! ink: their reference plots print no border at all, while ours draws the
-//! `CPE-SQ-A1.igr` both link — the same link `一级闪蒸分离器B` wears on its
-//! plot. The A2 page reads 0.9881, 208.840 mm uncovered and 187.091 mm extra,
-//! with 250 of 261 labels paired: every furniture label pairs, and the eleven
-//! that miss are the ones the masked view misses.
+//! Until `b5dfb5a`, `一级闪蒸分离器A` and `低温分离器A` carried 3478.9 /
+//! 3478.7 mm of extra ink: their reference plots printed no border at all,
+//! while the earlier drawings drew the `CPE-SQ-A1.igr` both link — the same
+//! link `一级闪蒸分离器B` wears on its plot. The A2 page read 0.9881,
+//! 208.840 mm uncovered and 187.091 mm extra, with 250 of 261 labels paired:
+//! every furniture label paired, and the eleven that missed were the ones the
+//! masked view missed. Those three sheets are the drawings their reference
+//! plots were made from. As of `b5dfb5a` the eleven sheets read coverage
+//! 1.000000, uncovered 0, extra 0, and the ink gate reports 0 known defect
+//! lines.
 //!
 //! A paired label is held two ways (2026-11-10,
 //! `docs/analysis/2026-11-10-every-lettering-class-is-held-and-every-label-counted.md`).
@@ -171,9 +179,9 @@ struct Pin {
     page_mm: [f64; 2],
     min_coverage: f64,
     max_extra_mm: f64,
-    /// Reference ink, millimetres, that no ink of ours covers. Ten pages read
-    /// 0.000 once the signal-line dash is fitted to every straight piece; the
-    /// A2 remainder is the instrument cluster the `.pid` stores elsewhere.
+    /// Reference ink, millimetres, that no ink of ours covers. All eleven pages
+    /// read 0.000: the ten once the signal-line dash is fitted to every
+    /// straight piece, and the A2 sheet as of `b5dfb5a`.
     max_uncovered_mm: f64,
     min_text_matched: usize,
     /// Reference labels the page counts, so a page that stops counting its

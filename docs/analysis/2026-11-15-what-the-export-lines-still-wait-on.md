@@ -1,7 +1,7 @@
 # publish 两条线还在等的那些数据（2026-11-15）
 
 > 口径：**先写红测与缺口文档，等数据到位再改规则**。这一页只记录，不改 `src/`。
-> 关联：GitHub #71（现场数据）、#62（`Export.mdf`）、#56 / #57 / #53（墨迹门禁的已知缺陷）。
+> 关联：GitHub #71（现场数据）、#62（`Export.mdf`）、#56 / #57 / #53（墨迹门禁曾有的 22 行已知缺陷，`b5dfb5a` 起为 0，见第 3 节）。
 > 上游：`docs/plans/2026-11-10-publish-export-completion.md` §3 的 S10 / S12 / S15 / S16 / S17 与 Q6。
 > 红测：`tests/publish_missing_data.rs`（5 条，全部只读入库夹具，今天全绿；规则一改就红）。
 > 行号：2026-11-17 这条线与审核整改线合并之后，这一页引的 `文件:行号` 按合并出来的树重对过一遍；S12 的那次筛选整改线已经收进 `attach_dump` 一处，那一段照现在的样子改写了。
@@ -66,7 +66,9 @@
 
 ## 3. #56 / #57 / #53 与墨迹缺陷表的行数
 
-`pid-plot/tests/reference_plots_ink.rs` 的 `SHEETS`（`:443-698`）里，每张 `Sheet` 的 `defects` 是一个 `&[Defect]`。**实际一共 22 行**，落在三张图上：
+`b5dfb5a`（2026-11-23，`fix(pid-plot): cover the eleven reference plots in full`）之后，下面这 22 行都没有了。一级闪蒸分离器A、低温分离器A、轻烃分离器I 改成与参考图同一版的图纸来比，`pid-plot/tests/reference_plots_ink.rs` 的 `SHEETS` 里每张 `defects` 都是 `&[]`。墨迹门禁现在报 **0** 条已知缺陷：`every_known_defect_is_one_reading_with_a_cause` 打印 `known defects: 0 not fixed yet, 0 needing data from the site, 0 not settled`，汇总行是 `ink gate: 11 page(s), 0 known defect line(s), …`。#56、#57、#53 已关闭。验收十一张都读 coverage 1.000000、uncovered 0、extra 0。
+
+下面是 `b5dfb5a` 之前的账，不是现在的表。行号是 2026-11-15 写这一节时的。当时 `SHEETS`（`:443-698`）里，每张 `Sheet` 的 `defects` 是一个 `&[Defect]`。**一共 22 行**，落在三张图上：
 
 | 图纸 | 行数 | 字段（`Field::*`） | `cause` |
 |---|---:|---|---|
@@ -77,18 +79,19 @@
 
 （`Cause::NotFixed` 自 2026-11-11 A2 页变成自己的纸张之后一条都没有，`reference_plots_ink.rs:302-306` 的注释说的就是这件事。）
 
-### 三个 issue 与代码对齐
+### 三个 issue 与当时的代码
 
-| issue | issue 说的条数 | 代码里的条数 | 差在哪 |
+| issue | issue 说的条数 | 当时代码里的条数 | 差在哪 |
 |---|---:|---:|---|
 | #57 闪蒸A、低温A 的图框与绘制次序 | 8 | 10（那两张图合计） | issue 的 8 = 那两张图上**图框**那 8 行（`BARE_BORDER`：闪蒸A 4 + 低温A 4）。多出来的 2 行是闪蒸A 的 `WipesSame` / `WipesOther`（`OTHER_ORDER`），issue 把它们归到 #53 去了，所以两张图合计 10 = 8 + 2，**没有重叠**。 |
 | #53 闪蒸A 上标签 `P` 的原点标记与参考同次序 | 2 | 2（闪蒸A 的 `WipesSame` + `WipesOther`） | 一致。这两行就是 `OTHER_ORDER`（`reference_plots_ink.rs:422`）说的 `P70` 原点标记，而 `P70` 是参考图上的写法、我方记录里的同一个标签（`a_label_and_its_origin_mark_are_painted_in_the_order_the_sheet_lists_them` 的 `AGAINST_ITS_LIST` 一行）。 |
 | #56 A2（轻烃分离器I）与参考图同版 | 12 | 12（轻烃分离器I 的全部行） | 一致，`cause` 全是 `SiteData`。 |
 
-**结论**：22 = 8（#57）+ 2（#53）+ 12（#56），三个 issue 的条数加起来正好是表里的行数，**没有一行被两个 issue 重复计算，也没有一行没被 issue 提到**。#57 的「8」是它自己那一半（图框），把闪蒸A 上那 2 行次序读数算成 #53 的，就对上了。
+**当时的结论**：22 = 8（#57）+ 2（#53）+ 12（#56），三个 issue 的条数加起来正好是当时表里的行数，**没有一行被两个 issue 重复计算，也没有一行没被 issue 提到**。#57 的「8」是它自己那一半（图框），把闪蒸A 上那 2 行次序读数算成 #53 的，就对上了。这 22 行在 `b5dfb5a` 已全部去掉。
 
-`every_known_defect_is_one_reading_with_a_cause`（`reference_plots_ink.rs:1123`）会在 `--nocapture` 下打印这三个数，跑一次就能核：
+当时 `every_known_defect_is_one_reading_with_a_cause`（写这一节时在 `reference_plots_ink.rs:1123`）在 `--nocapture` 下打印：
 `known defects: 0 not fixed yet, 12 needing data from the site, 10 not settled`。
+现在同一行打印 `known defects: 0 not fixed yet, 0 needing data from the site, 0 not settled`。
 
 ## 4. 这一页没有做的事
 

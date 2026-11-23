@@ -1944,9 +1944,10 @@ fn show_text(
             stretch_of.push(stretch);
         }
     }
-    // The direction the label is lettered along. The plotter states an angle
-    // in whole tenths of a degree, so a label a hair off level, or off a
-    // quarter turn, is lettered exactly on it ([`escapement`]).
+    // The direction the label is lettered along. The plotter cuts the angle
+    // to a tenth of a degree toward zero, so a label a hair off level, or
+    // one that has passed a quarter turn by less than a tenth, is lettered
+    // exactly on it ([`escapement`]). A label short of a quarter turn is not.
     let escapement::Lettered {
         rotation,
         sin,
@@ -4070,9 +4071,16 @@ mod tests {
             level.iter().all(|op| op.op != b"TJ"),
             "a level label is shown as strings"
         );
-        // The angles the corpora hold, either side of level, and the widest
-        // one a tenth of a degree still rounds to none.
-        for rotation in [9.0e-8, -2.59e-6, 2.0e-4, -2.0e-4, 0.049_f64.to_radians()] {
+        // The angles the corpora hold, either side of level, and 0.06°,
+        // which the cut calls none and the nearest tenth calls a tenth.
+        for rotation in [
+            9.0e-8,
+            -2.59e-6,
+            2.0e-4,
+            -2.0e-4,
+            0.06_f64.to_radians(),
+            (-0.06_f64).to_radians(),
+        ] {
             let ops = label_ops(&face, value, height_mm, rotation, None);
             assert_eq!(
                 String::from_utf8_lossy(&super::serialize_ops(&ops)),
@@ -4082,12 +4090,14 @@ mod tests {
         }
     }
 
-    /// The same for a label a hair off a quarter turn: it is lettered on the
-    /// quarter turn, and the matrix says so in whole numbers — the reference
-    /// writes `0 1.012 -1.012 0`, with no trace of the 1e-13 rad that 45 of
-    /// its turned labels are short of a right angle in the drawing's doubles.
+    /// A label that has passed a quarter turn by less than a tenth of a
+    /// degree is lettered on it, and the matrix says so in whole numbers.
+    /// One short of the quarter turn is not: the cut leaves it short, where
+    /// the nearest tenth would put it on the quarter. The reference writes
+    /// `0 1.012 -1.012 0` for labels that are short by 1e-13 rad; those plots
+    /// do not separate the two.
     #[test]
-    fn a_label_a_hair_off_a_quarter_turn_is_lettered_on_it() {
+    fn a_label_past_a_quarter_turn_is_lettered_on_it() {
         use std::f64::consts::FRAC_PI_2;
         let value = "ABAB";
         let (face, height_mm) = arial_on_29_units(value);
@@ -4109,26 +4119,44 @@ mod tests {
                 on_it.iter().any(|op| op.op == b"TJ"),
                 "a turned label is shown glyph by glyph"
             );
-            for off in [2.17e-6, -1.84e-6, 4.14e-13, -8.84e-13] {
-                let ops = label_ops(&face, value, height_mm, quarter + off, None);
-                assert_eq!(
-                    String::from_utf8_lossy(&super::serialize_ops(&ops)),
-                    String::from_utf8_lossy(&super::serialize_ops(&on_it)),
-                    "a label {off} rad off {quarter} is the label on the quarter turn"
-                );
+            // A positive offset is past +π/2 and +3π/2, away from zero. The
+            // same offset on −π/2 is back toward zero, and the cut drops it.
+            if quarter > 0.0 {
+                for off in [2.17e-6, 4.14e-13] {
+                    let ops = label_ops(&face, value, height_mm, quarter + off, None);
+                    assert_eq!(
+                        String::from_utf8_lossy(&super::serialize_ops(&ops)),
+                        String::from_utf8_lossy(&super::serialize_ops(&on_it)),
+                        "a label {off} rad past {quarter} is the label on the quarter turn"
+                    );
+                }
             }
         }
+        // 90.06° is on the quarter turn. Rounding leaves it at 90.06°.
+        let on_the_quarter = label_ops(&face, value, height_mm, FRAC_PI_2, None);
+        let past = label_ops(&face, value, height_mm, 90.06_f64.to_radians(), None);
+        assert_eq!(
+            String::from_utf8_lossy(&super::serialize_ops(&past)),
+            String::from_utf8_lossy(&super::serialize_ops(&on_the_quarter)),
+            "90.06° is the quarter turn"
+        );
+        let short = label_ops(&face, value, height_mm, FRAC_PI_2 - 1.84e-6, None);
+        assert_ne!(
+            String::from_utf8_lossy(&super::serialize_ops(&short)),
+            String::from_utf8_lossy(&super::serialize_ops(&on_the_quarter)),
+            "a label short of the quarter turn is not lettered on it"
+        );
     }
 
-    /// Only a quarter turn is read that way. A label at any other angle keeps
-    /// the angle the drawing states — it is not rounded to its tenth of a
-    /// degree — and is lettered as a turned label is: 0.06° is 0.1° to GDI,
-    /// which is an angle.
+    /// Only a cut tenth that is a quarter turn is read that way. A label at
+    /// any other angle keeps the angle the drawing states — it is not cut to
+    /// its tenth of a degree. `89.96°` is the case the nearest tenth would
+    /// put on the quarter turn.
     #[test]
     fn a_label_at_any_other_angle_keeps_the_angle_the_drawing_states() {
         let value = "ABAB";
         let (face, height_mm) = arial_on_29_units(value);
-        for degrees in [0.06_f64, -0.06, 37.26, 89.94, 180.06, 211.0] {
+        for degrees in [0.1_f64, -0.1, 37.26, 89.94, 89.96, 179.96, 211.0] {
             let rotation = degrees.to_radians();
             let ops = label_ops(&face, value, height_mm, rotation, None);
             let (sin, cos) = rotation.sin_cos();

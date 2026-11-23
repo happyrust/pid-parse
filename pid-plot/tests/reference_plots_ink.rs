@@ -2,9 +2,13 @@
 //!
 //! `reference_plots_acceptance` compares paint with paint: its reader keeps
 //! no colour, so a rule stroked in the paper's white counts as a rule, and it
-//! reads ten of the eleven pages at coverage 1.000000 while their title
-//! blocks print no rules at all
+//! reads the eleven pages at coverage 1.000000 while their title blocks
+//! print no rules at all
 //! (`docs/analysis/2026-11-10-the-acceptance-gate-reads-paint-not-ink.md`).
+//! Until `b5dfb5a` that figure was ten of the eleven. As of that commit the
+//! eleven sheets read coverage 1.000000, uncovered 0, extra 0, and this gate
+//! reports 0 known defect lines.
+//!
 //! This gate reads the same eleven pages for what prints. Both pages go
 //! through [`PageInk::read`], and every page is held to:
 //!
@@ -44,7 +48,8 @@
 //! page's own — how many labels its reference letters, how many strokes pair
 //! — and every reading that falls short of that is one line of its
 //! `defects`, with the value it reads and why: not fixed yet, waiting on data
-//! from the site, or not settled. The goal is a table with no such line.
+//! from the site, or not settled. As of `b5dfb5a` the table has no such line,
+//! and the ink gate reports 0 known defect lines.
 //!
 //! Every reading is an equality. One that gets worse fails; one that gets
 //! better fails too, until its pin is tightened or its defect line is taken

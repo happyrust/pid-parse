@@ -105,10 +105,11 @@
 //! - a label lettered at an angle that is no quarter turn. The driver takes
 //!   the length of the vector across from its two components and cuts each
 //!   of the four entries on its own; here such a label takes the two scales
-//!   above times the sine and cosine of its angle. No label of any corpus is
-//!   lettered so: an angle within a twentieth of a degree of a quarter turn
-//!   is lettered on it ([`super::escapement`]), and the farthest any label
-//!   lies from one is 0.012°;
+//!   above times the sine and cosine of its angle. A label whose tenth of a
+//!   degree, cut toward zero, is a quarter turn is lettered on it
+//!   ([`super::escapement`]); one short of a quarter turn keeps its angle.
+//!   The reference plots' own turned labels are at most 1.2e-10° short, which
+//!   does not separate the two on the page;
 //! - a turned or stretched label of more than one font. Each font of a label
 //!   is written under its own matrix (`SetFont` in the writer), which is
 //!   this rule taken to a font the driver is known to be handed; the
