@@ -581,12 +581,19 @@ pub(crate) enum InterfaceRule {
     /// Only when the object states a non-empty value of one of the
     /// element's attributes.
     IfValue,
-    /// On the objects of some equipment types only, which the `IEquipment`
-    /// code list (`EqType0` … `EqType5`) decides; the text names the codes.
-    /// The `.pid` line does not carry those codes, so it writes the element
-    /// only where the object states a non-empty value for it, which no
-    /// label does today.
-    ByEquipmentType(&'static str),
+    /// On the objects whose `IEquipment` states `attribute` as one of
+    /// `values`. The `.pid` alone does not carry those codes, so without
+    /// them the element is written only where the object states a
+    /// non-empty value for it, which no label does today. With a dump the
+    /// codes are the levels `codelist_values::LEAF_LEVELS` spells,
+    /// and the seven same-revision references carry the element on every
+    /// object of that type and on no other.
+    ByEquipmentType {
+        /// `EqType1` or `EqType2`.
+        attribute: &'static str,
+        /// The spellings of that level that carry the element.
+        values: &'static [&'static str],
+    },
 }
 
 /// How the `.pid` line writes one attribute of an interface element.
@@ -639,10 +646,14 @@ const fn if_value(interface: &'static str) -> InterfaceSlot {
     }
 }
 
-const fn by_equipment_type(interface: &'static str, codes: &'static str) -> InterfaceSlot {
+const fn by_equipment_type(
+    interface: &'static str,
+    attribute: &'static str,
+    values: &'static [&'static str],
+) -> InterfaceSlot {
     InterfaceSlot {
         interface,
-        rule: InterfaceRule::ByEquipmentType(codes),
+        rule: InterfaceRule::ByEquipmentType { attribute, values },
         attributes: &[],
     }
 }
@@ -682,7 +693,7 @@ const NAMED_EQUIPMENT_ATTRIBUTES: &[(&str, AttributeRule)] = &[
     ("EquipSeqNo", Stated),
     ("EquipSuff", AlwaysEmpty),
 ];
-const AIR_COOLER: &str = "an air cooler: EqType2 @EE796";
+const AIR_COOLER: &[&str] = &["@EE796"];
 
 /// The interface elements of every class the `.pid` line writes, in the
 /// order the references write them, and when each is written.
@@ -696,22 +707,16 @@ const AIR_COOLER: &str = "an air cooler: EqType2 @EE796";
 /// `ISlopedPipingItem` and `IInsulatedItem`), and an `AlwaysEmpty`
 /// attribute is on every reference element and empty on every one.
 ///
-/// What the equipment type decides is not decidable here, because the
-/// `.pid` line does not carry the `EqType*` codes, so those elements are
-/// left out rather than written where the reference may lack them:
-///
-/// * `PIDProcessVessel`: `ILowPressureTank` (`EqType1` @EE793, a tank) and
-///   `ILowPressureTankOcc` (`EqType2` @EE7A6, an open-top tank);
-/// * `PIDHeatTransferEquipment`: the four `IAirCooler*` elements of an air
-///   cooler (`EqType2` @EE796);
-/// * `PIDMechanicalEquipment` has no one order. A pump (`EqType1` @EE791)
-///   writes `IPump` before `IEquipmentDriver`, a motor (`EqType1` @EE792)
-///   after it, and each writes elements the other lacks. The row lists the
-///   pump's order with the motor's own elements where they fall among the
-///   elements both write; the elements written are those on both — the
-///   ten up to `IPBSItem`, then `IPump`, then `IPIDTypical` — and they are
-///   in the same order on both. `IEquipmentDriver`, on both but on either
-///   side of `IPump`, is left out with the elements of one type.
+/// An element [`InterfaceRule::ByEquipmentType`] names is written when
+/// `IEquipment` states that code, which a dump does and a `.pid` alone
+/// does not. On the seven same-revision acceptance drawings the code and
+/// the element agree on every object. `PIDMechanicalEquipment` still has
+/// no one order: a pump (`EqType1` @EE791) writes `IPump` before
+/// `IEquipmentDriver`, a motor (`EqType1` @EE792) writes `IEquipmentDriver`
+/// and `IProcessEquipmentDriverOcc` before `IPump`. The row lists the
+/// pump's order. The writer moves those two elements to just before
+/// `IPump` when the object is a motor, which is the only inversion the
+/// seven drawings show.
 pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
     ClassInterfaces {
         class: "PIDDrawing",
@@ -993,8 +998,8 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             always("IProcessVessel"),
             always("IDrawingItem"),
             always("IPIDProcessVessel"),
-            by_equipment_type("ILowPressureTankOcc", "an open-top tank: EqType2 @EE7A6"),
-            by_equipment_type("ILowPressureTank", "a tank: EqType1 @EE793"),
+            by_equipment_type("ILowPressureTankOcc", "EqType2", &["@EE7A6"]),
+            by_equipment_type("ILowPressureTank", "EqType1", &["@EE793"]),
             with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
             if_value("ISpecifiedMatlItem"),
             always("IPIDTypical"),
@@ -1015,10 +1020,10 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             always("IEquipment"),
             always("IDrawingItem"),
             always("IPBSItem"),
-            by_equipment_type("IAirCooler", AIR_COOLER),
-            by_equipment_type("IAirCoolerOcc", AIR_COOLER),
-            by_equipment_type("IAirCooledExchanger", AIR_COOLER),
-            by_equipment_type("IAirCooledExchangerOcc", AIR_COOLER),
+            by_equipment_type("IAirCooler", "EqType2", AIR_COOLER),
+            by_equipment_type("IAirCoolerOcc", "EqType2", AIR_COOLER),
+            by_equipment_type("IAirCooledExchanger", "EqType2", AIR_COOLER),
+            by_equipment_type("IAirCooledExchangerOcc", "EqType2", AIR_COOLER),
             always("IShellAndTubeHeatExchanger"),
             with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
             always("IPIDTypical"),
@@ -1037,24 +1042,21 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             always("IPlannedMatl"),
             always("IDrawingItem"),
             always("IPBSItem"),
-            by_equipment_type("IPositiveDisplacementPumpOcc", "a pump: EqType1 @EE791"),
-            by_equipment_type("IPositiveDisplacementPump", "a pump: EqType1 @EE791"),
-            by_equipment_type("IPumpOcc", "a pump: EqType1 @EE791"),
-            by_equipment_type("IElectricMotorOcc", "a motor: EqType1 @EE792"),
-            by_equipment_type("IElectricMotor", "a motor: EqType1 @EE792"),
+            by_equipment_type("IPositiveDisplacementPumpOcc", "EqType1", &["@EE791"]),
+            by_equipment_type("IPositiveDisplacementPump", "EqType1", &["@EE791"]),
+            by_equipment_type("IPumpOcc", "EqType1", &["@EE791"]),
+            by_equipment_type("IElectricMotorOcc", "EqType1", &["@EE792"]),
+            by_equipment_type("IElectricMotor", "EqType1", &["@EE792"]),
             always("IPump"),
-            by_equipment_type("IFluidTransferMachineOcc", "a pump: EqType1 @EE791"),
-            by_equipment_type("IFluidTransferMachine", "a pump: EqType1 @EE791"),
-            by_equipment_type("IMaterialTransferEquipment", "a pump: EqType1 @EE791"),
-            by_equipment_type("IMaterialTransferEquipmentOcc", "a pump: EqType1 @EE791"),
-            by_equipment_type(
-                "IEquipmentDriver",
-                "after IPump on a pump (EqType1 @EE791), before it on a motor (EqType1 @EE792)",
-            ),
-            by_equipment_type(
-                "IProcessEquipmentDriverOcc",
-                "a motor, before IPump: EqType1 @EE792",
-            ),
+            by_equipment_type("IFluidTransferMachineOcc", "EqType1", &["@EE791"]),
+            by_equipment_type("IFluidTransferMachine", "EqType1", &["@EE791"]),
+            by_equipment_type("IMaterialTransferEquipment", "EqType1", &["@EE791"]),
+            by_equipment_type("IMaterialTransferEquipmentOcc", "EqType1", &["@EE791"]),
+            // After `IPump` here, which is the pump's order. A motor writes
+            // this element, and `IProcessEquipmentDriverOcc`, before `IPump`;
+            // `pid_writer` moves the two when `EqType1` is `@EE792`.
+            by_equipment_type("IEquipmentDriver", "EqType1", &["@EE791", "@EE792"]),
+            by_equipment_type("IProcessEquipmentDriverOcc", "EqType1", &["@EE792"]),
             with_attributes(if_value("INamedEquipment"), NAMED_EQUIPMENT_ATTRIBUTES),
             always("IPIDTypical"),
         ],
@@ -1712,7 +1714,7 @@ mod tests {
         class_interfaces(class)
             .unwrap_or_default()
             .iter()
-            .filter(|slot| !matches!(slot.rule, InterfaceRule::ByEquipmentType(_)))
+            .filter(|slot| !matches!(slot.rule, InterfaceRule::ByEquipmentType { .. }))
             .map(|slot| slot.interface)
             .collect()
     }
@@ -1792,7 +1794,7 @@ mod tests {
             let decided: Vec<&str> = row
                 .interfaces
                 .iter()
-                .filter(|slot| matches!(slot.rule, InterfaceRule::ByEquipmentType(_)))
+                .filter(|slot| matches!(slot.rule, InterfaceRule::ByEquipmentType { .. }))
                 .map(|slot| slot.interface)
                 .collect();
             let expected: &[&str] = match row.class {

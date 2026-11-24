@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### publish：设备类型决定的接口在 dump 写出代码时补上（2026-11-24）
+
+七张同版验收图上，泵（`EqType1` `@EE791`）、电机（`@EE792`）、罐（`@EE793`）和空冷器（`EqType2` `@EE796`）的接口随 `IEquipment` 的代码写出；敞口罐再加 `EqType2` `@EE7A6` 的 `ILowPressureTankOcc`。电机把 `IEquipmentDriver` 和 `IProcessEquipmentDriverOcc` 写在 `IPump` 之前。`.pid` 单独发布不带这些代码，字节不变。GitHub #78。
+
 ### CI：补一步只选根包的 `cargo check --examples`，把下一条改掉的那一样检查补回来（2026-11-17）
 
 **只改了 `.github/workflows/ci.yml`：在 examples 一步后面加一步 `cargo check --locked --examples`（`dcf9838`）。程序和测试没有动。下一条把 examples 一步改成 `--workspace` 之后，CI 上没有哪一步再查「依赖的特性只按根包自己声明的来的时候，example 编不编得过」；这一步补的就是它。`check` 只做类型检查、只写元数据，不会像原来的 `build` 那样把 example 再写一份到 runner 的磁盘上。推上去的那一次 CI（运行 44045056745）全绿；这一步 22 秒，查了 21 个包，没有警告；整次 13 分 06 秒。**

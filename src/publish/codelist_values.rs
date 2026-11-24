@@ -1683,9 +1683,10 @@ mod tests {
         assert_eq!(without, specialty + DRAWING_CONSTANTS.len());
     }
 
-    /// The committed drawing's XML, with and without the map, byte for
-    /// byte as it was before the gap counters. Length and FNV-1a were
-    /// taken at `a85fa10`.
+    /// The committed drawing's XML, with and without the map. The
+    /// with-map pin includes the open-top tank's `ILowPressureTankOcc`
+    /// and `ILowPressureTank` (55 bytes); counting gaps does not move
+    /// either pin.
     #[test]
     fn known_fixture_xml_bytes_do_not_change_when_gaps_are_counted() {
         let dump = std::fs::read(committed(
@@ -1706,7 +1707,7 @@ mod tests {
         let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
         assert_eq!(
             (xml.len(), fnv1a(xml.as_bytes())),
-            (44_981, 0xed7c_94a2_500b_39cc),
+            (45_036, 0x9885_2850_ca67_fbc1),
             "in-table values changed the fixture XML"
         );
         assert_eq!(attached.gaps.unmapped_leaf_total(), 0);
