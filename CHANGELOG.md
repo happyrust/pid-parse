@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### publish：补齐未填值时写空的属性（GitHub #77，2026-11-24）
+
+**`catalog::AttributeRule` 新增 `StatedOrEmpty`：对象有值时照写原值，未给出值时写出空属性 `=""`（`IfValue` 接口仍只在接口已有非空值时才写出）。七张同版验收图带 dump 的空属性从 15 660 / 16 680（93.9%）升到 16 680 / 16 680（100.0%），1 020 个缺口全部补齐；DWG-0202GP06-01 三种模式的空属性均从 91 / 93 升到 93 / 93（100.0%）；非空值、不同值与参考没有的接口数均无回归，`--diff-against` 基线零变动。**
+
+- **规则与十项属性。** 核对全部 13 份原厂参考 `_Data.xml`（11 张验收图、A01、DWG-0202GP06-01），以下六组接口槽位覆盖 #77 所列全部 10 项 `(类, 接口, 属性)`，原厂参考在接口出现时一律写出（有值写值，无值写空；仅 A01 一条管段 `<IConnector/>` 裸写）：
+  - `PIDPipingConnector.IConnector`：`FlowDirection`（`StatedOrEmpty`）排在 `RepresentationsAreAllZeroLength`（`Stated`）之前（补齐 675 处 + DWG 2 处）。
+  - `INamedInstrument`（`PIDInlineInstrument` / `PIDControlSystemFunction` / `PIDInstrument` 共用）：`InstrTagSequenceNo`、`MeasuredVariable` 改为 `StatedOrEmpty`（补齐 111+111+25+25+23+18 = 313 处）。
+  - `INamedEquipment`（四类设备共用，`IfValue` 接口）：`EquipSeqNo` 改为 `StatedOrEmpty`（补齐 `PIDProcessEquipment` 19 处）。
+  - `PIDDrawing.IDocument`：`DocTitle` 改为 `StatedOrEmpty`（补齐 7 处；DWG 参考有非空标题，写出 `DocTitle=""` 不产生 `values_different` 或 diff 差异，`publish_dwg_generated_parity` 的 `ATTRIBUTES_THE_LINE_LEAVES_OUT` 同步移除该项）。
+  - `PIDPipingComponent.IPipingComponent`：按参考顺序声明 `PipingComponentType1`、`PipingComponentType3`、`PipingComponentType2`、`PipModelCode`（`StatedOrEmpty`）、`CommoditySpecialtyType`（补齐 6 处）。
+- **七张验收图与 DWG 读数。** `--oracle-exp` 空属性：I井场 2 635 → 2 802 / 2 802，J K井场 3 991 → 4 241 / 4 241，L M井场 4 745 → 5 029 / 5 029，轻烃分离器I 962 → 1 046 / 1 046，空冷器A 1 142 → 1 220 / 1 220，空冷器B 1 105 → 1 184 / 1 184，空冷器C 1 080 → 1 158 / 1 158。`.pid` 单独发布空属性同步上升：I井场 2 496 → 2 660，J K井场 3 772 → 4 016，L M井场 4 493 → 4 769，轻烃分离器I 884 → 968，空冷器A 1 068 → 1 146，空冷器B 1 077 → 1 156，空冷器C 1 054 → 1 132（合计 14 844 → 15 847 / 16 680）；DWG 三种模式均为 91 → 93 / 93。`codelist_values::tests::known_fixture_xml_bytes_do_not_change_when_gaps_are_counted` 字节长度带映射 45 605 → 45 651（+46：`DocTitle=""` + 2×`FlowDirection=""`）、不带映射 42 159 → 42 322（+163：`DocTitle=""` + 7×`FlowDirection=""` + 2×`PipModelCode=""`）。
+
 ### publish：写出 `LongMaterialDescription3`、`ReliefPressure`、`EquipmentTrimSpec`（2026-11-24）
 
 **只在挂了 Oracle `exp` dump 时写这三项。`.pid` 单独发布的字节不动。图纸上已有的标签与 dump 不一致时，留下标签。七张同版验收图的非空值从 38 881 增到 38 922（分母 39 171），不同的值仍是 0。**

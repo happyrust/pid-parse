@@ -599,8 +599,12 @@ pub(crate) enum InterfaceRule {
 /// How the `.pid` line writes one attribute of an interface element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttributeRule {
-    /// Written when the object states it.
+    /// Written only when the object states it.
     Stated,
+    /// Written with the object's value when stated, and empty (`""`) when
+    /// unset: every reference object of the class that carries the element
+    /// carries this attribute, either with a value or empty.
+    StatedOrEmpty,
     /// Written empty when the object does not state it: every reference
     /// object of the class that carries the element states it empty.
     AlwaysEmpty,
@@ -669,7 +673,7 @@ const fn with_attributes(
     }
 }
 
-use AttributeRule::{AlwaysEmpty, Stated};
+use AttributeRule::{AlwaysEmpty, Stated, StatedOrEmpty};
 
 const ITEM_OBJECT: InterfaceSlot = with_attributes(
     always("IObject"),
@@ -683,14 +687,14 @@ const NAMED_INSTRUMENT: InterfaceSlot = with_attributes(
         ("InstrFuncModifier", AlwaysEmpty),
         ("InstrLoopSuffix", AlwaysEmpty),
         ("InstrTagPrefix", AlwaysEmpty),
-        ("InstrTagSequenceNo", Stated),
+        ("InstrTagSequenceNo", StatedOrEmpty),
         ("InstrTagSuffix", AlwaysEmpty),
-        ("MeasuredVariable", Stated),
+        ("MeasuredVariable", StatedOrEmpty),
     ],
 );
 const NAMED_EQUIPMENT_ATTRIBUTES: &[(&str, AttributeRule)] = &[
     ("EquipPrefix", Stated),
-    ("EquipSeqNo", Stated),
+    ("EquipSeqNo", StatedOrEmpty),
     ("EquipSuff", AlwaysEmpty),
 ];
 const AIR_COOLER: &[&str] = &["@EE796"];
@@ -704,8 +708,11 @@ const AIR_COOLER: &[&str] = &["@EE796"];
 /// every reference object of the class, an `IfValue` element is on a
 /// reference object exactly when one of its attributes is non-empty (A01
 /// alone writes three bare: a nozzle's `IPipingSpecifiedItem`, a pipe run's
-/// `ISlopedPipingItem` and `IInsulatedItem`), and an `AlwaysEmpty`
-/// attribute is on every reference element and empty on every one.
+/// `ISlopedPipingItem` and `IInsulatedItem`), an `AlwaysEmpty` attribute is
+/// on every reference element and empty on every one, and a `StatedOrEmpty`
+/// attribute is on every reference element — non-empty when the object
+/// states it, empty when unset (A01's one pipe run alone writes
+/// `<IConnector/>` bare).
 ///
 /// An element [`InterfaceRule::ByEquipmentType`] names is written when
 /// `IEquipment` states that code, which a dump does and a `.pid` alone
@@ -733,7 +740,7 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
                 always("IDocument"),
                 &[
                     ("DocCategory", Stated),
-                    ("DocTitle", Stated),
+                    ("DocTitle", StatedOrEmpty),
                     ("DocType", Stated),
                     ("DocSubtype", AlwaysEmpty),
                 ],
@@ -866,7 +873,16 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             always("IPipingPortComposition"),
             always("IPlannedMatl"),
             always("IDrawingItem"),
-            always("IPipingComponent"),
+            with_attributes(
+                always("IPipingComponent"),
+                &[
+                    ("PipingComponentType1", Stated),
+                    ("PipingComponentType3", Stated),
+                    ("PipingComponentType2", Stated),
+                    ("PipModelCode", StatedOrEmpty),
+                    ("CommoditySpecialtyType", Stated),
+                ],
+            ),
             always("IPipingComponentOcc"),
             always("IInlineComponentOcc"),
             always("IFabricatedItem"),
@@ -889,7 +905,13 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             ITEM_OBJECT,
             always("IPBSItem"),
             always("IPlannedFacility"),
-            always("IConnector"),
+            with_attributes(
+                always("IConnector"),
+                &[
+                    ("FlowDirection", StatedOrEmpty),
+                    ("RepresentationsAreAllZeroLength", Stated),
+                ],
+            ),
             always("IDrawingItem"),
             always("IPBSItemCollection"),
             always("IPipingConnector"),
@@ -1806,6 +1828,54 @@ mod tests {
         for name in pump.iter().chain(&motor) {
             assert!(every_slot.contains(name), "{name} is not in the row");
         }
+    }
+
+    #[test]
+    fn stated_or_empty_attributes_are_the_measured_set() {
+        let mut pairs: Vec<(&str, &str, &str)> = Vec::new();
+        for row in CLASS_INTERFACES {
+            for slot in row.interfaces {
+                for &(attribute, rule) in slot.attributes {
+                    if rule == AttributeRule::StatedOrEmpty {
+                        pairs.push((row.class, slot.interface, attribute));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            pairs,
+            vec![
+                ("PIDDrawing", "IDocument", "DocTitle"),
+                (
+                    "PIDControlSystemFunction",
+                    "INamedInstrument",
+                    "InstrTagSequenceNo"
+                ),
+                (
+                    "PIDControlSystemFunction",
+                    "INamedInstrument",
+                    "MeasuredVariable"
+                ),
+                ("PIDInstrument", "INamedInstrument", "InstrTagSequenceNo"),
+                ("PIDInstrument", "INamedInstrument", "MeasuredVariable"),
+                (
+                    "PIDInlineInstrument",
+                    "INamedInstrument",
+                    "InstrTagSequenceNo"
+                ),
+                (
+                    "PIDInlineInstrument",
+                    "INamedInstrument",
+                    "MeasuredVariable"
+                ),
+                ("PIDPipingComponent", "IPipingComponent", "PipModelCode"),
+                ("PIDPipingConnector", "IConnector", "FlowDirection"),
+                ("PIDProcessEquipment", "INamedEquipment", "EquipSeqNo"),
+                ("PIDProcessVessel", "INamedEquipment", "EquipSeqNo"),
+                ("PIDHeatTransferEquipment", "INamedEquipment", "EquipSeqNo"),
+                ("PIDMechanicalEquipment", "INamedEquipment", "EquipSeqNo"),
+            ]
+        );
     }
 
     #[test]

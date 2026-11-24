@@ -29,9 +29,6 @@ const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[];
 /// `(tag, interface, attribute)` the reference states and the Oracle
 /// line does not, each with what it is:
 ///
-/// * `PIDDrawing/IDocument.DocTitle` — the document register's title;
-///   the `.pid` states the drawing's name and UID, not the register
-///   row (the CLI prints it among its excused classes).
 /// * `PIDPipeline/IFluidSystem.FluidCode` — the reference's first
 ///   pipeline carries a fluid code the dump's data map does not map.
 /// * `PIDPipingComponent/IPipingComponent.PipingComponentType1..3` —
@@ -43,8 +40,11 @@ const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[];
 /// * `PIDProcessVessel/IObject.Description`,
 ///   `IEquipment.EqType0..3`, `IEquipment.EquipmentTrimSpec` — the
 ///   equipment register's columns.
+///
+/// `PIDDrawing/IDocument.DocTitle` is now emitted empty when unset
+/// (`StatedOrEmpty`), so the attribute is present on the element even
+/// though the `.pid` and dump do not supply its text.
 const ATTRIBUTES_THE_LINE_LEAVES_OUT: &[(&str, &str, &[&str])] = &[
-    ("PIDDrawing", "IDocument", &["DocTitle"]),
     ("PIDPipeline", "IFluidSystem", &["FluidCode"]),
     (
         "PIDPipingComponent",
