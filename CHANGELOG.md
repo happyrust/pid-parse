@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### publish：写出管段的 InsulThickSrc 与 SlopedPipeDirection（2026-11-24）
+
+**`--oracle-exp` 和带 dump 的整包给管段写出这两个枚举；`.pid` 单独发布的字节不变。** 数据映射把它们标成 `EFAdapter.EnumConversions`，落在 `T_PipeRun`：`InsulationThkSource` 用枚举表 `SP_50`，`SlopeDirection` 用 `SP_85`。拼写是 `MapEnumToEnum` 的目标，前面加 `@`。`SP_50` 序号 1 没有目标，不写。`CatalogPartNumber` 仍不写：这份 dump 的 `T_PLANTITEM.SP_PARTNO` 是 NULL。
+
+- **读数。** DWG-0202GP06-01 用入库包的 dump：写出 7 个值，与参考逐 UID 相同（6 个 `@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}`、1 个 `@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}`），参考没有的 0。`--oracle-exp` 的非空值 204 → 211 / 236，整包目录 163 → 170 / 236，报告的缺值 8 → 1。元素里 `SlopedPipingAngle` 仍在 `SlopedPipeDirection` 之前，`InsulThickSrc` 在 `TotalInsulThick` 之前。53 张图的 dump 这两列没有非空格子，七张同版验收图的非空值仍是 38 881 / 39 171。入库包的索引里值数 1 526 → 1 536：DWG-0202GP06-01 232 → 239，DWG-0201GP06-01 359 → 361，DWG-0104GP01-08 14 → 15（后两张没有参考）。
+
 ### CI：补一步只选根包的 `cargo check --examples`，把下一条改掉的那一样检查补回来（2026-11-17）
 
 **只改了 `.github/workflows/ci.yml`：在 examples 一步后面加一步 `cargo check --locked --examples`（`dcf9838`）。程序和测试没有动。下一条把 examples 一步改成 `--workspace` 之后，CI 上没有哪一步再查「依赖的特性只按根包自己声明的来的时候，example 编不编得过」；这一步补的就是它。`check` 只做类型检查、只写元数据，不会像原来的 `build` 那样把 example 再写一份到 runner 的磁盘上。推上去的那一次 CI（运行 44045056745）全绿；这一步 22 秒，查了 21 个包，没有警告；整次 13 分 06 秒。**

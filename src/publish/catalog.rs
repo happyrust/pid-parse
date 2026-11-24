@@ -906,8 +906,20 @@ pub(crate) static CLASS_INTERFACES: &[ClassInterfaces] = &[
             ),
             always("IPipeCrossSectionItem"),
             if_value("IPipingSpecifiedItem"),
-            if_value("ISlopedPipingItem"),
-            if_value("IInsulatedItem"),
+            // The reference writes the angle before the direction, and the
+            // thickness source before the thickness. Alphabetical order of
+            // the names would put `SlopedPipeDirection` first.
+            with_attributes(
+                if_value("ISlopedPipingItem"),
+                &[
+                    ("SlopedPipingAngle", Stated),
+                    ("SlopedPipeDirection", Stated),
+                ],
+            ),
+            with_attributes(
+                if_value("IInsulatedItem"),
+                &[("InsulThickSrc", Stated), ("TotalInsulThick", Stated)],
+            ),
             always("IJacketedItem"),
             always("IPIDTypical"),
         ],
@@ -1323,7 +1335,7 @@ pub(crate) const LABELLED_ATTRIBUTES: [(&str, &str); 7] = [
 /// `LEAF_LEVELS`): a run that states one on some object had the dump, so a
 /// reference value it leaves out on another object is a finding; a run that
 /// states it nowhere is excused as before.
-pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 26] = [
+pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 28] = [
     ("IConnector", "FlowDirection"),
     ("IDocument", "DocCategory"),
     ("IDocument", "DocType"),
@@ -1350,6 +1362,8 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 26] = [
     ("IPipingComponent", "PipingComponentType2"),
     ("IPipingComponent", "PipingComponentType3"),
     ("IPipingConnector", "PipingConnectorType"),
+    ("IInsulatedItem", "InsulThickSrc"),
+    ("ISlopedPipingItem", "SlopedPipeDirection"),
 ];
 
 /// Excluded attributes an `--oracle-exp` run states from the cells the dump

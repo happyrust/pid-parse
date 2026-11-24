@@ -86,10 +86,6 @@
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state
 //!   (S8); and the interfaces an equipment type decides;
-//! * two enumerations of a pipe run that no stage reads from the dump,
-//!   `IInsulatedItem.InsulThickSrc` and
-//!   `ISlopedPipingItem.SlopedPipeDirection`, which the fixture's own
-//!   `--diff-against` reports as missing values;
 //! * three scattered values, `LongMaterialDescription3`, `ReliefPressure`
 //!   and `EquipmentTrimSpec`, and the interface stated only beside the
 //!   first of them, `ISpecifiedMatlItem`;

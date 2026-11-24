@@ -1332,6 +1332,7 @@ mod tests {
         let mut sizes = Vec::new();
         for list in [
             "SP_93", "SP_22", "SP_25", "SP_35", "SP_28", "SP_29", "SP_17", "SP_14", "SP_47",
+            "SP_50", "SP_85",
         ] {
             let members = &map.enum_list_members[list];
             let published = members
@@ -1352,6 +1353,8 @@ mod tests {
                 ("InstrumentLocation", 18, 1),
                 ("LineType", 31, 12),
                 ("FlowDirection", 5, 5),
+                ("SourceType", 3, 2),
+                ("SlopeDirection", 2, 2),
             ]
         );
         let target = |text: &str| Some(text.to_string());
@@ -1408,6 +1411,22 @@ mod tests {
         assert_eq!(
             entry("SP_47", 2),
             ("End 1 is upstream (Inlet)", "", target("@EE872"))
+        );
+        assert_eq!(
+            entry("SP_50", 3),
+            (
+                "User",
+                "",
+                target("@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}")
+            )
+        );
+        assert_eq!(
+            entry("SP_85", 2),
+            (
+                "Down",
+                "End 1 is high",
+                target("@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}")
+            )
         );
 
         // The schema enums the adapter only reads back: 94 of them, onto 83

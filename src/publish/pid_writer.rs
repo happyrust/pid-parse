@@ -1096,6 +1096,49 @@ mod tests {
         ));
     }
 
+    /// The reference writes the angle before the direction, and the
+    /// thickness source before the thickness. The attributes arrive in
+    /// the other order; the class's slot puts them back.
+    #[test]
+    fn a_pipe_run_writes_slope_and_insulation_in_the_reference_order() {
+        let mut drawing = drawing();
+        drawing.items = vec![item(
+            "RUN",
+            "PIDPipingConnector",
+            &[
+                (
+                    "ISlopedPipingItem",
+                    "SlopedPipeDirection",
+                    "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}",
+                ),
+                (
+                    "ISlopedPipingItem",
+                    "SlopedPipingAngle",
+                    "2.9999910000486E-03 rad",
+                ),
+                ("IInsulatedItem", "TotalInsulThick", "50 mm"),
+                (
+                    "IInsulatedItem",
+                    "InsulThickSrc",
+                    "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}",
+                ),
+            ],
+        )];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(
+            xml.contains(
+                r#"<ISlopedPipingItem SlopedPipingAngle="2.9999910000486E-03 rad" SlopedPipeDirection="@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}"/>"#
+            ),
+            "{xml}"
+        );
+        assert!(
+            xml.contains(
+                r#"<IInsulatedItem InsulThickSrc="@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" TotalInsulThick="50 mm"/>"#
+            ),
+            "{xml}"
+        );
+    }
+
     #[test]
     fn an_interface_the_equipment_type_decides_is_left_out() {
         let mut drawing = drawing();

@@ -44,10 +44,6 @@ const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[(
 /// * `PIDPipingConnector/IObject.Name` — the vendor's composed tag
 ///   (`BV1001406A`, `-PG-1001105-F9--F9--`, `FT-753`); the line states
 ///   the UID and the derived interfaces, not the composed name.
-/// * `PIDPipingConnector/IInsulatedItem.InsulThickSrc`,
-///   `ISlopedPipingItem.SlopedPipeDirection` — the insulation and
-///   slope source references, which the dump stores on the pipe run
-///   and the reference states on the connector.
 /// * `PIDProcessVessel/IObject.Description`,
 ///   `IEquipment.EqType0..3`, `IEquipment.EquipmentTrimSpec` — the
 ///   equipment register's columns.
@@ -64,12 +60,6 @@ const ATTRIBUTES_THE_LINE_LEAVES_OUT: &[(&str, &str, &[&str])] = &[
         ],
     ),
     ("PIDPipingConnector", "IObject", &["Name"]),
-    (
-        "PIDPipingConnector",
-        "ISlopedPipingItem",
-        &["SlopedPipeDirection"],
-    ),
-    ("PIDPipingConnector", "IInsulatedItem", &["InsulThickSrc"]),
     ("PIDProcessVessel", "IObject", &["Description"]),
     (
         "PIDProcessVessel",

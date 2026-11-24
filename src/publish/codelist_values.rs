@@ -21,6 +21,8 @@
 //! | same | `ProcEqpCompTypeDescription` | name of that `SP_35` entry |
 //! | `PIDPipingConnector` | `PipingConnectorType` | `MapEnumToEnum` of `SP_14` `T_PIPERUN.PIPERUNTYPE` |
 //! | same | `IConnector.FlowDirection` | `MapEnumToEnum` of `SP_47` `T_PIPERUN.FLOWDIRECTION` |
+//! | same | `IInsulatedItem.InsulThickSrc` | `MapEnumToEnum` of `SP_50` `T_PIPERUN.INSULATIONTHKSOURCE` |
+//! | same | `ISlopedPipingItem.SlopedPipeDirection` | `MapEnumToEnum` of `SP_85` `T_PIPERUN.SLOPEDIRECTION` |
 //! | `PIDPipingComponent` | `PipingComponentType1`…`3` | [`LEAF_LEVELS`] of the leaf of `SP_27` `PIPINGCOMPCLASS`, `SP_26` `PIPINGCOMPSUBCLASS` and `SP_25` `PIPINGCOMPTYPE` |
 //! | equipment | `IEquipment.EqType0`…`5` | same, of `SP_24` `T_EQUIPMENT.CLASS`, `SP_23` `EQUIPMENTSUBCLASS` and `SP_22` `EQUIPMENTTYPE` |
 //! | `PIDNozzle` | `ProcessEqCompType1` | same, of `SP_35` `T_NOZZLE.NOZZLETYPE` |
@@ -1045,7 +1047,7 @@ pub const LEAF_LEVELS: [(&str, &[(&str, &str)]); 58] = [
 type Cells = HashMap<(ItemTable, &'static str), HashMap<String, i64>>;
 
 /// Every column a rule or a hierarchy reads.
-const COLUMNS: [(ItemTable, &str); 14] = [
+const COLUMNS: [(ItemTable, &str); 16] = [
     (ItemTable::PlantItem, "CONSTRUCTIONSTATUS"),
     (ItemTable::Equipment, "CLASS"),
     (ItemTable::Equipment, "EQUIPMENTSUBCLASS"),
@@ -1060,6 +1062,8 @@ const COLUMNS: [(ItemTable, &str); 14] = [
     (ItemTable::Nozzle, "NOZZLETYPE"),
     (ItemTable::PipeRun, "PIPERUNTYPE"),
     (ItemTable::PipeRun, "FLOWDIRECTION"),
+    (ItemTable::PipeRun, "INSULATIONTHKSOURCE"),
+    (ItemTable::PipeRun, "SLOPEDIRECTION"),
 ];
 
 fn read_cells(tables: &ExpTables) -> Result<Cells, ExpError> {
@@ -1239,6 +1243,22 @@ fn rules_of(class: &str) -> Vec<Rule> {
                 ItemTable::PipeRun,
                 "PIPERUNTYPE",
                 "SP_14",
+                Spelling::Target,
+            ));
+            rules.push(rule(
+                "IInsulatedItem",
+                "InsulThickSrc",
+                ItemTable::PipeRun,
+                "INSULATIONTHKSOURCE",
+                "SP_50",
+                Spelling::Target,
+            ));
+            rules.push(rule(
+                "ISlopedPipingItem",
+                "SlopedPipeDirection",
+                ItemTable::PipeRun,
+                "SLOPEDIRECTION",
+                "SP_85",
                 Spelling::Target,
             ));
         }
@@ -1528,7 +1548,22 @@ mod tests {
         }));
         let held: BTreeSet<(&str, &str)> = catalog::DUMP_CODELIST_ATTRIBUTES.into_iter().collect();
         assert_eq!(stated, held);
+        // These two stay findings on a run without the dump: the DWG
+        // `.pid`-alone baseline records them. A dump run that states one
+        // and leaves another out still reports the miss, because they are
+        // in `DUMP_CODELIST_ATTRIBUTES`.
+        const STILL_A_FINDING_WITHOUT_THE_DUMP: [(&str, &str); 2] = [
+            ("IInsulatedItem", "InsulThickSrc"),
+            ("ISlopedPipingItem", "SlopedPipeDirection"),
+        ];
         for (interface, attribute) in held {
+            if STILL_A_FINDING_WITHOUT_THE_DUMP.contains(&(interface, attribute)) {
+                assert!(
+                    catalog::excluded_attribute(interface, attribute).is_none(),
+                    "{interface}.{attribute} is a finding without the dump"
+                );
+                continue;
+            }
             assert!(
                 catalog::excluded_attribute(interface, attribute).is_some(),
                 "{interface}.{attribute} is excused in a run without the dump"
@@ -1636,6 +1671,11 @@ mod tests {
                     3,
                     "@{B88907F5-D4FC-49D8-BA8E-C1F76F392A52}"
                 ),
+                (
+                    "IInsulatedItem.InsulThickSrc",
+                    6,
+                    "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}"
+                ),
                 ("IPBSItem.ConstructionStatus", 15, "@NewConstruction"),
                 (
                     "IPBSItem.ConstructionStatus2",
@@ -1664,6 +1704,11 @@ mod tests {
                     "@{81CD9440-BC07-11D6-BDBC-00104BCC2B69}"
                 ),
                 ("IPipingConnector.PipingConnectorType", 7, "@EE690"),
+                (
+                    "ISlopedPipingItem.SlopedPipeDirection",
+                    1,
+                    "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}"
+                ),
             ]
         );
 
@@ -1683,9 +1728,11 @@ mod tests {
         assert_eq!(without, specialty + DRAWING_CONSTANTS.len());
     }
 
-    /// The committed drawing's XML, with and without the map, byte for
-    /// byte as it was before the gap counters. Length and FNV-1a were
-    /// taken at `a85fa10`.
+    /// The committed drawing's XML after the codelist stage. The document
+    /// without a map is the one from before the gap counters (length and
+    /// FNV-1a at `a85fa10`): the two pipe-run enumerations need the map.
+    /// With the map they are written, and that document's length and
+    /// FNV-1a are taken here.
     #[test]
     fn known_fixture_xml_bytes_do_not_change_when_gaps_are_counted() {
         let dump = std::fs::read(committed(
@@ -1706,7 +1753,7 @@ mod tests {
         let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
         assert_eq!(
             (xml.len(), fnv1a(xml.as_bytes())),
-            (44_981, 0xed7c_94a2_500b_39cc),
+            (45_550, 0x601f_4396_b39c_5eb0),
             "in-table values changed the fixture XML"
         );
         assert_eq!(attached.gaps.unmapped_leaf_total(), 0);
