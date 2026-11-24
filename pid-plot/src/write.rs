@@ -175,13 +175,17 @@ const STROKE_MM: f64 = PEN_MID_MM;
 /// prints on one, as a pen of no width does in GDI. That the driver cuts is
 /// read off these nine and not off the vendor's program; it replaces a
 /// table of five bands (2026-11-11) whose boundaries were choices inside
-/// the gaps between them, and it prints every width a drawing on hand
-/// declares — these nine, `0.7071`, and the plant backup's `0.30`, `0.50`,
-/// `0.75` and `0.7999`, which no plot shows — on the pen the table did. The
-/// two part only where no drawing on hand declares a width: just under two
-/// units (0.30 to 0.339 mm, one unit and no longer two), and on three, five
-/// and seven units (0.508 to 0.677, 0.847 to 1.016 and 1.185 to 1.355 mm),
-/// which the table had no pen for and folded onto its neighbours.
+/// the gaps between them. `O井场`'s factory plot, which wears
+/// `CPECCHB-SQ-A1` and was not one of the eleven, prints four more widths
+/// the backup declares: `0.30` mm on two units (the cut gives one), `0.50`
+/// mm on three (the cut gives two), and `0.75` and `0.7999` on four, which
+/// the cut already gives. `P井场` prints the same four. No rounding of the
+/// unit count meets both those and the eleven: nearest would put `0.13`
+/// (0.77 units) on two and `1.1313` (6.68) on seven, and the plots print
+/// one and six. So the cut stands, and those two plotted widths are named
+/// below. A width the plots do not show stays on the cut,
+/// including one just under two units other than `0.30` (0.301 to 0.339 mm)
+/// and one just under three other than `0.50` (0.501 to 0.507 mm).
 ///
 /// One, two, four, six and eight units are written as the five pens this
 /// crate has always written; another count is that many units exactly.
@@ -197,8 +201,7 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
     if declared_mm > WIDEST_PEN_MM {
         return PEN_HEAVY_MM;
     }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let units = (declared_mm / DEVICE_UNIT_MM).trunc().max(1.0) as u32;
+    let units = device_units(declared_mm);
     match units {
         1 => PEN_THIN_MM,
         2 => PEN_MID_MM,
@@ -207,6 +210,26 @@ pub fn pen_width_mm(declared_mm: f64) -> f64 {
         8 => PEN_HEAVY_MM,
         units => f64::from(units) * DEVICE_UNIT_MM,
     }
+}
+
+/// Whole device units [`pen_width_mm`] gives `declared_mm`.
+///
+/// The count is the width in units of 1/150 inch, cut, and never under one.
+/// `0.30` and `0.50` are the exception `O井场`'s factory plot measures: every
+/// one of its eight `0.30` mm furniture strokes is `0.3387` mm wide (two
+/// units) and every one of its four `0.50` mm strokes is `0.5080` mm wide
+/// (three), and the page's ink has those four three-unit strokes and no
+/// others.
+fn device_units(declared_mm: f64) -> u32 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let cut = (declared_mm / DEVICE_UNIT_MM).trunc().max(1.0) as u32;
+    if (declared_mm - 0.30).abs() < 1e-4 {
+        return 2;
+    }
+    if (declared_mm - 0.50).abs() < 1e-4 {
+        return 3;
+    }
+    cut
 }
 
 /// The widest width a drafting pen declares in this corpus, in millimetres.
@@ -4148,24 +4171,34 @@ mod tests {
         );
     }
 
-    /// Only a cut tenth that is a quarter turn is read that way. A label at
-    /// any other angle keeps the angle the drawing states — it is not cut to
-    /// its tenth of a degree. `89.96°` is the case the nearest tenth would
-    /// put on the quarter turn.
+    /// Only a cut tenth that is a quarter turn, or the tenth just short of a
+    /// right angle, is read that way. A label at any other angle keeps the
+    /// angle the drawing states — it is not cut to its tenth of a degree.
+    /// `89.96°` is lettered at the cut tenth 89.9°; the nearest tenth would
+    /// put it on the quarter turn.
     #[test]
     fn a_label_at_any_other_angle_keeps_the_angle_the_drawing_states() {
         let value = "ABAB";
         let (face, height_mm) = arial_on_29_units(value);
-        for degrees in [0.1_f64, -0.1, 37.26, 89.94, 89.96, 179.96, 211.0] {
-            let rotation = degrees.to_radians();
-            let ops = label_ops(&face, value, height_mm, rotation, None);
+        let cases: [(f64, f64); 7] = [
+            (0.1, 0.1),
+            (-0.1, -0.1),
+            (37.26, 37.26),
+            (89.94, 89.94),
+            (89.96, 89.9),
+            (179.96, 179.96),
+            (211.0, 211.0),
+        ];
+        for (degrees, lettered) in cases {
+            let rotation = lettered.to_radians();
+            let ops = label_ops(&face, value, height_mm, degrees.to_radians(), None);
             let (sin, cos) = rotation.sin_cos();
             let matrix = &numbers(&ops, "Tm")[0];
             let stated = [cos * 1.012, sin * 1.012, -sin * 1.012, cos * 1.012];
             assert_eq!(
                 matrix[..4],
                 stated,
-                "a label at {degrees}° is set at that angle under the turned matrix"
+                "a label at {degrees}° is set at {lettered}° under the turned matrix, not {matrix:?}"
             );
             assert!(
                 ops.iter().any(|op| op.op == b"TJ"),
@@ -4921,11 +4954,13 @@ mod tests {
         assert_eq!(pen_width_mm(std::f64::consts::FRAC_1_SQRT_2), PEN_THICK_MM);
         assert_eq!(pen_width_mm(1.1313), PEN_WIDE_MM);
         assert_eq!(pen_width_mm(1.4141), PEN_HEAVY_MM);
-        // The four widths the plant backup declares and no reference plot
-        // shows: the same pens the five-band table gave them.
+        // `O井场`'s factory plot: 0.30 mm on two units, 0.50 mm on three,
+        // 0.75 and 0.7999 on four. The neighbours the cut still owns are
+        // pinned with the unread widths below, so a band drawn around these
+        // two fails here.
         for (declared, pen) in [
-            (0.30, PEN_THIN_MM),
-            (0.50, PEN_MID_MM),
+            (0.30, PEN_MID_MM),
+            (0.50, 3.0 * DEVICE_UNIT_MM),
             (0.75, PEN_THICK_MM),
             (0.7999, PEN_THICK_MM),
         ] {
@@ -5512,7 +5547,7 @@ mod tests {
                 skipped_endpoint_pairs: 0,
                 primitives: vec![line],
                 missing_symbols: Vec::new(),
-            library_gaps: Vec::new(),
+                library_gaps: Vec::new(),
                 missing_templates: Vec::new(),
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
@@ -5528,6 +5563,74 @@ mod tests {
         );
         let dashed = write_plot(&page(vec![3.5, 1.75]), &[]).expect("dashed");
         assert_ne!(dashed, solid, "a real dash still reaches the page");
+    }
+
+    /// `3.500/1.750` is unfitted, and the factory plot of
+    /// `凝析油一级闪蒸分离器A气相出口改造` inks it that way: on a 356 mm
+    /// stroke declared at 0.35 mm the plot's pieces are about 3.5 mm with
+    /// gaps of about 1.75 mm, on the two-unit pen. A solid stroke, or one on
+    /// the thin pen, is not that plot.
+    #[test]
+    fn the_three_point_five_dash_is_written_at_its_pitch_and_pen() {
+        let mut line = primitive(
+            "decoded",
+            PaperShape::Line {
+                start_mm: [10.0, 20.0],
+                end_mm: [29.25, 20.0],
+            },
+        );
+        line.stroke = Some(super::PaperStroke {
+            rgb: [0, 0, 0],
+            width_mm: 0.35,
+            dash_mm: vec![3.5, 1.75],
+            dash_fit: None,
+        });
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            frame_mm: None,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![line],
+            missing_symbols: Vec::new(),
+            library_gaps: Vec::new(),
+            missing_templates: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+            ledger: crate::ledger::LayoutLedger::default(),
+        };
+        let pdf = write_plot(&model, &[]).expect("dashed");
+        let ink = read_plot(&pdf).expect("read");
+        let mut pieces: Vec<_> = ink
+            .segments
+            .iter()
+            .map(|segment| {
+                let length = (segment.end_mm[0] - segment.start_mm[0])
+                    .hypot(segment.end_mm[1] - segment.start_mm[1]);
+                (segment.start_mm[0], length, segment.width_mm)
+            })
+            .collect();
+        pieces.sort_by(|left, right| left.0.total_cmp(&right.0));
+        assert_eq!(pieces.len(), 4, "a solid stroke is one piece: {pieces:?}");
+        for (start, length, width) in &pieces {
+            assert!(
+                (length - 3.5).abs() < 0.05,
+                "dash at {start} is {length} mm, not 3.5"
+            );
+            assert!(
+                (width - PEN_MID_MM).abs() < 0.01,
+                "0.35 mm prints on the two-unit pen, not {width}"
+            );
+        }
+        for pair in pieces.windows(2) {
+            let gap = pair[1].0 - (pair[0].0 + pair[0].1);
+            assert!(
+                (gap - 1.75).abs() < 0.05,
+                "gap {gap} mm is not the 1.75 mm the record states"
+            );
+        }
     }
 
     /// `D03` in the plant backup is a drawing with a declared sheet and no
@@ -6478,7 +6581,7 @@ mod tests {
                     },
                 )],
                 missing_symbols: Vec::new(),
-            library_gaps: Vec::new(),
+                library_gaps: Vec::new(),
                 missing_templates: Vec::new(),
                 missing_boxes: Vec::new(),
                 symbols_found: 0,

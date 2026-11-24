@@ -1315,7 +1315,8 @@ fn assert_classes_hold(
         );
         let first = group[0];
         for other in &group[1..] {
-            let relative_mm = (other.along_mm - first.along_mm).hypot(other.down_mm - first.down_mm);
+            let relative_mm =
+                (other.along_mm - first.along_mm).hypot(other.down_mm - first.down_mm);
             assert!(
                 relative_mm <= PIECE_SHIFT_MM,
                 "{name} {view} {}: pieces of {text:?} shift {relative_mm:.4} mm relative to \

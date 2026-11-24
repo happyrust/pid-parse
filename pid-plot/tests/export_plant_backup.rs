@@ -1151,9 +1151,13 @@ const TEMPLATE_SHEETS: [(&str, usize); 7] = [
 /// The sheets that wear no template, by their path under the backup directory.
 ///
 /// All three state no page and link no template, so the pick has neither a
-/// size nor a name to go on and the page stays bare — as `换热器CD`'s
-/// reference plot is. Listed rather than counted: a sheet that loses its
-/// furniture while one of these gains some leaves the count at three.
+/// size nor a name to go on and the page stays bare. `换热器CD`'s reference
+/// plot is bare, and so is the factory plot of `D井场`. The factory plot of
+/// `凝析油一级闪蒸分离器B气相出口改造` letters the `CPECCHB-SQ-A2` title
+/// block, and the `.pid` still names no template file, so the page stays bare
+/// with the other two (`factory_amyuni_plots`). Listed rather than counted:
+/// a sheet that loses its furniture while one of these gains some leaves the
+/// count at three.
 const BARE_SHEETS: [&str; 3] = [
     "00/00/D井场 注采阀组工艺及自控流程图.pid",
     "00/00/集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图.pid",
@@ -1261,9 +1265,12 @@ const FRAME_OFFSET_FLOOR_MM: f64 = 0.001;
 ///
 /// `N井场`'s sideways pipeline tag starts 0.208 mm under the bottom edge, so
 /// its first glyph is clipped there and the other nineteen are on the sheet.
-/// The count alone would be satisfied by any one primitive on that sheet.
-/// What a border template holds past the paper is pinned apart, in
-/// [`TEMPLATE_PAST_THE_PAPER`].
+/// The factory plot clips it the same way: the first glyph's origin is
+/// (262.128, −1.524) mm, the insertion the `.pid` states on the 150 dpi grid,
+/// and that glyph hangs under the edge. The run stays where the frame places
+/// the insertion; it is not moved up onto the page. The count alone would be
+/// satisfied by any one primitive on that sheet. What a border template holds
+/// past the paper is pinned apart, in [`TEMPLATE_PAST_THE_PAPER`].
 const PAST_THE_PAGE: (&str, &str, [f64; 2]) =
     ("N井场", "15-TD-4101416-B2-EH40", [259.113810, -0.207788]);
 
