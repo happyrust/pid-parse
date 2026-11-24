@@ -78,10 +78,10 @@
 //!   from the dump only where no label of the sheet disagrees with the
 //!   dump: this fixture's package dump is a later revision, four labels
 //!   disagree with it, and its own run leaves out the three such values
-//!   the dump would have given. A pipe run's name is composed by the
-//!   map's template, and one the template cannot fill as the references
-//!   show it is left out and counted: 249 of the 631 run names the seven
-//!   acceptance references state;
+//!   the dump would have given. A pipe run's name is the map's template;
+//!   a stated insulation purpose or thickness leaves that name out. A
+//!   NULL diameter or materials class is an empty segment, so the 631
+//!   run names the seven acceptance references state are all written;
 //! * the hierarchical levels of an enumeration whose leaf no reference
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state
