@@ -7158,7 +7158,7 @@ mod tests {
                 frame_mm: None,
                 skipped_endpoint_pairs: 0,
                 missing_symbols: Vec::new(),
-            library_gaps: Vec::new(),
+                library_gaps: Vec::new(),
                 missing_templates: Vec::new(),
                 missing_boxes: Vec::new(),
                 symbols_found: 0,
@@ -9255,11 +9255,11 @@ mod tests {
             // a page that says nothing of its template at all.
             DropReason::SegmentBeyondThePaperNoPlotOfTemplate => {
                 let reason = filed_past_the_paper(Some(placed_template(
-                    "CPECCHB-SQ-A1.igr",
-                    [1.297_400, 1.553_387],
+                    "XIONGANA2.igr",
+                    [0.500_000, 0.500_000],
                 )));
                 for unwitnessed in [
-                    Some(placed_template("CPE-SQ-A1.igr", [1.042_526, 1.042_526])),
+                    Some(placed_template("CPE-SQ-A1.igr", [2.500_000, 2.500_000])),
                     Some(placed_template("CPECCHB-SQ-A2.igr", [0.150_015, 0.399_965])),
                     None,
                 ] {
@@ -9827,7 +9827,7 @@ mod tests {
                     skipped_endpoint_pairs: 0,
                     primitives: vec![write_label([50.0, 100.9], Some(2.5), "PT-101")],
                     missing_symbols: Vec::new(),
-            library_gaps: Vec::new(),
+                    library_gaps: Vec::new(),
                     missing_templates: Vec::new(),
                     missing_boxes: Vec::new(),
                     symbols_found: 0,

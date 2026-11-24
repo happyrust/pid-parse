@@ -510,52 +510,22 @@ const PLOTTED_CODE: &str = "segment_beyond_the_paper";
 /// The code it files the same segment under where no plot does.
 const UNPLOTTED_CODE: &str = "segment_beyond_the_paper_no_plot_of_template";
 
-/// The template every sheet of [`PLOTTED_PAST_THE_PAPER`] wears.
-const PLOTTED_TEMPLATE: &str = "CPECCHB-SQ-A2.igr";
-
 /// The sheets whose template ink past the paper is left unprinted **as a
-/// reference plot shows it**, with how many segments of it the ledger files
-/// under [`PLOTTED_CODE`].
+/// vendor's plot shows it**: the sheet, the template it wears and how many
+/// segments the ledger files under [`PLOTTED_CODE`].
 ///
-/// All nine wear `CPECCHB-SQ-A2` where the plot of
-/// `轻烃分离器I气出口接口位置改造` is printed with it, (0.388407, 0.565648) mm
-/// off the paper's corner (`pid_plot::witness::PAPER_EDGE_WITNESSES`): the
-/// top and the right piece of the template's outline and the line that
-/// restates its right edge, three segments.
-const PLOTTED_PAST_THE_PAPER: [(&str, u64); 9] = [
-    ("00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid", 3),
-    (
-        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
-        3,
-    ),
-    (
-        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
-        3,
-    ),
-    ("test/U01/D01.pid", 3),
-    ("test/U01/D03.pid", 3),
-    ("test/U01/D04.pid", 3),
-    ("test/U01/D06.pid", 3),
-    ("test/U01/D07.pid", 3),
-    ("test/U01/TESTDWG-0002TP03-01.pid", 3),
-];
-
-/// The sheets whose template ink past the paper is left unprinted **with no
-/// plot of that template placed so**: the sheet, the template it wears and
-/// how many segments the ledger files under [`UNPLOTTED_CODE`].
+/// All fifteen frame-offset sheets of the 53-sheet backup now have a row in
+/// `pid_plot::witness::PAPER_EDGE_WITNESSES`:
 ///
-/// `A井场` wears `CPE-SQ-A0` and the two `凝析油稳定塔` sheets `CPE-SQ-A1`
-/// off the paper's corner, and the plots of those two templates show them
-/// on it; `N井场`, `O井场` and `P井场` wear `CPECCHB-SQ-A1`, of which there is
-/// no plot at all. Two segments on each, the top and the right piece of the
-/// outline, left unprinted by the rule the A2 plot shows carried over to a
-/// placement none shows.
-///
-/// Which side a sheet falls on is decided by the witness table and not by
-/// these names: the two tables pin what that decision comes to on the 53
-/// sheets, so that a row added to the witnesses, or one lost, moves a sheet
-/// here and says so.
-const UNPLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 6] = [
+/// - The nine `CPECCHB-SQ-A2` sheets at `(0.388407, 0.565648)` mm, witnessed
+///   by the acceptance plot of `轻烃分离器I气出口接口位置改造` (three segments
+///   each: the top and right pieces of the outline and the line that restates
+///   its right edge).
+/// - The six sheets whose factory Amyuni plots (#59) confirm their page is
+///   their declared ISO paper and print no outline edge past it (`A井场`,
+///   `N井场`, `O井场`, `P井场`, `1200td`, `600td`; two segments each: top and
+///   right pieces of the outline).
+const PLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 15] = [
     (
         "00/00/A井场 注采阀组工艺及自控流程图.pid",
         "CPE-SQ-A0.igr",
@@ -586,7 +556,33 @@ const UNPLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 6] = [
         "CPE-SQ-A1.igr",
         2,
     ),
+    (
+        "00/02/集注站 低压气压缩机入口改造工艺及自控流程图.pid",
+        "CPECCHB-SQ-A2.igr",
+        3,
+    ),
+    (
+        "00/02/集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+        "CPECCHB-SQ-A2.igr",
+        3,
+    ),
+    (
+        "00/02/集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图.pid",
+        "CPECCHB-SQ-A2.igr",
+        3,
+    ),
+    ("test/U01/D01.pid", "CPECCHB-SQ-A2.igr", 3),
+    ("test/U01/D03.pid", "CPECCHB-SQ-A2.igr", 3),
+    ("test/U01/D04.pid", "CPECCHB-SQ-A2.igr", 3),
+    ("test/U01/D06.pid", "CPECCHB-SQ-A2.igr", 3),
+    ("test/U01/D07.pid", "CPECCHB-SQ-A2.igr", 3),
+    ("test/U01/TESTDWG-0002TP03-01.pid", "CPECCHB-SQ-A2.igr", 3),
 ];
+
+/// The sheets whose template ink past the paper is left unprinted **with no
+/// plot of that template placed so**: empty once all fifteen frame-offset
+/// sheets are witnessed (#59).
+const UNPLOTTED_PAST_THE_PAPER: [(&str, &str, u64); 0] = [];
 
 /// How the 53 pages end their strokes, read back from the PDFs: the inked
 /// paths stroked butt-ended and mitred, and the ones stroked round-ended and
@@ -2450,8 +2446,8 @@ fn every_backup_drawing_exports_a_readable_page() {
     let pinned_filing = |sheet: &str| -> Vec<(&'static str, u64, &'static str)> {
         let plotted = PLOTTED_PAST_THE_PAPER
             .iter()
-            .filter(|(pinned, _)| *pinned == sheet)
-            .map(|(_, segments)| (PLOTTED_CODE, *segments, PLOTTED_TEMPLATE));
+            .filter(|(pinned, ..)| *pinned == sheet)
+            .map(|(_, template, segments)| (PLOTTED_CODE, *segments, *template));
         let unplotted = UNPLOTTED_PAST_THE_PAPER
             .iter()
             .filter(|(pinned, ..)| *pinned == sheet)
@@ -2475,7 +2471,7 @@ fn every_backup_drawing_exports_a_readable_page() {
     }
     let pinned_sheets = PLOTTED_PAST_THE_PAPER
         .iter()
-        .map(|(sheet, _)| *sheet)
+        .map(|(sheet, ..)| *sheet)
         .chain(UNPLOTTED_PAST_THE_PAPER.iter().map(|(sheet, ..)| *sheet));
     for sheet in pinned_sheets {
         let found = filed_past_the_paper

@@ -164,7 +164,9 @@ use pid_plot::compare::{
 use pid_plot::fonts::{font_dirs, prepare_fonts, typeface_key};
 use pid_plot::model::{PaperModel, PaperShape, TextAnchor, lay_out_drawing};
 use pid_plot::read::{PlotInk, read_plot_with_faces};
-use pid_plot::witness::{PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, paper_edge_witness};
+use pid_plot::witness::{
+    PAPER_EDGE_OFFSET_SLACK_MM, PAPER_EDGE_WITNESSES, PaperEdgeSource, paper_edge_witness,
+};
 use pid_plot::write::{PlotFont, write_plot_titled};
 
 #[path = "support/exported_page.rs"]
@@ -890,7 +892,10 @@ fn eleven_reference_plots_hold_their_readings() {
         });
         off_the_corner.push((pin.name, witness.template));
     }
-    for witness in &PAPER_EDGE_WITNESSES {
+    for witness in PAPER_EDGE_WITNESSES
+        .iter()
+        .filter(|witness| witness.source == PaperEdgeSource::Acceptance)
+    {
         assert!(
             off_the_corner.contains(&(witness.plot, witness.template)),
             "PAPER_EDGE_WITNESSES says the plot of {} shows {} at ({:.6}, {:.6}) mm; the \
@@ -1315,7 +1320,8 @@ fn assert_classes_hold(
         );
         let first = group[0];
         for other in &group[1..] {
-            let relative_mm = (other.along_mm - first.along_mm).hypot(other.down_mm - first.down_mm);
+            let relative_mm =
+                (other.along_mm - first.along_mm).hypot(other.down_mm - first.down_mm);
             assert!(
                 relative_mm <= PIECE_SHIFT_MM,
                 "{name} {view} {}: pieces of {text:?} shift {relative_mm:.4} mm relative to \

@@ -45,6 +45,18 @@ use std::fmt;
 use crate::fonts::typeface_key;
 use crate::model::{BorderTemplate, PaperModel, PaperShape};
 
+/// Which plot set carries the PDF a [`PaperEdgeWitness`] was read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperEdgeSource {
+    /// One of the eleven acceptance plots (`验收数据`), checked two-way by
+    /// `reference_plots_acceptance`.
+    Acceptance,
+    /// One of the backup's factory Amyuni plots
+    /// (`publish/sppid导出/导出dxf pdf/导出pdf`), checked two-way by
+    /// `paper_edge_factory_plots`.
+    FactoryBackup,
+}
+
 /// A border template put past its paper's corner by a sheet's frame, as a
 /// vendor's plot shows it printed.
 ///
@@ -64,29 +76,68 @@ pub struct PaperEdgeWitness {
     /// The drawing whose reference plot shows it, by its file name without
     /// the extension; the plot is the `.pdf` beside it.
     pub plot: &'static str,
+    /// Which plot set carries that `.pdf`.
+    pub source: PaperEdgeSource,
 }
 
-/// Every template placement past a paper's corner that a reference plot
+/// Every template placement past a paper's corner that a vendor's plot
 /// shows.
 ///
-/// One row. Of the eleven sheets that have a vendor's plot ten wear their
-/// template on the paper's corner, where nothing of it is past the paper,
-/// and one — the A2 sheet `轻烃分离器I气出口接口位置改造` — wears
-/// `CPECCHB-SQ-A2` at (0.388407, 0.565648) mm. Its plot is what shows that
-/// the outline's ink past the paper is not printed: of the 4 586 `m` / `l`
-/// operands of its content stream four lie outside the page box, all in the
-/// outline's own path.
+/// Six rows covering all fifteen frame-offset sheets of the 53-sheet plant
+/// backup:
 ///
-/// This is data, and the acceptance gate holds it to the corpus: each row
-/// names a sheet of the gate's that wears that template at that offset, and
-/// no sheet of the gate's wears a template off its corner without a row
-/// (`reference_plots_acceptance.rs`). A new plot of an offset template is a
-/// new row here, and the ledger then files that placement as witnessed.
-pub const PAPER_EDGE_WITNESSES: [PaperEdgeWitness; 1] = [PaperEdgeWitness {
-    template: "CPECCHB-SQ-A2",
-    offset_mm: [0.388_407, 0.565_648],
-    plot: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
-}];
+/// - One acceptance plot (`轻烃分离器I气出口接口位置改造`), wearing
+///   `CPECCHB-SQ-A2` at `(0.388407, 0.565648)` mm, covering the nine
+///   `CPECCHB-SQ-A2` sheets.
+/// - Five distinct `(template, offset_mm)` placements from the six backup
+///   factory Amyuni plots (`A井场`, `N井场`, `O井场`/`P井场`, `1200td`,
+///   `600td`, #59): every one of the six PDFs has the sheet's declared ISO
+///   paper as its page box and prints no outline segment past the paper edge
+///   (`O井场` and `P井场` share `CPECCHB-SQ-A1` at `(0.150015, 0.399965)` mm;
+///   `1200td`'s factory plot is bare on A1 paper and `600td` plots
+///   `CPE-SQ-A1` off-corner clipped to A1 paper).
+///
+/// Each row is held two-way to its corpus by `reference_plots_acceptance`
+/// ([`PaperEdgeSource::Acceptance`]) or `paper_edge_factory_plots`
+/// ([`PaperEdgeSource::FactoryBackup`]).
+pub const PAPER_EDGE_WITNESSES: [PaperEdgeWitness; 6] = [
+    PaperEdgeWitness {
+        template: "CPECCHB-SQ-A2",
+        offset_mm: [0.388_407, 0.565_648],
+        plot: "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+        source: PaperEdgeSource::Acceptance,
+    },
+    PaperEdgeWitness {
+        template: "CPE-SQ-A0",
+        offset_mm: [0.152_593, 0.152_593],
+        plot: "A井场 注采阀组工艺及自控流程图",
+        source: PaperEdgeSource::FactoryBackup,
+    },
+    PaperEdgeWitness {
+        template: "CPECCHB-SQ-A1",
+        offset_mm: [1.297_400, 1.553_387],
+        plot: "N井场 注采阀组工艺及自控流程图",
+        source: PaperEdgeSource::FactoryBackup,
+    },
+    PaperEdgeWitness {
+        template: "CPECCHB-SQ-A1",
+        offset_mm: [0.150_015, 0.399_965],
+        plot: "O井场 注采阀组工艺及自控流程图",
+        source: PaperEdgeSource::FactoryBackup,
+    },
+    PaperEdgeWitness {
+        template: "CPE-SQ-A1",
+        offset_mm: [1.042_526, 1.042_526],
+        plot: "集注站 凝析油稳定单元 凝析油稳定塔、泵及换热器(1200td)工艺及自控流程图",
+        source: PaperEdgeSource::FactoryBackup,
+    },
+    PaperEdgeWitness {
+        template: "CPE-SQ-A1",
+        offset_mm: [0.768_634, 0.768_634],
+        plot: "集注站 凝析油稳定单元 凝析油稳定塔、泵及换热器(600td)工艺及自控流程图",
+        source: PaperEdgeSource::FactoryBackup,
+    },
+];
 
 /// How near a template's offset has to be to a witnessed one to be it, in
 /// millimetres: a micrometre, the precision the rows are stated to.
@@ -491,17 +542,32 @@ mod tests {
     }
 
     #[test]
+    fn the_six_factory_plotted_backup_placements_are_witnessed() {
+        for (path, offset_mm, expected_plot) in [
+            ("CPE-SQ-A0.igr", [0.152_593, 0.152_593], "A井场"),
+            ("CPECCHB-SQ-A1.igr", [1.297_400, 1.553_387], "N井场"),
+            ("CPECCHB-SQ-A1.igr", [0.150_015, 0.399_965], "O井场"),
+            ("CPE-SQ-A1.igr", [1.042_526, 1.042_526], "1200td"),
+            ("CPE-SQ-A1.igr", [0.768_634, 0.768_634], "600td"),
+        ] {
+            let witness = paper_edge_witness(&placed(path, offset_mm))
+                .unwrap_or_else(|| panic!("{path} at {offset_mm:?}: no witness"));
+            assert_eq!(witness.source, PaperEdgeSource::FactoryBackup);
+            assert!(
+                witness.plot.contains(expected_plot),
+                "{path}: expected {expected_plot}, got {}",
+                witness.plot
+            );
+        }
+    }
+
+    #[test]
     fn a_placement_no_plot_shows_has_no_witness() {
-        // The six sheets of the plant backup that wear a template off the
-        // paper's corner without a plot of it: the template with a plot of
-        // another placement, and the template with no plot at all.
         for (path, offset_mm) in [
-            ("CPE-SQ-A0.igr", [0.152_593, 0.152_593]),
-            ("CPECCHB-SQ-A1.igr", [1.297_400, 1.553_387]),
-            ("CPECCHB-SQ-A1.igr", [0.150_015, 0.399_965]),
-            ("CPE-SQ-A1.igr", [1.042_526, 1.042_526]),
-            ("CPE-SQ-A1.igr", [0.768_634, 0.768_634]),
-            // The witnessed template somewhere its plot does not show it.
+            // A fixture template with no factory plot.
+            ("XIONGANA2.igr", [0.500_000, 0.500_000]),
+            // A witnessed template somewhere no plot shows it.
+            ("CPE-SQ-A1.igr", [2.500_000, 2.500_000]),
             ("CPECCHB-SQ-A2.igr", [0.150_015, 0.399_965]),
             ("CPECCHB-SQ-A2.igr", [0.388_407, 0.565_648 + 0.002]),
             ("CPECCHB-SQ-A2.igr", [0.388_407 - 0.002, 0.565_648]),
