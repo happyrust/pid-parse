@@ -21,14 +21,10 @@ mod common;
 use common::{generate_dwg_data_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY};
 
 /// Interfaces the reference states on a tag and the Oracle line does
-/// not. One entry, the A25 vessel variant: `SmartPlant` writes
-/// `ILowPressureTank` + `ILowPressureTankOcc` on the reference's
-/// open-top-tank vessel; the writer emits the horizontal-drum shape on
-/// every vessel until a conditional emit path reads the vessel type.
-const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[(
-    "PIDProcessVessel",
-    &["ILowPressureTank", "ILowPressureTankOcc"],
-)];
+/// not. The open-top tank's `ILowPressureTank` and `ILowPressureTankOcc`
+/// are written when the dump states `EqType1` `@EE793` and `EqType2`
+/// `@EE7A6`, so this list is empty.
+const INTERFACES_THE_LINE_LEAVES_OUT: &[(&str, &[&str])] = &[];
 
 /// `(tag, interface, attribute)` the reference states and the Oracle
 /// line does not, each with what it is:
@@ -82,7 +78,7 @@ const DWG_PID_BRANCH_POINTS: usize = 4;
 const DWG_REFERENCE_PID_BRANCH_POINTS: usize = 5;
 
 /// The generated DWG `_Data.xml` must state every interface the
-/// reference states, except the one registered vessel variant.
+/// reference states. The open-top tank's two interfaces are among them.
 #[test]
 fn dwg_generated_interface_parity_is_the_reference_less_the_registered_variant() {
     let Some(generated_result) = generate_dwg_data_xml() else {
@@ -136,7 +132,7 @@ fn dwg_generated_interface_parity_is_the_reference_less_the_registered_variant()
     assert!(
         missing_per_tag.is_empty(),
         "DWG generated interface parity regression: the Oracle line is missing interfaces \
-         the SmartPlant DWG reference states, beyond the registered A25 vessel variant:\n\
+         the SmartPlant DWG reference states:\n\
          {missing_per_tag:#?}",
     );
 }

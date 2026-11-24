@@ -6,7 +6,9 @@
 //! An object carries the interface elements its class's row of
 //! `catalog::CLASS_INTERFACES` lists, in that order: the ones every
 //! reference object of the class carries, bare when the file gives them no
-//! value, and the others only with a value. A representation carries its
+//! value, and the others only with a value. An element the equipment type
+//! decides is also written bare when `IEquipment` states that type's code,
+//! which a dump does and a `.pid` alone does not. A representation carries its
 //! `GraphicOID`; the relationships are the two the items'
 //! own rows state -- `DwgRepresentationComposition` (drawing -> representation)
 //! and `DrawingItems` (representation -> item) -- plus one
@@ -357,44 +359,54 @@ impl<'a> Stated<'a> {
     }
 }
 
+/// A motor writes these two before `IPump`. The catalog lists them after
+/// it, which is the pump's order; the seven same-revision references use
+/// no other inversion.
+const BEFORE_THE_PUMP_ON_A_MOTOR: &[&str] = &["IEquipmentDriver", "IProcessEquipmentDriverOcc"];
+
+/// `IEquipment` states the code `InterfaceRule::ByEquipmentType` names.
+fn equipment_code_selects(rule: InterfaceRule, stated: &[Stated<'_>]) -> bool {
+    let InterfaceRule::ByEquipmentType { attribute, values } = rule else {
+        return false;
+    };
+    stated.iter().any(|value| {
+        value.interface == "IEquipment"
+            && value.name == attribute
+            && values.contains(&value.value.as_ref())
+    })
+}
+
+fn is_motor(stated: &[Stated<'_>]) -> bool {
+    stated.iter().any(|value| {
+        value.interface == "IEquipment" && value.name == "EqType1" && value.value == "@EE792"
+    })
+}
+
 /// Write one object block: the interface elements `catalog::class_interfaces`
 /// lists for `class` in their order, each with the values `stated` gives it.
 ///
 /// An element the class's row does not list, or an object of a class with no
 /// row, is written after the listed ones with its values in the order
-/// `stated` gives them, so no stated value is dropped.
+/// `stated` gives them, so no stated value is dropped. A motor's
+/// `BEFORE_THE_PUMP_ON_A_MOTOR` elements are written just before `IPump`.
 fn write_object(buf: &mut String, class: &str, stated: &[Stated<'_>]) -> std::fmt::Result {
     writeln!(buf, "   <{class}>")?;
     let slots = catalog::class_interfaces(class).unwrap_or_default();
+    let motor = is_motor(stated);
+    let mut motor_prefix_written = false;
     for slot in slots {
-        let values: Vec<&Stated<'_>> = stated
-            .iter()
-            .filter(|value| value.interface == slot.interface)
-            .collect();
-        let written = match slot.rule {
-            InterfaceRule::Always => true,
-            InterfaceRule::IfValue | InterfaceRule::ByEquipmentType(_) => {
-                values.iter().any(|value| !value.value.is_empty())
-            }
-        };
-        if !written {
+        if motor && BEFORE_THE_PUMP_ON_A_MOTOR.contains(&slot.interface) {
             continue;
         }
-        let mut pairs = String::new();
-        for &(name, rule) in slot.attributes {
-            match values.iter().find(|value| value.name == name) {
-                Some(value) => write_pair(&mut pairs, name, &value.value)?,
-                None if rule == AttributeRule::AlwaysEmpty => write_pair(&mut pairs, name, "")?,
-                None => {}
+        if motor && slot.interface == "IPump" && !motor_prefix_written {
+            for name in BEFORE_THE_PUMP_ON_A_MOTOR {
+                if let Some(earlier) = slots.iter().find(|slot| slot.interface == *name) {
+                    write_listed(buf, earlier, stated)?;
+                }
             }
+            motor_prefix_written = true;
         }
-        for value in values
-            .iter()
-            .filter(|value| !slot.attributes.iter().any(|(name, _)| *name == value.name))
-        {
-            write_pair(&mut pairs, value.name, &value.value)?;
-        }
-        writeln!(buf, "      <{}{pairs}/>", slot.interface)?;
+        write_listed(buf, slot, stated)?;
     }
     let mut unlisted: Vec<(&str, String)> = Vec::new();
     for value in stated
@@ -417,6 +429,43 @@ fn write_object(buf: &mut String, class: &str, stated: &[Stated<'_>]) -> std::fm
         writeln!(buf, "      <{interface}{pairs}/>")?;
     }
     writeln!(buf, "   </{class}>")
+}
+
+fn write_listed(
+    buf: &mut String,
+    slot: &catalog::InterfaceSlot,
+    stated: &[Stated<'_>],
+) -> std::fmt::Result {
+    let values: Vec<&Stated<'_>> = stated
+        .iter()
+        .filter(|value| value.interface == slot.interface)
+        .collect();
+    let written = match slot.rule {
+        InterfaceRule::Always => true,
+        InterfaceRule::IfValue => values.iter().any(|value| !value.value.is_empty()),
+        InterfaceRule::ByEquipmentType { .. } => {
+            values.iter().any(|value| !value.value.is_empty())
+                || equipment_code_selects(slot.rule, stated)
+        }
+    };
+    if !written {
+        return Ok(());
+    }
+    let mut pairs = String::new();
+    for &(name, rule) in slot.attributes {
+        match values.iter().find(|value| value.name == name) {
+            Some(value) => write_pair(&mut pairs, name, &value.value)?,
+            None if rule == AttributeRule::AlwaysEmpty => write_pair(&mut pairs, name, "")?,
+            None => {}
+        }
+    }
+    for value in values
+        .iter()
+        .filter(|value| !slot.attributes.iter().any(|(name, _)| *name == value.name))
+    {
+        write_pair(&mut pairs, value.name, &value.value)?;
+    }
+    writeln!(buf, "      <{}{pairs}/>", slot.interface)
 }
 
 fn write_pair(pairs: &mut String, name: &str, value: &str) -> std::fmt::Result {
@@ -1174,6 +1223,147 @@ mod tests {
             ]
         );
         assert!(xml.contains(r#"      <INamedEquipment EquipPrefix="E" EquipSuff=""/>"#));
+    }
+
+    /// The seven same-revision references: a code writes its interfaces and
+    /// no other type's, a motor puts its two elements before `IPump`, and an
+    /// object with no code writes none of them.
+    #[test]
+    fn an_equipment_type_the_dump_states_writes_the_reference_interfaces() {
+        let mut drawing = drawing();
+        drawing.items = vec![
+            item(
+                "PUMP",
+                "PIDMechanicalEquipment",
+                &[("IEquipment", "EqType1", "@EE791")],
+            ),
+            item(
+                "MOTOR",
+                "PIDMechanicalEquipment",
+                &[("IEquipment", "EqType1", "@EE792")],
+            ),
+            item(
+                "TANK",
+                "PIDProcessVessel",
+                &[("IEquipment", "EqType1", "@EE793")],
+            ),
+            item(
+                "OPEN",
+                "PIDProcessVessel",
+                &[
+                    ("IEquipment", "EqType1", "@EE793"),
+                    ("IEquipment", "EqType2", "@EE7A6"),
+                ],
+            ),
+            item(
+                "DRUM",
+                "PIDProcessVessel",
+                &[("IEquipment", "EqType1", "@EE790")],
+            ),
+            item(
+                "AC",
+                "PIDHeatTransferEquipment",
+                &[("IEquipment", "EqType2", "@EE796")],
+            ),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert_eq!(
+            interfaces_of(&xml, "PUMP"),
+            [
+                "IObject",
+                "IPIDMechanicalEquipmentOcc",
+                "IProcessEquipmentOcc",
+                "IPIDMechanicalEquipment",
+                "IProcessEquipment",
+                "IEquipmentOcc",
+                "IEquipment",
+                "IPlannedMatl",
+                "IDrawingItem",
+                "IPBSItem",
+                "IPositiveDisplacementPumpOcc",
+                "IPositiveDisplacementPump",
+                "IPumpOcc",
+                "IPump",
+                "IFluidTransferMachineOcc",
+                "IFluidTransferMachine",
+                "IMaterialTransferEquipment",
+                "IMaterialTransferEquipmentOcc",
+                "IEquipmentDriver",
+                "IPIDTypical",
+            ]
+        );
+        assert_eq!(
+            interfaces_of(&xml, "MOTOR"),
+            [
+                "IObject",
+                "IPIDMechanicalEquipmentOcc",
+                "IProcessEquipmentOcc",
+                "IPIDMechanicalEquipment",
+                "IProcessEquipment",
+                "IEquipmentOcc",
+                "IEquipment",
+                "IPlannedMatl",
+                "IDrawingItem",
+                "IPBSItem",
+                "IElectricMotorOcc",
+                "IElectricMotor",
+                "IEquipmentDriver",
+                "IProcessEquipmentDriverOcc",
+                "IPump",
+                "IPIDTypical",
+            ]
+        );
+        let tank = [
+            "IObject",
+            "IPIDProcessVesselOcc",
+            "IProcessVesselOcc",
+            "IEquipment",
+            "IEquipmentOcc",
+            "IPBSItem",
+            "IPBSItemCollection",
+            "IPlannedMatl",
+            "IProcessEquipment",
+            "IProcessEquipmentOcc",
+            "IProcessVessel",
+            "IDrawingItem",
+            "IPIDProcessVessel",
+            "ILowPressureTank",
+            "IPIDTypical",
+        ];
+        assert_eq!(interfaces_of(&xml, "TANK"), tank);
+        let mut open = tank.to_vec();
+        let tank_at = open
+            .iter()
+            .position(|name| *name == "ILowPressureTank")
+            .unwrap();
+        open.insert(tank_at, "ILowPressureTankOcc");
+        assert_eq!(interfaces_of(&xml, "OPEN"), open);
+        assert!(!interfaces_of(&xml, "DRUM")
+            .iter()
+            .any(|name| name.starts_with("ILowPressureTank")));
+        assert_eq!(
+            interfaces_of(&xml, "AC"),
+            [
+                "IObject",
+                "IPIDHeatTransferEquipmentOcc",
+                "IHeatTransferEquipmentOcc",
+                "IPIDHeatTransferEquipment",
+                "IHeatTransferEquipment",
+                "IProcessEquipmentOcc",
+                "IEquipmentOcc",
+                "IPlannedMatl",
+                "IProcessEquipment",
+                "IEquipment",
+                "IDrawingItem",
+                "IPBSItem",
+                "IAirCooler",
+                "IAirCoolerOcc",
+                "IAirCooledExchanger",
+                "IAirCooledExchangerOcc",
+                "IShellAndTubeHeatExchanger",
+                "IPIDTypical",
+            ]
+        );
     }
 
     #[test]

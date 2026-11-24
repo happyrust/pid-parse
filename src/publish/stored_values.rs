@@ -413,8 +413,11 @@ impl Reader<'_> {
     /// A run whose `ItemTag` is NULL has no name: none of the 382 such
     /// connectors of the seven acceptance references is named. The two
     /// [`ONLY_EMPTY`] parts are written empty when NULL and leave the name
-    /// out when stated; every other part has to be stated. A part that is
-    /// not spelled or not placed leaves the name out unspelled.
+    /// out when stated. [`EMPTY_WHEN_NULL`] parts are written empty when
+    /// NULL and spelled when stated: a reference name keeps the template's
+    /// separators where the diameter or the materials class is empty.
+    /// A part that is not spelled or not placed leaves the name out
+    /// unspelled.
     fn compose(
         &mut self,
         item: &PidPublishItem,
@@ -455,7 +458,9 @@ impl Reader<'_> {
                     name.push_str(&part);
                 }
                 None if first => return None,
-                None if ONLY_EMPTY.contains(&attribute) => {}
+                // The separators around an empty segment are the template's own text.
+                None if ONLY_EMPTY.contains(&attribute) || EMPTY_WHEN_NULL.contains(&attribute) => {
+                }
                 None => {
                     report.unspelled += 1;
                     return None;
@@ -479,6 +484,14 @@ const COMPOSED_NAME: &str = "EFAdapter.PpConnNameConv";
 /// which the map names `IC`) and no thickness; no reference shows how a
 /// stated one reads in a name.
 const ONLY_EMPTY: [&str; 2] = ["InsulPurpose", "InsulThick"];
+
+/// Parts of a composed name written as an empty segment when the cell is
+/// NULL. Of the 631 run names the seven acceptance references state, 247
+/// have no diameter (`{ItemTag}--{PipingMaterialsClass}--`) and two have
+/// neither a diameter nor a materials class (`{ItemTag}----`). A stated
+/// cell is spelled, the way a stated diameter is the enum's name (`6"`,
+/// `1-1/2"`) rather than the published `6 in`.
+const EMPTY_WHEN_NULL: [&str; 2] = ["NominalDiameter", "PipingMaterialsClass"];
 
 /// The template of a [`COMPOSED_NAME`] conversion.
 fn name_template(criteria: &str) -> Option<&str> {
@@ -943,5 +956,166 @@ mod tests {
     fn a_conversion_this_stage_does_not_run_writes_nothing() {
         let text = StoredCell::Text("B2".to_string());
         assert_eq!(spell(Some("EFAdapter.EnumConversions"), &text), None);
+    }
+
+    fn unescape(value: &str) -> String {
+        value
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&apos;", "'")
+    }
+
+    fn xml_attr(tag: &str, name: &str) -> Option<String> {
+        let key = format!("{name}=\"");
+        let start = tag.find(&key)? + key.len();
+        let end = tag[start..].find('"')? + start;
+        Some(unescape(&tag[start..end]))
+    }
+
+    /// `UID` → `IObject.Name` of every named `<PIDPipingConnector>` in a reference.
+    fn reference_run_names(xml: &str) -> HashMap<String, String> {
+        let mut names = HashMap::new();
+        let mut rest = xml;
+        while let Some(start) = rest.find("<PIDPipingConnector>") {
+            rest = &rest[start..];
+            let Some(end) = rest.find("</PIDPipingConnector>") else {
+                break;
+            };
+            let block = &rest[..end];
+            rest = &rest[end..];
+            let Some(object_at) = block.find("<IObject") else {
+                continue;
+            };
+            let Some(close) = block[object_at..].find("/>") else {
+                continue;
+            };
+            let tag = &block[object_at..object_at + close];
+            let (Some(uid), Some(name)) = (xml_attr(tag, "UID"), xml_attr(tag, "Name")) else {
+                continue;
+            };
+            if !name.is_empty() {
+                names.insert(uid, name);
+            }
+        }
+        names
+    }
+
+    fn run_name(item: &PidPublishItem) -> Option<&str> {
+        label(
+            item,
+            &StoredProperty {
+                interface: "IObject",
+                property: "Name",
+            },
+        )
+    }
+
+    /// A NULL diameter or materials class is an empty segment of the run's
+    /// name. The sheet labels none of the 631 run names the seven acceptance
+    /// references state, so this stage supplies every one of them — the 382
+    /// whose parts are all stated, and the 249 whose diameter or materials
+    /// class is empty. Each equals the reference, and no name is written on
+    /// a run the reference does not name.
+    #[test]
+    fn an_empty_diameter_or_class_is_an_empty_segment_of_the_run_name() {
+        let corpus = PathBuf::from(r"D:\work\cad\pid-test-data\验收数据");
+        let package = PathBuf::from(r"D:\work\cad\pid-test-data");
+        let dump = package.join("Export.dmp");
+        let datamap = package.join("RefData~4~804.zip");
+        if !corpus.is_dir() || !dump.is_file() || !datamap.is_file() {
+            eprintln!(
+                "skipping: the acceptance corpus or its Export.dmp and RefData~4~804.zip is absent"
+            );
+            return;
+        }
+        let stems = [
+            "I井场 注采阀组工艺及自控流程图",
+            "J K井场 注采阀组工艺及自控流程图",
+            "L M井场 注采阀组工艺及自控流程图",
+            "集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图",
+            "集注站 烃水露点控制单元（一） 空冷器A集预冷分离器A工艺及自控流程图",
+            "集注站 烃水露点控制单元（二） 空冷器B集预冷分离器B工艺及自控流程图",
+            "集注站 烃水露点控制单元（三） 空冷器C集预冷分离器C工艺及自控流程图",
+        ];
+        let tables = ExpTables::read(&std::fs::read(&dump).expect("the plant dump reads"))
+            .expect("the plant dump reads");
+        let map = crate::backup::read_datamap(&datamap).expect("the plant data map reads");
+        let mut added = 0usize;
+        let mut wrong = Vec::new();
+        let mut extra = Vec::new();
+        let mut missing = Vec::new();
+        for stem in stems {
+            let pid = corpus.join(format!("{stem}.pid"));
+            let reference = corpus.join(format!("{stem}_Data.xml"));
+            if !pid.is_file() || !reference.is_file() {
+                eprintln!(
+                    "skipping: {stem} — the acceptance corpus holds no .pid beside a _Data.xml"
+                );
+                return;
+            }
+            let mut drawing = load_publish_from_pid(&pid).expect("the drawing loads");
+            let before: HashMap<String, String> = drawing
+                .items
+                .iter()
+                .filter(|item| item.class == Some("PIDPipingConnector"))
+                .filter_map(|item| run_name(item).map(|name| (item.uid.clone(), name.to_string())))
+                .collect();
+            let report = attach_stored_values(&mut drawing, &tables, &map);
+            assert_eq!(
+                report.withheld, 0,
+                "{stem}: a label disagrees with the dump, so no name is taken from it"
+            );
+            let reference_names = reference_run_names(
+                &std::fs::read_to_string(&reference).expect("the reference reads"),
+            );
+            let mut seen = HashSet::new();
+            for item in drawing
+                .items
+                .iter()
+                .filter(|item| item.class == Some("PIDPipingConnector"))
+            {
+                let Some(name) = run_name(item) else {
+                    continue;
+                };
+                seen.insert(item.uid.clone());
+                match reference_names.get(&item.uid) {
+                    Some(expected) if expected == name => {
+                        if !before.contains_key(&item.uid) {
+                            added += 1;
+                        }
+                    }
+                    Some(expected) => wrong.push(format!(
+                        "{stem} {} wrote {name:?}, reference {expected:?}",
+                        item.uid
+                    )),
+                    None => extra.push(format!(
+                        "{stem} {} wrote {name:?}, reference names none",
+                        item.uid
+                    )),
+                }
+            }
+            for (uid, expected) in &reference_names {
+                if seen.contains(uid) {
+                    continue;
+                }
+                if missing.len() < 12 {
+                    missing.push(format!("{stem} {uid} reference {expected:?}"));
+                } else {
+                    missing.push(format!("{stem} {uid}"));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty() && extra.is_empty(),
+            "wrong: {wrong:?}\nextra: {extra:?}"
+        );
+        assert!(
+            missing.is_empty(),
+            "{} reference names still unspelled, first: {missing:?}",
+            missing.len()
+        );
+        assert_eq!(added, 631);
     }
 }

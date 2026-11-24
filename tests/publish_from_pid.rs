@@ -440,7 +440,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert!(diff.is_clean(), "{diff}");
     assert_eq!(
         (diff.objects, diff.values, diff.rels),
-        (3_093, 4_643, 4_107)
+        (3_093, 4_687, 4_107)
     );
     // G2 (census `contract-work/g2-evidence/devin/ref-only-inventory.log`):
     // nothing the reference carries is missing from the generated side; the
@@ -452,7 +452,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(diff.rels_not_in_generated, 0);
     assert_eq!(diff.objects_excused_by_design, 0);
     assert_eq!(diff.objects_paired_by_name, 79);
-    assert_eq!(diff.values_excused_by_design, 2_082);
+    assert_eq!(diff.values_excused_by_design, 2_038);
     assert_eq!(diff.rels_excused_by_design, 0);
     assert_eq!(diff.rels_paired_by_name, 106);
     assert_eq!(diff.pipelines_paired_by_name, 79);
@@ -1008,7 +1008,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_176);
-    assert_eq!(index["values"], 177_160);
+    assert_eq!(index["values"], 178_223);
     assert_eq!(index["relationships"], 106_806);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
