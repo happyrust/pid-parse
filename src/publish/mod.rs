@@ -77,11 +77,15 @@
 //!   (`IObject.Name` and `IObject.Description`, S7). A drawing takes it
 //!   from the dump only where no label of the sheet disagrees with the
 //!   dump: this fixture's package dump is a later revision, four labels
-//!   disagree with it, and its own run leaves out the three such values
-//!   the dump would have given. A pipe run's name is the map's template;
-//!   a stated insulation purpose or thickness leaves that name out. A
-//!   NULL diameter or materials class is an empty segment, so the 631
-//!   run names the seven acceptance references state are all written;
+//!   disagree with it, and its own run leaves out the nine such values
+//!   the dump would have given. A pipe run's name is the map's template
+//!   (`<ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`):
+//!   any of the four segments after `ItemTag` is empty when NULL and
+//!   spelled when stated (`SP_6` / `SP_8` enum names from the data map or
+//!   `CODELISTS.CODELIST_TEXT` for plant-local codes; `InsulThick` verbatim
+//!   from `T_PipeRun.InsulThick`), matching the 631 run names of the seven
+//!   acceptance references and the six insulated run names of the DWG
+//!   reference;
 //! * the hierarchical levels of an enumeration whose leaf no reference
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state

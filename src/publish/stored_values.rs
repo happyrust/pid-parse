@@ -268,6 +268,7 @@ pub fn attach_stored_values(
         sources: HashMap::new(),
         columns: HashMap::new(),
         rows: HashMap::new(),
+        codelist_texts: HashMap::new(),
     };
     let mut identity = Vec::new();
     for (index, item) in drawing.items.iter_mut().enumerate() {
@@ -371,6 +372,7 @@ struct Reader<'a> {
     sources: HashMap<(&'static str, &'static str, String), Source>,
     columns: HashMap<DumpColumn, Option<HashMap<String, StoredCell>>>,
     rows: HashMap<String, HashSet<String>>,
+    codelist_texts: HashMap<i64, HashMap<i64, String>>,
 }
 
 impl Reader<'_> {
@@ -451,16 +453,18 @@ impl Reader<'_> {
 
     /// A name composed by `template` out of the item's own attributes, each
     /// placed under the item's type. A part the map lists in an enum list
-    /// is that enum's name (`25 mm`, `6"`, `1-1/2"`: the codelist's display
-    /// text, not the published `6 in`); any other is spelled under the
-    /// conversion the map names for it.
+    /// is that enum's display text (`25 mm`, `6"`, `1-1/2"`, `WE`: the
+    /// data map's `SPMapEnumDef.Name` or, for a plant-local code the map
+    /// does not list, `CODELISTS.CODELIST_TEXT`, not the published `6 in`);
+    /// any other is spelled under the conversion the map names for it
+    /// (`InsulThick` has none, so `T_PipeRun.InsulThick` is kept as stored:
+    /// `50mm`, not the SI-formatted `50 mm` of `TotalInsulThick`).
     ///
     /// A run whose `ItemTag` is NULL has no name: none of the 382 such
-    /// connectors of the seven acceptance references is named. The two
-    /// [`ONLY_EMPTY`] parts are written empty when NULL and leave the name
-    /// out when stated. [`EMPTY_WHEN_NULL`] parts are written empty when
-    /// NULL and spelled when stated: a reference name keeps the template's
-    /// separators where the diameter or the materials class is empty.
+    /// connectors of the seven acceptance references is named.
+    /// [`EMPTY_WHEN_NULL`] parts are written empty when NULL and spelled
+    /// when stated: a reference name keeps the template's separators where
+    /// diameter, materials class, insulation purpose or thickness is empty.
     /// A part that is not spelled or not placed leaves the name out
     /// unspelled.
     fn compose(
@@ -491,12 +495,8 @@ impl Reader<'_> {
             };
             let property = attribute_property(self.map, &item.model_item_type, attribute);
             match self.cell(&column, key, report)? {
-                Some(_) if ONLY_EMPTY.contains(&attribute) => {
-                    report.unspelled += 1;
-                    return None;
-                }
                 Some(cell) => {
-                    let Some(part) = spell_part(self.map, property, &cell) else {
+                    let Some(part) = self.spell_part(property, &cell) else {
                         report.unspelled += 1;
                         return None;
                     };
@@ -504,8 +504,7 @@ impl Reader<'_> {
                 }
                 None if first => return None,
                 // The separators around an empty segment are the template's own text.
-                None if ONLY_EMPTY.contains(&attribute) || EMPTY_WHEN_NULL.contains(&attribute) => {
-                }
+                None if EMPTY_WHEN_NULL.contains(&attribute) => {}
                 None => {
                     report.unspelled += 1;
                     return None;
@@ -516,6 +515,39 @@ impl Reader<'_> {
         name.push_str(rest);
         Some(name)
     }
+
+    /// One part of a composed name: a code of an enum list is the enum's
+    /// display name (`SPMapEnumDef.Name`, or `CODELISTS.CODELIST_TEXT` when
+    /// the plant added a local code the map does not list), and anything
+    /// else is spelled under the attribute's own conversion.
+    fn spell_part(&mut self, property: Option<&MapProperty>, cell: &StoredCell) -> Option<String> {
+        let list = property.and_then(|property| property.value_list.as_deref());
+        if let (Some(list), StoredCell::Integer(code)) = (list, cell) {
+            if self.map.enum_list_members.contains_key(list) {
+                if let Some(uid) = self.map.enum_numbered(list, *code) {
+                    let name = &self.map.enums.get(uid)?.name;
+                    return (!name.is_empty()).then(|| name.clone());
+                }
+                if let Some(number) = list
+                    .strip_prefix("SP_")
+                    .and_then(|rest| rest.parse::<i64>().ok())
+                {
+                    let tables = self.tables;
+                    let texts = self
+                        .codelist_texts
+                        .entry(number)
+                        .or_insert_with(|| tables.codelist_text(number).unwrap_or_default());
+                    let text = texts.get(code)?;
+                    return (!text.is_empty()).then(|| text.clone());
+                }
+                return None;
+            }
+        }
+        let criteria = property
+            .and_then(|property| property.process_criteria.as_deref())
+            .filter(|criteria| name_template(criteria).is_none());
+        spell(criteria, cell)
+    }
 }
 
 /// The conversion that composes a run's name out of its attributes, by the
@@ -523,20 +555,23 @@ impl Reader<'_> {
 /// <ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`).
 const COMPOSED_NAME: &str = "EFAdapter.PpConnNameConv";
 
-/// The parts of a composed name the references show only empty: every one
-/// of the 631 names the seven acceptance references compose ends in `--`.
-/// The plant's dump states an insulation purpose on 21 runs (code 10003,
-/// which the map names `IC`) and no thickness; no reference shows how a
-/// stated one reads in a name.
-const ONLY_EMPTY: [&str; 2] = ["InsulPurpose", "InsulThick"];
-
 /// Parts of a composed name written as an empty segment when the cell is
-/// NULL. Of the 631 run names the seven acceptance references state, 247
-/// have no diameter (`{ItemTag}--{PipingMaterialsClass}--`) and two have
-/// neither a diameter nor a materials class (`{ItemTag}----`). A stated
-/// cell is spelled, the way a stated diameter is the enum's name (`6"`,
-/// `1-1/2"`) rather than the published `6 in`.
-const EMPTY_WHEN_NULL: [&str; 2] = ["NominalDiameter", "PipingMaterialsClass"];
+/// NULL and spelled when stated.
+///
+/// Of the 631 run names the seven acceptance references state, 247 have no
+/// diameter (`{ItemTag}--{PipingMaterialsClass}--`), two have neither a
+/// diameter nor a materials class (`{ItemTag}----`), and all 631 have
+/// empty `InsulPurpose` and `InsulThick`. All six named runs of the
+/// committed `DWG-0202GP06-01_Data.xml` reference state both: e.g.
+/// `A3jqz0101-OD-100 mm-1.6AR12-WE-50mm` (`InsulPurpose` = `10006` → `WE`
+/// in `CODELISTS` list 6; `InsulThick` = `50mm` as stored in
+/// `T_PipeRun.InsulThick`, not the `50 mm` of `TotalInsulThick`).
+const EMPTY_WHEN_NULL: [&str; 4] = [
+    "NominalDiameter",
+    "PipingMaterialsClass",
+    "InsulPurpose",
+    "InsulThick",
+];
 
 /// The template of a [`COMPOSED_NAME`] conversion.
 fn name_template(criteria: &str) -> Option<&str> {
@@ -554,22 +589,6 @@ fn attribute_property<'a>(
     map.properties
         .iter()
         .find(|property| property.class_uid == class.uid && property.name == attribute)
-}
-
-/// One part of a composed name: a code of an enum list is the enum's name,
-/// anything else is spelled under the attribute's own conversion.
-fn spell_part(map: &DataMap, property: Option<&MapProperty>, cell: &StoredCell) -> Option<String> {
-    let list = property.and_then(|property| property.value_list.as_deref());
-    if let (Some(list), StoredCell::Integer(code)) = (list, cell) {
-        if map.enum_list_members.contains_key(list) {
-            let name = &map.enums.get(map.enum_numbered(list, *code)?)?.name;
-            return (!name.is_empty()).then(|| name.clone());
-        }
-    }
-    let criteria = property
-        .and_then(|property| property.process_criteria.as_deref())
-        .filter(|criteria| name_template(criteria).is_none());
-    spell(criteria, cell)
 }
 
 /// The `SP_ID`s of the rows of `table`, folded like [`backup_uid_key`];
@@ -696,19 +715,20 @@ mod tests {
         assert_eq!(nozzle.value, "1.6AR12");
         assert_eq!(nozzle.source, placed("T_Nozzle", "PipingMaterialsClass"));
         // The package's dump is a later revision than the sheet: four labels
-        // of the drawing disagree with it, six cells it holds are not spelled
-        // by a conversion this stage runs, and the two identity values of an
-        // item no label gives are withheld because of the disagreement. The
-        // four properties the map places in a table the dump holds are
-        // confirmed by the sheet's own labels where the sheet states them.
+        // of the drawing disagree with it, so all nine identity values the
+        // dump would supply (six insulated pipe-run names plus three other
+        // item names) are withheld because of the disagreement, and none is
+        // left unspelled. The four properties the map places in a table the
+        // dump holds are confirmed by the sheet's own labels where the sheet
+        // states them.
         assert_eq!(
             report,
             StoredValues {
                 written: 29,
                 confirmed_labels: 21,
                 disagreeing_labels: 4,
-                unspelled: 6,
-                withheld: 3,
+                unspelled: 0,
+                withheld: 9,
                 ..StoredValues::default()
             }
         );
@@ -1225,5 +1245,127 @@ mod tests {
         assert_eq!(trim.interface, "IEquipment");
         assert_eq!(trim.value, "1.6AR12");
         assert_eq!(trim.source, placed("T_Equipment", "TrimSpec"));
+    }
+
+    /// All six named pipe runs in the committed `DWG-0202GP06-01_Data.xml`
+    /// reference state both `InsulPurpose` (`WE`, plant-local code `10006`
+    /// in `CODELISTS` list 6, absent from `SPPIDDataMap.xml`) and
+    /// `InsulThick` (`50mm` verbatim from `T_PipeRun.InsulThick`, not the
+    /// SI-formatted `50 mm` of `TotalInsulThick`). Composing the template
+    /// on the committed dump spells every one of their four non-tag segments
+    /// exactly as the reference does, and also spells the other insulated
+    /// runs in the package (`INH` / `50 mm`, `N` with NULL thickness, NULL
+    /// diameter with `WE`).
+    #[test]
+    fn an_insulated_pipe_run_composes_its_purpose_and_thickness_as_the_dwg_reference_does() {
+        let (_, tables, map) = dwg();
+        let reference_xml = std::fs::read_to_string(repo(
+            "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Data.xml",
+        ))
+        .expect("the committed DWG reference reads");
+        let reference_names = reference_run_names(&reference_xml);
+        assert_eq!(reference_names.len(), 6);
+
+        let template =
+            "<ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>";
+        let mut reader = Reader {
+            tables: &tables,
+            map: &map,
+            sources: HashMap::new(),
+            columns: HashMap::new(),
+            rows: HashMap::new(),
+            codelist_texts: HashMap::new(),
+        };
+        let mut report = StoredValues::default();
+        let compose_uid = |reader: &mut Reader<'_>, report: &mut StoredValues, uid: &str| {
+            let item = PidPublishItem {
+                uid: uid.to_string(),
+                model_item_type: "PipeRun".to_string(),
+                class: Some("PIDPipingConnector"),
+                attributes: Vec::new(),
+            };
+            let key = backup_uid_key(uid);
+            reader.compose(&item, &key, template, report)
+        };
+
+        // The six runs of `DWG-0202GP06-01`: the dump is a later revision
+        // whose `ItemTag` changed, while the four segments after `<ItemTag>-`
+        // (`<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`)
+        // match the committed reference character for character.
+        let expected_dwg = [
+            (
+                "4C2F232018CE42E8B7FFCABD553BDBC4",
+                "A3jqz0101-OD",
+                "OD-100 mm-06-0101-1.6AR12-WE50mm",
+                "-100 mm-1.6AR12-WE-50mm",
+            ),
+            (
+                "61BA43D9FA854B8EBE6E0FACBCBC64BD",
+                "A3jqz0201-OD",
+                "OD-50 mm-03-0201-1.6AR12-WE50mm",
+                "-50 mm-1.6AR12-WE-50mm",
+            ),
+            (
+                "C7C3E09265174C91AC008F3CE02E9653",
+                "A3jqz0301-OD",
+                "OD-50 mm-03-565-1.6AR12-WE50mm",
+                "-50 mm-1.6AR12-WE-50mm",
+            ),
+            (
+                "9CE3F6FAD0F949DDBE8630B0A0DB5993",
+                "A3jqz0101-OD",
+                "OD-50 mm-03-0101-1.6AR12-WE50mm",
+                "-50 mm-1.6AR12-WE-50mm",
+            ),
+            (
+                "ED053C1B662D45F887952F3C5968A094",
+                "A3jqz0201-LFL",
+                "LFL-80 mm-06-0201-1.6AR12-WE50mm",
+                "-80 mm-1.6AR12-WE-50mm",
+            ),
+            (
+                "7042E6B0A1A944E390A08A5A44771C46",
+                "A3jqz0401-OD",
+                "OD-50 mm-03-0401-1.6AR12-WE50mm",
+                "-50 mm-1.6AR12-WE-50mm",
+            ),
+        ];
+        for (uid, ref_tag, dump_tag, tail) in expected_dwg {
+            assert_eq!(
+                reference_names.get(uid).map(String::as_str),
+                Some(format!("{ref_tag}{tail}").as_str()),
+                "{uid} in DWG reference"
+            );
+            assert_eq!(
+                compose_uid(&mut reader, &mut report, uid).as_deref(),
+                Some(format!("{dump_tag}{tail}").as_str()),
+                "{uid} composed from committed dump"
+            );
+        }
+
+        // The unnamed run (`ItemTag` NULL) has no name.
+        assert_eq!(
+            compose_uid(&mut reader, &mut report, "DE61D90B9E534F4DB739317B8A679182"),
+            None
+        );
+
+        // Other insulated combinations in the committed package's dump:
+        // `INH` (map enum 10001) + `50 mm` (stored with space), `N` (map
+        // enum 2) + NULL thickness, and NULL diameter + `WE` (10006) + NULL
+        // thickness.
+        assert_eq!(
+            compose_uid(&mut reader, &mut report, "9D054B54CBAF403297A8F669F5FD6323").as_deref(),
+            Some("-10 mm--0102-16AR12-INH50 mm-10 mm-16AR12-INH-50 mm")
+        );
+        assert_eq!(
+            compose_uid(&mut reader, &mut report, "E5F9B6C8B4734D8FA5D9521B9A201F63").as_deref(),
+            Some("WW-100 mm-01-0101-1.6AR12-N-100 mm-1.6AR12-N-")
+        );
+        assert_eq!(
+            compose_uid(&mut reader, &mut report, "7B8E6DAAFC5C4F73981988BF6A74296C").as_deref(),
+            Some("LFL--06-0101-1.6AR12-WE--1.6AR12-WE-")
+        );
+        assert_eq!(report.unspelled, 0);
+        assert!(report.unread.is_empty());
     }
 }

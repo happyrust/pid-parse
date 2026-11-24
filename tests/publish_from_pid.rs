@@ -1008,7 +1008,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_176);
-    assert_eq!(index["values"], 178_361);
+    assert_eq!(index["values"], 178_366);
     assert_eq!(index["relationships"], 106_806);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
@@ -1838,7 +1838,7 @@ const DWG_EXP_SAYS: [&str; 7] = [
     "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, 5 fluid codes \
      missing, 0 fluid systems unmapped",
     "oracle-exp stored values: 29 written, 21 labels confirmed, 4 labels kept where the dump \
-     says otherwise, 6 left out unspelled, 3 names left out because a label disagrees with the \
+     says otherwise, 0 left out unspelled, 9 names left out because a label disagrees with the \
      dump",
     "oracle-exp connectivity: 20 pairs, 19 written as <Rel>, 1 left out because an end is not \
      a published object",
@@ -2222,11 +2222,11 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             ("DWG-0201GP01-01", 492, 901, 688),
             ("DWG-0201GP06-01", 170, 362, 233),
             ("DWG-0202GP06-01", 112, 240, 139),
-            ("DWG-0104GP01-08", 5, 15, 4),
+            ("DWG-0104GP01-08", 5, 16, 4),
         ]
     );
     assert_eq!(index["objects"], 785);
-    assert_eq!(index["values"], 1_538);
+    assert_eq!(index["values"], 1_539);
     assert_eq!(index["relationships"], 1_068);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

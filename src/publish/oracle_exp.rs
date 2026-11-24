@@ -789,7 +789,28 @@ impl ExpTables {
     /// Returns [`ExpError::Table`] when the codelist columns are missing or
     /// a number cell is not an integer.
     pub fn codelist_short_text(&self, list_number: i64) -> Result<HashMap<i64, String>, ExpError> {
-        let short = column_index(&self.codelists, "CODELIST_SHORT_TEXT", Kind::Char)?;
+        self.codelist_column(list_number, "CODELIST_SHORT_TEXT")
+    }
+
+    /// `CODELIST_TEXT` for one list number, keyed by `CODELIST_INDEX`.
+    ///
+    /// An empty text is omitted. The caller treats a missing index as a code
+    /// that cannot be spelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when the codelist columns are missing or
+    /// a number cell is not an integer.
+    pub fn codelist_text(&self, list_number: i64) -> Result<HashMap<i64, String>, ExpError> {
+        self.codelist_column(list_number, "CODELIST_TEXT")
+    }
+
+    fn codelist_column(
+        &self,
+        list_number: i64,
+        text_column: &str,
+    ) -> Result<HashMap<i64, String>, ExpError> {
+        let text_col = column_index(&self.codelists, text_column, Kind::Char)?;
         column_index(&self.codelists, "CODELIST_NUMBER", Kind::Num)?;
         column_index(&self.codelists, "CODELIST_INDEX", Kind::Num)?;
         let mut texts = HashMap::new();
@@ -814,7 +835,7 @@ impl ExpTables {
             if list != list_number {
                 continue;
             }
-            let text = cell_text(row, short);
+            let text = cell_text(row, text_col);
             if text.is_empty() {
                 continue;
             }
@@ -4970,6 +4991,27 @@ mod tests {
             first.item_tag.as_deref(),
             Some("OD-50 mm-03-0401-1.6AR12-WE50mm")
         );
+    }
+
+    /// `CODELIST_TEXT` carries each codelist entry's display text, including
+    /// plant-local additions such as list 6's `10006` (`WE`) and `10007`
+    /// (`W`) that `SPPIDDataMap.xml` does not list. Empty entries (list 6
+    /// index `1`) are omitted.
+    #[test]
+    fn the_committed_dwg_dump_reads_codelist_text_including_plant_local_codes() {
+        let dump = committed_dwg_dump();
+        let tables = ExpTables::read(&dump).expect("the dump reads");
+        let list6 = tables.codelist_text(6).expect("codelist 6 text");
+        assert_eq!(list6.len(), 29);
+        assert!(!list6.contains_key(&1));
+        assert_eq!(list6.get(&2).map(String::as_str), Some("N"));
+        assert_eq!(list6.get(&10001).map(String::as_str), Some("INH"));
+        assert_eq!(list6.get(&10006).map(String::as_str), Some("WE"));
+        assert_eq!(list6.get(&10007).map(String::as_str), Some("W"));
+        let list8 = tables.codelist_text(8).expect("codelist 8 text");
+        assert_eq!(list8.len(), 82);
+        assert_eq!(list8.get(&50).map(String::as_str), Some("50 mm"));
+        assert_eq!(list8.get(&5032).map(String::as_str), Some("1\""));
     }
 
     // What the seventeen tables of that dump hold that the reader keeps

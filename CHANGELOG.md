@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### publish：管段名有保温目的或厚度时也按数据表模板写出（2026-11-24）
+
+入库参考 `DWG-0202GP06-01_Data.xml` 的六条带保温管段全部按模板 `<ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>` 写出 `IObject.Name`（如 `A3jqz0101-OD-100 mm-1.6AR12-WE-50mm`）：`InsulPurpose` 取枚举显示名（`SPMapEnumDef.Name`，映射文件里没有的厂级自定义码回退读 `CODELISTS.CODELIST_TEXT`，如 DWG 包 6 号表的 `10006 -> WE` 与 53 张库 8 号表的 `550 -> 550mm`），`InsulThick` 按 `T_PipeRun.InsulThick` 原文写出（`50mm`，不是 `TotalInsulThick` 带空格的 `50 mm`）。现在不再把 `InsulPurpose`、`InsulThick` 有值时整名留空，`ExpTables::codelist_text` 补读 `CODELIST_TEXT`。
+
+- **读数。** DWG-0202GP06-01 挂包内 dump：`stored values` 的 `unspelled` 6 → 0，`withheld` 3 → 9（该图有 4 条标签与较新 dump 不一致，名字仍整图不写，XML 逐字节不变）。入库 DWG 整包 `_Index.json` 的 `values` 1 538 → 1 539（`DWG-0104GP01-08` 15 → 16，新增那条带 `INH` / `50 mm` 的管段名）。53 张整包 `_Index.json` 的 `values` 178 361 → 178 366（+5：N井场 2 条、Q井场 2 条带 `IC` 保温目的，凝析油冷却 1 条 `ND = 550` 走 `CODELISTS` 8 号表回退拼出 `550mm`）。七张同版验收图的 631 条管段名、非空值（39 171 / 39 171）与 `.pid` 单发逐字节不变。GitHub #74。
+
 ### publish：写出 `LongMaterialDescription3`、`ReliefPressure`、`EquipmentTrimSpec`（2026-11-24）
 
 **只在挂了 Oracle `exp` dump 时写这三项。`.pid` 单独发布的字节不动。图纸上已有的标签与 dump 不一致时，留下标签。七张同版验收图的非空值从 38 881 增到 38 922（分母 39 171），不同的值仍是 0。**
