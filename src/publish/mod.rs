@@ -88,10 +88,9 @@
 //!   (S8). The interfaces an equipment type decides are written when
 //!   `IEquipment` states that type's code;
 //! * a pipe run's `InsulThickSrc` and `SlopedPipeDirection`, written from
-//!   the dump's codelist cells;
-//! * three scattered values, `LongMaterialDescription3`, `ReliefPressure`
-//!   and `EquipmentTrimSpec`, and the interface stated only beside the
-//!   first of them, `ISpecifiedMatlItem`;
+//!   the dump's codelist cells, and `LongMaterialDescription3`,
+//!   `ReliefPressure`, `EquipmentTrimSpec` and `ISpecifiedMatlItem`, written
+//!   from the cells the data map places;
 //! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
 //!   off-page connectors in a drawing's stockpile (S12), and objects other
 //!   than piping components the database draws on a sheet its `.pid` does

@@ -1379,13 +1379,19 @@ pub(crate) const DUMP_CODELIST_ATTRIBUTES: [(&str, &str); 28] = [
 /// not disagree with it, so a reference value it leaves out on another
 /// object is a finding. The two are named here rather than in
 /// [`STORED_PROPERTIES`] because a label, not this stage, is what fills them
-/// on a drawing that has one.
-pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 5] = [
+/// on a drawing that has one. `LongMaterialDescription3`,
+/// `EquipmentTrimSpec` and `ReliefPressure` are read from the same kind of
+/// cell: the first two as the text is stored, a relief pressure stored as
+/// `12MPa` written `12 MPa`.
+pub(crate) const DUMP_STORED_ATTRIBUTES: [(&str, &str); 8] = [
     ("IConnector", "RepresentationsAreAllZeroLength"),
+    ("IEquipment", "EquipmentTrimSpec"),
     ("IInlineComponent", "IsFlowDirectional"),
-    ("IPIDTypical", "IsTypical"),
     ("IObject", "Description"),
     ("IObject", "Name"),
+    ("IPIDTypical", "IsTypical"),
+    ("IPressureReliefItem", "ReliefPressure"),
+    ("ISpecifiedMatlItem", "LongMaterialDescription3"),
 ];
 
 /// The exclusion class covering `interface`.`attribute`, if any.

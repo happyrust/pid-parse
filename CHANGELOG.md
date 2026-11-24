@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：写出 `LongMaterialDescription3`、`ReliefPressure`、`EquipmentTrimSpec`（2026-11-24）
+
+**只在挂了 Oracle `exp` dump 时写这三项。`.pid` 单独发布的字节不动。图纸上已有的标签与 dump 不一致时，留下标签。七张同版验收图的非空值从 38 881 增到 38 922（分母 39 171），不同的值仍是 0。**
+
+- **放在哪。** `LongMaterialDescription3` 是 `EquipmentOther.Description`，在 `T_ModelItem.Description`，原文照写，只落在 `PIDProcessEquipment`。`EquipmentTrimSpec` 是设备类型继承的 `TrimSpec`，在 `T_Equipment.TrimSpec`，原文照写。`ReliefPressure` 是 `SP_SetPressure`，在 `T_InlineComp.SP_SetPressure`；数据地图把它记在 `InstrumentInline` 上，字典里没有这个类型，就按对象自己的 `Instrument` 去读。单元格是 `12MPa`，六处参考都写成 `12 MPa`，中间补一个空格。
+- **接口。** `ISpecifiedMatlItem` 只在写出 `LongMaterialDescription3` 的那 34 个 `PIDProcessEquipment` 上出现。这个类的接口表里本来就有它，排在 `INamedEquipment` 之后、`IPIDTypical` 之前，和参考的次序一样。另外两项落在本来就会写出的 `IEquipment`、`IPressureReliefItem` 上。
+- **七张图各加了多少。** 非空值 / 接口元素：I井场 +8 / +6（6 650 → 6 658，22 898 → 22 904），J K井场 +13 / +12（9 956 → 9 969，34 489 → 34 501），L M井场 +17 / +16（11 749 → 11 766，40 713 → 40 729），轻烃分离器I 不加，空冷器A/B/C 各加 1 个泄放压力（2 714 → 2 715，2 656 → 2 657，2 607 → 2 608），接口数不变。34 个材料长描述、6 个泄放压力、I井场 1 个 `B9`。
+- **DWG。** 容器的 `EquipmentTrimSpec` 是 `1.6AR12`，和参考相同。带 dump 的值 204 → 205，整包那张图的完整性 163 → 164；接口仍是 687 与 683。`oracle-exp stored values` 那一行从 `28 written` 变成 `29 written`，其余数字不动。提交的包的 `_Index.json`：`DWG-0202GP06-01` 的值 232 → 233，`DWG-0201GP06-01` 的值 359 → 360，合计 1 526 → 1 528。53 张整包的 `values` 177 160 → 177 298。
+
 ### publish：写出管段的 InsulThickSrc 与 SlopedPipeDirection（2026-11-24）
 
 **`--oracle-exp` 和带 dump 的整包给管段写出这两个枚举；`.pid` 单独发布的字节不变。** 数据映射把它们标成 `EFAdapter.EnumConversions`，落在 `T_PipeRun`：`InsulationThkSource` 用枚举表 `SP_50`，`SlopeDirection` 用 `SP_85`。拼写是 `MapEnumToEnum` 的目标，前面加 `@`。`SP_50` 序号 1 没有目标，不写。`CatalogPartNumber` 仍不写：这份 dump 的 `T_PLANTITEM.SP_PARTNO` 是 NULL。
