@@ -85,7 +85,8 @@
 //! * the hierarchical levels of an enumeration whose leaf no reference
 //!   drawing shows: the map holds no levels, and
 //!   [`codelist_values::LEAF_LEVELS`] holds those the references state
-//!   (S8); and the interfaces an equipment type decides;
+//!   (S8). The interfaces an equipment type decides are written when
+//!   `IEquipment` states that type's code;
 //! * two enumerations of a pipe run that no stage reads from the dump,
 //!   `IInsulatedItem.InsulThickSrc` and
 //!   `ISlopedPipingItem.SlopedPipeDirection`, which the fixture's own

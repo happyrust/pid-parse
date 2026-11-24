@@ -6,6 +6,10 @@
 
 七张同版验收图的参考里有 631 条管段 `IObject.Name`。数据表模板是 `EFAdapter.PpConnNameConv, <ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>`。直径或材料等级这一格为空时，原先整名不写，249 条因此留在 `left out unspelled`：247 条参考写成 `{位号}--{材料等级}--`，2 条（轻烃分离器I 的 `02532----`、`02534----`）直径和等级都空。现在这两格为空就写成空段，分隔符仍在。631 条都与参考相同，参考没有名字的管段不写。非空值 38 881 → 39 130 / 39 171（99.2% → 99.9%）：I井场 6 650 → 6 694，J K井场 9 956 → 10 021，L M井场 11 749 → 11 830，轻烃分离器I 2 549 → 2 574，空冷器A 2 714 → 2 732，空冷器B 2 656 → 2 664，空冷器C 2 607 → 2 615；写得与参考不同的值仍是 0。I井场对照里计入的值 4 643 → 4 687，原先按合成名豁免的 44 条不再豁免（2 082 → 2 038）。53 张整包 `_Index.json` 的 `values` 177 160 → 178 223。`.pid` 单发逐字节不变。图上标签与 dump 不一致时仍不从 dump 取名字。保温目的或厚度有值时仍不写这条名字。
 
+### publish：设备类型决定的接口在 dump 写出代码时补上（2026-11-24）
+
+七张同版验收图上，泵（`EqType1` `@EE791`）、电机（`@EE792`）、罐（`@EE793`）和空冷器（`EqType2` `@EE796`）的接口随 `IEquipment` 的代码写出；敞口罐再加 `EqType2` `@EE7A6` 的 `ILowPressureTankOcc`。电机把 `IEquipmentDriver` 和 `IProcessEquipmentDriverOcc` 写在 `IPump` 之前。`.pid` 单独发布不带这些代码，字节不变。GitHub #78。
+
 ### CI：补一步只选根包的 `cargo check --examples`，把下一条改掉的那一样检查补回来（2026-11-17）
 
 **只改了 `.github/workflows/ci.yml`：在 examples 一步后面加一步 `cargo check --locked --examples`（`dcf9838`）。程序和测试没有动。下一条把 examples 一步改成 `--workspace` 之后，CI 上没有哪一步再查「依赖的特性只按根包自己声明的来的时候，example 编不编得过」；这一步补的就是它。`check` 只做类型检查、只写元数据，不会像原来的 `build` 那样把 example 再写一份到 runner 的磁盘上。推上去的那一次 CI（运行 44045056745）全绿；这一步 22 秒，查了 21 个包，没有警告；整次 13 分 06 秒。**
