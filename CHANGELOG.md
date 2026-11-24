@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### pid-plot：原厂 Amyuni PDF 见证补齐（#59、#72、#73、#60、#61，2026-11-24）
+
+- **样式见证从 37 / 53 升至 52 / 53（GitHub #72）。** 对照 `O井场`、`A井场进站生产收球筒`、`凝析油一级闪蒸分离器A气相出口改造` 三张备份图的原厂 Amyuni PDF：
+  - `O井场`（穿 `CPECCHB-SQ-A1`）与 `P井场` 实测确认 `0.30` mm 家具线印在 2 个设备单位（`0.3387` mm）、`0.50` mm 印在 3 个设备单位（`0.5080` mm）、`0.75` 与 `0.7999` mm 印在 4 个设备单位；`write::device_units` 据此对 `0.30` 与 `0.50` mm 分别返回 `2` 与 `3`（其余笔宽维持向零截断，不破坏 11 张验收图的 `0.13` 与 `1.1313` mm）。
+  - `A井场进站生产收球筒` 实测确认 `CPE-SQ-A2` 图框家具与我方出图一致。
+  - `凝析油一级闪蒸分离器A气相出口改造` 实测确认 `3.500/1.750` 非拟合虚线按步距与双单位笔宽画出（新增 `write::tests::the_three_point_five_dash_is_written_at_its_pitch_and_pen`）。
+  - `pid-plot/tests/style_witness.rs` 纳入这 3 张见证图，受见证词表扩至 14 种笔宽、3 种虚线、4 种字型、5 种模板，53 张备份图中 52 张完全由受见证词表画出，仅剩无原厂出图的 `D04` 自有墨迹 `0.000` 虚线（10 条笔画）。
+- **`低温分离器C` 竖排长标签截断十分之一度见证（GitHub #73）。** 原厂 Amyuni PDF 实测确认 `25-WO-0103528-B2-EH40`（比直角小 `1.06e-4°`、长 296 个设备单位）前 19 个字排在同一竖轴、最后两个字（`40`）横移 1 个设备单位（`0.48 pt` = `25.4/150` mm），证实驱动按截断的 `89.9°` 排字；同图 `40-WO-0103526-B2-EH40`（超过直角 `1.25e-4°`）截断为 `900` 全在同一竖轴。`write/escapement.rs` 以 `HAIR_SHORT_OF_A_RIGHT_ANGLE` 将差 `< 0.1°` 且 `> 1e-9 rad` 的标签按 `89.9°` 排（验收图 45 条仅差 `≤ 1e-12 rad` 的短标签保留图纸转角），新增 `the_factory_plot_stands_the_last_glyphs_a_device_unit_aside` 并更新 `write.rs` 的 `89.96° -> 89.9°` 断言。
+- **6 张图框偏移图纸纸边见证（GitHub #59，`3b9ef37`）。** 对照 `A井场`、`N/O/P井场`、`凝析油稳定塔(1200td/600td)` 原厂 Amyuni PDF 补齐 `PAPER_EDGE_WITNESSES` 5 组见证，`UNPLOTTED_PAST_THE_PAPER` 与 `export-ledger-backup.json` 中 6 张图的 `segment_beyond_the_paper_no_plot_of_template` 全部归零，新增 `pid-plot/tests/paper_edge_factory_plots.rs`。
+- **`EF井场` 实心圆点、`5.966 mm` 文本框与裸图见证（GitHub #60、#61）。** `model::hang_in_the_box` 新增 `TALL_WITNESSED_BOX_MM = 5.965_723_937`，对照两张闪蒸气相出口改造原厂 PDF 将 16 条 `0x48` 仿宋标签自盒顶悬挂（上提 `1.138 mm`），其余锚点码保持原位；新增 `pid-plot/tests/factory_amyuni_plots.rs` 钉死 `EF井场` 实心圆点（oid 52844）、`N井场` 底边裁切标签及 `D井场` / `凝析油一级闪蒸分离器B气相出口改造` 裸图行为。
+
 ### publish：管段名有保温目的或厚度时也按数据表模板写出（2026-11-24）
 
 入库参考 `DWG-0202GP06-01_Data.xml` 的六条带保温管段全部按模板 `<ItemTag>-<NominalDiameter>-<PipingMaterialsClass>-<InsulPurpose>-<InsulThick>` 写出 `IObject.Name`（如 `A3jqz0101-OD-100 mm-1.6AR12-WE-50mm`）：`InsulPurpose` 取枚举显示名（`SPMapEnumDef.Name`，映射文件里没有的厂级自定义码回退读 `CODELISTS.CODELIST_TEXT`，如 DWG 包 6 号表的 `10006 -> WE` 与 53 张库 8 号表的 `550 -> 550mm`），`InsulThick` 按 `T_PipeRun.InsulThick` 原文写出（`50mm`，不是 `TotalInsulThick` 带空格的 `50 mm`）。现在不再把 `InsulPurpose`、`InsulThick` 有值时整名留空，`ExpTables::codelist_text` 补读 `CODELIST_TEXT`。

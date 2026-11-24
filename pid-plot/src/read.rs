@@ -659,24 +659,23 @@ impl<'a> Device<'a> for InkDevice {
                 // this long is where it lies and how wide it is.
                 let delta = to - from;
                 let len = delta.hypot();
-                let indices = if let Some((edge_start, edge_end)) =
-                    device.printed_edge(from, to, width_pt)
-                {
-                    printed_pt += (edge_end - edge_start).hypot();
-                    let edge = piece(edge_start, edge_end);
-                    let edge_idx = device.edges.len();
-                    device.edges.push(SheetEdge {
-                        start_mm: edge.start_mm,
-                        end_mm: edge.end_mm,
-                        width_mm: edge.width_mm,
-                        paper,
-                    });
-                    let printed_idx = printed.len();
-                    printed.push(edge);
-                    Some((edge_idx, printed_idx))
-                } else {
-                    None
-                };
+                let indices =
+                    if let Some((edge_start, edge_end)) = device.printed_edge(from, to, width_pt) {
+                        printed_pt += (edge_end - edge_start).hypot();
+                        let edge = piece(edge_start, edge_end);
+                        let edge_idx = device.edges.len();
+                        device.edges.push(SheetEdge {
+                            start_mm: edge.start_mm,
+                            end_mm: edge.end_mm,
+                            width_mm: edge.width_mm,
+                            paper,
+                        });
+                        let printed_idx = printed.len();
+                        printed.push(edge);
+                        Some((edge_idx, printed_idx))
+                    } else {
+                        None
+                    };
                 *active_edge = (len > 0.0).then_some(ActiveEdge {
                     end: to,
                     dir: [delta.x / len, delta.y / len],
@@ -696,8 +695,7 @@ impl<'a> Device<'a> for InkDevice {
                         if let (Some((edge_idx, printed_idx)), Some((clipped_start, clipped_end))) =
                             (active.indices, device.printed(from, to))
                         {
-                            let end_mm =
-                                view_pt_to_paper_mm(clipped_end.x, clipped_end.y, page_h);
+                            let end_mm = view_pt_to_paper_mm(clipped_end.x, clipped_end.y, page_h);
                             printed_pt += (clipped_end - clipped_start).hypot();
                             device.edges[edge_idx].end_mm = end_mm;
                             printed[printed_idx].end_mm = end_mm;

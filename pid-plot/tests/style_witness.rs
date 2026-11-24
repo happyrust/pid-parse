@@ -1,36 +1,21 @@
-//! The plant backup's style vocabulary, against the only pages a plot can be
-//! compared with.
+//! The plant backup's style vocabulary, against the pages a factory plot has
+//! been read for.
 //!
-//! Forty-two of the corpus's fifty-three plant sheets have no reference plot,
-//! so no page-by-page verdict is possible for them. What *is* possible — and is
-//! what this gate pins — is a per-entry verdict: every pen width, dash pattern,
-//! face and border template a sheet draws with is either one of the eleven
-//! validated pages' or it is not, and the ones that are not are named here.
+//! The eleven acceptance sheets are one witness set. Three backup drawings
+//! now have a factory Amyuni plot, each compared with what this crate draws
+//! before the drawing was added here:
 //!
-//! The lists below are the *result* of that decomposition, and each one is
-//! short enough to settle by hand:
+//! - `O井场` wears `CPECCHB-SQ-A1` and its plot prints that furniture. Its
+//!   `0.30` mm strokes are two device units, its `0.50` mm strokes three,
+//!   and its `0.75` and `0.7999` mm strokes four — see `pen_width_mm`.
+//! - `A井场进站生产收球筒` wears `CPE-SQ-A2`, and the plot's furniture lies
+//!   on the furniture this crate draws.
+//! - `凝析油一级闪蒸分离器A气相出口改造` draws `3.500/1.750` unfitted, and
+//!   the plot dashes it at that pitch on the pen the width already prints.
 //!
-//! - **Pen widths.** Four widths, and every one of them sits inside a band
-//!   boundary the eleven plots leave open — see [`WIDENED_BY_THE_BOUNDARY`].
-//!   Three are furniture of `CPECCHB-SQ-A1.igr`, which four sheets wear. The
-//!   fourth, `0.5000`, is also on the drawing's own ink: `D04` draws 24
-//!   strokes with it. The A2 acceptance sheet now witnesses `CPECCHB-SQ-A2`
-//!   and the four widths that used to head this list (`0.7071` and the three
-//!   rails above 1.06 mm).
-//! - **Dash patterns.** Both are the drawing's own ink, and both are resolved
-//!   without a reference plot: `0.000` is a single zero-length step, which
-//!   `write::dash_array` draws solid on purpose, and `3.500/1.750` is a
-//!   two-step pattern whose record literally stores `-3.500/-1.750` — the same
-//!   shape as the witnessed `-1.905/-1.270`, read by the same code. The A2
-//!   acceptance sheet does not draw this pattern, so it stays unwitnessed.
-//! - **Faces.** None: every sheet letters with the four faces the validated
-//!   pages already use.
-//! - **Templates.** Two files no validated page wears — `CPE-SQ-A2` and
-//!   `CPECCHB-SQ-A1` — which is why the three furniture widths above are
-//!   unexercised. `CPECCHB-SQ-A2` is witnessed by the A2 acceptance sheet.
-//!
-//! `37` of the fifty-three sheets draw with witnessed vocabulary alone, and
-//! `16` carry at least one entry from the lists below.
+//! What is still unwitnessed is one dash: `0.000`, ten strokes of `D04`'s
+//! own ink, which `write::dash_array` draws solid because a zero period
+//! inks nothing. No factory plot of `D04` is in the set above.
 //!
 //! Soft-skips when the corpus or the extracted backup is absent, which is the
 //! case on CI.
@@ -40,69 +25,46 @@
 //!   cargo test -p pid-plot --test style_witness --locked
 //! ```
 //!
-//! The witness set is `PID_ACCEPTANCE_CORPUS`, or
-//! `D:\work\cad\pid-test-data\验收数据`: the eleven sheets that gate already
-//! holds to a reading. It does not fall back to the five-sheet corpus. The
-//! backup sheets are still laid out against `PID_PARSE_SELF_CHECK_DIR`.
+//! The eleven sheets are `PID_ACCEPTANCE_CORPUS`, or
+//! `D:\work\cad\pid-test-data\验收数据`. The three factory plots are the
+//! PDFs of those names under `<backup>/../publish/sppid导出/导出dxf pdf/导出pdf`.
+//! The backup sheets are laid out against `PID_PARSE_SELF_CHECK_DIR`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use pid_plot::model::{PaperModel, lay_out_drawing};
 use pid_plot::witness::{Dimension, Witness};
-use pid_plot::write::pen_width_mm;
 
-const PEN_WIDTHS: [&str; 10] = [
-    "0.0100", "0.1300", "0.1800", "0.2500", "0.3500", "0.7000", "0.7071", "1.0606", "1.1313",
-    "1.4141",
+const PEN_WIDTHS: [&str; 14] = [
+    "0.0100", "0.1300", "0.1800", "0.2500", "0.3000", "0.3500", "0.5000", "0.7000", "0.7071",
+    "0.7500", "0.7999", "1.0606", "1.1313", "1.4141",
 ];
-const DASH_PATTERNS: [&str; 2] = ["1.905/1.270", "7.000/1.750/0.350/1.750"];
+const DASH_PATTERNS: [&str; 3] = ["1.905/1.270", "3.500/1.750", "7.000/1.750/0.350/1.750"];
 const FACES: [&str; 4] = ["Arial", "Arial Narrow", "FangSong", "SimSun"];
-const TEMPLATES: [&str; 3] = ["CPE-SQ-A0.igr", "CPE-SQ-A1.igr", "CPECCHB-SQ-A2.igr"];
-
-/// The unexercised widths: the ones the plant backup declares and no
-/// reference plot shows a pen for.
-///
-/// Each sits between two witnessed widths that print on different pens, so
-/// the plots alone do not say which of the two it prints on. The writer's
-/// rule does — a width prints on its whole device units, cut and never under
-/// one (`pen_width_mm`), which is the pen of every one of the 19 393 pieces
-/// the plots show — and by it these four print on one, two, four and four
-/// units ([`UNEXERCISED_PENS`]): the pens the five-band table before it gave
-/// them. That is the rule carried to widths it was not read on, and the
-/// gate below still holds each to the open interval it sits in. `0.7071` is
-/// declared by the A2 acceptance sheet and that sheet's pen column agrees,
-/// so it is witnessed rather than listed, even though it sits inside the
-/// thick/wide interval.
-///
-/// - **thin/mid `(0.25, 0.35)`** — 0.25 mm rules print thin and 0.35 mm
-///   strokes print mid (9665 straight symbol strokes on the eleven sheets
-///   agree) — so `0.3000` could be either.
-/// - **mid/thick `(0.35, 0.70)`** — 0.35 prints mid and 0.70 prints thick, and
-///   nothing in between is declared by a validated page. `0.5000` sits inside
-///   it. The old `(0.50, 0.70)` writing rested on an `As Drawn` placeholder
-///   that prints thin (see
-///   `docs/analysis/2026-10-30-as-drawn-is-not-a-pen.md`).
-/// - **thick/wide `(0.70, 1.06)`** — 0.70 prints thick and the A2 title block's
-///   1.0606 mm rails print wide (17 strokes, the reference's 1.02 mm). The
-///   straight-stroke tally did not name a declaration between them, so the
-///   interval is not tighter than this. `0.7500` and `0.7999` sit inside it
-///   and no validated page declares either.
-///
-/// The gate holds each listed width to that: the nearest widths a validated
-/// page declares on either side of it print on different pens
-/// ([`pen_width_mm`]). For `0.7500` and `0.7999` the nearest one below is the
-/// witnessed `0.7071`, which prints thick as `0.7000` does.
-const WIDENED_BY_THE_BOUNDARY: [&str; 4] = ["0.3000", "0.5000", "0.7500", "0.7999"];
-
-/// The pen each of [`WIDENED_BY_THE_BOUNDARY`] prints on, in device units of
-/// 1/150 inch: what the writer's rule gives a width no plot shows.
-const UNEXERCISED_PENS: [(&str, f64); 4] = [
-    ("0.3000", 1.0),
-    ("0.5000", 2.0),
-    ("0.7500", 4.0),
-    ("0.7999", 4.0),
+const TEMPLATES: [&str; 5] = [
+    "CPE-SQ-A0.igr",
+    "CPE-SQ-A1.igr",
+    "CPE-SQ-A2.igr",
+    "CPECCHB-SQ-A1.igr",
+    "CPECCHB-SQ-A2.igr",
 ];
+
+/// Backup drawings whose factory plot was compared before the drawing was
+/// allowed to witness its vocabulary. One sheet of each kind.
+const FACTORY_SHEETS: [&str; 3] = [
+    r"00\00\O井场 注采阀组工艺及自控流程图.pid",
+    r"00\00\集注站 进出站收发球单元 A井场进站生产收球筒工艺及自控流程图.pid",
+    r"00\02\集注站 凝析油一级闪蒸分离器A气相出口改造工艺及自控流程图.pid",
+];
+
+/// Factory plots named beside the backup package, not beside the `.pid`.
+fn factory_plot_dir(backup: &Path) -> PathBuf {
+    backup
+        .parent()
+        .unwrap_or(backup)
+        .join(r"publish\sppid导出\导出dxf pdf\导出pdf")
+}
 
 /// The corpus `PID_PARSE_SELF_CHECK_DIR` names, when the run names one.
 fn named_corpus() -> Option<PathBuf> {
@@ -179,40 +141,6 @@ fn validated_sheets(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// A pen width in millimetres, from the four-decimal spelling the witness
-/// compares widths by.
-fn millimetres(width: &str) -> f64 {
-    width
-        .parse()
-        .unwrap_or_else(|error| panic!("{width} is not a width in millimetres: {error}"))
-}
-
-/// The widths of `witnessed` nearest `width` on either side of it, the
-/// narrower one first; `None` on a side where no validated page declares one.
-///
-/// The nearest pair is the one that decides whether the references settle a
-/// width's pen. The pen table only ever steps up, so two neighbours on one pen
-/// put everything between them on that pen, and two neighbours on different
-/// pens leave the step somewhere between them.
-fn witnessed_either_side<'a>(
-    witnessed: &[&'a str],
-    width: &str,
-) -> (Option<&'a str>, Option<&'a str>) {
-    let width = millimetres(width);
-    let by_width = |left: &&str, right: &&str| millimetres(left).total_cmp(&millimetres(right));
-    let below = witnessed
-        .iter()
-        .copied()
-        .filter(|candidate| millimetres(candidate) < width)
-        .max_by(by_width);
-    let above = witnessed
-        .iter()
-        .copied()
-        .filter(|candidate| millimetres(candidate) > width)
-        .min_by(by_width);
-    (below, above)
-}
-
 #[test]
 fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
     let corpus = corpus_dir();
@@ -237,139 +165,70 @@ fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
         backup.display()
     );
 
-    let witnessed = sheets(&witness_paths, &witness_root);
+    let mut witnessed = sheets(&witness_paths, &witness_root);
+    let factory = factory_plot_dir(&backup);
+    for relative in FACTORY_SHEETS {
+        let pid = backup.join(relative);
+        let name = stem(&pid);
+        let pdf = factory.join(format!("{name}.pdf"));
+        assert!(
+            pdf.is_file(),
+            "{name}: the factory plot is not {}",
+            pdf.display()
+        );
+        let model = lay_out_drawing(&pid, &corpus)
+            .unwrap_or_else(|error| panic!("{}: {error}", pid.display()));
+        witnessed.push((name, model));
+    }
     let witness = Witness::of(witnessed.iter().map(|(name, model)| (name.as_str(), model)));
     // What the validated pages exercise is the floor this gate rests on: if a
-    // plot or a drawing goes missing, the witness set shrinks and the
-    // unexercised lists below grow, so pin it too.
+    // plot or a drawing goes missing, the witness set shrinks and an entry
+    // below comes back, so pin it too.
     assert_eq!(
         witness.values(Dimension::PenWidth),
         PEN_WIDTHS,
-        "the declared widths the eleven reference pages draw with"
+        "the declared widths the reference pages draw with"
     );
     assert_eq!(
         witness.values(Dimension::DashPattern),
         DASH_PATTERNS,
-        "the dash patterns the eleven reference pages draw with"
+        "the dash patterns the reference pages draw with"
     );
     assert_eq!(
         witness.values(Dimension::Face),
         FACES,
-        "the faces the eleven reference pages letter with"
+        "the faces the reference pages letter with"
     );
     assert_eq!(
         witness.values(Dimension::Template),
         TEMPLATES,
-        "the templates the eleven reference pages wear"
+        "the templates the reference pages wear"
     );
 
     let targets = sheets(&target_paths, &corpus);
     let report = witness.unwitnessed(targets.iter().map(|(name, model)| (name.as_str(), model)));
 
-    // Every unexercised entry, by dimension, with the drawing/furniture split.
-    let mut widths: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-    for entry in report.of_dimension(Dimension::PenWidth) {
-        widths.insert(&entry.value, (entry.drawing, entry.furniture));
-    }
     assert_eq!(
-        widths.keys().copied().collect::<Vec<_>>(),
-        ["0.3000", "0.5000", "0.7500", "0.7999"],
-        "the pen widths no reference page draws with"
+        report
+            .of_dimension(Dimension::PenWidth)
+            .map(|entry| entry.value.as_str())
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new(),
+        "every pen width a backup sheet declares is one a factory plot prints"
     );
-    // The load-bearing half of the decomposition: the pen table is measured
-    // from the references, so an unexercised width on the drawing's own ink is
-    // a process line whose weight nothing has checked. Three of the four are
-    // furniture; `0.5000` is the one that is not, and every one of the four
-    // sits inside a boundary the references leave open.
-    for (width, (drawing, furniture)) in &widths {
-        if *width == "0.5000" {
-            continue;
-        }
-        assert_eq!(
-            *drawing, 0,
-            "{width} mm is used by the drawing's own ink, which no reference page exercises"
-        );
-        assert!(*furniture > 0, "{width} mm is listed with no furniture use");
-    }
-    assert_eq!(
-        widths["0.5000"],
-        (24, 16),
-        "`0.5000` mm on D04's own ink and on four sheets' furniture"
-    );
-    for (width, expected) in [
-        ("0.3000", (0, 32)),
-        ("0.5000", (24, 16)),
-        ("0.7500", (0, 12)),
-        ("0.7999", (0, 52)),
-    ] {
-        assert_eq!(
-            widths[width], expected,
-            "{width} mm is an unexercised width inside a band boundary the \
-             references leave open; its stroke count is what a tighter boundary \
-             would re-pen"
-        );
-    }
-
-    // What `WIDENED_BY_THE_BOUNDARY` says of each width, read off the witness
-    // and the pen table. The nearest width a validated page declares below it
-    // prints on a thinner pen than the nearest one above it, so the boundary
-    // between those two pens lies in the open interval the width sits in, and
-    // no validated page declares anything inside that interval to say on
-    // which side of the width.
-    let witnessed_widths = witness.values(Dimension::PenWidth);
-    let mut open_intervals = BTreeSet::new();
-    for width in WIDENED_BY_THE_BOUNDARY {
-        let (Some(below), Some(above)) = witnessed_either_side(&witnessed_widths, width) else {
-            panic!(
-                "{width} mm has no witnessed width on one side of it, so the references bound \
-                 no interval around it"
-            );
-        };
-        let thinner = pen_width_mm(millimetres(below));
-        let wider = pen_width_mm(millimetres(above));
-        assert!(
-            thinner < wider,
-            "{width} mm sits between the witnessed {below} and {above}, which print on the \
-             {thinner} mm and the {wider} mm pen: no boundary lies between them, so the \
-             references settle this width's pen"
-        );
-        open_intervals.insert((below, above));
-    }
-    assert_eq!(
-        open_intervals.len(),
-        3,
-        "three boundaries, four widths the references cannot settle: {open_intervals:?}"
-    );
-    // What the writer's rule prints each of them on.
-    for (width, units) in UNEXERCISED_PENS {
-        let printed = (pen_width_mm(millimetres(width)) / (25.4 / 150.0)).round();
-        assert!(
-            (printed - units).abs() < f64::EPSILON,
-            "{width} mm prints on {printed} device unit(s); {units} when this was pinned"
-        );
-    }
-    assert_eq!(
-        widths.keys().copied().collect::<Vec<_>>(),
-        WIDENED_BY_THE_BOUNDARY,
-        "the widths a boundary widens are the unexercised ones, and no others"
-    );
-
     let mut dashes: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for entry in report.of_dimension(Dimension::DashPattern) {
         dashes.insert(&entry.value, (entry.drawing, entry.furniture));
     }
     assert_eq!(
         dashes.keys().copied().collect::<Vec<_>>(),
-        ["0.000", "3.500/1.750"],
+        ["0.000"],
         "the dash patterns no reference page draws with"
     );
     assert_eq!(
-        dashes["0.000"].0, 10,
-        "the zero-length pattern's strokes; the writer draws it solid"
-    );
-    assert_eq!(
-        dashes["3.500/1.750"].0, 459,
-        "the two-step pattern's strokes, read from a record that stores -3.500/-1.750"
+        dashes["0.000"],
+        (10, 0),
+        "the zero-length pattern's strokes, on D04's own ink; the writer draws it solid"
     );
 
     assert_eq!(
@@ -385,21 +244,19 @@ fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
             .of_dimension(Dimension::Template)
             .map(|entry| entry.value.as_str())
             .collect::<Vec<_>>(),
-        ["CPE-SQ-A2.igr", "CPECCHB-SQ-A1.igr"],
-        "the border templates no reference page wears"
+        Vec::<&str>::new(),
+        "every border template a backup sheet wears is one a reference page wears"
     );
 
-    // The two numbers that make the decomposition legible: how many sheets
-    // need nothing explained, and how many carry something from the lists.
     assert_eq!(report.sheets_checked, 53, "sheets examined");
     assert_eq!(
-        report.sheets_clean, 37,
+        report.sheets_clean, 52,
         "sheets drawing with witnessed vocabulary alone"
     );
     assert_eq!(
-        report.sheets_affected().len(),
-        16,
-        "sheets carrying an unexercised entry"
+        report.sheets_affected(),
+        ["D04"].into_iter().collect(),
+        "the sheet still carrying an unwitnessed entry"
     );
     let drawing_ink_unexercised: BTreeSet<&str> = report
         .entries
@@ -409,8 +266,7 @@ fn the_plant_backup_draws_only_vocabulary_a_reference_plot_has_exercised() {
         .collect();
     assert_eq!(
         drawing_ink_unexercised,
-        ["0.000", "0.5000", "3.500/1.750"].into_iter().collect(),
-        "the only unexercised entries on the drawing's own ink: D04's 0.50 mm \
-         strokes and the two dash patterns"
+        ["0.000"].into_iter().collect(),
+        "the only unwitnessed entry on a drawing's own ink"
     );
 }

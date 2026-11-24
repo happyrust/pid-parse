@@ -1963,6 +1963,18 @@ const BOXED_LINE_ANCHOR: u8 = 0x48;
 /// micrometre: the A2 sheet's four are 4.034 276 mm.
 const TALLEST_WITNESSED_BOX_MM: f64 = 4.035_3;
 
+/// The taller box the factory plots of the two flash-drum vapour-outlet
+/// sheets letter, millimetres: all thirty-one records of that height on
+/// those sheets are 5.965 723 937 mm, and the sixteen whose anchor code is
+/// `0x48` hang from its top.
+const TALL_WITNESSED_BOX_MM: f64 = 5.965_723_937;
+
+/// A box the plots have shown a line hanging in: no taller than the reference
+/// plots' 4.034 mm, or within a micrometre of the 5.966 mm box above.
+fn witnessed_box_height(box_mm: f64) -> bool {
+    box_mm <= TALLEST_WITNESSED_BOX_MM || (box_mm - TALL_WITNESSED_BOX_MM).abs() <= 0.001
+}
+
 /// How much taller than its line's cell a box may be and still be that cell,
 /// millimetres of lift: half a micrometre.
 const BOX_IS_THE_CELL_MM: f64 = 0.000_5;
@@ -1985,12 +1997,18 @@ const BOX_IS_THE_CELL_MM: f64 = 0.000_5;
 /// `仪表风管线`, two of each, sit in boxes of 4.034 mm and were lettered
 /// 0.122 and 0.198 mm under the reference for want of that 0.173 mm.
 ///
-/// Only the class the reference plots letter is moved: the record's anchor
-/// code is `0x48`, it letters one line, in FangSong, from the middle line,
-/// and its box is no taller than the tallest of those. The plant backup
-/// holds 37 boxes taller than that (5.966 and 8.309 mm) and 30 records with
-/// another code, and no plot shows where their lines sit
-/// (`docs/analysis/2026-11-11-a-boxed-label-hangs-from-the-top-of-its-box.md`).
+/// Only the class a plot has lettered is moved: the record's anchor code is
+/// `0x48`, it letters one line, in FangSong, from the middle line, and its
+/// box is a height those plots have shown. The eleven reference plots stop
+/// at 4.034 mm. The factory plots of the two flash-drum vapour-outlet sheets
+/// add 5.965 724 mm: the sixteen `0x48` lines there are low by 1.079 to
+/// 1.224 mm, against this lift of 1.138 mm, and after it they sit where the
+/// 4.034 mm lines already do. The other codes at that height are not that offset —
+/// twelve `0x40` lines are 1.69 mm low, the `0x51` line is already on the
+/// factory baseline, the `0x36` line is 4.18 mm low, the `0x42` line is
+/// 0.43 mm high — and neither sheet carries an 8.309 mm box. A box between
+/// the two witnessed heights, or taller than the second, stays on the
+/// middle line.
 fn hang_in_the_box(
     lettered: &mut [PaperPrimitive],
     entity: &PidGraphicEntity,
@@ -2032,7 +2050,7 @@ fn hang_in_the_box(
     let Some(cap72) = crate::write::reference_cap_px(face, TextHeightBasis::Cap) else {
         return;
     };
-    if face != "FangSong" || box_mm > TALLEST_WITNESSED_BOX_MM {
+    if face != "FangSong" || !witnessed_box_height(box_mm) {
         return;
     }
     // The cell the line is set in: the face's 72 reference units, of which
@@ -5567,17 +5585,51 @@ mod tests {
         assert_eq!(short, unboxed);
     }
 
-    /// The rule is held to the class the reference plots letter. A taller
-    /// box, another anchor code, a face that is not FangSong and a record of
-    /// two lines are lettered as they were: no plot shows where they sit.
+    /// The sixteen `0x48` lines in a 5.965 724 mm box on the flash-drum
+    /// vapour-outlet sheets. The factory plots letter them from the top of
+    /// the box, the same rule as the 4.034 mm lines, so the line is lifted
+    /// half of what the box is taller than its cell by — 1.138 46 mm.
+    #[test]
+    fn a_line_in_the_tall_witnessed_box_hangs_from_the_top_of_the_box() {
+        let height = 5.965_723_937;
+        let unboxed = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, None)[0]);
+        let lift: f64 = (height - 0.002_469_444 * 1000.0 * 72.0 / 48.2) / 2.0;
+        assert!((lift - 1.138_464).abs() < 1e-5, "{lift}");
+
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, 0.0, Some(height))[0]);
+        assert!((hung[0] - unboxed[0]).abs() < 1e-12, "{hung:?}");
+        assert!((hung[1] - unboxed[1] - lift).abs() < 1e-9, "{hung:?}");
+
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let upright = origin_of(&boxed_line("仪表风管线", 0x48, quarter, None)[0]);
+        let hung = origin_of(&boxed_line("仪表风管线", 0x48, quarter, Some(height))[0]);
+        assert!((hung[0] - upright[0] + lift).abs() < 1e-9, "{hung:?}");
+        assert!((hung[1] - upright[1]).abs() < 1e-9, "{hung:?}");
+    }
+
+    /// The rule is held to the class a plot has lettered. Another height, another
+    /// anchor code, a face that is not FangSong and a record of two lines are
+    /// lettered as they were.
     #[test]
     fn a_boxed_record_no_reference_letters_is_left_where_it_was() {
-        // 5.966 and 8.309 mm: the plant backup's taller boxes.
-        for height in [5.966, 8.309] {
+        // 5.080 mm is the fixture square between the two witnessed heights,
+        // 5.968 mm is just outside the micrometre around 5.965 724, and
+        // 8.309 mm is the plant backup's taller box, which these sheets do
+        // not carry.
+        for height in [5.080, 5.968, 8.309] {
             assert_eq!(
                 boxed_line("仪表风管线", 0x48, 0.0, Some(height)),
                 boxed_line("仪表风管线", 0x48, 0.0, None),
                 "{height} mm"
+            );
+        }
+        // The other codes at the witnessed tall height. Each sits somewhere
+        // else on the factory plot, so the lift above is not applied.
+        for code in [0x36, 0x40, 0x42, 0x51] {
+            assert_eq!(
+                boxed_line("仪表风管线", code, 0.0, Some(5.965_723_937)),
+                boxed_line("仪表风管线", code, 0.0, None),
+                "{code:#04x}"
             );
         }
         // The codes the backup's other boxed records carry.

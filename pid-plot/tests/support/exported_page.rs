@@ -29,8 +29,14 @@ const DEFAULT_ACCEPTANCE_EXPORT_DIR: &str =
 /// The three acceptance drawings whose reference PDFs in `验收数据` were
 /// plotted from a matching revision in `sppid导出格式.pid+xml`: `(name, subdir)`.
 const SAME_REVISION_DRAWINGS: [(&str, &str); 3] = [
-    ("集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图", "01"),
-    ("集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图", "01"),
+    (
+        "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+        "01",
+    ),
+    (
+        "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
+        "01",
+    ),
     ("集注站 轻烃分离器I气出口接口位置改造工艺及自控流程图", "02"),
 ];
 
