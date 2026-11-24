@@ -362,9 +362,9 @@
         "oracle-exp": {
           "command": "pid_publish_xml.exe \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图.pid\" --diff-against \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图_Data.xml\" --plant P01 --oracle-exp D:\\work\\cad\\pid-test-data\\Export.dmp --datamap D:\\work\\cad\\pid-test-data\\RefData~4~804.zip",
           "clean_exit_code": 0,
-          "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6673 (different 0, not in reference 0), rels 4107 (not in reference 0)",
+          "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6681 (different 0, not in reference 0), rels 4107 (not in reference 0)",
           "alias_exit_code": 1,
-          "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6673 (different 1, not in reference 0), rels 4107 (not in reference 0)",
+          "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 6681 (different 1, not in reference 0), rels 4107 (not in reference 0)",
           "informational_line": "按名配对 79 个 PIDPipeline，106 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 23（登记上界 23）"
         }
       },
@@ -1071,7 +1071,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 4655 (extra 0, wrong class 0), values 9990 (different 0, not in reference 0), rels 6175 (not in reference 0)",
+            "summary": "pid export diff: objects 4655 (extra 0, wrong class 0), values 10003 (different 0, not in reference 0), rels 6175 (not in reference 0)",
             "informational_line": "按名配对 123 个 PIDPipeline，163 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 34（登记上界 34）"
           }
         }
@@ -1086,7 +1086,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 5493 (extra 0, wrong class 0), values 11791 (different 0, not in reference 0), rels 7274 (not in reference 0)",
+            "summary": "pid export diff: objects 5493 (extra 0, wrong class 0), values 11808 (different 0, not in reference 0), rels 7274 (not in reference 0)",
             "informational_line": "按名配对 141 个 PIDPipeline，192 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 42（登记上界 42）"
           }
         }
@@ -1116,7 +1116,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1260 (extra 0, wrong class 0), values 2717 (different 0, not in reference 0), rels 1652 (not in reference 0)",
+            "summary": "pid export diff: objects 1260 (extra 0, wrong class 0), values 2718 (different 0, not in reference 0), rels 1652 (not in reference 0)",
             "informational_line": "按名配对 47 个 PIDPipeline，56 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }
@@ -1131,7 +1131,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1248 (extra 0, wrong class 0), values 2659 (different 0, not in reference 0), rels 1636 (not in reference 0)",
+            "summary": "pid export diff: objects 1248 (extra 0, wrong class 0), values 2660 (different 0, not in reference 0), rels 1636 (not in reference 0)",
             "informational_line": "按名配对 30 个 PIDPipeline，33 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }
@@ -1146,7 +1146,7 @@
           },
           "oracle-exp": {
             "exit_code": 0,
-            "summary": "pid export diff: objects 1229 (extra 0, wrong class 0), values 2610 (different 0, not in reference 0), rels 1614 (not in reference 0)",
+            "summary": "pid export diff: objects 1229 (extra 0, wrong class 0), values 2611 (different 0, not in reference 0), rels 1614 (not in reference 0)",
             "informational_line": "按名配对 28 个 PIDPipeline，32 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 3（登记上界 3）"
           }
         }

@@ -440,7 +440,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert!(diff.is_clean(), "{diff}");
     assert_eq!(
         (diff.objects, diff.values, diff.rels),
-        (3_093, 4_643, 4_107)
+        (3_093, 4_651, 4_107)
     );
     // G2 (census `contract-work/g2-evidence/devin/ref-only-inventory.log`):
     // nothing the reference carries is missing from the generated side; the
@@ -452,7 +452,7 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(diff.rels_not_in_generated, 0);
     assert_eq!(diff.objects_excused_by_design, 0);
     assert_eq!(diff.objects_paired_by_name, 79);
-    assert_eq!(diff.values_excused_by_design, 2_082);
+    assert_eq!(diff.values_excused_by_design, 2_074);
     assert_eq!(diff.rels_excused_by_design, 0);
     assert_eq!(diff.rels_paired_by_name, 106);
     assert_eq!(diff.pipelines_paired_by_name, 79);
@@ -1008,7 +1008,7 @@ fn backup_directory_publishes_the_whole_package() {
     // ports and representations
     // (docs/analysis/2026-11-05-seven-reference-publish-diff.md).
     assert_eq!(index["objects"], 80_176);
-    assert_eq!(index["values"], 177_160);
+    assert_eq!(index["values"], 177_298);
     assert_eq!(index["relationships"], 106_806);
     // The index declares which drawings the top-level objects / values /
     // relationships aggregates exclude, so for each of those fields
@@ -1706,7 +1706,7 @@ fn the_dwg_fixture_publishes_against_its_packages_later_dump() {
     );
     assert!(
         stdout.lines().any(|line| line
-            == "pid export diff: objects 108 (extra 6, wrong class 0), values 204 \
+            == "pid export diff: objects 108 (extra 6, wrong class 0), values 205 \
                 (different 0, not in reference 0), rels 133 (not in reference 6)"),
         "{stdout}"
     );
@@ -1825,7 +1825,7 @@ const DWG_EXP_SAYS: [&str; 7] = [
     "oracle-exp codelists: 68 enumerated values",
     "oracle-exp pipelines: 6 PIDPipeline, 6 PipingConnectors, 6 FluidSystem, 5 fluid codes \
      missing, 0 fluid systems unmapped",
-    "oracle-exp stored values: 28 written, 21 labels confirmed, 4 labels kept where the dump \
+    "oracle-exp stored values: 29 written, 21 labels confirmed, 4 labels kept where the dump \
      says otherwise, 6 left out unspelled, 3 names left out because a label disagrees with the \
      dump",
     "oracle-exp connectivity: 20 pairs, 19 written as <Rel>, 1 left out because an end is not \
@@ -2077,7 +2077,7 @@ fn a_dump_run_that_ends_early_has_said_what_the_dump_added() {
 /// line, in the order of their names. The dump's own dictionary places a
 /// pipe run's `SP_ConnectorsZeroLength` and an inline component's
 /// `FlowDirection`; here the `INSERT`s of the two tables name neither, and
-/// nine of the drawing's 28 stored values are not written.
+/// nine of the drawing's 29 stored values are not written.
 #[test]
 fn a_dump_run_says_each_stored_column_it_could_not_read() {
     let scratch = Scratch::new("exp-stored-column-not-read");
@@ -2103,7 +2103,7 @@ fn a_dump_run_says_each_stored_column_it_could_not_read() {
         read.starts_with("Read drawing `DWG-0202GP06-01` ("),
         "{stderr}"
     );
-    let stored = DWG_EXP_SAYS[3].replace("28 written", "19 written");
+    let stored = DWG_EXP_SAYS[3].replace("29 written", "20 written");
     assert_ne!(stored, DWG_EXP_SAYS[3]);
     assert_eq!(
         said,
@@ -2208,13 +2208,13 @@ fn the_dwg_package_publishes_every_drawing_it_lists() {
             ("002", 3, 10, 2),
             ("222", 3, 10, 2),
             ("DWG-0201GP01-01", 492, 901, 688),
-            ("DWG-0201GP06-01", 170, 359, 233),
-            ("DWG-0202GP06-01", 112, 232, 139),
+            ("DWG-0201GP06-01", 170, 360, 233),
+            ("DWG-0202GP06-01", 112, 233, 139),
             ("DWG-0104GP01-08", 5, 14, 4),
         ]
     );
     assert_eq!(index["objects"], 785);
-    assert_eq!(index["values"], 1_526);
+    assert_eq!(index["values"], 1_528);
     assert_eq!(index["relationships"], 1_068);
     // As many ports as the dump has rows in `T_PIPINGPOINT` and in
     // `T_SIGNALPOINT`.

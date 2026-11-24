@@ -90,9 +90,6 @@
 //!   `IInsulatedItem.InsulThickSrc` and
 //!   `ISlopedPipingItem.SlopedPipeDirection`, which the fixture's own
 //!   `--diff-against` reports as missing values;
-//! * three scattered values, `LongMaterialDescription3`, `ReliefPressure`
-//!   and `EquipmentTrimSpec`, and the interface stated only beside the
-//!   first of them, `ISpecifiedMatlItem`;
 //! * rules waiting on reference data: pipelines from `T_PIPELINE` (S10),
 //!   off-page connectors in a drawing's stockpile (S12), and objects other
 //!   than piping components the database draws on a sheet its `.pid` does

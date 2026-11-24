@@ -72,13 +72,11 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
         interface: "IInlineComponent",
         property: "IsFlowDirectional",
     },
-    // The four below are the values the references state on an object the
-    // sheet's labels do not name: an instrument's sequence number and its
-    // measured variable, an equipment item's tag prefix, and an inline
-    // instrument's relief pressure. The map places each in a table the
-    // dump holds, under an item type that is the object's own (`Instrument`,
-    // `EquipmentOther` / `Mechanical` / `Vessel`) or one the map spells and
-    // the dump does not (`InstrumentInline`, read under `Instrument`).
+    // The values the references state on an object the sheet's labels do
+    // not name. The map places each in a table the dump holds, under an
+    // item type that is the object's own (`Instrument`, `EquipmentOther` /
+    // `Mechanical` / `Vessel`) or one the map spells and the dump does not
+    // (`InstrumentInline`, read under `Instrument`).
     StoredProperty {
         interface: "INamedInstrument",
         property: "InstrTagSequenceNo",
@@ -90,6 +88,26 @@ pub const STORED_PROPERTIES: &[StoredProperty] = &[
     StoredProperty {
         interface: "INamedEquipment",
         property: "EquipPrefix",
+    },
+    // `EquipmentOther.Description` in `T_ModelItem`. The interface is
+    // stated only on the objects that carry the value, and only the
+    // classes whose row already lists `ISpecifiedMatlItem`.
+    StoredProperty {
+        interface: "ISpecifiedMatlItem",
+        property: "LongMaterialDescription3",
+    },
+    // `TrimSpec` in `T_Equipment`, the table the equipment types inherit
+    // it from.
+    StoredProperty {
+        interface: "IEquipment",
+        property: "EquipmentTrimSpec",
+    },
+    // `SP_SetPressure` in `T_InlineComp`. The cell is the number against
+    // the unit (`12MPa`); [`space_before_unit`] writes the space the
+    // references use (`12 MPa`).
+    StoredProperty {
+        interface: "IPressureReliefItem",
+        property: "ReliefPressure",
     },
 ];
 
@@ -184,6 +202,29 @@ pub fn spell(criteria: Option<&str>, cell: &StoredCell) -> Option<String> {
 /// The conversion that publishes `IsFlowDirectional` from the item's
 /// `FlowDirection`.
 const COMPONENT_FLOW_DIRECTION: &str = "EFAdapter.CompFlowDirConv";
+
+/// `12MPa` as the references write a relief pressure, `12 MPa`.
+///
+/// The dump stores the number against the unit. Each of the six
+/// `ReliefPressure` values on the seven acceptance drawings is `12MPa` in
+/// `T_InlineComp.SP_SetPressure` and `12 MPa` in the reference. A text that
+/// already has the space, or that is not a number followed by a unit, is
+/// returned unchanged.
+fn space_before_unit(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let Some(index) = bytes.iter().position(u8::is_ascii_alphabetic) else {
+        return text.to_string();
+    };
+    if index > 0
+        && bytes[..index]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+    {
+        format!("{} {}", &text[..index], &text[index..])
+    } else {
+        text.to_string()
+    }
+}
 
 /// What a row whose cell is NULL is spelled as under `criteria`: a
 /// component that states no flow direction is not flow-directional. `None`
@@ -360,7 +401,11 @@ impl Reader<'_> {
                 report.unspelled += 1;
                 return None;
             };
-            value
+            if stored.property == "ReliefPressure" {
+                space_before_unit(&value)
+            } else {
+                value
+            }
         } else {
             let null = spell_null(criteria.as_deref())?;
             let held = self
@@ -646,7 +691,7 @@ mod tests {
         assert_eq!(
             report,
             StoredValues {
-                written: 28,
+                written: 29,
                 confirmed_labels: 21,
                 disagreeing_labels: 4,
                 unspelled: 6,
@@ -749,7 +794,9 @@ mod tests {
             .unwrap();
         nozzle.class = None;
         let report = attach_stored_values(&mut drawing, &tables, &map);
-        assert_eq!(report.written, 25);
+        // The vessel's trim spec is still written: clearing the nozzle's
+        // class does not touch it.
+        assert_eq!(report.written, 26);
         assert_eq!(report.disagreeing_labels, 5);
         let run = stated(
             &drawing,
@@ -943,5 +990,66 @@ mod tests {
     fn a_conversion_this_stage_does_not_run_writes_nothing() {
         let text = StoredCell::Text("B2".to_string());
         assert_eq!(spell(Some("EFAdapter.EnumConversions"), &text), None);
+    }
+
+    /// `12MPa` is how the dump stores the six relief pressures; the
+    /// references write `12 MPa`. A trim spec is not a number jammed
+    /// against a unit, and this function is not what spells it.
+    #[test]
+    fn a_relief_pressure_gains_the_space_before_its_unit() {
+        assert_eq!(space_before_unit("12MPa"), "12 MPa");
+        assert_eq!(space_before_unit("12.5kPa"), "12.5 kPa");
+        assert_eq!(space_before_unit("12 MPa"), "12 MPa");
+        assert_eq!(space_before_unit("B9"), "B9");
+    }
+
+    /// Where the three scattered properties sit in the committed package's
+    /// dump. `InstrumentInline` is not an item type there, so an inline
+    /// instrument's relief pressure is read under `Instrument`.
+    #[test]
+    fn the_three_scattered_properties_are_placed_in_the_declaring_table() {
+        let (_, tables, map) = dwg();
+        let column = |class: &str, property: &str, item_type: &str| {
+            let (column, criteria) = source_of(&map, &tables, class, property, item_type)
+                .unwrap_or_else(|| panic!("{class}.{property} is placed"));
+            assert_eq!(criteria, None, "{class}.{property}");
+            column.to_string()
+        };
+        assert_eq!(
+            column(
+                "PIDProcessEquipment",
+                "LongMaterialDescription3",
+                "EquipmentOther"
+            ),
+            "T_ModelItem.Description"
+        );
+        assert_eq!(
+            column("PIDInlineInstrument", "ReliefPressure", "Instrument"),
+            "T_InlineComp.SP_SetPressure"
+        );
+        assert_eq!(
+            column("PIDProcessEquipment", "EquipmentTrimSpec", "EquipmentOther"),
+            "T_Equipment.TrimSpec"
+        );
+        assert_eq!(
+            column("PIDProcessVessel", "EquipmentTrimSpec", "Vessel"),
+            "T_Equipment.TrimSpec"
+        );
+    }
+
+    /// The fixture's vessel states `1.6AR12`, the text `T_Equipment.TrimSpec`
+    /// holds, and the reference states the same text.
+    #[test]
+    fn the_vessel_states_its_trim_spec_from_its_equipment_row() {
+        let (drawing, _) = dwg_with_stored_values();
+        let trim = stated(
+            &drawing,
+            "F1081777313D41ABB14B7B18FA210D83",
+            "EquipmentTrimSpec",
+        )
+        .expect("the vessel states it");
+        assert_eq!(trim.interface, "IEquipment");
+        assert_eq!(trim.value, "1.6AR12");
+        assert_eq!(trim.source, placed("T_Equipment", "TrimSpec"));
     }
 }

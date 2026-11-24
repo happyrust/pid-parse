@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish：写出 `LongMaterialDescription3`、`ReliefPressure`、`EquipmentTrimSpec`（2026-11-24）
+
+**只在挂了 Oracle `exp` dump 时写这三项。`.pid` 单独发布的字节不动。图纸上已有的标签与 dump 不一致时，留下标签。七张同版验收图的非空值从 38 881 增到 38 922（分母 39 171），不同的值仍是 0。**
+
+- **放在哪。** `LongMaterialDescription3` 是 `EquipmentOther.Description`，在 `T_ModelItem.Description`，原文照写，只落在 `PIDProcessEquipment`。`EquipmentTrimSpec` 是设备类型继承的 `TrimSpec`，在 `T_Equipment.TrimSpec`，原文照写。`ReliefPressure` 是 `SP_SetPressure`，在 `T_InlineComp.SP_SetPressure`；数据地图把它记在 `InstrumentInline` 上，字典里没有这个类型，就按对象自己的 `Instrument` 去读。单元格是 `12MPa`，六处参考都写成 `12 MPa`，中间补一个空格。
+- **接口。** `ISpecifiedMatlItem` 只在写出 `LongMaterialDescription3` 的那 34 个 `PIDProcessEquipment` 上出现。这个类的接口表里本来就有它，排在 `INamedEquipment` 之后、`IPIDTypical` 之前，和参考的次序一样。另外两项落在本来就会写出的 `IEquipment`、`IPressureReliefItem` 上。
+- **七张图各加了多少。** 非空值 / 接口元素：I井场 +8 / +6（6 650 → 6 658，22 898 → 22 904），J K井场 +13 / +12（9 956 → 9 969，34 489 → 34 501），L M井场 +17 / +16（11 749 → 11 766，40 713 → 40 729），轻烃分离器I 不加，空冷器A/B/C 各加 1 个泄放压力（2 714 → 2 715，2 656 → 2 657，2 607 → 2 608），接口数不变。34 个材料长描述、6 个泄放压力、I井场 1 个 `B9`。
+- **DWG。** 容器的 `EquipmentTrimSpec` 是 `1.6AR12`，和参考相同。带 dump 的值 204 → 205，整包那张图的完整性 163 → 164；接口仍是 687 与 683。`oracle-exp stored values` 那一行从 `28 written` 变成 `29 written`，其余数字不动。提交的包的 `_Index.json`：`DWG-0202GP06-01` 的值 232 → 233，`DWG-0201GP06-01` 的值 359 → 360，合计 1 526 → 1 528。53 张整包的 `values` 177 160 → 177 298。
+
 ### CI：补一步只选根包的 `cargo check --examples`，把下一条改掉的那一样检查补回来（2026-11-17）
 
 **只改了 `.github/workflows/ci.yml`：在 examples 一步后面加一步 `cargo check --locked --examples`（`dcf9838`）。程序和测试没有动。下一条把 examples 一步改成 `--workspace` 之后，CI 上没有哪一步再查「依赖的特性只按根包自己声明的来的时候，example 编不编得过」；这一步补的就是它。`check` 只做类型检查、只写元数据，不会像原来的 `build` 那样把 example 再写一份到 runner 的磁盘上。推上去的那一次 CI（运行 44045056745）全绿；这一步 22 秒，查了 21 个包，没有警告；整次 13 分 06 秒。**
