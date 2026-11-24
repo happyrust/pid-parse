@@ -455,7 +455,13 @@ fn write_listed(
     for &(name, rule) in slot.attributes {
         match values.iter().find(|value| value.name == name) {
             Some(value) => write_pair(&mut pairs, name, &value.value)?,
-            None if rule == AttributeRule::AlwaysEmpty => write_pair(&mut pairs, name, "")?,
+            None if matches!(
+                rule,
+                AttributeRule::AlwaysEmpty | AttributeRule::StatedOrEmpty
+            ) =>
+            {
+                write_pair(&mut pairs, name, "")?
+            }
             None => {}
         }
     }
@@ -1078,9 +1084,126 @@ mod tests {
         let xml = write_pid_data_xml(&drawing, "P01");
         assert!(xml.contains(
             "      <INamedInstrument InstrFuncModifier=\"\" InstrLoopSuffix=\"\" \
-             InstrTagPrefix=\"\" InstrTagSuffix=\"\"/>\n   </PIDControlSystemFunction>\n"
+             InstrTagPrefix=\"\" InstrTagSequenceNo=\"\" InstrTagSuffix=\"\" \
+             MeasuredVariable=\"\"/>\n   </PIDControlSystemFunction>\n"
         ));
         assert_eq!(interfaces_of(&xml, "CSF").len(), 12);
+    }
+
+    #[test]
+    fn a_stated_or_empty_attribute_writes_its_value_when_set_and_empty_when_unset() {
+        let mut drawing = drawing();
+        drawing.drawing_attributes = vec![
+            PidPublishAttribute {
+                interface: "IDocument",
+                name: "DocCategory",
+                value: "P&ID Documents".to_string(),
+                source: PidValueSource::Label { row: 1 },
+            },
+            PidPublishAttribute {
+                interface: "IDocument",
+                name: "DocType",
+                value: "P&ID".to_string(),
+                source: PidValueSource::Label { row: 1 },
+            },
+        ];
+        drawing.items = vec![
+            item(
+                "RUN_EMPTY",
+                "PIDPipingConnector",
+                &[("IConnector", "RepresentationsAreAllZeroLength", "False")],
+            ),
+            item(
+                "RUN_SET",
+                "PIDPipingConnector",
+                &[
+                    ("IConnector", "RepresentationsAreAllZeroLength", "False"),
+                    ("IConnector", "FlowDirection", "@EE872"),
+                ],
+            ),
+            item(
+                "COMP_EMPTY",
+                "PIDPipingComponent",
+                &[
+                    ("IPipingComponent", "CommoditySpecialtyType", "Spec"),
+                    ("IPipingComponent", "PipingComponentType2", "@T2"),
+                    ("IPipingComponent", "PipingComponentType3", "@T3"),
+                    ("IPipingComponent", "PipingComponentType1", "@T1"),
+                ],
+            ),
+            item(
+                "COMP_SET",
+                "PIDPipingComponent",
+                &[
+                    ("IPipingComponent", "CommoditySpecialtyType", "Spec"),
+                    ("IPipingComponent", "PipModelCode", "Gate valve"),
+                    ("IPipingComponent", "PipingComponentType1", "@T1"),
+                ],
+            ),
+            item(
+                "INST_HALF",
+                "PIDInstrument",
+                &[("INamedInstrument", "MeasuredVariable", "PI")],
+            ),
+            item("INLINE_EMPTY", "PIDInlineInstrument", &[]),
+            item("EQ_NONE", "PIDProcessEquipment", &[]),
+            item(
+                "EQ_PREFIX",
+                "PIDProcessEquipment",
+                &[("INamedEquipment", "EquipPrefix", "S")],
+            ),
+            item(
+                "EQ_BOTH",
+                "PIDProcessEquipment",
+                &[
+                    ("INamedEquipment", "EquipPrefix", "S"),
+                    ("INamedEquipment", "EquipSeqNo", "101"),
+                ],
+            ),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            r#"      <IDocument DocCategory="P&amp;ID Documents" DocTitle="" DocType="P&amp;ID" DocSubtype=""/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <IConnector FlowDirection="" RepresentationsAreAllZeroLength="False"/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <IConnector FlowDirection="@EE872" RepresentationsAreAllZeroLength="False"/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <IPipingComponent PipingComponentType1="@T1" PipingComponentType3="@T3" PipingComponentType2="@T2" PipModelCode="" CommoditySpecialtyType="Spec"/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <IPipingComponent PipingComponentType1="@T1" PipModelCode="Gate valve" CommoditySpecialtyType="Spec"/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <INamedInstrument InstrFuncModifier="" InstrLoopSuffix="" InstrTagPrefix="" InstrTagSequenceNo="" InstrTagSuffix="" MeasuredVariable="PI"/>"#
+        ));
+        assert!(xml.contains(
+            r#"      <INamedInstrument InstrFuncModifier="" InstrLoopSuffix="" InstrTagPrefix="" InstrTagSequenceNo="" InstrTagSuffix="" MeasuredVariable=""/>"#
+        ));
+        assert!(!interfaces_of(&xml, "EQ_NONE")
+            .iter()
+            .any(|name| name == "INamedEquipment"));
+        assert!(
+            xml.contains(r#"      <INamedEquipment EquipPrefix="S" EquipSeqNo="" EquipSuff=""/>"#)
+        );
+        assert!(xml
+            .contains(r#"      <INamedEquipment EquipPrefix="S" EquipSeqNo="101" EquipSuff=""/>"#));
+
+        // When `DocTitle` is stated on the drawing, it is never overwritten
+        // with an empty string.
+        drawing.drawing_attributes.push(PidPublishAttribute {
+            interface: "IDocument",
+            name: "DocTitle",
+            value: "Process Sheet".to_string(),
+            source: PidValueSource::Label { row: 1 },
+        });
+        let titled = write_pid_data_xml(&drawing, "P01");
+        assert!(titled.contains(
+            r#"      <IDocument DocCategory="P&amp;ID Documents" DocTitle="Process Sheet" DocType="P&amp;ID" DocSubtype=""/>"#
+        ));
     }
 
     #[test]
@@ -1222,7 +1345,9 @@ mod tests {
                 "IPIDTypical"
             ]
         );
-        assert!(xml.contains(r#"      <INamedEquipment EquipPrefix="E" EquipSuff=""/>"#));
+        assert!(
+            xml.contains(r#"      <INamedEquipment EquipPrefix="E" EquipSeqNo="" EquipSuff=""/>"#)
+        );
     }
 
     /// The seven same-revision references: a code writes its interfaces and
@@ -1432,7 +1557,7 @@ mod tests {
         assert!(xml.contains(concat!(
             "   <PIDDrawing>\n",
             "      <IObject UID=\"D1\" Name=\"A &amp; B\" Description=\"\"/>\n",
-            "      <IDocument DocSubtype=\"\"/>\n",
+            "      <IDocument DocTitle=\"\" DocSubtype=\"\"/>\n",
             "      <IDocVersionComposition/>\n",
             "      <IDwgRepresentationComposition/>\n",
             "      <IPIDDrawing/>\n",

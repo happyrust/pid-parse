@@ -1729,9 +1729,11 @@ mod tests {
     }
 
     /// The committed drawing's XML after the codelist stage. The with-map
-    /// document includes the open-top tank's two interfaces and the two
-    /// pipe-run enumerations. Counting gaps does not move the pin; the
-    /// length and FNV-1a are taken here.
+    /// document includes the open-top tank's two interfaces, the two
+    /// pipe-run enumerations, and the `StatedOrEmpty` attributes (`DocTitle`
+    /// and the two unset `FlowDirection`s; without the map, all seven
+    /// `FlowDirection`s and both `PipModelCode`s are unset as well). Counting
+    /// gaps does not move the pin; the length and FNV-1a are taken here.
     #[test]
     fn known_fixture_xml_bytes_do_not_change_when_gaps_are_counted() {
         let dump = std::fs::read(committed(
@@ -1752,7 +1754,7 @@ mod tests {
         let xml = crate::publish::pid_writer::write_pid_data_xml(&drawing, "PLANT");
         assert_eq!(
             (xml.len(), fnv1a(xml.as_bytes())),
-            (45_605, 0x4885_8f23_5543_d055),
+            (45_651, 0xbd81_c1bb_b260_deca),
             "in-table values changed the fixture XML"
         );
         assert_eq!(attached.gaps.unmapped_leaf_total(), 0);
@@ -1774,7 +1776,7 @@ mod tests {
         let bare_xml = crate::publish::pid_writer::write_pid_data_xml(&bare, "PLANT");
         assert_eq!(
             (bare_xml.len(), fnv1a(bare_xml.as_bytes())),
-            (42_159, 0x409a_9a47_64b6_eef4),
+            (42_322, 0x9998_738d_166f_d2e1),
             "in-table values changed the fixture XML without the map"
         );
     }
